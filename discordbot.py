@@ -90,41 +90,23 @@ submission_queue = []
 max_queue_size = 100  # Number of submissions to accumulate before flushing
 
 # Initialize all variables
-#prod_or_stage = os.getenv("prod_or_stage")
-prod_or_stage = "stage"
-#discord_token = os.getenv("DISCORD_TOKEN")
-discord_token = ""
-#mongo_db_string = os.getenv("mongo_db_string")
-mongo_db_string = "mongodb+srv://nsharma2:REMOVED_MONGO_PASSWORD@staging.oxez2.mongodb.net/?retryWrites=true&w=majority&appName=staging"
-#openai.api_key = os.getenv("open_api_key")
-openai_api_key = "REMOVED_OPENAI_KEY_V2"
-#buymeacoffee_api_key = os.getenv("buy_me_a_coffee_api_key")
-buymeacoffee_api_key = ""
-#openweather_api_key = os.getenv("openweather_api_key")
-openweather_api_key = "REMOVED_OPENWEATHER_KEY"
-#googlemaps_api_key = os.getenv("googlemaps_api_key")
+discord_token = os.getenv("DISCORD_TOKEN")
+mongo_db_string = os.getenv("mongo_db_string")
+openai.api_key = os.getenv("open_api_key")
+openweather_api_key = os.getenv("openweather_api_key")
 googlemaps_api_key = os.getenv("googlemaps_api_key")
-#googletranslate_api_key = os.getenv("googletranslate_api_key")
-googletranslate_api_key = "REMOVED_GOOGLETRANSLATE_KEY"
-#webster_api_key = os.getenv("webster_api_key")
-webster_api_key = "REMOVED_WEBSTER_KEY"
-#webster_thes_api_key = os.getenv("webster_thes_api_key")
-webster_thes_api_key = "REMOVED_WEBSTER_THES_KEY"
-#question_time = int(os.getenv("question_time"))
-channel_id = 1367697743014789172
-#channel_id = os.getenv("channel_id")
+googletranslate_api_key = os.getenv("googletranslate_api_key")
+webster_api_key = os.getenv("webster_api_key")
+webster_thes_api_key = os.getenv("webster_thes_api_key")
+question_time = int(os.getenv("question_time"))
+channel_id = os.getenv("channel_id")
 channel = None
 
-question_time = 10
-#questions_per_round = int(os.getenv("questions_per_round"))
-questions_per_round = 1
-#time_between_questions = int(os.getenv("time_between_questions"))
-time_between_questions = 2
+questions_per_round = int(os.getenv("questions_per_round"))
+time_between_questions = int(os.getenv("time_between_questions"))
 time_between_questions_default = time_between_questions
-#max_retries = int(os.getenv("max_retries"))
-max_retries = 3
-#delay_between_retries = int(os.getenv("delay_between_retries"))
-delay_between_retries = 3
+max_retries = int(os.getenv("max_retries"))
+delay_between_retries = int(os.getenv("delay_between_retries"))
 
 intents = discord.Intents.default()
 intents.messages = True
