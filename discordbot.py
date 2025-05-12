@@ -98,9 +98,9 @@ googlemaps_api_key = os.getenv("googlemaps_api_key")
 googletranslate_api_key = os.getenv("googletranslate_api_key")
 webster_api_key = os.getenv("webster_api_key")
 webster_thes_api_key = os.getenv("webster_thes_api_key")
+
 question_time = int(os.getenv("question_time"))
-channel_id = os.getenv("channel_id")
-channel = None
+channel_id = int(os.getenv("channel_id"))
 
 questions_per_round = int(os.getenv("questions_per_round"))
 time_between_questions = int(os.getenv("time_between_questions"))
@@ -143,7 +143,7 @@ image_questions_default = True
 image_questions = image_questions_default
 
 OKRAN_GUILD_ID = 1367682586079395902  # Replace with your actual server ID
-
+channel = None
 
 
 question_categories = [
