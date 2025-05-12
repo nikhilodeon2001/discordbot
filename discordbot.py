@@ -7329,10 +7329,12 @@ async def update_round_streaks(user, user_id):
                 discount_fraction = min((streak // discount_streak_amount) * discount_step_amount, 90)
                 message += f"\n⚖️ Going forward @{user} will incur a -{discount_fraction}% handicap.\n"
                 
-            message += f"\n▶️ Live trivia stats available: https://livetriviastats.com\n\u200b\n\u200b"
+            #message += f"\n▶️ Live trivia stats available: https://livetriviastats.com\n\u200b\n\u200b"
+            message += f"\n▶️ Live trivia stats for Discord coming soon.\n\u200b\n\u200b"
 
         else:
-            message = f"\u200b\n\u200b\n🏆 Winner: <@{user_id}>!\n\n▶️ Live trivia stats available: https://livetriviastats.com\n\u200b\n\u200b"
+            #message = f"\u200b\n\u200b\n🏆 Winner: <@{user_id}>!\n\n▶️ Live trivia stats available: https://livetriviastats.com\n\u200b\n\u200b"
+            message = f"\u200b\n\u200b\n🏆 Winner: <@{user_id}>!\n\n▶️ Live trivia stats for Discord coming soon.\u200b\n\u200b"
 
         await channel.send(message)
         await asyncio.sleep(2)
@@ -8568,7 +8570,7 @@ async def start_trivia():
             start_message = "\u200b\n🏁 Get ready 🏁\n\u200b"
             await channel.send(start_message)
 
-            await round_start_messages()
+            #await round_start_messages()
             await asyncio.sleep(5)
                 
             # Randomly select n questions
