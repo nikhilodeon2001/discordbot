@@ -8559,7 +8559,8 @@ async def start_trivia():
             await asyncio.sleep(2)
             start_message = f"\u200b\u200b\n⏩ **Starting a round of {questions_per_round} questions!** ⏩\n\u200b\n\u200b"
 
-            start_message += f"\u200b\n🚩 Write **#flag** to report question\n\u200b"
+            start_message += f"\u200b\n🚩 Enter **#flag** to report question\n"
+            start_message += f"🗝️ Enter **#perks** for a link to unlock\n\u200b"
             await channel.send(start_message)
             await asyncio.sleep(3)
 
@@ -8686,6 +8687,17 @@ async def on_message(message):
 
     if message.author == bot.user:
         return
+
+    if "#perks" in message.content.strip().lower() and message.author.id != bot.user.id:
+        try:
+            dm_channel = await message.author.create_dm()
+            await dm_channel.send("🔓✨ Here's the link to become an Okran and unlock perks!\n<https://patreon.com/OkraStrut>")
+            await message.channel.send(f"\u200b\n{message.author.mention} 📬 Check your DMs for your perks link!\n\u200b")
+        except Exception as e:
+            #await message.reply("⚠️ I couldn't DM you. Make sure your DMs are open.")
+            await message.channel.send(f"\u200b\n{message.author.mention} ⚠️ I couldn't DM you. Make sure your DMs are open.\n\u200b")
+            print(f"Error sending DM: {e}")
+
 
     if "okra" in message.content.strip().lower() and emoji_mode == True and message.author.id != bot.user.id:
         if emoji_mode == True:
