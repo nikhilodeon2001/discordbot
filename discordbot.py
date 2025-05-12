@@ -1,0 +1,8746 @@
+import sentry_sdk
+from sentry_sdk.integrations.logging import LoggingIntegration
+
+# Setup Sentry
+sentry_sdk.init(
+    dsn="https://REMOVED_SENTRY_KEY@o4507935419400192.ingest.us.sentry.io/4507935424839680",  # Replace with your DSN from Sentry
+    integrations=[LoggingIntegration(level=None, event_level='ERROR')]
+)
+
+import requests
+import json
+import random
+import importlib
+import traceback
+import unicodedata
+import datetime
+from datetime import timezone
+import time
+import pytz
+import os
+from motor.motor_asyncio import AsyncIOMotorClient
+import difflib
+import string
+from urllib.parse import urlparse 
+from urllib.parse import quote
+from urllib.parse import urlencode
+import io            
+from PIL import Image, ImageDraw, ImageFont, ImageColor
+import openai
+from openai import AsyncOpenAI
+from openai import OpenAIError
+import main
+import subprocess
+import re
+from botocore.exceptions import BotoCoreError, ClientError
+import aioboto3
+import logging
+import tempfile
+import base64
+from collections import Counter, defaultdict
+import math
+import sys
+import signal
+from ebooklib import epub
+from html.parser import HTMLParser
+import warnings
+import operator
+from itertools import product
+import io
+import os
+import random
+from PIL import Image, ImageDraw, ImageFilter
+import numpy as np
+import cairosvg
+import asyncio
+import difflib
+import nltk
+from nltk.corpus import wordnet as wn
+from metaphone import doublemetaphone
+nltk.data.path.append("./nltk_data")
+import discord
+from discord.ext import commands
+import aiohttp
+import aiofiles
+
+# Define global variables to store streaks and scores
+round_count = 0
+scoreboard = {}
+
+# Define a global variable to store round data
+round_data = {
+    "questions": []  # Collect questions asked with their answers and responses
+}
+
+fastest_answers_count = {}
+current_longest_answer_streak = {"user": None, "streak": 0}
+current_longest_round_streak = {"user": None, "streak": 0}
+
+# Store since_token and responses
+since_token = None
+responses = []
+question_asked_start = None  
+question_asked_end = None
+
+question_responders = []  # Tracks users who responded during the current question
+round_responders = []
+
+# Add this global variable to hold the submission queue
+submission_queue = []
+max_queue_size = 100  # Number of submissions to accumulate before flushing
+
+# Initialize all variables
+#prod_or_stage = os.getenv("prod_or_stage")
+prod_or_stage = "stage"
+#discord_token = os.getenv("DISCORD_TOKEN")
+discord_token = ""
+#mongo_db_string = os.getenv("mongo_db_string")
+mongo_db_string = "mongodb+srv://nsharma2:REMOVED_MONGO_PASSWORD@staging.oxez2.mongodb.net/?retryWrites=true&w=majority&appName=staging"
+#openai.api_key = os.getenv("open_api_key")
+openai_api_key = "REMOVED_OPENAI_KEY_V2"
+#buymeacoffee_api_key = os.getenv("buy_me_a_coffee_api_key")
+buymeacoffee_api_key = ""
+#openweather_api_key = os.getenv("openweather_api_key")
+openweather_api_key = "REMOVED_OPENWEATHER_KEY"
+#googlemaps_api_key = os.getenv("googlemaps_api_key")
+googlemaps_api_key = os.getenv("googlemaps_api_key")
+#googletranslate_api_key = os.getenv("googletranslate_api_key")
+googletranslate_api_key = "REMOVED_GOOGLETRANSLATE_KEY"
+#webster_api_key = os.getenv("webster_api_key")
+webster_api_key = "REMOVED_WEBSTER_KEY"
+#webster_thes_api_key = os.getenv("webster_thes_api_key")
+webster_thes_api_key = "REMOVED_WEBSTER_THES_KEY"
+#question_time = int(os.getenv("question_time"))
+channel_id = 1367697743014789172
+#channel_id = os.getenv("channel_id")
+channel = None
+
+question_time = 10
+#questions_per_round = int(os.getenv("questions_per_round"))
+questions_per_round = 1
+#time_between_questions = int(os.getenv("time_between_questions"))
+time_between_questions = 2
+time_between_questions_default = time_between_questions
+#max_retries = int(os.getenv("max_retries"))
+max_retries = 3
+#delay_between_retries = int(os.getenv("delay_between_retries"))
+delay_between_retries = 3
+
+intents = discord.Intents.default()
+intents.messages = True
+intents.message_content = True
+bot = commands.Bot(command_prefix="!", intents=intents)
+openai_client = AsyncOpenAI(api_key=openai_api_key)
+id_limits = {"general": 2000, "mysterybox": 2000, "crossword": 100000, "jeopardy": 100000, "wof": 1500, "list": 20, "feud": 1000, "posters": 2000, "movie_scenes": 5000, "missing_link": 2500, "people": 2500, "ranker_list": 4000, "animal": 2000, "riddle": 2500, "dictionary": 100000, "flags": 800, "lyric": 500, "polyglottery": 80, "book": 80, "element": 100, "jigsaw": 30000}
+first_place_bonus = 0
+magic_time = 10
+magic_number = 0000
+ghost_mode_default = False
+ghost_mode = ghost_mode_default
+god_mode_default = False
+god_mode = god_mode_default
+god_mode_points = 5000
+god_mode_players = 5
+yolo_mode_default = False
+yolo_mode = yolo_mode_default
+emoji_mode_default = True
+emoji_mode = emoji_mode_default
+collect_feedback_mode_default = True
+collect_feedback_mode = collect_feedback_mode_default
+magic_number_correct = False
+wf_winner = False
+nice_okra = False
+creep_okra = False
+seductive_okra = False
+joke_okra = False
+blind_mode_default = False
+blind_mode = blind_mode_default
+marx_mode_default = False
+marx_mode = marx_mode_default
+image_questions_default = True
+image_questions = image_questions_default
+
+OKRAN_GUILD_ID = 1367682586079395902  # Replace with your actual server ID
+
+
+
+question_categories = [
+    "Mystery Box or Boat", "Famous People", "Anatomy", "Characters", "Music", "Art & Literature", 
+    "Chemistry", "Geography", "Mathematics", "Physics", "Science & Nature", "Language", "English Grammar", 
+    "Astronomy", "Logos", "The World", "Economics & Government", "Toys & Games", "Food & Drinks", "Geology", 
+    "Tech & Video Games", "Flags", "Miscellaneous", "Biology", "Superheroes", "Television", "Pop Culture", 
+    "History", "Movies", "Religion & Mythology", "Sports & Leisure", "World Culture", "General Knowledge", "Statistics"
+]
+
+fixed_letters = ['O', 'K', 'R', 'A']
+filler_words = {'a', 'an', 'the', 'of', 'and', 'to', 'in', 'on', 'at', 'with', 'for', 'by'}
+categories_to_exclude = []  
+collected_responses = []
+current_question = None
+previous_question = None
+
+ops = {
+    '+': operator.add,
+    '-': operator.sub,
+    '*': operator.mul,
+    '/': lambda a, b: a / b if b != 0 else None
+}
+
+superscript_map = {
+    "0": "⁰", "1": "¹", "2": "²", "3": "³", "4": "⁴",
+    "5": "⁵", "6": "⁶", "7": "⁷", "8": "⁸", "9": "⁹"
+}
+
+reverse_superscript_map = {v: k for k, v in superscript_map.items()}
+
+warnings.filterwarnings("ignore", message="In the future version we will turn default option ignore_ncx to True.")
+warnings.filterwarnings("ignore", message="This search incorrectly ignores the root element, and will be fixed in a future version.")
+
+
+async def get_survey_results():
+    survey_collection = db["survey_questions_discord"]
+    results = []
+
+    # Find all documents where question_type is "rating-10"
+    rating_questions = await survey_collection.find({"question_type": "rating-10"}).to_list(length=None)
+
+    for doc in rating_questions:
+        question = doc.get("question", "Unknown Question")
+        responses = doc.get("responses", {})
+        answer_values = []
+
+        # Go through each user in responses
+        for user_response in responses.values():
+            answer = user_response.get("answer")
+            if isinstance(answer, (int, float)):
+                answer_values.append(answer)
+
+        # Calculate average if there are any valid answers
+        if answer_values:
+            avg_score = round(sum(answer_values) / len(answer_values), 1)
+            results.append(f"{question}: {avg_score}")
+            print(f"{question}: {avg_score}")
+
+    return results
+
+
+async def select_intro_image_url():
+    # Connect to the collection
+    collection = db["intro_image_urls"]
+
+    # Fetch one random document where enabled is True
+    result = await collection.aggregate([
+            {"$match": {"enabled": True}},
+            {"$sample": {"size": 1}}
+        ]).to_list(length=1)
+
+    if not result:
+        print("No enabled intro image URLs found.")
+        return None
+
+    # Return just the URL field
+    return result[0].get("url")
+
+
+def create_family_feud_board_image(total_answers, user_answers, num_of_xs=0):
+    # Convert user_answers to a case-insensitive set
+    lower_user_answers = {ua.lower() for ua in user_answers}
+    n = len(total_answers)
+
+    width = 3600
+    height = 800 + (n * 240)
+    bg_color = (10, 10, 10)
+    gold_color = (255, 215, 0)
+    #gold_color = (62, 145, 45)
+    box_color = (0, 60, 220)
+    #box_color = (97, 51, 47)
+    box_outline = (255, 255, 255)
+    txt_color = (255, 255, 255)
+    circle_color = (0, 0, 150)
+    #circle_color = (34, 49, 29)
+
+    # Create the blank image
+    img = Image.new("RGB", (width, height), bg_color)
+    draw = ImageDraw.Draw(img)
+
+    # Assuming this is at the top of your script
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    font_dir = os.path.join(base_dir, "fonts")
+
+    def load_font(font_name, size):
+        try:
+            font_path = os.path.join(font_dir, font_name)
+            return ImageFont.truetype(font_path, size)
+        except:
+            return ImageFont.load_default()
+
+    # Load fonts
+    scoreboard_font = load_font("DejaVuSans.ttf", 80)
+    answer_font = load_font("DejaVuSans.ttf", 140)
+    circle_font = load_font("DejaVuSans.ttf", 80)
+
+    # 1) Golden Arc
+    arc_x1, arc_y1 = 0, 0
+    arc_x2, arc_y2 = width, height * 2
+    draw.pieslice([arc_x1, arc_y1, arc_x2, arc_y2], start=180, end=360, fill=gold_color)
+
+    # 2) Scoreboard rectangle
+    scoreboard_w = 800
+    scoreboard_h = 150
+    scoreboard_x = (width - scoreboard_w) // 2
+    scoreboard_y = 60
+    scoreboard_rect = [scoreboard_x, scoreboard_y, scoreboard_x + scoreboard_w, scoreboard_y + scoreboard_h]
+    draw.rectangle(scoreboard_rect, fill=(0, 0, 150))
+
+    scoreboard_text = "Okra"
+    # measure scoreboard text
+    try:
+        left, top, right, bottom = draw.textbbox((0, 0), scoreboard_text, font=scoreboard_font)
+        txt_w, txt_h = right - left, bottom - top
+    except:
+        mask = scoreboard_font.getmask(scoreboard_text)
+        txt_w, txt_h = mask.size
+
+    sb_text_x = scoreboard_x + (scoreboard_w - txt_w) // 2
+    sb_text_y = scoreboard_y + (scoreboard_h - txt_h) // 2
+    draw.text((sb_text_x, sb_text_y), scoreboard_text, fill=(255, 255, 255), font=scoreboard_font)
+
+    # 3) Single-column answer boxes
+    box_height = 240
+    box_width = 2500
+    box_spacing = 40
+    top_offset = scoreboard_y + scoreboard_h + 160
+    left_margin = (width - box_width) // 2
+
+    # -- Download Okra image from URL for unrevealed answers --
+    #    We'll fetch it and convert to RGBA for transparency if needed.
+    okra_url = "https://triviabotwebsite.s3.us-east-2.amazonaws.com/okra/okra_ff.png"
+    okra_icon = None
+    try:
+        response = requests.get(okra_url, timeout=5)
+        response.raise_for_status()
+        okra_icon = Image.open(io.BytesIO(response.content)).convert("RGBA")
+        # optional: resize if it's too large
+        okra_icon = okra_icon.resize((106, 190), resample=Image.LANCZOS)
+    except Exception as e:
+        print(f"Could not load Okra image from URL: {e}")
+        okra_icon = None
+
+    for i, ans in enumerate(total_answers):
+        box_x = left_margin
+        box_y = top_offset + i*(box_height + box_spacing)
+
+        draw.rectangle(
+            [box_x, box_y, box_x + box_width, box_y + box_height],
+            fill=box_color,
+            outline=box_outline,
+            width=8
+        )
+
+        # Circle for numbering
+        circle_diam = 160
+        circle_x1 = box_x - circle_diam//2
+        circle_y1 = box_y + (box_height - circle_diam)//2
+        circle_x2 = circle_x1 + circle_diam
+        circle_y2 = circle_y1 + circle_diam
+        draw.ellipse([circle_x1, circle_y1, circle_x2, circle_y2],
+                     fill=circle_color, outline=box_outline, width=8)
+
+        number_str = str(i + 1)
+        try:
+            left, top, right, bottom = draw.textbbox((0, 0), number_str, font=circle_font)
+            num_w, num_h = right - left, bottom - top
+        except:
+            mask = circle_font.getmask(number_str)
+            num_w, num_h = mask.size
+        
+        num_x = circle_x1 + (circle_diam - num_w)//2
+        num_y = circle_y1 + (circle_diam - num_h)//2
+        draw.text((num_x, num_y), number_str, fill=(255, 255, 255), font=circle_font)
+
+        # Check if user guessed it
+        is_revealed = (ans.lower() in lower_user_answers)
+        if is_revealed:
+            # measure text
+            try:
+                left, top, right, bottom = draw.textbbox((0, 0), ans, font=answer_font)
+                r_w, r_h = right - left, bottom - top
+            except:
+                mask = answer_font.getmask(ans)
+                r_w, r_h = mask.size
+
+            text_x = box_x + (box_width - r_w)//2
+            text_y = box_y + (box_height - r_h)//2
+            draw.text((text_x, text_y), ans, fill=txt_color, font=answer_font)
+        else:
+            # If not revealed, paste the okra image (if loaded)
+            if okra_icon:
+                okra_w, okra_h = okra_icon.size
+                okra_x = box_x + (box_width - okra_w)//2
+                okra_y = box_y + (box_height - okra_h)//2
+                img.paste(okra_icon, (okra_x, okra_y), okra_icon)
+            else:
+                # fallback: show ??? if no image loaded
+                hidden_text = "???"
+                try:
+                    left, top, right, bottom = draw.textbbox((0, 0), hidden_text, font=answer_font)
+                    h_w, h_h = right - left, bottom - top
+                except:
+                    mask = answer_font.getmask(hidden_text)
+                    h_w, h_h = mask.size
+                h_text_x = box_x + (box_width - h_w)//2
+                h_text_y = box_y + (box_height - h_h)//2
+                draw.text((h_text_x, h_text_y), hidden_text, fill=txt_color, font=answer_font)
+
+    # 4) Overlay red X's if num_of_xs > 0
+    if num_of_xs > 0:
+        try:
+            x_font = ImageFont.truetype("DejaVuSans-Bold.ttf", 800)
+        except:
+            x_font = ImageFont.load_default()
+
+        x_text = "X"
+        try:
+            lx, ty, rx, by = draw.textbbox((0, 0), x_text, font=x_font)
+            x_w, x_h = rx - lx, by - ty
+        except:
+            mask = x_font.getmask(x_text)
+            x_w, x_h = mask.size
+
+        total_strikes_width = (num_of_xs - 1) * int(1.2 * x_w) + x_w
+        start_x = (width - total_strikes_width)//2
+        x_y = (height - x_h) // 2
+
+        for i in range(num_of_xs):
+            x_x = start_x + i * int(1.2 * x_w)
+            draw.text((x_x, x_y), x_text, font=x_font, fill=(255, 0, 0))
+
+    # Convert to bytes
+    img_buffer = io.BytesIO()
+    img.save(img_buffer, format="PNG")
+    img_buffer.seek(0)
+    
+    return img_buffer
+
+
+def word_similarity(guess, answer):
+    guess = guess.lower().strip()
+    answer = answer.lower().strip()
+
+    if not guess or not answer:
+        return 0.0
+
+    if guess == answer:
+        return 1.0
+
+    seq_similarity = difflib.SequenceMatcher(None, guess, answer).ratio()
+    first_letter_bonus = 0.1 if guess[0] == answer[0] else 0
+    last_letter_bonus = 0.1 if guess[-1] == answer[-1] else 0
+
+    max_len = max(len(guess), len(answer))
+    len_diff = abs(len(guess) - len(answer))
+    length_similarity = max(0, 1 - (len_diff / max_len)) * 0.2
+
+    guess_phonetic = doublemetaphone(guess)
+    answer_phonetic = doublemetaphone(answer)
+    phonetic_match = 0.2 if any(g == a and g != '' for g in guess_phonetic for a in answer_phonetic) else 0
+
+    guess_synonyms = {lemma.name().lower() for syn in wn.synsets(guess) for lemma in syn.lemmas()}
+    synonym_match = 0.2 if answer in guess_synonyms else 0
+
+    score = (seq_similarity * 0.5) + first_letter_bonus + last_letter_bonus + length_similarity + phonetic_match + synonym_match
+    return round(min(score, 1.0), 3)
+
+
+async def shuffle_image_pieces(image_url, num_pieces=9, tint_mode="none", tint_colors=None, fixed_tint=None, tint_strength=0.50):
+    async with aiohttp.ClientSession() as session:
+        async with session.get(image_url) as response:
+            if response.status != 200:
+                raise Exception(f"Failed to download image from {image_url}")
+            image_data = await response.read()
+
+    img = Image.open(io.BytesIO(image_data)).convert("RGB")
+    width, height = img.size
+
+    grid_size = int(num_pieces ** 0.5)
+    if grid_size * grid_size != num_pieces:
+        raise ValueError("num_pieces must be a perfect square")
+
+    piece_width = width // grid_size
+    piece_height = height // grid_size
+
+    pieces = []
+    for i in range(grid_size):
+        for j in range(grid_size):
+            left = j * piece_width
+            upper = i * piece_height
+            right = left + piece_width
+            lower = upper + piece_height
+            piece = img.crop((left, upper, right, lower))
+            pieces.append(piece)
+
+    random.shuffle(pieces)
+
+    shuffled_img = Image.new("RGB", (width, height))
+    idx = 0
+    for i in range(grid_size):
+        for j in range(grid_size):
+            piece = pieces[idx]
+
+            if tint_mode == "fixed" and fixed_tint:
+                overlay = Image.new("RGB", piece.size, fixed_tint)
+                piece = Image.blend(piece, overlay, alpha=tint_strength)
+            elif tint_mode == "random" and tint_colors:
+                random_tint = random.choice(tint_colors)
+                overlay = Image.new("RGB", piece.size, random_tint)
+                piece = Image.blend(piece, overlay, alpha=tint_strength)
+
+            shuffled_img.paste(piece, (j * piece_width, i * piece_height))
+            idx += 1
+
+    image_buffer = io.BytesIO()
+    shuffled_img.save(image_buffer, format="PNG")
+    image_buffer.seek(0)
+    return image_buffer
+
+
+async def ask_jigsaw_challenge(winner, winner_id):
+    global wf_winner
+    wf_winner = True
+
+    gifs = [
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/jigsaw1.gif",
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/jigsaw2.gif",
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/jigsaw3.gif",
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/jigsaw4.gif",
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/jigsaw5.gif",
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/jigsaw6.gif"
+    ]
+    gif_url = random.choice(gifs)
+
+    await channel.send(content="\u200b\n🧩🌀 **Jigsawed: Let's play a game...**\n\u200b", embed=discord.Embed().set_image(url=gif_url))
+    await asyncio.sleep(3)
+
+    await channel.send(f"\u200b\n🪚🔢 **{winner}**, how many jigsaw pieces?\n\n👉 **4**, **9**, **16**, **25**, **36**, **49**, **64**, **81**, or **100**\n\u200b")
+    try:
+        msg = await bot.wait_for("message", timeout=magic_time + 5, check=lambda m: m.author.id == winner_id and m.author != bot.user and m.channel == channel and m.content in {"4", "9", "16", "25", "36", "49", "64", "81", "100"})
+        num_pieces = int(msg.content)
+        await msg.add_reaction("✅")
+    except asyncio.TimeoutError:
+        num_pieces = 16
+        await channel.send("\u200b\n⏱️ Time's up! We'll go with **16** pieces.\n\u200b")
+
+    await channel.send(f"\u200b\n💥🤯 Ok...ra! We're going with **{num_pieces}** pieces!\n\u200b")
+    await asyncio.sleep(2)
+    await channel.send("\u200b\n5️⃣🥇 Let's do a **best of 5**...\n\u200b")
+    await asyncio.sleep(3)
+
+    user_data = {}
+
+    for round_num in range(1, 6):
+        try:
+            recent_ids = await get_recent_question_ids_from_mongo("jigsaw")
+            collection = db["jigsaw_questions"]
+            pipeline = [
+                {"$match": {"_id": {"$nin": list(recent_ids)}}},
+                {"$sample": {"size": 100}},
+                {"$group": {"_id": "$question", "question_doc": {"$first": "$$ROOT"}}},
+                {"$replaceRoot": {"newRoot": "$question_doc"}},
+                {"$sample": {"size": 1}}
+            ]
+            questions = [doc async for doc in collection.aggregate(pipeline)]
+            q = questions[0]
+
+            qid = q["_id"]
+            image_url = q["url"]
+            answers = q["answers"]
+            category = q["category"]
+            main_answer = answers[0]
+
+            if qid:
+                await store_question_ids_in_mongo([qid], "jigsaw")
+            print(answers)
+
+            random_colors = [
+                (255, 150, 150),  # light red
+                (150, 255, 150),  # light green
+                (150, 150, 255),  # light blue
+                (255, 255, 150),  # light yellow
+                (150, 255, 255),  # light cyan
+                (255, 150, 255),  # light magenta / pink
+                (255, 200, 150),  # light orange
+                (200, 150, 255),  # light purple
+                (150, 255, 200),  # light teal / turquoise
+                (255, 220, 200),  # peach
+                (200, 255, 150),  # light lime
+                (220, 200, 255),  # light violet
+            ]
+
+            jigsaw_buffer = await shuffle_image_pieces(
+                image_url, num_pieces=num_pieces,
+                tint_mode="random",
+                tint_colors=random_colors,
+                fixed_tint=None,
+                tint_strength=0.2
+            )
+
+            message = f"\u200b\n🗣💬❓ **({round_num}/5)** Who or what is **THIS**?!?\n\u200b"
+            file = discord.File(fp=jigsaw_buffer, filename="jigsaw.png")
+            embed = discord.Embed()
+            embed.set_image(url="attachment://jigsaw.png")
+            await channel.send(content=message, embed=embed, file=file)
+
+            answered = False
+            processed_users = set()
+            start_time = asyncio.get_event_loop().time()
+
+            def check(m):
+                return m.channel == channel and m.author != bot.user
+
+            while asyncio.get_event_loop().time() - start_time < 20 and not answered:
+                try:
+                    timeout = 20 - (asyncio.get_event_loop().time() - start_time)
+                    msg = await bot.wait_for("message", timeout=timeout, check=check)
+                    guess = normalize_text(msg.content).replace(" ", "")
+                    user = msg.author.display_name
+                    uid = msg.author.id
+                    key = (uid, guess)
+
+                    if key in processed_users:
+                        continue
+                    processed_users.add(key)
+
+                    for correct in answers:
+                        correct_clean = normalize_text(correct).replace(" ", "")
+                        if fuzzy_match(guess, correct_clean, category, image_url):
+                            await msg.add_reaction("✅")
+                            await channel.send(f"\u200b\n✅🎉 **{user}** got it! **{correct.upper()}**\n\u200b")
+                            user_data[uid] = (user, user_data.get(uid, (user, 0))[1] + 1)
+                            all_answers = "\n".join(f"{a.upper()}" for a in answers)
+                            await channel.send(f"\u200b\n📝🧠 **All Answers**\n{all_answers}\n\u200b\n\u200b")
+                            embed = discord.Embed()
+                            embed.set_image(url=image_url)
+                            await channel.send(embed=embed)
+                            answered = True
+                            break
+                except asyncio.TimeoutError:
+                    break
+
+            if not answered:
+                all_answers = "\n".join(f"{a.upper()}" for a in answers)
+                await channel.send(f"\u200b\n❌😢 No one got it.\n\n📝🧠 Answers:\n{all_answers}\n\u200b")
+                embed = discord.Embed()
+                embed.set_image(url=image_url)
+                await channel.send(embed=embed)
+
+            await asyncio.sleep(5)
+
+        except Exception as e:
+            sentry_sdk.capture_exception(e)
+            print(traceback.format_exc())
+            await channel.send("\u200b\n⚠️ Error during round, skipping.\n\u200b")
+            continue
+
+    await asyncio.sleep(3)
+    sorted_data = sorted(user_data.items(), key=lambda x: x[1][1], reverse=True)
+    if sorted_data:
+        standings = "\n".join([f"{i+1}. **{name}**: {score}" for i, (_, (name, score)) in enumerate(sorted_data)])
+        await channel.send(f"\u200b\n🏁🏆 **Commendable Okrans**\n{standings}\n\u200b")
+        await asyncio.sleep(2)
+        await channel.send(f"\u200b\n🎉🥇 The winner is **{sorted_data[0][1][0]}**!\n\u200b")
+    else:
+        await channel.send("\u200b\n👎😢 **No right answers**. I'm ashamed to call you Okrans.\n\u200b")
+
+    await asyncio.sleep(5)
+
+
+def get_largest_fitting_font(draw, text, box_width, box_height, font_path, padding=6):
+    max_width = box_width - padding
+    max_height = box_height - padding
+
+    for size in range(100, 1, -1):  # Try from large to small
+        font = ImageFont.truetype(font_path, size)
+        bbox = draw.textbbox((0, 0), text, font=font)
+        text_w = bbox[2] - bbox[0]
+        text_h = bbox[3] - bbox[1]
+        if text_w <= max_width and text_h <= max_height:
+            return font
+    return ImageFont.truetype(font_path, 12)  # fallback
+
+
+def get_text_color_for_background(rgb_color):
+    r, g, b = rgb_color
+    brightness = (0.299 * r + 0.587 * g + 0.114 * b)
+    return "black" if brightness > 160 else "white"
+    
+
+def highlight_element(x, y, width, height, hex_color, blank=True, symbol="", highlight_boxes=None):
+    SVG_FILENAME = "periodic_table.svg"
+    OKRA_FILENAME = "okra.png"
+    CROP_BOX = (0, 0, 920, 530)
+    OUTPUT_WIDTH = 1200
+    OUTPUT_HEIGHT = 750
+
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    svg_path = os.path.join(base_dir, SVG_FILENAME)
+    okra_path = os.path.join(base_dir, OKRA_FILENAME)
+
+    temp_png_path = os.path.join(base_dir, "temp_rendered.png")
+    cairosvg.svg2png(url=svg_path, write_to=temp_png_path, output_width=OUTPUT_WIDTH, output_height=OUTPUT_HEIGHT)
+
+    table_img = Image.open(temp_png_path).convert("RGB").crop(CROP_BOX)
+    table_width, table_height = table_img.size
+
+    total_height = table_height + 100  # Black margin of 100px
+    final_img = Image.new('RGB', (table_width, total_height), color=(0, 0, 0))
+    final_img.paste(table_img, (0, 100))
+    draw = ImageDraw.Draw(final_img)
+
+    cropped_x = x - CROP_BOX[0]
+    cropped_y = y - CROP_BOX[1] + 100
+
+    if not hex_color:
+        hex_color = "#ffffff"
+    else:
+        hex_color = f"#{hex_color.lstrip('#')}"
+    rgb_color = ImageColor.getrgb(hex_color)
+
+    if highlight_boxes:
+        for box in highlight_boxes:
+            box_x = box["x"] - CROP_BOX[0]
+            box_y = box["y"] - CROP_BOX[1] + 100
+            box_w = box["width"]
+            box_h = box["height"]
+            box_color = f"#{box['color'].lstrip('#')}" if box.get("color") else "#ffffff"
+            rgb_box_color = ImageColor.getrgb(box_color)
+
+            draw.rectangle([box_x, box_y, box_x + box_w, box_y + box_h], fill=rgb_box_color)
+
+            box_brightness = 0.299 * rgb_box_color[0] + 0.587 * rgb_box_color[1] + 0.114 * rgb_box_color[2]
+            if box_brightness > 186:
+                draw.rectangle([box_x, box_y, box_x + box_w, box_y + box_h], outline="red", width=2)
+    else:
+        draw.rectangle([cropped_x, cropped_y, cropped_x + width, cropped_y + height], fill=rgb_color)
+        brightness = 0.299 * rgb_color[0] + 0.587 * rgb_color[1] + 0.114 * rgb_color[2]
+        if brightness > 186:
+            draw.rectangle([cropped_x, cropped_y, cropped_x + width, cropped_y + height], outline="red", width=2)
+
+    if not blank and symbol:
+        try:
+            font_path = os.path.join(base_dir, "fonts", "DejaVuSans.ttf")
+            font = get_largest_fitting_font(draw, symbol, width, height, font_path)
+        except:
+            font = ImageFont.load_default()
+
+        text_color = "black" if brightness > 186 else "white"
+        bbox = font.getbbox(symbol)
+        text_w = bbox[2] - bbox[0]
+        text_h = bbox[3] - bbox[1]
+        text_x = cropped_x + (width - text_w) // 2
+        text_y = cropped_y + (height - text_h) // 2 - 4
+        draw.text((text_x, text_y), symbol, fill=text_color, font=font)
+
+    # === ADD OKRA IMAGE ===
+    try:
+        okra_img = Image.open(okra_path).convert("RGBA")
+        okra_w, okra_h = okra_img.size
+
+        # Black margin is 100px tall → let's use 90% of that height max
+        max_okra_height = int(100 * 0.9)  # 90px
+
+        # Also make sure it's not too wide (optional, can add if needed later)
+        max_okra_width = int(table_width * 0.6)  # allow up to 60% table width
+
+        scale_h = max_okra_height / okra_h
+        scale_w = max_okra_width / okra_w
+        #scale_factor = min(scale_h, scale_w, 1.0)  # don't upscale beyond 1.0
+        scale_factor = .35
+
+        new_w = int(okra_w * scale_factor)
+        new_h = int(okra_h * scale_factor)
+
+        okra_img = okra_img.resize((new_w, new_h), Image.Resampling.LANCZOS)
+
+        okra_x = (table_width - new_w) // 2 - 100
+        okra_y = (100 - new_h) // 2 + 80 # perfectly centered vertically
+        final_img.paste(okra_img, (okra_x, okra_y), okra_img)
+    except Exception as e:
+        print(f"Failed to overlay okra.png: {e}")
+
+    image_buffer = io.BytesIO()
+    final_img.save(image_buffer, format='PNG')
+    image_buffer.seek(0)
+
+    return image_buffer
+
+
+async def ask_element_challenge(winner, winner_id):
+    global wf_winner
+    wf_winner = True
+
+    element_gifs = [
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/element1.gif",
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/element2.gif",
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/element3.gif",
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/element4.gif",
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/element5.gif",
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/element6.gif",
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/element7.gif"
+    ]
+
+    gif_url = random.choice(element_gifs)
+
+    await channel.send(content="\u200b\n\u200b\n💧🔥 **Elementary: Guess the Element Name**\n\u200b", embed=discord.Embed().set_image(url=gif_url))
+    await asyncio.sleep(3)
+
+    await channel.send(f"\u200b\n🕹️🚀 **{winner}**, select the mode:\n\n🧸 **Normal** or 🧨 **Okrap**.\n\u200b")
+    try:
+        msg = await bot.wait_for("message", timeout=magic_time + 5, check=lambda m: m.author.id == winner_id and m.author != bot.user and m.channel == channel and m.content.lower() in {"normal", "okrap"})
+        game_mode = msg.content.lower()
+        await msg.add_reaction("✅")
+    except asyncio.TimeoutError:
+        game_mode = "normal"
+
+    await channel.send(f"\u200b\n💥🤯 Ok...ra! We're going with **{game_mode.upper()}** baby!\n\u200b")
+    await asyncio.sleep(2)
+    await channel.send("\u200b\n5️⃣🥇 Let's do a best of 5...\n\u200b")
+    await asyncio.sleep(3)
+
+    user_data = {}
+
+    for round_num in range(1, 6):
+        try:
+            recent_element_ids = await get_recent_question_ids_from_mongo("element")
+            element_collection = db["element_questions"]
+            pipeline_element = [
+                {
+                    "$match": {
+                        "_id": {"$nin": list(recent_element_ids)},
+                        "hypothetical": "No",
+                        #"question_type": {"$in": ["multiple-single-answer"]}
+                }
+                },
+                {"$sample": {"size": 5}},  
+                {
+                    "$group": {  
+                        "_id": "$question",
+                        "question_doc": {"$first": "$$ROOT"}
+                    }
+                },
+                {"$replaceRoot": {"newRoot": "$question_doc"}},  
+                {"$sample": {"size": 1}} 
+            ]
+
+            element_questions = [doc async for doc in element_collection.aggregate(pipeline_element)]
+            element_question = element_questions[0]
+            element_question_type = element_question["question_type"]
+
+            if element_question_type == "single":
+                element_name = element_question["name"]
+                element_source = element_question["name"]
+                element_symbol = element_question["symbol"]
+                element_category = element_question["category"]
+                element_number = element_question["number"]
+                element_period = element_question["period"]
+                element_group = element_question["group"]
+                element_phase = element_question["phase"]
+                element_summary = element_question["phase"]
+                element_easy = element_question["easy"]
+                element_color = element_question["cpk-hex"]
+                element_summary = element_question["summary"]
+                element_x = element_question["x"]
+                element_y = element_question["y"]
+                element_width = element_question["width"]
+                element_height = element_question["height"]
+                element_bohr_url = element_question["bohr_model_image"]
+                
+            elif element_question_type == "multiple" or element_question_type == "multiple-single-answer":
+                element_group = element_question["element_group"]
+                num_of_elements = element_question["num_of_elements"]
+                element_answers = element_question["answers"]
+                element_coordinate_data = element_question["elements"]
+
+            
+            element_category = "element"
+            element_url = ""
+            element_question_id = element_question["_id"] 
+
+            if element_question_id:
+                await store_question_ids_in_mongo([element_question_id], "element")  # Store it as a list containing a single ID
+
+            if element_question_type == "single":
+                
+                if game_mode == "normal":
+                    element_crossword_buffer, element_crossword_string = generate_crossword_image(element_name, prefill=0.3)
+                    element_image_buffer = highlight_element(element_x, element_y, element_width, element_height, element_color, blank=False, symbol=element_symbol)
+                else:
+                    element_image_buffer = highlight_element(element_x, element_y, element_width, element_height, element_color)
+                #element_bohr_mxc, element_bohr_width, element_bohr_height = download_image_from_url(element_bohr_url, False, "okra.png") 
+
+            elif element_question_type == "multiple" or element_question_type == "multiple-single-answer":
+                highlight_boxes = [
+                    {
+                        "x": el["x"],
+                        "y": el["y"],
+                        "width": el["width"],
+                        "height": el["height"],
+                        "color": f"#{el['cpk-hex']}" if el.get('cpk-hex') else "#ffffff"
+                    }
+                    for el in element_coordinate_data
+                ]
+                if game_mode == "normal":
+                    element_crossword_buffer, element_crossword_string = generate_crossword_image(element_group, prefill=0.3)
+                    
+                element_image_buffer = highlight_element(0, 0, 0, 0, "#ffffff", blank=True, symbol="", highlight_boxes=highlight_boxes)
+            
+            if element_question_type == "single":
+                correct_answers = [element_name]
+                element_answers = None
+            elif element_question_type == "multiple":
+                correct_answers = [answer for answer in element_answers]
+            elif element_question_type == "multiple-single-answer":
+                correct_answers = [element_group]
+            
+            print(correct_answers)
+            answered = False
+
+            message = "\u200b\n"
+            if element_question_type == "single":
+                message += f"\n🗣💬❓ **({round_num}/5)** Name this **element**.\n"
+            elif element_question_type == "multiple-single-answer":
+                message += f"\n🗣💬❓ **({round_num}/5)** What is this **group of elements** called?\n"
+            elif element_question_type == "multiple":
+                message += f"\n🗣💬❓ **({round_num}/5)** Name **one element** in this group: **{element_group.upper()}**\n"
+            message += "\n\u200b"
+               
+            file = discord.File(fp=element_image_buffer, filename="element.png")
+            embed = discord.Embed()
+            embed.set_image(url="attachment://element.png")
+            await channel.send(content=message, embed=embed, file=file)   
+
+            if element_question_type == "single":
+                if game_mode == "normal":
+                    redacted_element_summary = replace_element_references(element_summary, element_name=element_name)
+                elif game_mode == "okrap":
+                    redacted_element_summary = replace_element_references(element_summary, element_name=element_name, element_symbol=element_symbol)
+                message = f"\n🔍🧪 {redacted_element_summary}\n"
+                await channel.send(message)
+
+            if game_mode == "normal" and (element_question_type == "multiple-single-answer" or element_question_type == "single"):
+                file = discord.File(fp=element_crossword_buffer, filename="element.png")
+                embed = discord.Embed()
+                embed.set_image(url="attachment://element.png")
+                await channel.send(embed=embed, file=file)   
+
+            start_time = asyncio.get_event_loop().time()
+
+            def check(m):
+                return m.channel == channel and m.author != bot.user
+
+            while asyncio.get_event_loop().time() - start_time < 20 and not answered:
+                try:
+                    msg = await bot.wait_for("message", timeout=20 - (asyncio.get_event_loop().time() - start_time), check=check)
+                    guess = normalize_text(msg.content).replace(" ", "")
+                    user = msg.author.display_name
+                    uid = msg.author.id
+                    for correct in correct_answers:
+                        normalized_answer = normalize_text(correct).replace(" ", "")
+                        if (((guess == normalized_answer or guess[:-1] == normalized_answer) and game_mode == "okrap") or (fuzzy_match(guess, normalized_answer, element_category, element_url) and game_mode == "normal")):
+                            await msg.add_reaction("✅")
+                            await channel.send(f"\u200b\n✅🎉 **{user}** got it! **{correct.upper()}**\n\u200b")
+                            user_data[uid] = (user, user_data.get(uid, (user, 0))[1] + 1)
+                            message = ""
+                            if element_answers:
+                                formatted_answers = ", ".join(name.title() for name in element_answers)
+                                message += f"\n🗒️📋 Full List\n{formatted_answers}\n"
+                                await channel.send(message)
+                            answered = True
+                            break
+                except asyncio.TimeoutError:
+                    break
+
+            if not answered:
+                if element_question_type == "single":
+                    message = f"\u200b\n❌😢 No one got it.\n\nAnswer: **{element_name.upper()}**\n\u200b"
+                if element_question_type == "multiple-single-answer":
+                    message = f"\u200b\n❌😢 No one got it.\n\nAnswer: **{element_group.upper()}**\n\u200b"
+                    formatted_answers = ", ".join(name.title() for name in element_answers)
+                    message += f"\u200b\n🗒️📋 **Full List**\n{formatted_answers}\n\u200b"
+                if element_question_type == "multiple":
+                    formatted_answers = ", ".join(name.title() for name in element_answers)
+                    message = f"\u200b\n❌😢 No one got it.\n\n**Full List**\n{formatted_answers}\n\u200b"
+                await channel.send(message)
+
+            await asyncio.sleep(5)
+
+        except Exception as e:
+            sentry_sdk.capture_exception(e)
+            print(traceback.format_exc())
+            await channel.send("\u200b\n⚠️ Error during round, skipping.\n\u200b")
+            continue
+
+    await asyncio.sleep(2)
+    sorted_data = sorted(user_data.items(), key=lambda x: x[1][1], reverse=True)
+    if sorted_data:
+        standings = "\n".join([f"{i+1}. **{name}**: {score}" for i, (_, (name, score)) in enumerate(sorted_data)])
+        await channel.send(f"\u200b\n🏁🏆 **Commendable Okrans**\n{standings}\n\u200b")
+        await asyncio.sleep(2)
+        await channel.send(f"\u200b\n🎉🥇 The winner is **{sorted_data[0][1][0]}**!\n\u200b")
+    else:
+        await channel.send("\u200b\n👎😢 **No right answers**. I'm ashamed to call you Okrans.\n\u200b")
+
+    await asyncio.sleep(5)
+
+
+def replace_element_references(element_summary, element_name=None, element_symbol=None):
+    modified_summary = element_summary
+
+    if element_name:
+        name_pattern = re.compile(re.escape(element_name), re.IGNORECASE)
+        modified_summary = name_pattern.sub("OKRA", modified_summary)
+
+    if element_symbol:
+        symbol_pattern = re.compile(r'\b' + re.escape(element_symbol) + r'\b', re.IGNORECASE)
+        modified_summary = symbol_pattern.sub("OKRA", modified_summary)
+
+    return modified_summary
+
+
+async def collect_words_from_user(winner, winner_id):
+    collected_words = []
+    timeout = magic_time + 5
+    start_time = asyncio.get_event_loop().time()
+
+    def check(m):
+        return m.author.id == winner_id and m.channel == channel and m.author != bot.user
+
+    while asyncio.get_event_loop().time() - start_time < timeout and len(collected_words) < 5:
+        try:
+            remaining = timeout - (asyncio.get_event_loop().time() - start_time)
+            message = await bot.wait_for("message", timeout=remaining, check=check)
+            words = message.content.strip().split()
+            for word in words:
+                if len(collected_words) < 5:
+                    collected_words.append(word)
+                else:
+                    break
+        except asyncio.TimeoutError:
+            break
+
+    return " ".join(collected_words[:5])
+
+
+async def translate_text(collected_words: str, lang_code: str, google_api_key: str) -> str:
+    url = "https://translation.googleapis.com/language/translate/v2"
+
+    params = {
+        "q": collected_words,
+        "source": "en",
+        "target": lang_code,
+        "format": "text",
+        "key": google_api_key
+    }
+
+    for attempt in range(1, max_retries + 1):
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(url, data=params, timeout=aiohttp.ClientTimeout(total=10)) as response:
+                    if response.status != 200:
+                        raise Exception(f"Non-200 response: {response.status}")
+                    data = await response.json()
+                    return data['data']['translations'][0]['translatedText']
+        except Exception as e:
+            print(f"[Attempt {attempt}] Translation failed: {e}")
+            if attempt == max_retries:
+                return collected_words 
+
+
+async def ask_polyglottery_challenge(winner, winner_id):
+    global wf_winner
+    wf_winner = True
+
+    gifs = [
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/polyglottery1.gif",
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/polyglottery2.gif",
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/polyglottery3.gif",
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/polyglottery4.gif",
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/polyglottery5.gif"
+    ]
+    gif_url = random.choice(gifs)
+
+    await channel.send(content="\u200b\n\u200b\n🎰🗣️ **PolygLottery: Guess the Language**\n\u200b", embed=discord.Embed().set_image(url=gif_url))
+    await asyncio.sleep(3)
+
+    # Collect phrase
+    await channel.send(f"\u200b\n✍️🌍 **{winner}**, give me **3–5 words** to translate...\n\u200b")
+    collected_words = await collect_words_from_user(winner, winner_id)
+
+    if len(collected_words.split()) < 3:
+        collected_words = random.choice(okra_sentences)
+        await channel.send(f"\n🤖📢 Not enough words, so I'm picking this:\n\n`{collected_words}`")
+    else:
+        await channel.send(f"\n💥🤯 Ok...ra we're going with:\n\n`{collected_words}`")
+
+    await asyncio.sleep(2)
+    await channel.send(f"\u200b\n5️⃣🥇 Let's do a **best of 5**...\n\u200b")
+    await asyncio.sleep(3)
+
+    user_data = {}
+
+    for round_num in range(1, 6):
+        try:
+            recent_ids = await get_recent_question_ids_from_mongo("polyglottery")
+            collection = db["polyglottery_questions"]
+            pipeline = [
+                {"$match": {"_id": {"$nin": list(recent_ids)}, "enabled": "1"}},
+                {"$sample": {"size": 100}},
+                {"$group": {"_id": "$question", "question_doc": {"$first": "$$ROOT"}}},
+                {"$replaceRoot": {"newRoot": "$question_doc"}},
+                {"$sample": {"size": 1}}
+            ]
+            questions = [doc async for doc in collection.aggregate(pipeline)]
+            q = questions[0]
+
+            lang_code = q["language_code"]
+            lang_name = q["language_name"]
+            qid = q["_id"]
+
+            if qid:
+                await store_question_ids_in_mongo([qid], "polyglottery")
+            print(lang_name)
+
+            # Translate
+            translated_text = await translate_text(collected_words, lang_code, googletranslate_api_key)
+            if translated_text.strip().lower() == collected_words.strip().lower():
+                await channel.send("🌐🔄 Translation matches original. Skipping this round.")
+                continue
+
+            # Generate image
+            image_buffer = generate_text_image(translated_text, 0, 0, 0, 0, 153, 255, True, "okra.png", lang_code)
+            file = discord.File(fp=image_buffer, filename="translation.png")
+            embed = discord.Embed().set_image(url="attachment://translation.png")
+
+        except Exception as e:
+            sentry_sdk.capture_exception(e)
+            print(f"Error fetching or translating:\n{traceback.format_exc()}")
+            continue
+
+        await channel.send(f"\u200b\n🗣💬❓ **({round_num}/5)** Name this language:\n\u200b", file=file, embed=embed)
+
+        start_time = asyncio.get_event_loop().time()
+        answered = False
+        processed_users = set()
+
+        def check(m):
+            return m.channel == channel and m.author != bot.user
+
+        while asyncio.get_event_loop().time() - start_time < 20 and not answered:
+            try:
+                timeout = 20 - (asyncio.get_event_loop().time() - start_time)
+                message = await bot.wait_for("message", timeout=timeout, check=check)
+                content = message.content.strip()
+                user = message.author.display_name
+                user_id = message.author.id
+                key = (user_id, content.lower())
+
+                if key in processed_users:
+                    continue
+                processed_users.add(key)
+
+                if fuzzy_match(content, lang_name, "Polyglottery", ""):
+                    await message.add_reaction("✅")
+                    await channel.send(f"\u200b\n✅🎉 **{user}** got it! **{lang_name.upper()}**\n\u200b")
+                    if user_id not in user_data:
+                        user_data[user_id] = (user, 0)
+                    user_data[user_id] = (user, user_data[user_id][1] + 1)
+                    answered = True
+            except asyncio.TimeoutError:
+                break
+
+        if not answered:
+            await channel.send(f"\u200b\n❌😢 No one got it.\n\nAnswer: **{lang_name.upper()}**\n\u200b")
+
+        await asyncio.sleep(5)
+
+    # Final scores
+    await asyncio.sleep(2)
+    sorted_data = sorted(user_data.items(), key=lambda x: x[1][1], reverse=True)
+    if sorted_data:
+        msg = "\u200b\n🏁🏆 **Commendable Okrans**\n"
+        for i, (uid, (name, score)) in enumerate(sorted_data, 1):
+            msg += f"{i}. **{name}**: {score}\n"
+        msg += "\u200b"
+        await channel.send(msg)
+        await asyncio.sleep(2)
+        await channel.send(f"\u200b\n🎉🥇 The winner is **{sorted_data[0][1][0]}**!\n\u200b")
+    else:
+        await channel.send("\u200b\n👎😢 **No right answers**. I'm ashamed to call you Okrans.\n\u200b")
+
+    await asyncio.sleep(5)
+
+
+async def ask_dictionary_challenge(winner):
+    global wf_winner
+    wf_winner = True
+
+    gifs = [
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/wordnerd_nerds.gif",
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/wordnerd_urkel.gif",
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/wordnerd_simpsons.gif"
+    ]
+    gif_url = random.choice(gifs)
+
+    await channel.send(content="\u200b\n\u200b\n🤓📚 **Word Nerd**\n\u200b", embed=discord.Embed().set_image(url=gif_url))
+    await asyncio.sleep(3)
+    await channel.send("\u200b\n5️⃣🥇 Let's do a **best of 5**...\n\n😏🎯 I'll take the **best answer per person**.\n\u200b")
+    await asyncio.sleep(5)
+
+    user_data = {}
+
+    for round_num in range(1, 6):
+        try:
+            recent_ids = await get_recent_question_ids_from_mongo("dictionary")
+            collection = db["dictionary_questions"]
+            pipeline = [
+                {"$match": {"_id": {"$nin": list(recent_ids)}}},
+                {"$sample": {"size": 100}},
+                {"$group": {"_id": "$question", "question_doc": {"$first": "$$ROOT"}}},
+                {"$replaceRoot": {"newRoot": "$question_doc"}},
+                {"$sample": {"size": 1}}
+            ]
+            questions = [doc async for doc in collection.aggregate(pipeline)]
+            q = questions[0]
+
+            word = q["word"]
+            redacted_def = re.compile(re.escape(word), re.IGNORECASE).sub("OKRA", q["definition"])
+            word_len = len(word)
+            first_char = word[0].upper()
+            category = "Dictionary"
+            url = ""
+            qid = q["_id"]
+
+            if qid:
+                await store_question_ids_in_mongo([qid], "dictionary")
+
+            print(f"Word {round_num}: {word}")
+
+        except Exception as e:
+            sentry_sdk.capture_exception(e)
+            print(f"Error selecting dictionary question:\n{traceback.format_exc()}")
+            return
+
+        await channel.send(f"\u200b\n🧠❓ Word **{round_num}/5**\n")
+        await channel.send(f"\u200b\n🔤 Starts with **{first_char}**\n🔢 **{word_len}** characters\n📘📝 Definition: **{redacted_def}**\n\n🟢💨 **GO!**\n\u200b")
+
+        start_time = asyncio.get_event_loop().time()
+        answered = False
+        closest_guesses = []
+        best_guess_per_user = {}
+
+        def check(m):
+            return m.channel == channel and m.author != bot.user
+
+        while asyncio.get_event_loop().time() - start_time < 20 and not answered:
+            try:
+                timeout = 20 - (asyncio.get_event_loop().time() - start_time)
+                message = await bot.wait_for("message", timeout=timeout, check=check)
+                content = message.content.strip()
+                user = message.author.display_name
+                user_id = message.author.id
+                similarity = word_similarity(content, word)
+
+                if user_id not in best_guess_per_user or similarity > best_guess_per_user[user_id][2]:
+                    best_guess_per_user[user_id] = (user, content, similarity)
+
+                if similarity == 1:
+                    await message.add_reaction("✅")
+                    await channel.send(f"\u200b\n✅🎉 **{user}** got it! **{word.upper()}**\n\u200b")
+                    user_data[user_id] = (user, user_data.get(user_id, (user, 0))[1] + 1)
+                    answered = True
+                    break
+
+            except asyncio.TimeoutError:
+                break
+
+        if not answered:
+            await channel.send(f"\u200b\n❌😢 No one got it.\n\nAnswer: **{word.upper()}**\n\u200b")
+            sorted_closest = sorted(best_guess_per_user.items(), key=lambda x: x[1][1], reverse=True)
+            if sorted_closest:
+                await asyncio.sleep(2)
+                msg = "\n🔍 Top 3 least worst guesses:\n"
+                for i, (uid, (display_name, guess, score)) in enumerate(sorted_closest[:3], 1):
+                    msg += f"{i}. **{display_name}**: \"{guess}\" — score: {score:.2f}\n\u200b"
+                    current_score = user_data.get(uid, (display_name, 0))[1]
+                    user_data[uid] = (display_name, current_score + score * 0.5)
+                await channel.send(msg)
+                await asyncio.sleep(1)
+                await channel.send("\n\u200b🥈🤡 50% credit for your 'effort'.\n\u200b")
+    
+        sorted_data = sorted(user_data.items(), key=lambda x: x[1][1], reverse=True)
+        if sorted_data:
+            msg = "\u200b\n🏁🏆 **Commendable Okrans**\n"
+            for i, (uid, (name, score)) in enumerate(sorted_data, 1):
+                msg += f"{i}. **{name}**: {score:.2f}\n"
+            msg += "\u200b"
+            await channel.send(msg)
+            await asyncio.sleep(5)
+
+    if sorted_data:
+        await channel.send(f"\u200b\n🎉🥇 The winner is **{sorted_data[0][1][0]}**!\n\u200b")
+    else:
+        await channel.send("\u200b\n👎😢 **No right answers**. I'm ashamed to call you Okrans.\n\u200b")
+
+    await asyncio.sleep(5)
+
+
+def generate_text_image(question_text, red_value_bk, green_value_bk, blue_value_bk, red_value_f, green_value_f, blue_value_f, add_okra, okra_path, lang_code="en", font_size=60, highlight_missing_operator=False):
+    LANGUAGE_FONT_MAP = {
+        "ab": "NotoSans-Regular.ttf",
+        "ace": "NotoSans-Regular.ttf",
+        "ach": "NotoSans-Regular.ttf",
+        "af": "NotoSans-Regular.ttf",
+        "ak": "NotoSans-Regular.ttf",
+        "alz": "NotoSans-Regular.ttf",
+        "am": "NotoSansEthiopic-Regular.ttf",
+        "ar": "NotoSansArabic-Regular.ttf",
+        "as": "NotoSansBengali-Regular.ttf",
+        "awa": "NotoSans-Regular.ttf",
+        "ay": "NotoSans-Regular.ttf",
+        "az": "NotoSans-Regular.ttf",
+        "ba": "NotoSans-Regular.ttf",
+        "ban": "NotoSans-Regular.ttf",
+        "bbc": "NotoSans-Regular.ttf",
+        "be": "NotoSans-Regular.ttf",
+        "bem": "NotoSans-Regular.ttf",
+        "bew": "NotoSans-Regular.ttf",
+        "bg": "NotoSans-Regular.ttf",
+        "bho": "NotoSans-Regular.ttf",
+        "bik": "NotoSans-Regular.ttf",
+        "bm": "NotoSans-Regular.ttf",
+        "bn": "NotoSansBengali-Regular.ttf",
+        "br": "NotoSans-Regular.ttf",
+        "bs": "NotoSans-Regular.ttf",
+        "bts": "NotoSans-Regular.ttf",
+        "btx": "NotoSans-Regular.ttf",
+        "bua": "NotoSans-Regular.ttf",
+        "ca": "NotoSans-Regular.ttf",
+        "ceb": "NotoSans-Regular.ttf",
+        "cgg": "NotoSans-Regular.ttf",
+        "chm": "NotoSans-Regular.ttf",
+        "ckb": "NotoSansArabic-Regular.ttf",
+        "cnh": "NotoSans-Regular.ttf",
+        "co": "NotoSans-Regular.ttf",
+        "crh": "NotoSans-Regular.ttf",
+        "crs": "NotoSans-Regular.ttf",
+        "cs": "NotoSans-Regular.ttf",
+        "cv": "NotoSans-Regular.ttf",
+        "cy": "NotoSans-Regular.ttf",
+        "da": "NotoSans-Regular.ttf",
+        "de": "NotoSans-Regular.ttf",
+        "din": "NotoSans-Regular.ttf",
+        "doi": "NotoSans-Regular.ttf",
+        "dov": "NotoSans-Regular.ttf",
+        "dv": "NotoSansThaana-Regular.ttf",
+        "dz": "NotoSansTibetan-Regular.ttf",
+        "ee": "NotoSans-Regular.ttf",
+        "el": "NotoSans-Regular.ttf",
+        "en": "NotoSans-Regular.ttf",
+        "eo": "NotoSans-Regular.ttf",
+        "es": "NotoSans-Regular.ttf",
+        "et": "NotoSans-Regular.ttf",
+        "eu": "NotoSans-Regular.ttf",
+        "fa": "NotoSansArabic-Regular.ttf",
+        "ff": "NotoSans-Regular.ttf",
+        "fi": "NotoSans-Regular.ttf",
+        "fj": "NotoSans-Regular.ttf",
+        "fr": "NotoSans-Regular.ttf",
+        "fy": "NotoSans-Regular.ttf",
+        "ga": "NotoSans-Regular.ttf",
+        "gaa": "NotoSans-Regular.ttf",
+        "gd": "NotoSans-Regular.ttf",
+        "gl": "NotoSans-Regular.ttf",
+        "gn": "NotoSans-Regular.ttf",
+        "gom": "NotoSans-Regular.ttf",
+        "gu": "NotoSansGujarati-Regular.ttf",
+        "ha": "NotoSans-Regular.ttf",
+        "haw": "NotoSans-Regular.ttf",
+        "he": "NotoSansHebrew-Regular.ttf",
+        "hi": "NotoSansDevanagari-Regular.ttf",
+        "hil": "NotoSans-Regular.ttf",
+        "hmn": "NotoSans-Regular.ttf",
+        "hr": "NotoSans-Regular.ttf",
+        "hrx": "NotoSans-Regular.ttf",
+        "ht": "NotoSans-Regular.ttf",
+        "hu": "NotoSans-Regular.ttf",
+        "hy": "NotoSansArmenian-Regular.ttf",
+        "id": "NotoSans-Regular.ttf",
+        "ig": "NotoSans-Regular.ttf",
+        "ilo": "NotoSans-Regular.ttf",
+        "is": "NotoSans-Regular.ttf",
+        "it": "NotoSans-Regular.ttf",
+        "iw": "NotoSansHebrew-Regular.ttf",
+        "ja": "NotoSansCJKjp-Regular.otf",
+        "jv": "NotoSans-Regular.ttf",
+        "jw": "NotoSans-Regular.ttf",
+        "ka": "NotoSansGeorgian-Regular.ttf",
+        "kk": "NotoSans-Regular.ttf",
+        "km": "NotoSansKhmer-Regular.ttf",
+        "kn": "NotoSansKannada-Regular.ttf",
+        "ko": "NotoSansCJKkr-Regular.otf",
+        "kri": "NotoSans-Regular.ttf",
+        "ktu": "NotoSans-Regular.ttf",
+        "ku": "NotoSansArabic-Regular.ttf",
+        "ky": "NotoSans-Regular.ttf",
+        "la": "NotoSans-Regular.ttf",
+        "lb": "NotoSans-Regular.ttf",
+        "lg": "NotoSans-Regular.ttf",
+        "li": "NotoSans-Regular.ttf",
+        "lij": "NotoSans-Regular.ttf",
+        "lmo": "NotoSans-Regular.ttf",
+        "ln": "NotoSans-Regular.ttf",
+        "lo": "NotoSansLao-Regular.ttf",
+        "lt": "NotoSans-Regular.ttf",
+        "ltg": "NotoSans-Regular.ttf",
+        "luo": "NotoSans-Regular.ttf",
+        "lus": "NotoSans-Regular.ttf",
+        "lv": "NotoSans-Regular.ttf",
+        "mai": "NotoSansDevanagari-Regular.ttf",
+        "mak": "NotoSans-Regular.ttf",
+        "mg": "NotoSans-Regular.ttf",
+        "mi": "NotoSans-Regular.ttf",
+        "min": "NotoSans-Regular.ttf",
+        "mk": "NotoSans-Regular.ttf",
+        "ml": "NotoSansMalayalam-Regular.ttf",
+        "mn": "NotoSans-Regular.ttf",
+        "mni-Mtei": "NotoSansMeeteiMayek-Regular.ttf",
+        "mr": "NotoSansDevanagari-Regular.ttf",
+        "ms": "NotoSans-Regular.ttf",
+        "ms-Arab": "NotoSansArabic-Regular.ttf",
+        "mt": "NotoSans-Regular.ttf",
+        "my": "NotoSansMyanmar-Regular.ttf",
+        "ne": "NotoSansDevanagari-Regular.ttf",
+        "new": "NotoSansDevanagari-Regular.ttf",
+        "nl": "NotoSans-Regular.ttf",
+        "no": "NotoSans-Regular.ttf",
+        "nr": "NotoSans-Regular.ttf",
+        "nso": "NotoSans-Regular.ttf",
+        "nus": "NotoSans-Regular.ttf",
+        "ny": "NotoSans-Regular.ttf",
+        "oc": "NotoSans-Regular.ttf",
+        "om": "NotoSans-Regular.ttf",
+        "or": "NotoSansOriya-Regular.ttf",
+        "pa": "NotoSansGurmukhi-Regular.ttf",
+        "pa-Arab": "NotoSansGurmukhi-Regular.ttf",
+        "pag": "NotoSans-Regular.ttf",
+        "pam": "NotoSans-Regular.ttf",
+        "pap": "NotoSans-Regular.ttf",
+        "pl": "NotoSans-Regular.ttf",
+        "ps": "NotoSansArabic-Regular.ttf",
+        "pt": "NotoSans-Regular.ttf",
+        "qu": "NotoSans-Regular.ttf",
+        "rn": "NotoSans-Regular.ttf",
+        "ro": "NotoSans-Regular.ttf",
+        "rom": "NotoSans-Regular.ttf",
+        "ru": "NotoSans-Regular.ttf",
+        "rw": "NotoSans-Regular.ttf",
+        "sa": "NotoSansDevanagari-Regular.ttf",
+        "scn": "NotoSans-Regular.ttf",
+        "sd": "NotoSansArabic-Regular.ttf",
+        "sg": "NotoSans-Regular.ttf",
+        "shn": "NotoSansMyanmar-Regular.ttf",
+        "si": "NotoSansSinhala-Regular.ttf",
+        "sk": "NotoSans-Regular.ttf",
+        "sl": "NotoSans-Regular.ttf",
+        "sm": "NotoSans-Regular.ttf",
+        "sn": "NotoSans-Regular.ttf",
+        "so": "NotoSans-Regular.ttf",
+        "sq": "NotoSans-Regular.ttf",
+        "sr": "NotoSans-Regular.ttf",
+        "ss": "NotoSans-Regular.ttf",
+        "st": "NotoSans-Regular.ttf",
+        "su": "NotoSans-Regular.ttf",
+        "sv": "NotoSans-Regular.ttf",
+        "sw": "NotoSans-Regular.ttf",
+        "szl": "NotoSans-Regular.ttf",
+        "ta": "NotoSansTamil-Regular.ttf",
+        "te": "NotoSansTelugu-Regular.ttf",
+        "tet": "NotoSans-Regular.ttf",
+        "tg": "NotoSans-Regular.ttf",
+        "th": "NotoSansThai-Regular.ttf",
+        "ti": "NotoSansEthiopic-Regular.ttf",
+        "tk": "NotoSans-Regular.ttf",
+        "tl": "NotoSans-Regular.ttf",
+        "tn": "NotoSans-Regular.ttf",
+        "tr": "NotoSans-Regular.ttf",
+        "ts": "NotoSans-Regular.ttf",
+        "tt": "NotoSans-Regular.ttf",
+        "ug": "NotoSansArabic-Regular.ttf",
+        "uk": "NotoSans-Regular.ttf",
+        "ur": "NotoSansArabic-Regular.ttf",
+        "uz": "NotoSans-Regular.ttf",
+        "vi": "NotoSans-Regular.ttf",
+        "xh": "NotoSans-Regular.ttf",
+        "yi": "NotoSansHebrew-Regular.ttf",
+        "yo": "NotoSans-Regular.ttf",
+        "yua": "NotoSans-Regular.ttf",
+        "yue": "NotoSansCJKtc-Regular.otf",
+        "zh": "NotoSansCJKsc-Regular.otf",
+        "zh-CN": "NotoSansCJKsc-Regular.otf",
+        "zh-TW": "NotoSansCJKtc-Regular.otf",
+        "zu": "NotoSans-Regular.ttf",
+        "default": "NotoSans-Regular.ttf",
+    }
+
+    background_color = (red_value_bk, green_value_bk, blue_value_bk)
+    text_color = (red_value_f, green_value_f, blue_value_f)
+
+    img_width, img_height = 800, 600
+    font_file = LANGUAGE_FONT_MAP.get(lang_code, LANGUAGE_FONT_MAP["default"])
+    font_path = os.path.join(os.path.dirname(__file__), "fonts", font_file)
+    #font_size = 60
+    img = Image.new('RGB', (img_width, img_height), color=background_color)
+    draw = ImageDraw.Draw(img)
+
+    try:
+        font = ImageFont.truetype(font_path, font_size)
+    except IOError:
+        print(f"Error: Font file not found at {font_path}")
+        return None
+
+    if highlight_missing_operator:
+        # Force black background, white text, red '?'
+        background_color = (0, 0, 0)
+        text_color = (255, 255, 255)
+    
+        # Replace all ⬜ (U+2B1C) or placeholders with red '?'
+        parts = question_text.split("⬜")
+        rendered_parts = []
+        for i, part in enumerate(parts):
+            rendered_parts.append((part, text_color))
+            if i < len(parts) - 1:
+                rendered_parts.append((" _ ", (255, 0, 0)))  # red question mark
+    
+        # Now calculate total dimensions for mixed-color text
+        total_width = 0
+        max_height = 0
+        for text, color in rendered_parts:
+            bbox = draw.textbbox((0, 0), text, font=font)
+            w = bbox[2] - bbox[0]
+            h = bbox[3] - bbox[1]
+            total_width += w
+            max_height = max(max_height, h)
+    
+        text_x = (img_width - total_width) // 2
+        text_y = (img_height - max_height) // 2
+    
+        # Clear and draw styled text
+        img = Image.new('RGB', (img_width, img_height), color=background_color)
+        draw = ImageDraw.Draw(img)
+    
+        for text, color in rendered_parts:
+            draw.text((text_x, text_y), text, fill=color, font=font)
+            bbox = draw.textbbox((0, 0), text, font=font)
+            text_width = bbox[2] - bbox[0]
+            text_x += text_width + 10 
+    
+    else:
+        wrapped_text = "\n".join(draw_text_wrapper(question_text, font, img_width - 40))
+        text_bbox = draw.textbbox((0, 0), wrapped_text, font=font)
+        text_width = text_bbox[2] - text_bbox[0]
+        text_height = text_bbox[3] - text_bbox[1]
+        text_x = (img_width - text_width) // 2
+        text_y = (img_height - text_height) // 2
+    
+        draw.multiline_text((text_x, text_y), wrapped_text, fill=text_color, font=font, align="center")
+    
+    image_buffer = io.BytesIO()
+    img.save(image_buffer, format='PNG')
+    image_buffer.seek(0)
+
+    return image_buffer
+
+
+def evaluate_expression(numbers, operators_seq):
+    """Evaluate an expression given numbers and a tuple of operators."""
+    expression = str(numbers[0])
+    for i in range(len(operators_seq)):
+        expression += f" {operators_seq[i]} {numbers[i + 1]}"
+    try:
+        result = eval(expression)
+        return result if result == int(result) else None
+    except ZeroDivisionError:
+        return None
+    except Exception:
+        return None
+
+
+def generate_math_puzzle(n):
+    """Generate a puzzle with exactly ONE valid operator combo that results in an integer."""
+    while True:
+        nums = [random.randint(1, 10) for _ in range(n + 1)]
+        op_combos = list(product(ops.keys(), repeat=n))
+        valid_solutions = []
+
+        for operator_seq in op_combos:
+            result = evaluate_expression(nums, operator_seq)
+            if result is not None:
+                valid_solutions.append((operator_seq, int(result)))
+
+        # Group results by value
+        result_to_ops = {}
+        for op_seq, res in valid_solutions:
+            if res not in result_to_ops:
+                result_to_ops[res] = []
+            result_to_ops[res].append(op_seq)
+
+        # Find results with exactly one valid operator sequence
+        unique_results = [(res, op_seqs[0]) for res, op_seqs in result_to_ops.items() if len(op_seqs) == 1]
+
+        if unique_results:
+            selected_result, selected_ops = random.choice(unique_results)
+            math_string = " ⬜ ".join(str(num) for num in nums) + f" = {selected_result}"
+            operator_string = "".join(selected_ops)
+
+            return {
+                "math_string": math_string,
+                "answer_string": operator_string
+            }
+
+
+async def ask_math_challenge(winner, winner_id):
+    global wf_winner
+    wf_winner = True
+
+    gifs = [
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/math1.gif",
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/math2.gif",
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/math3.gif",
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/math5.gif",
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/math7.gif",
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/math8.gif",
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/math9.gif",
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/math10.gif"
+    ]
+
+    gif_url = random.choice(gifs)
+    await channel.send(content="\u200b\n\u200b\n➕➖ **Sign Language: Fill in the Missing Signs**\n\u200b", embed=discord.Embed().set_image(url=gif_url))
+    await asyncio.sleep(3)
+
+    await channel.send(f"\u200b\n🔢❓ **{winner}**, how many missing signs? **[2 or 3]**\n\u200b")
+
+    user_number = None
+    start_time = asyncio.get_event_loop().time()
+
+    def check(m):
+        return m.author.id == winner_id and m.channel == channel and m.author != bot.user and m.content.strip() in {"2", "3"}
+
+    while asyncio.get_event_loop().time() - start_time < magic_time + 5:
+        try:
+            timeout = magic_time + 5 - (asyncio.get_event_loop().time() - start_time)
+            msg = await bot.wait_for("message", timeout=timeout, check=check)
+            user_number = int(msg.content.strip())
+            await msg.add_reaction("🧠")
+            break
+        except asyncio.TimeoutError:
+            break
+
+    if user_number:
+        await channel.send(f"\n💥🤯 Ok...ra! We're going with **{user_number}** missing signs!\n")
+    else:
+        user_number = 2
+        await channel.send(f"\n⏱️ Time's up! Defaulting to **2** missing signs!\n")
+
+    await asyncio.sleep(2)
+    await channel.send("\u200b\n5️⃣🥇 Let's do a **best of 5**...\n\u200b")
+    await asyncio.sleep(3)
+
+    user_data = {}
+
+    for round_num in range(1, 6):
+        puzzle = generate_math_puzzle(user_number)
+        math_string = puzzle["math_string"]
+        answer_string = puzzle["answer_string"]
+        emoji_map = {'+': '➕', '-': '➖', '*': '✖️', '/': '➗'}
+        pretty_answer_string = ''.join(emoji_map.get(c, c) for c in answer_string)
+
+        print(f"Puzzle: {math_string} | Answer: {answer_string}")
+
+        image_buffer = generate_text_image(math_string, 0, 0, 0, 255, 255, 255, True, "okra.png", highlight_missing_operator=True)
+        file = discord.File(fp=image_buffer, filename="math.png")
+        embed = discord.Embed().set_image(url="attachment://math.png")
+
+        await channel.send(f"\u200b\n⚠️ Equation **{round_num}/5**: Use **[+ - / *  x]**\n\u200b", file=file, embed=embed)
+
+        start_time = asyncio.get_event_loop().time()
+        answered = False
+        processed_users = set()
+
+        def check(m):
+            return m.channel == channel and m.author != bot.user
+
+        while asyncio.get_event_loop().time() - start_time < 20 and not answered:
+            try:
+                timeout = 20 - (asyncio.get_event_loop().time() - start_time)
+                msg = await bot.wait_for("message", timeout=timeout, check=check)
+                content = msg.content.strip().replace(" ", "").replace("x", "*").lower()
+                user = msg.author.display_name
+                user_id = msg.author.id
+                key = (user_id, content)
+
+                if key in processed_users:
+                    continue
+                processed_users.add(key)
+
+                if content == answer_string:
+                    await msg.add_reaction("✅")
+                    await channel.send(f"\u200b\n✅🎉 **{user}** got it! {pretty_answer_string}\n\u200b")
+                    if user_id not in user_data:
+                        user_data[user_id] = (user, 0)
+                    user_data[user_id] = (user, user_data[user_id][1] + 1)
+                    answered = True
+            except asyncio.TimeoutError:
+                break
+
+        if not answered:
+            await channel.send(f"\u200b\n❌😢 No one got it.\n\nAnswer: **{pretty_answer_string}**\n\u200b")
+
+        await asyncio.sleep(5)
+
+    await asyncio.sleep(2)
+    sorted_data = sorted(user_data.items(), key=lambda x: x[1][1], reverse=True)
+    if sorted_data:
+        msg = "\u200b\n🏁🏆 **Commendable Okrans**\n"
+        for i, (uid, (name, score)) in enumerate(sorted_data, 1):
+            msg += f"{i}. **{name}**: {score}\n"
+        msg += "\u200b"
+        await channel.send(msg)
+        await asyncio.sleep(2)
+        await channel.send(f"\u200b\n🎉🥇 The winner is **{sorted_data[0][1][0]}**!\n\u200b")
+    else:
+        await channel.send("\u200b\n👎😢 **No right answers. I'm ashamed to call you Okrans.**\n\u200b")
+
+    await asyncio.sleep(5)
+
+
+async def ask_lyric_challenge(winner):
+    global wf_winner
+    wf_winner = True
+
+    gifs = [
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/lyric1.gif",
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/lyric2.gif",
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/lyric3.gif"
+    ]
+    gif_url = random.choice(gifs)
+
+    await channel.send(content="\u200b\n\u200b\n🎧🎤 **LyrIQ: Name the Song OR Artist**\n\u200b", embed=discord.Embed().set_image(url=gif_url))
+    await asyncio.sleep(3)
+    await channel.send("\u200b\n5️⃣🥇 Let's do a **best of 5**...\n\u200b")
+    await asyncio.sleep(3)
+
+    user_data = {}
+
+    for round_num in range(1, 6):
+        try:
+            recent_ids = await get_recent_question_ids_from_mongo("lyric")
+            collection = db["lyric_questions"]
+            pipeline = [
+                {"$match": {"_id": {"$nin": list(recent_ids)}, "enabled": "1"}},
+                {"$sample": {"size": 100}},
+                {"$group": {"_id": "$question", "question_doc": {"$first": "$$ROOT"}}},
+                {"$replaceRoot": {"newRoot": "$question_doc"}},
+                {"$sample": {"size": 1}}
+            ]
+            questions = [doc async for doc in collection.aggregate(pipeline)]
+            q = questions[0]
+
+            artist = q["artist"]
+            title = q["title"]
+            url = q["url"]
+            category = q["category"]
+            lyrics = q["lyrics"]
+            qid = q["_id"]
+
+            pretty_categories = [("R&B" if c == "rb" else c.title()) for c in category if c != "all"]
+
+            if qid:
+                await store_question_ids_in_mongo([qid], "lyric")
+            print(f"{artist} - {title}")
+
+            if len(lyrics) < 2:
+                await channel.send("⚠️ Not enough lyric lines. Skipping this round.")
+                continue
+
+            selected_lines = random.sample(lyrics, 2)
+            selected_lines.sort(key=lambda x: x["line_number"])
+            line1 = f"Line {selected_lines[0]['line_number']}: \"{selected_lines[0]['text']}\""
+            line2 = f"Line {selected_lines[1]['line_number']}: \"{selected_lines[1]['text']}\""
+
+            image_buffer_1 = generate_text_image(line1, 255, 99, 130, 255, 255, 255, True, "okra.png")
+            image_buffer_2 = generate_text_image(line2, 255, 99, 130, 255, 255, 255, True, "okra.png")
+
+        except Exception as e:
+            sentry_sdk.capture_exception(e)
+            print(f"Error fetching lyric:\n{traceback.format_exc()}")
+            continue
+
+        await channel.send(f"\u200b\n🎵 **Song {round_num}/5**\n📂 Category: {', '.join(pretty_categories)}\n\u200b")
+        file_1 = discord.File(fp=image_buffer_1, filename="lyric1.png")
+        embed_1 = discord.Embed().set_image(url="attachment://lyric1.png")
+        file_2 = discord.File(fp=image_buffer_2, filename="lyric2.png")
+        embed_2 = discord.Embed().set_image(url="attachment://lyric2.png")
+
+        await channel.send(file=file_1, embed=embed_1)
+        await channel.send(file=file_2, embed=embed_2)
+
+        start_time = asyncio.get_event_loop().time()
+        answered = False
+        processed_users = set()
+
+        def check(m):
+            return m.channel == channel and m.author != bot.user
+
+        while asyncio.get_event_loop().time() - start_time < 20 and not answered:
+            try:
+                timeout = 20 - (asyncio.get_event_loop().time() - start_time)
+                message = await bot.wait_for("message", timeout=timeout, check=check)
+                content = message.content.strip()
+                user = message.author.display_name
+                user_id = message.author.id
+                key = (user_id, content.lower())
+
+                if key in processed_users:
+                    continue
+                processed_users.add(key)
+
+                for answer in [artist, title]:
+                    if fuzzy_match(content, answer, category, url):
+                        await message.add_reaction("✅")
+                        await channel.send(f"\u200b\n✅🎉 **{user}** got it! **{artist.upper()} - {title.upper()}**\n\u200b")
+                        if user_id not in user_data:
+                            user_data[user_id] = (user, 0)
+                        user_data[user_id] = (user, user_data[user_id][1] + 1)
+                        answered = True
+                        break
+
+            except asyncio.TimeoutError:
+                break
+
+        if not answered:
+            await channel.send(f"\u200b\n❌😢 No one got it.\n\nAnswer: **{artist.upper()} - {title.upper()}**\n\u200b")
+
+        await asyncio.sleep(5)
+
+    # Final scoreboard
+    await asyncio.sleep(2)
+    sorted_data = sorted(user_data.items(), key=lambda x: x[1][1], reverse=True)
+    if sorted_data:
+        msg = "\u200b\n🏁🏆 **Commendable Okrans**\n"
+        for i, (uid, (name, score)) in enumerate(sorted_data, 1):
+            msg += f"{i}. **{name}**: {score}\n"
+        msg += "\u200b"
+        await channel.send(msg)
+        await asyncio.sleep(3)
+        await channel.send(f"\u200b\n🎉🥇 The winner is **{sorted_data[0][1][0]}**!\n\u200b")
+    else:
+        await channel.send("\u200b\n👎😢 **No right answers**. I'm ashamed to call you Okrans.\n\u200b")
+
+    await asyncio.sleep(5)
+
+
+class HTMLTextExtractor(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.text_parts = []
+
+    def handle_data(self, data):
+        self.text_parts.append(data)
+
+    def get_text(self):
+        return ' '.join(self.text_parts)
+
+
+def strip_html_tags(html):
+    parser = HTMLTextExtractor()
+    parser.feed(html)
+    return parser.get_text()
+
+
+def clean_snippet_text(text):
+    return re.sub(r'\s+', ' ', text).strip()
+
+
+async def get_random_epub_snippets(book_epub_url, snippet_length=300, count=2):
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(book_epub_url) as response:
+                response.raise_for_status()
+                content = await response.read()
+
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".epub") as tmp_file:
+            tmp_file.write(content)
+            tmp_path = tmp_file.name
+
+        book = epub.read_epub(tmp_path)
+        full_text = ""
+
+        for spine_id, _ in book.spine:
+            item = book.get_item_with_id(spine_id)
+            if item:
+                html = item.get_content().decode("utf-8", errors="ignore")
+                full_text += " " + strip_html_tags(html)
+
+        if len(full_text.strip()) < 300:
+            for item in book.get_items():
+                if item.get_type() == epub.EpubHtml:
+                    html = item.get_content().decode("utf-8", errors="ignore")
+                    full_text += " " + strip_html_tags(html)
+
+        full_text = clean_snippet_text(full_text)
+        os.unlink(tmp_path)
+
+        if len(full_text) < snippet_length * count:
+            return []
+
+        snippets = []
+        min_start = int(0.10 * len(full_text))
+        max_start = int(0.90 * len(full_text)) - snippet_length
+
+        for _ in range(count):
+            start = random.randint(min_start, max_start)
+            while start > 0 and full_text[start - 1].isalnum():
+                start -= 1
+
+            end = start + snippet_length
+            while end < len(full_text) and full_text[end].isalnum():
+                end += 1
+
+            snippet = full_text[start:end].strip()
+            snippets.append(f"...{snippet}...")
+
+        return snippets
+
+    except Exception as e:
+        print(f"❌ Error extracting snippets: {e}")
+        return []
+
+
+async def ask_book_challenge(winner):
+    global wf_winner
+    wf_winner = True
+
+    gifs = [
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/book1.gif",
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/book2.gif",
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/book3.gif",
+    ]
+    gif_url = random.choice(gifs)
+
+    await channel.send(content="\u200b\n\u200b\n📖🕵️‍♂️ **Prose & Cons: Name the Book OR Author**\n\u200b", embed=discord.Embed().set_image(url=gif_url))
+    await asyncio.sleep(3)
+    await channel.send("\u200b\n5️⃣🥇 Let's do a **best of 5**...\n\u200b")
+    await asyncio.sleep(3)
+
+    user_data = {}
+
+    for round_num in range(1, 6):
+        try:
+            recent_ids = await get_recent_question_ids_from_mongo("book")
+            collection = db["book_questions"]
+            pipeline = [
+                {"$match": {"_id": {"$nin": list(recent_ids)}, "enabled": "1"}},
+                {"$sample": {"size": 10}},
+                {"$group": {"_id": "$question", "question_doc": {"$first": "$$ROOT"}}},
+                {"$replaceRoot": {"newRoot": "$question_doc"}},
+                {"$sample": {"size": 1}}
+            ]
+            questions = [doc async for doc in collection.aggregate(pipeline)]
+            q = questions[0]
+
+            title = q["title"]
+            author = q["author"]
+            subjects = q["subjects"]
+            epub_url = q["epub_url"]
+            qid = q["_id"]
+
+            if qid:
+                await store_question_ids_in_mongo([qid], "book")
+
+            print(f"Book: {title} by {author}")
+
+            category_msg = "\u200b\n📚🗂️ **Categories**\n" + "\n".join(f"• {s}" for s in subjects)
+
+            snippets = await get_random_epub_snippets(epub_url)
+            snippet_1 = f"\n'{snippets[0]}'\n"
+            snippet_2 = f"\n'{snippets[1]}'\n"
+
+            image_1 = generate_text_image(snippet_1, 0, 0, 0, 255, 255, 102, True, "okra.png", "en", 40)
+            image_2 = generate_text_image(snippet_2, 0, 0, 0, 255, 255, 102, True, "okra.png", "en", 40)
+
+            file_1 = discord.File(fp=image_1, filename="book1.png")
+            embed_1 = discord.Embed().set_image(url="attachment://book1.png")
+            file_2 = discord.File(fp=image_2, filename="book2.png")
+            embed_2 = discord.Embed().set_image(url="attachment://book2.png")
+
+        except Exception as e:
+            sentry_sdk.capture_exception(e)
+            print(f"Error fetching book:\n{traceback.format_exc()}")
+            continue
+
+        await channel.send(f"\u200b\n📘 **Book {round_num}/5**\n\u200b")
+        await channel.send(category_msg)
+        await asyncio.sleep(2)
+        await channel.send(file=file_1, embed=embed_1)
+        await channel.send(file=file_2, embed=embed_2)
+
+        start_time = asyncio.get_event_loop().time()
+        answered = False
+        processed_users = set()
+
+        def check(m):
+            return m.channel == channel and m.author != bot.user
+
+        while asyncio.get_event_loop().time() - start_time < 20 and not answered:
+            try:
+                timeout = 20 - (asyncio.get_event_loop().time() - start_time)
+                message = await bot.wait_for("message", timeout=timeout, check=check)
+                content = message.content.strip()
+                user = message.author.display_name
+                user_id = message.author.id
+                key = (user_id, content.lower())
+
+                if key in processed_users:
+                    continue
+                processed_users.add(key)
+
+                for answer in [title, author]:
+                    if fuzzy_match(content, answer, "Book", epub_url):
+                        await message.add_reaction("✅")
+                        await channel.send(f"\u200b\n✅🎉 **{user}** got it!\n\n📚 **{title.upper()}** by **{author.upper()}**\n\u200b")
+                        if user_id not in user_data:
+                            user_data[user_id] = (user, 0)
+                        user_data[user_id] = (user, user_data[user_id][1] + 1)
+                        answered = True
+                        break
+            except asyncio.TimeoutError:
+                break
+
+        if not answered:
+            await channel.send(f"\u200b\n❌😢 No one got it.\n\n📚 **{title.upper()}** by **{author.upper()}**\n\u200b")
+
+        await asyncio.sleep(5)
+
+    # Final scoreboard
+    await asyncio.sleep(2)
+    sorted_data = sorted(user_data.items(), key=lambda x: x[1][1], reverse=True)
+    if sorted_data:
+        msg = "\u200b\n🏁🏆 **Commendable Okrans**\n"
+        for i, (uid, (name, score)) in enumerate(sorted_data, 1):
+            msg += f"{i}. **{name}**: {score}\n"
+        msg += "\u200b"
+        await channel.send(msg)
+        await asyncio.sleep(2)
+        await channel.send(f"\u200b\n🎉🥇 The winner is **{sorted_data[0][1][0]}**!\n\u200b")
+    else:
+        await channel.send("\u200b\n👎😢 **No right answers**. I'm ashamed to call you Okrans.\n\u200b")
+
+    await asyncio.sleep(5)
+
+
+async def ask_riddle_challenge(winner):
+    global wf_winner
+    wf_winner = True
+
+    gifs = [
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/riddler-carey.gif",
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/riddler-vintage.gif",
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/riddler-cartoon.gif"
+    ]
+    gif_url = random.choice(gifs)
+
+    await channel.send(content="\u200b\n\u200b\n🟢🎩 **The Riddler**\n\u200b", embed=discord.Embed().set_image(url=gif_url))
+    await asyncio.sleep(3)
+    await channel.send("\u200b\n5️⃣🥇 Let's do a **best of 5**...\n\u200b")
+    await asyncio.sleep(3)
+
+    user_data = {}
+
+    for round_num in range(1, 6):
+        try:
+            recent_ids = await get_recent_question_ids_from_mongo("riddle")
+            collection = db["riddle_questions"]
+            pipeline = [
+                {"$match": {"_id": {"$nin": list(recent_ids)}}},
+                {"$sample": {"size": 100}},
+                {"$group": {"_id": "$question", "question_doc": {"$first": "$$ROOT"}}},
+                {"$replaceRoot": {"newRoot": "$question_doc"}},
+                {"$sample": {"size": 1}}
+            ]
+            questions = [doc async for doc in collection.aggregate(pipeline)]
+            q = questions[0]
+
+            riddle_text = q["question"]
+            riddle_answers = q["answers"]
+            main_answer = riddle_answers[0]
+            category = q["category"]
+            url = q["url"]
+            qid = q["_id"]
+
+            if qid:
+                await store_question_ids_in_mongo([qid], "riddle")
+
+            print(f"Riddle {round_num}: {riddle_text} (Answer: {main_answer})")
+
+        except Exception as e:
+            sentry_sdk.capture_exception(e)
+            print(f"Error selecting riddle question:\n{traceback.format_exc()}")
+            return
+
+        await channel.send(f"\u200b\n🧠❓ **Riddle {round_num}/5**: {riddle_text}\n\u200b")
+        await asyncio.sleep(1)
+
+        start_time = asyncio.get_event_loop().time()
+        answered = False
+        processed_users = set()
+
+        def check(m):
+            return m.channel == channel and m.author != bot.user
+
+        while asyncio.get_event_loop().time() - start_time < 20 and not answered:
+            try:
+                timeout = 20 - (asyncio.get_event_loop().time() - start_time)
+                message = await bot.wait_for("message", timeout=timeout, check=check)
+                content = message.content.strip()
+                user = message.author.display_name
+                user_id = message.author.id
+                key = (user_id, content.lower())
+
+                if key in processed_users:
+                    continue
+                processed_users.add(key)
+
+                for answer in riddle_answers:
+                    if fuzzy_match(content, answer, category, url):
+                        await message.add_reaction("✅")
+                        await channel.send(f"\u200b\n✅🎉 **{user}** got it! **{answer.upper()}**\n\u200b")
+                        if user_id not in user_data:
+                            user_data[user_id] = (user, 0)
+                        user_data[user_id] = (user, user_data[user_id][1] + 1)
+                        answered = True
+                        break
+            except asyncio.TimeoutError:
+                break
+
+        if not answered:
+            await channel.send(f"\u200b\n❌😢 No one got it.\n\nAnswer: **{main_answer.upper()}**\n\u200b")
+
+        await asyncio.sleep(5)
+
+    await asyncio.sleep(2)
+    sorted_data = sorted(user_data.items(), key=lambda x: x[1][1], reverse=True)
+    if sorted_data:
+        msg = "\u200b\n🏁🏆 **Commendable Okrans (Final)**\n"
+        for i, (uid, (name, score)) in enumerate(sorted_data, 1):
+            msg += f"{i}. **{name}**: {score}\n"
+        msg += "\u200b"
+        await channel.send(msg)
+        await asyncio.sleep(1)
+        await channel.send(f"\u200b\n🎉🥇 The winner is **{sorted_data[0][1][0]}**!\n\u200b")
+    else:
+        await channel.send("\u200b\n👎😢 No right answers. I'm ashamed to call you Okrans.\n\u200b")
+
+    await asyncio.sleep(5)
+
+
+async def ask_animal_challenge(winner):
+    global wf_winner
+    wf_winner = True
+
+    gifs = [
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/animal1.gif",
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/animal2.gif",
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/animal3.gif"
+    ]
+
+    gif_url = random.choice(gifs)
+    await channel.send(content="\u200b\n\u200b\n❓🦓 **Name That OkrAnimal!**\n\u200b", embed=discord.Embed().set_image(url=gif_url))
+    await asyncio.sleep(3)
+
+    num_of_xs = 0
+    correct_guesses = 0
+    user_correct_answers = {}
+    animal_main_url = "https://a-z-animals.com/animals/"
+    category = "Animals"
+
+    while num_of_xs < 3 and correct_guesses < 20:
+        try:
+            recent_ids = await get_recent_question_ids_from_mongo("animal")
+            collection = db["animal_questions"]
+            pipeline = [
+                {"$match": {"_id": {"$nin": list(recent_ids)}}},
+                {"$sample": {"size": 100}},
+                {"$group": {"_id": "$question", "question_doc": {"$first": "$$ROOT"}}},
+                {"$replaceRoot": {"newRoot": "$question_doc"}},
+                {"$sample": {"size": 1}}
+            ]
+            questions = [doc async for doc in collection.aggregate(pipeline)]
+            q = questions[0]
+            print(q)
+
+            name = q["name"]
+            image_url = q["image_url"]
+            detail_url = q["animal_url"]
+            pattern = re.compile(re.escape(name), re.IGNORECASE)
+
+            fields = {k: pattern.sub("OKRA", q.get(k, "N/A")) for k in ["kingdom", "phylum", "class", "order", "family", "genus", "species"]}
+
+            if q["_id"]:
+                await store_question_ids_in_mongo([q["_id"]], "animal")
+
+        except Exception as e:
+            sentry_sdk.capture_exception(e)
+            print(f"Error selecting animal question:\n{traceback.format_exc()}")
+            return
+
+        processed_users = set()
+
+        start_message = f"\u200b\n\u200b\n{'🟩' if num_of_xs == 0 else '🟨' if num_of_xs == 1 else '🟥'}🤔 Okrans, you have **{num_of_xs}/3** strikes.\n"
+    
+        if correct_guesses > 0:
+            start_message += f"\nCorrect guesses: **{correct_guesses}**\n"
+        start_message += f"\n⚠️🚨 **Everyone's in!**\n\u200b"
+
+        await channel.send(start_message)
+
+        await asyncio.sleep(3)
+
+        await channel.send(embed=discord.Embed().set_image(url=image_url))
+
+        await channel.send(f"\u200b\n❓🦓 The **$@!#** is dat?!?\n\n"
+                           f"👑 **Kingdom**: {fields['kingdom']}\n"
+                           f"🧩 **Phylum**: {fields['phylum']}\n"
+                           f"🏫 **Class**: {fields['class']}\n"
+                           f"🧾 **Order**: {fields['order']}\n"
+                           f"👨‍👩‍👧 **Family**: {fields['family']}\n"
+                           f"🔬 **Genus**: {fields['genus']}\n"
+                           f"🐾 **Species**: {fields['species']}\n\u200b")
+
+        start_time = asyncio.get_event_loop().time()
+        right_answer = False
+
+        def check(m):
+            return m.channel == channel and m.author != bot.user
+
+        while asyncio.get_event_loop().time() - start_time < 15 and not right_answer:
+            try:
+                remaining = 15 - (asyncio.get_event_loop().time() - start_time)
+                message = await bot.wait_for("message", timeout=remaining, check=check)
+                content = message.content.strip()
+                user = message.author.display_name
+                key = (message.author.id, content.lower())
+
+                if key in processed_users:
+                    continue
+                processed_users.add(key)
+
+                if fuzzy_match(content, name, category, detail_url):
+                    await message.add_reaction("✅")
+                    await channel.send(f"\u200b\n✅🎉 Correct! **{user}** got it! **{name.upper()}**\n")
+                    correct_guesses += 1
+                    user_correct_answers[user] = user_correct_answers.get(user, 0) + 1
+                    right_answer = True
+            except asyncio.TimeoutError:
+                break
+
+        if not right_answer:
+            num_of_xs += 1
+            await channel.send(f"\u200b\n❌😢 No one got it.\n\nAnswer: **{name.upper()}**\n\n<{detail_url}>\n\u200b")
+
+        await asyncio.sleep(5)
+
+    # Wrap up
+    if correct_guesses == 0:
+        await channel.send("\u200b\n👎😢 No right answers. **I'm ashamed to call you Okrans.**\n\u200b")
+    else:
+        summary = (
+            f"\u200b\n✅✌️ **{correct_guesses}** right! I get the point. Let's move on.\n"
+            if correct_guesses >= 20 else
+            f"\u200b\n🎉✅ Congrats Okrans! You got **{correct_guesses}** right!\n"
+        )
+        summary += "\n**🏆 Commendable Okrans (Final)**\n"
+        sorted_users = sorted(user_correct_answers.items(), key=lambda x: x[1], reverse=True)
+        for i, (user, count) in enumerate(sorted_users, 1):
+            summary += f"{i}. **{user}**: {count}\n"
+        summary += f"\nSee more cute animals at:\n<{animal_main_url}>\n\u200b"
+        await channel.send(summary)
+
+    await asyncio.sleep(5)
+
+
+async def ask_ranker_people_challenge(winner):
+    global wf_winner
+
+    gifs = [
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/ranker1.gif",
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/ranker2.gif",
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/ranker3.gif",
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/ranker4.gif"
+    ]
+
+    gif_url = random.choice(gifs)
+    await channel.send(content="\u200b\n\u200b\n 👤🌟 Famous Peeps\n\u200b", embed=discord.Embed().set_image(url=gif_url))
+    await asyncio.sleep(3)
+
+    await channel.send(f"\u200b\n👤🌟 ID Ranker.com's All Time Greats\n\u200b")
+    await asyncio.sleep(3)
+
+    num_of_xs = 0
+    correct_guesses = 0
+    user_correct_answers = {}
+    ranker_url = "https://www.ranker.com/crowdranked-list/the-most-influential-people-of-all-time"
+
+    while num_of_xs < 3 and correct_guesses < 20:
+        try:
+            recent_ids = await get_recent_question_ids_from_mongo("people")
+            collection = db["ranker_people_questions"]
+            pipeline = [
+                {"$match": {"_id": {"$nin": list(recent_ids)}}},
+                {"$sample": {"size": 100}},
+                {"$group": {"_id": "$question", "question_doc": {"$first": "$$ROOT"}}},
+                {"$replaceRoot": {"newRoot": "$question_doc"}},
+                {"$sample": {"size": 1}}
+            ]
+            questions = [doc async for doc in collection.aggregate(pipeline)]
+            question = questions[0]
+
+            answers = question["answers"]
+            main_answer = answers[0]
+            rank = question["rank"]
+            detail_url = question["detail_url"]
+            birthplace = question["birthplace"]
+            nationality = question["nationality"]
+            profession = question["profession"]
+            image_url = question["url"]
+
+            if question["_id"]:
+                await store_question_ids_in_mongo([question["_id"]], "people")
+            print(question)
+
+        except Exception as e:
+            sentry_sdk.capture_exception(e)
+            print(f"Error selecting people question:\n{traceback.format_exc()}")
+            return
+
+        processed_users = set()
+
+        # Display strikes and progress
+        start_msg = f"\u200b\n{'🟩' if num_of_xs == 0 else '🟨' if num_of_xs == 1 else '🟥'}🤔 Okrans, you have **{num_of_xs}/3** strikes!\n"
+        if correct_guesses > 0:
+            start_msg += f"\nCorrect guesses: **{correct_guesses}**\n\u200b"
+        await channel.send(start_msg)
+        await asyncio.sleep(2)
+
+        prompt = f"\u200b\n⚠️🚨 **Everyone's in!**\n\u200b"
+        await channel.send(prompt)
+
+        await asyncio.sleep(3)
+
+        # Image and clues
+        prompt = (
+            f"\u200b\n👤🌟 **Rank #{rank}** - Who dat?!?\n"
+            f"\n🌍🏡 Birthplace: **{birthplace}**"
+            f"\n🏳️🆔 Nationality: **{nationality}**"
+            f"\n💼⚒️ Profession: **{profession}**\n\u200b"
+        )
+
+        await channel.send(embed=discord.Embed(description=f"Rank #{rank}").set_image(url=image_url))
+        await channel.send(prompt)
+
+        start_time = asyncio.get_event_loop().time()
+        right_answer = False
+
+        def check(m):
+            return m.channel == channel and m.author != bot.user
+
+        while asyncio.get_event_loop().time() - start_time < 15 and not right_answer:
+            try:
+                remaining = 15 - (asyncio.get_event_loop().time() - start_time)
+                message = await bot.wait_for("message", timeout=remaining, check=check)
+                user = message.author.display_name
+                content = message.content.strip()
+                key = (message.author.id, content.lower())
+
+                if key in processed_users:
+                    continue
+                processed_users.add(key)
+
+                for answer in answers:
+                    if fuzzy_match(content, answer, "Ranker People", image_url):
+                        await message.add_reaction("✅")
+                        await channel.send(f"\u200b\n✅🎉 Correct! **{user}** got it! **{answer.upper()}**")
+                        correct_guesses += 1
+                        user_correct_answers[user] = user_correct_answers.get(user, 0) + 1
+                        right_answer = True
+                        break
+            except asyncio.TimeoutError:
+                break
+
+        if not right_answer:
+            msg = f"\u200b\n❌😢 No one got it.\n\nAnswer: **{main_answer.upper()}**\n"
+            if int(rank) > 2500:
+                msg += "\n🆓✅ No penalty for 2500+.\n\u200b"
+            else:
+                num_of_xs += 1
+            await channel.send(msg)
+
+        detail_url = detail_url if detail_url.startswith("http") else "https://" + detail_url.lstrip("/")
+
+        msg = f"\u200b\n[More info about {main_answer}]({detail_url})\n\u200b"
+        await channel.send(msg)
+
+        await asyncio.sleep(5)
+
+    # Wrap-up
+    if correct_guesses == 0:
+        await channel.send("\u200b\n👎😢 No right answers. **I'm ashamed to call you Okrans.**\n\u200b")
+    else:
+        summary = (
+            f"\u200b\n✅✌️ **{correct_guesses}** right! I get the point. Let's move on.\n"
+            if correct_guesses >= 20 else
+            f"\u200b\n🎉✅ Congrats Okrans! You got **{correct_guesses}** right!\n"
+        )
+        summary += "\n**🏆 Commendable Okrans**\n"
+        sorted_users = sorted(user_correct_answers.items(), key=lambda x: x[1], reverse=True)
+        for i, (user, count) in enumerate(sorted_users, 1):
+            summary += f"{i}. **{user}**: {count}\n"
+        summary += "\u200b"
+        await channel.send(summary)
+
+    
+
+
+    ranker_url = ranker_url if ranker_url.startswith("http") else "https://" + detail_url.lstrip("/")
+    await channel.send(f"\u200b\n📝 Ranks from Ranker.com\n{ranker_url}\n\u200b")
+
+    #await channel.send(msg)
+    await asyncio.sleep(2)
+    wf_winner = True
+    await asyncio.sleep(5)
+
+
+async def ask_flags_challenge(winner):
+    global wf_winner
+    wf_winner = True
+
+    gifs = [
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/flags_usc.gif",
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/flags_cartoon.gif",
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/flags_friends.gif"
+    ]
+    gif_url = random.choice(gifs)
+    await channel.send(content="\u200b\n\u200b\n🎏🎉 **Flag Fest!**\n\u200b", embed=discord.Embed().set_image(url=gif_url))
+    await asyncio.sleep(3)
+
+    num_of_xs = 0
+    correct_guesses = 0
+    user_correct_answers = {}
+    flag_reference_url = "http://flags.net/"
+
+    while num_of_xs < 3 and correct_guesses < 20:
+        try:
+            recent_ids = await get_recent_question_ids_from_mongo("flags")
+            collection = db["flags_questions"]
+            pipeline = [
+                {"$match": {"_id": {"$nin": list(recent_ids)}}},
+                {"$sample": {"size": 100}},
+                {"$group": {"_id": "$question", "question_doc": {"$first": "$$ROOT"}}},
+                {"$replaceRoot": {"newRoot": "$question_doc"}},
+                {"$sample": {"size": 1}}
+            ]
+            questions = [doc async for doc in collection.aggregate(pipeline)]
+            q = questions[0]
+
+            answer = q["answer"]
+            category = q["category"]
+            image_url = q["flag_url"]
+            detail = q["flag_detail"]
+            source_url = q["source_url"]
+
+            if q["_id"]:
+                await store_question_ids_in_mongo([q["_id"]], "flags")
+            print(q)
+
+        except Exception as e:
+            sentry_sdk.capture_exception(e)
+            print(f"Error selecting flags question:\n{traceback.format_exc()}")
+            return
+
+        processed_users = set()
+
+        start_message = f"\u200b\n\u200b\n{'🟩' if num_of_xs == 0 else '🟨' if num_of_xs == 1 else '🟥'}🤔 Okrans, you have **{num_of_xs}/3** strikes.\n"
+        if correct_guesses > 0:
+            start_message += f"\nCorrect guesses: **{correct_guesses}**\n\u200b"
+        await channel.send(start_message)
+        await asyncio.sleep(3)
+
+        await channel.send(embed=discord.Embed().set_image(url=image_url))
+
+        if category == "country_region_org":
+            prompt = "\u200b\n🌍🏳️ Which **country or international organization** does this flag represent?\n\n✋🔤 *Do NOT abbreviate countries.*\n\u200b"
+        elif category == "signal":
+            prompt = "\u200b\n🔣🏳️ What **symbol** does this flag represent?\n\u200b"
+        else:
+            prompt = "\u200b\n🏳️ What does this flag represent?\n\u200b"
+
+        await channel.send(prompt)
+
+        start_time = asyncio.get_event_loop().time()
+        right_answer = False
+
+        def check(m):
+            return m.channel == channel and m.author != bot.user
+
+        while asyncio.get_event_loop().time() - start_time < 15 and not right_answer:
+            try:
+                timeout = 15 - (asyncio.get_event_loop().time() - start_time)
+                message = await bot.wait_for("message", timeout=timeout, check=check)
+                content = message.content.strip()
+                user = message.author.display_name
+                key = (message.author.id, content.lower())
+
+                if key in processed_users:
+                    continue
+                processed_users.add(key)
+
+                if fuzzy_match(content, answer, category, image_url):
+                    await message.add_reaction("✅")
+                    await channel.send(f"\u200b\n✅🎉 **{user}** got it! **{answer.upper()}**\n\n🏴‍☠️📖 {detail}\n👀➡️ <{source_url}>\n\u200b")
+                    correct_guesses += 1
+                    user_correct_answers[user] = user_correct_answers.get(user, 0) + 1
+                    right_answer = True
+            except asyncio.TimeoutError:
+                break
+
+        if not right_answer:
+            num_of_xs += 1
+            await channel.send(f"\u200b\n❌😢 No one got it.\n\nAnswer: **{answer.upper()}**\n\n🏴‍☠️📖 {detail}\n👀➡️ <{source_url}>\n\u200b")
+
+        await asyncio.sleep(5)
+
+    # Wrap up
+    if correct_guesses == 0:
+        await channel.send("\u200b\n👎😢 **No right answers**. I'm ashamed to call you Okrans.\n\u200b")
+    else:
+        summary = (
+            f"\u200b\n✅✌️ **{correct_guesses}** right! I get the point. Let's move on.\n"
+            if correct_guesses >= 20 else
+            f"\u200b\n🎉✅ Congrats Okrans! You got **{correct_guesses}** right!\n"
+        )
+        summary += "\n**🏆 Commendable Okrans**\n"
+        sorted_users = sorted(user_correct_answers.items(), key=lambda x: x[1], reverse=True)
+        for i, (user, count) in enumerate(sorted_users, 1):
+            summary += f"{i}. **{user}**: {count}\n"
+        summary += f"\n👀➡️ See more flags at:\n<{flag_reference_url}>\n\u200b"
+        await channel.send(summary)
+
+    await asyncio.sleep(5)
+
+
+async def ask_poster_challenge(winner):
+    global wf_winner
+
+    gifs = [
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/poster1.gif",
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/poster2.gif",
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/poster3.gif"
+    ]
+
+    gif_url = random.choice(gifs)
+    
+    message = f"\u200b\n\u200b\n 🎥⚡ Poster Blitz\n\u200b"
+
+    await channel.send(content=message, embed=discord.Embed().set_image(url=gif_url))
+    await asyncio.sleep(3)
+
+    num_of_xs = 0
+    correct_guesses = 0
+    user_correct_answers = {}
+
+    while num_of_xs < 3 and correct_guesses < 20:
+        try:
+            recent_posters_ids = await get_recent_question_ids_from_mongo("posters")
+            posters_collection = db["posters_questions"]
+            pipeline_posters = [
+                {"$match": {"_id": {"$nin": list(recent_posters_ids)}}},
+                {"$group": {"_id": "$question", "question_doc": {"$first": "$$ROOT"}}},
+                {"$replaceRoot": {"newRoot": "$question_doc"}},
+                {"$sample": {"size": 1}}
+            ]
+            posters_questions = [doc async for doc in posters_collection.aggregate(pipeline_posters)]
+            posters_question = posters_questions[0]
+            posters_category = posters_question["category"]
+            posters_answers = posters_question["answers"]
+            posters_main_answer = posters_answers[0]
+            posters_year = posters_question["question"]
+            posters_url = posters_question["url"]
+
+            if posters_question["_id"]:
+                await store_question_ids_in_mongo([posters_question["_id"]], "posters")
+            print(posters_question)
+
+        except Exception as e:
+            sentry_sdk.capture_exception(e)
+            print(f"Error selecting posters questions:\n{traceback.format_exc()}")
+            return
+
+        processed_users = set()
+
+        start_message = ""
+        if num_of_xs == 0:
+            start_message += f"\u200b\n🟩🤔 Okrans, you have **0/3** strikes.\n"
+        elif num_of_xs == 1:
+            start_message += f"\u200b\n🟨🤔 Okrans, you have **1/3** strikes...\n"
+        elif num_of_xs == 2:
+            start_message += f"\u200b\n🟥🤔 Okrans, you have **2/3** strikes!\n"
+
+        if correct_guesses > 0:
+            start_message += f"\nCorrect guesses: **{correct_guesses}**\n"
+        start_message += f"\n⚠️🚨 **Everyone's in!**\n\u200b"
+
+        await channel.send(start_message)
+        await asyncio.sleep(2)
+
+        prompt = (
+            f"\u200b\n\u200b\n🎥🌟 What **{posters_category.upper()}** is depicted in the poster above?\n"
+            f"\n📅💡 Year: **{posters_year}**\n\u200b"
+        )
+        
+        await channel.send(embed=discord.Embed(description=f"{posters_category.upper()} ({posters_year})").set_image(url=posters_url))
+        await channel.send(prompt)
+
+        start_time = asyncio.get_event_loop().time()
+        right_answer = False
+
+        def check(m):
+            return m.channel == channel and m.author != bot.user
+
+        while asyncio.get_event_loop().time() - start_time < 15 and not right_answer:
+            try:
+                remaining = 15 - (asyncio.get_event_loop().time() - start_time)
+                message = await bot.wait_for("message", timeout=remaining, check=check)
+                user = message.author.display_name
+                content = message.content.strip()
+                key = (message.author.id, content.lower())
+
+                if key in processed_users:
+                    continue
+                processed_users.add(key)
+
+                for answer in posters_answers:
+                    if fuzzy_match(content, answer, posters_category, posters_url):
+                        await message.add_reaction("✅")
+                        await channel.send(f"\u200b\n✅🎉 Correct! **{user}** got it! **{answer.upper()}**\n\u200b")
+                        correct_guesses += 1
+                        user_correct_answers[user] = user_correct_answers.get(user, 0) + 1
+                        right_answer = True
+                        
+                        break
+            except asyncio.TimeoutError:
+                break
+
+        if not right_answer:
+            num_of_xs += 1
+            await channel.send(f"\u200b\n❌😢 No one got it.\n\nAnswer: **{posters_main_answer.upper()}**\n\u200b")
+        
+        await asyncio.sleep(5)
+
+    # Wrap up
+    if correct_guesses == 0:
+        await channel.send("\u200b\n👎😢 No right answers. **I'm ashamed to call you Okrans.**\n\u200b")
+    else:
+        summary = (
+            f"\u200b\n✅✌️ **{correct_guesses}** right! I get the point. Let's move on.\n"
+            if correct_guesses >= 20 else
+            f"\u200b\n🎉✅ Congrats Okrans! You got **{correct_guesses}** right!\n"
+        )
+        summary += "\u200b\n **🏆 Commendable Okrans**\n"
+        sorted_users = sorted(user_correct_answers.items(), key=lambda x: x[1], reverse=True)
+        for i, (user, count) in enumerate(sorted_users, 1):
+            summary += f"{i}. **{user}**: {count}\n"
+        summary += "\u200b"
+        await channel.send(summary)
+
+    wf_winner = True
+    await asyncio.sleep(5)
+
+
+async def ask_missing_link(winner):
+    global wf_winner
+
+    gifs = [
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/link1.gif",
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/link2.gif",
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/link3.gif"
+    ]
+
+    gif_url = random.choice(gifs)
+    await channel.send(content="\u200b\n\u200b\n 🧩🔗 Missing Link\n\u200b", embed=discord.Embed().set_image(url=gif_url))
+    await asyncio.sleep(3)
+
+    num_of_xs = 0
+    correct_guesses = 0
+    user_correct_answers = {}
+
+    while num_of_xs < 3 and correct_guesses < 20:
+        try:
+            recent_ids = await get_recent_question_ids_from_mongo("missing_link")
+            collection = db["missing_link_questions"]
+            pipeline = [
+                {"$match": {"_id": {"$nin": list(recent_ids)}}},
+                {"$sample": {"size": 100}},
+                {"$group": {"_id": "$question", "question_doc": {"$first": "$$ROOT"}}},
+                {"$replaceRoot": {"newRoot": "$question_doc"}},
+                {"$sample": {"size": 1}}
+            ]
+            questions = [doc async for doc in collection.aggregate(pipeline)]
+            question = questions[0]
+
+            category = question["category"]
+            answers = question["answers"]
+            main_answer = answers[0]
+            clue = question["url"]
+            prompt_list = question["question"]
+
+            if question["_id"]:
+                await store_question_ids_in_mongo([question["_id"]], "missing_link")
+            print(question)
+
+        except Exception as e:
+            sentry_sdk.capture_exception(e)
+            print(f"Error selecting missing link question:\n{traceback.format_exc()}")
+            return
+
+        processed_users = set()
+
+        # Display strikes and progress
+        start_msg = "\u200b\n"
+        start_msg += f"{'🟩' if num_of_xs == 0 else '🟨' if num_of_xs == 1 else '🟥'}🤔 Okrans, you have **{num_of_xs}/3** strikes!\n"
+        if correct_guesses > 0:
+            start_msg += f"\nCorrect guesses: **{correct_guesses}**\n"
+        await channel.send(start_msg)
+        await asyncio.sleep(2)
+
+        if category == "Movie Characters":
+            q_type = "MOVIE"
+            header = "Characters"
+        elif category == "Movie Actors":
+            q_type = "MOVIE"
+            header = "Actors / Actresses"
+        else:
+            q_type = "ACTOR or ACTRESS"
+            header = "Movies"
+
+        await channel.send(f"\u200b\n⚠️🚨 **Everyone's in!**")
+        await asyncio.sleep(2)
+
+        await channel.send(f"\u200b\n🎬🔎 What **{q_type}** is the missing link?\n\n📅💡 Clue: **{clue}**")
+
+        await asyncio.sleep(2)
+        list_msg = f"\u200b\n**{header}**\n"
+        for i, item in enumerate(prompt_list.split(","), 1):
+            list_msg += f"{i}. {item.strip()}\n"
+        await channel.send(list_msg)
+
+        start_time = asyncio.get_event_loop().time()
+        right_answer = False
+
+        def check(m):
+            return m.channel == channel and m.author != bot.user
+
+        while asyncio.get_event_loop().time() - start_time < 15 and not right_answer:
+            try:
+                remaining = 15 - (asyncio.get_event_loop().time() - start_time)
+                message = await bot.wait_for("message", timeout=remaining, check=check)
+                user = message.author.display_name
+                content = message.content.strip()
+                key = (message.author.id, content.lower())
+
+                if key in processed_users:
+                    continue
+                processed_users.add(key)
+
+                for answer in answers:
+                    if fuzzy_match(content, answer, category, clue):
+                        await message.add_reaction("✅")
+                        await channel.send(f"\u200b\n✅🎉 Correct! **{user}** got it! **{answer.upper()}**")
+                        correct_guesses += 1
+                        user_correct_answers[user] = user_correct_answers.get(user, 0) + 1
+                        right_answer = True
+                        break
+            except asyncio.TimeoutError:
+                break
+
+        if not right_answer:
+            num_of_xs += 1
+            await channel.send(f"\u200b\n❌😢 No one got it.\n\nAnswer: **{main_answer.upper()}**\n")
+        
+        await asyncio.sleep(5)
+
+    # Wrap-up message
+    if correct_guesses == 0:
+        await channel.send("\u200b\n👎😢 No right answers. **I'm ashamed to call you Okrans.**")
+    else:
+        summary = (
+            f"\u200b\n✅✌️ **{correct_guesses}** right! I get the point. Let's move on.\n"
+            if correct_guesses >= 20 else
+            f"\u200b\n🎉✅ Congrats Okrans! You got **{correct_guesses}** right!\n"
+        )
+        summary += "\n**🏆 Commendable Okrans**\n"
+        sorted_users = sorted(user_correct_answers.items(), key=lambda x: x[1], reverse=True)
+        for i, (user, count) in enumerate(sorted_users, 1):
+            summary += f"{i}. **{user}**: {count}\n"
+        summary += "\u200b"
+        await channel.send(summary)
+
+    wf_winner = True
+    await asyncio.sleep(5)
+
+
+async def ask_movie_scenes_challenge(winner):
+    global wf_winner
+
+    gifs = [
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/movie1.gif",
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/movie2.gif",
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/movie3.gif"
+    ]
+
+    gif_url = random.choice(gifs)
+    await channel.send(content="\u200b\n\u200b\n 🎬💥 Movie Mayhem\n\u200b", embed=discord.Embed().set_image(url=gif_url))
+    await asyncio.sleep(3)
+
+    num_of_xs = 0
+    correct_guesses = 0
+    user_correct_answers = {}
+
+    while num_of_xs < 3 and correct_guesses < 20:
+        try:
+            recent_ids = await get_recent_question_ids_from_mongo("movie_scenes")
+            collection = db["movie_scenes_questions"]
+            pipeline = [
+                {"$match": {"_id": {"$nin": list(recent_ids)}}},
+                {"$sample": {"size": 100}},
+                {"$group": {"_id": "$question", "question_doc": {"$first": "$$ROOT"}}},
+                {"$replaceRoot": {"newRoot": "$question_doc"}},
+                {"$sample": {"size": 1}}
+            ]
+            questions = [doc async for doc in collection.aggregate(pipeline)]
+            question = questions[0]
+
+            category = question["category"]
+            answers = question["answers"]
+            main_answer = answers[0]
+            year = question["question"]
+            image_url = question["url"]
+
+            if question["_id"]:
+                await store_question_ids_in_mongo([question["_id"]], "movie_scenes")
+            print(question)
+
+        except Exception as e:
+            sentry_sdk.capture_exception(e)
+            print(f"Error selecting movie scenes question:\n{traceback.format_exc()}")
+            return
+
+        processed_users = set()
+
+        # Strike and score banner
+        start_msg = "\u200b\n"
+        start_msg += f"{'🟩' if num_of_xs == 0 else '🟨' if num_of_xs == 1 else '🟥'}🤔 Okrans, you have **{num_of_xs}/3** strikes!\n"
+        if correct_guesses > 0:
+            start_msg += f"\nCorrect guesses: **{correct_guesses}**\n"
+        start_msg += "\u200b"
+
+        await channel.send(start_msg)
+        await asyncio.sleep(3)
+
+        prompt = f"\u200b\n⚠️🚨 **Everyone's in!**\n\u200b"
+        await channel.send(prompt)
+
+        await asyncio.sleep(3)
+        await channel.send(embed=discord.Embed(description=f"{category.upper()} ({year})").set_image(url=image_url))
+
+        prompt = (
+            f"\u200b\n🎬🌟 What **{category.upper()}** is depicted in the scene above?\n"
+            f"\n📅💡 Year: **{year}**\n\u200b"
+        )
+        await channel.send(prompt)
+
+        start_time = asyncio.get_event_loop().time()
+        right_answer = False
+
+        def check(m):
+            return m.channel == channel and m.author != bot.user
+
+        while asyncio.get_event_loop().time() - start_time < 15 and not right_answer:
+            try:
+                remaining = 15 - (asyncio.get_event_loop().time() - start_time)
+                message = await bot.wait_for("message", timeout=remaining, check=check)
+                user = message.author.display_name
+                content = message.content.strip()
+                key = (message.author.id, content.lower())
+
+                if key in processed_users:
+                    continue
+                processed_users.add(key)
+
+                for answer in answers:
+                    if fuzzy_match(content, answer, category, image_url):
+                        await message.add_reaction("✅")
+                        await channel.send(f"\u200b\n✅🎉 Correct! **{user}** got it! **{answer.upper()}**")
+                        correct_guesses += 1
+                        user_correct_answers[user] = user_correct_answers.get(user, 0) + 1
+                        right_answer = True
+                        break
+            except asyncio.TimeoutError:
+                break
+
+        if not right_answer:
+            num_of_xs += 1
+            await channel.send(f"\u200b\n❌😢 No one got it.\n\nAnswer: **{main_answer.upper()}**\n\u200b")
+        await asyncio.sleep(5)
+
+    # Wrap-up message
+    if correct_guesses == 0:
+        await channel.send("\u200b\n👎😢 No right answers. **I'm ashamed to call you Okrans.**\n\u200b")
+    else:
+        summary = (
+            f"\u200b\n✅✌️ **{correct_guesses}** right! I get the point. Let's move on.\n"
+            if correct_guesses >= 20 else
+            f"\u200b\n🎉✅ Congrats Okrans! You got **{correct_guesses}** right!\n"
+        )
+        summary += "\n **🏆 Commendable Okrans**\n"
+        sorted_users = sorted(user_correct_answers.items(), key=lambda x: x[1], reverse=True)
+        for i, (user, count) in enumerate(sorted_users, 1):
+            summary += f"{i}. **{user}**: {count}\n"
+        summary += "\u200b"
+        await channel.send(summary)
+
+    wf_winner = True
+    await asyncio.sleep(5)
+
+
+async def ask_feud_question(winner, mode, winner_id):
+
+    feud_gifs = [
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/feud1.gif",
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/feud2.gif",
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/feud3.gif"
+    ]
+
+    feud_gif_url = random.choice(feud_gifs)
+    print(feud_gif_url)
+    
+    if mode == "solo":
+        message = f"\u200b\n\u200b\n ⚔️🧍 FeUd\n\u200b"
+    elif mode == "cooperative":
+        message = f"\u200b\n\u200b\n ⚔️⚡ FeUd Blitz\n\u200b"
+
+    await channel.send(content=message, embed=discord.Embed().set_image(url=feud_gif_url))
+    await asyncio.sleep(3)
+    await channel.send(f"\u200b\n3️⃣🥇 Let's do a round of 3...\n\u200b")
+    await asyncio.sleep(3)
+
+    try:
+        recent_feud_ids = await get_recent_question_ids_from_mongo("feud")
+        feud_collection = db["feud_questions"]
+        pipeline_feud = [
+            {"$match": {"_id": {"$nin": list(recent_feud_ids)}}},
+            {"$group": {"_id": "$question", "question_doc": {"$first": "$$ROOT"}}},
+            {"$replaceRoot": {"newRoot": "$question_doc"}},
+            {"$sample": {"size": 1}}
+        ]
+        feud_questions = await feud_collection.aggregate(pipeline_feud).to_list(length=1)
+        if not feud_questions:
+            await channel.send("❌ Could not find a new feud question.")
+            return
+
+    except Exception as e:
+        sentry_sdk.capture_exception(e)
+        error_details = traceback.format_exc()
+        print(f"Error selecting feud questions: {e}\nDetailed traceback:\n{error_details}")
+        return None  # Return an empty list in case of failure
+
+    feud_question = feud_questions[0]
+    feud_prompt = feud_question["question"]
+    feud_answers = feud_question["answers"]
+    feud_question_id = feud_question["_id"]
+    await store_question_ids_in_mongo([feud_question_id], "feud")
+
+    win_image_url = "https://triviabotwebsite.s3.us-east-2.amazonaws.com/harvey/harvey+win.gif"
+    loss_image_url = "https://triviabotwebsite.s3.us-east-2.amazonaws.com/harvey/harvey+loss.gif"
+    
+    print(feud_question)
+
+    user_progress = []
+    user_correct_answers = {}
+    correct_guesses = 0
+    max_xs = 3
+    xs = 0
+    guess_time = 20
+    numbered_blocks = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"]
+    num_answers = len(feud_answers)
+    answered_correctly = False
+
+    while xs < max_xs and not answered_correctly:
+        feud_image_buffer = create_family_feud_board_image(feud_answers, user_progress)
+        image_file = discord.File(fp=feud_image_buffer, filename="image.png")
+        board_embed = discord.Embed(title=f"🟦 **Okra Says!** Top {num_answers} answers on the board\n\u200b")
+        board_embed.description = f"We asked 100 Okrans..."
+        board_embed.set_image(url="attachment://image.png")
+
+        await asyncio.sleep(1)
+
+        start_message = ""
+
+        if mode == "cooperative":
+            if xs == 0:
+                start_message += f"\u200b\n⚠️🚨 **Everyone's in!** Round 1/3! 🟩\n\u200b"
+            elif xs == 1:
+                start_message += f"\u200b\n⚠️🚨 **Everyone's in!** Round 2/3! 🟨\n\u200b"
+            elif xs == 2:
+                start_message += f"\u200b\n⚠️🚨 **Everyone's in!** Last round! 🟥\n\u200b"
+
+        elif mode == "solo":
+            if xs == 0:
+                start_message += f"\u200b\n⚠️🚨 **{winner} ONLY!** Round 1/3! 🟩\n\u200b"
+            elif xs == 1:
+                start_message += f"\u200b\n⚠️🚨 **{winner} ONLY!** Round 2/3! 🟨\n\u200b"
+            elif xs == 2:
+                start_message += f"\u200b\n⚠️🚨 **{winner} ONLY!** Last round! 🟥\n\u200b"
+
+        
+        await channel.send(embed=board_embed, file=image_file)
+        await asyncio.sleep(3)
+        await channel.send(start_message)
+        await asyncio.sleep(5)
+
+        prompt_message = f"\u200b\n\u200b\n👉👉 **{feud_prompt.upper()}**\n"
+        prompt_message += f"\n📜🔢 List as many as you can. GO! 🏁🚀\n\u200b"
+
+        await channel.send(prompt_message)
+
+        def check(m):
+            if mode == "solo":
+                return m.author.id == winner_id and m.channel == channel
+            return m.channel == channel and m.author != bot.user
+
+        try:
+            end_time = asyncio.get_event_loop().time() + guess_time
+
+            while asyncio.get_event_loop().time() < end_time and not answered_correctly:
+                timeout = end_time - asyncio.get_event_loop().time()
+
+                response = await bot.wait_for("message", timeout=timeout, check=check)
+
+                if response.author.id in user_correct_answers:
+                    continue
+
+                for answer in feud_answers:
+                    if answer in user_progress:
+                        continue
+
+                    if fuzzy_match(response.content, answer, "", ""):
+                        user_progress.append(answer)
+                        correct_guesses += 1
+                        await response.add_reaction("✅")
+
+                        user_correct_answers.setdefault(response.author.display_name, 0)
+                        user_correct_answers[response.author.display_name] += 1
+
+                        if len(user_progress) == num_answers:
+                            answered_correctly = True
+                            break
+
+        except asyncio.TimeoutError:
+            pass
+
+        xs += 1
+        
+        if answered_correctly == False and xs < 3:    
+            message = f"\u200b\n🎤📊 Okra says...\n\u200b"
+            await channel.send(message)
+            await asyncio.sleep(2)
+            message = f"{correct_guesses} out of {num_answers}\n"
+            if user_correct_answers and mode == "cooperative":
+                message += "\n**🏆 Commendable Okrans**\n"
+                sorted_users = sorted(user_correct_answers.items(), key=lambda x: x[1], reverse=True)
+                for i, (user, count) in enumerate(sorted_users, 1):
+                    message += f"{i}. **{user}**: {count}\n"
+            message += "\u200b"
+            await channel.send(message)
+            await asyncio.sleep(2)
+
+    result_message = ""
+    if mode == "cooperative":
+        if not user_progress:
+            result_message = f"\n👎😢 No right answers out of {num_answers}. **I'm ashamed to call you Okrans**.\n"
+        elif len(user_progress) < num_answers:
+            result_message = f"\n🙄😒 Wow...you got **{len(user_progress)}/{num_answers}**.\n"
+        else:
+            result_message = f"\n🎉✅ Congrats Okrans! You got all **{num_answers}** right!\n"
+
+        if user_correct_answers and mode == "cooperative":
+            result_message += "\n**🏆 Commendable Okrans (Final)**\n"
+            sorted_users = sorted(user_correct_answers.items(), key=lambda x: x[1], reverse=True)
+            for i, (user, count) in enumerate(sorted_users, 1):
+                result_message += f"{i}. **{user}**: {count}\n"
+    elif mode == "solo":
+        if not user_progress:
+            result_message = f"\n👎😢 **No right answers** out of {num_answers}. **{winner}, you're no Okran**.\n"
+        elif len(user_progress) < num_answers:
+            result_message = f"\n🙄😒 Wow {winner}...you got **{len(user_progress)}/{num_answers}**.\n"
+        else:
+            result_message = f"\n🎉✅ Congrats {winner}! You got all **{num_answers}** right!\n"
+
+    await asyncio.sleep(2)
+    final_feud_image_buffer = create_family_feud_board_image(feud_answers, user_progress, 0)
+    image_file = discord.File(fp=final_feud_image_buffer, filename="image.png")
+    board_embed = discord.Embed(title=f"🟦 **OKRA SAYS FINAL** Top {num_answers} answers on the board\n\u200b")
+    board_embed.description = f"We asked 100 Okrans..."
+    board_embed.set_image(url="attachment://image.png")
+    await channel.send(embed=board_embed, file=image_file)
+
+    if len(user_progress) < num_answers:
+        answer_feud_image_buffer = create_family_feud_board_image(feud_answers, feud_answers, 0)
+        image_file = discord.File(fp=answer_feud_image_buffer, filename="image.png")
+        board_embed = discord.Embed(title=f"🔑❓ **OKRA SAYS ANSWERS**\n\u200b")
+        board_embed.description = f"We asked 100 Okrans..."
+        board_embed.set_image(url="attachment://image.png")
+        await channel.send(embed=board_embed, file=image_file)
+    
+    await asyncio.sleep(2)
+
+    if len(user_progress) < num_answers:
+        await channel.send(embed=discord.Embed().set_image(url=loss_image_url))
+    else:
+        await channel.send(embed=discord.Embed().set_image(url=win_image_url))
+
+    await channel.send(result_message)
+    await asyncio.sleep(5)
+    return
+
+
+async def fetch_random_word_thes(min_length=5, max_length=12, max_retries=20, max_related=5):
+    for attempt in range(1, max_retries + 1):
+        print(f"[Attempt {attempt}/{max_retries}] Fetching a random word...")
+
+        try:
+            # Fetch a random word (you must make this async if it isn't already)
+            word = await get_random_word()  # Replace with await get_random_word() if it's async
+
+            if not word:
+                print("No word returned from local list.")
+                continue
+
+            url = f"https://www.dictionaryapi.com/api/v3/references/thesaurus/json/{word}?key={webster_thes_api_key}"
+
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, timeout=5) as response:
+                    if response.status != 200:
+                        print(f"Failed to fetch word: HTTP {response.status}")
+                        continue
+
+                    data = await response.json()
+
+            if not data or isinstance(data[0], str):
+                print(f"Merriam-Webster Thesaurus did not recognize the word '{word}'. Suggestions: {data}")
+                continue
+
+            for sense in data:
+                if isinstance(sense, dict):
+                    pos = sense.get("fl", "").lower()
+                    synonyms = sense.get("meta", {}).get("syns", [])
+                    antonyms = sense.get("meta", {}).get("ants", [])
+
+                    synonyms = [syn for group in synonyms for syn in group][:max_related]
+                    antonyms = [ant for group in antonyms for ant in group][:max_related]
+
+                    if pos and synonyms:
+                        mw_url = f"https://www.merriam-webster.com/thesaurus/{word}"
+                        return word, pos, synonyms, antonyms, mw_url
+
+            print(f"No valid synonyms found for '{word}'.")
+            continue
+
+        except Exception as e:
+            print(f"Error processing word details: {e}")
+            continue
+
+    print("Exceeded maximum retries. No valid word found.")
+    return None, None, None, None, None
+
+
+async def load_words_from_file(filepath):
+    words = []
+    async with aiofiles.open(filepath, 'r', encoding='utf-8') as f:
+        async for line in f:
+            word = line.strip()
+            if word:
+                words.append(word)
+    return words
+
+
+async def get_random_word(min_length=5, max_length=12):
+    words = await load_words_from_file("wordlist.txt")
+    valid_words = [w for w in words if min_length <= len(w) <= max_length]
+    if not valid_words:
+        return None
+    return random.choice(valid_words)
+
+
+def fetch_random_word(min_length=5, max_length=12, max_retries=5):
+    for attempt in range(1, max_retries + 1):
+        print(f"[Attempt {attempt}/{max_retries}] Fetching a random word...")
+        try:
+            # Fetch a random word
+            word = get_random_word()
+
+            if not word:
+                print("No word returned from local list.")
+                continue
+
+            # Look up the word in Merriam-Webster
+            url = f"https://www.dictionaryapi.com/api/v3/references/collegiate/json/{word}?key={webster_api_key}"
+            response = requests.get(url, timeout=5)
+            response.raise_for_status()
+            data = response.json()
+
+            if not data or isinstance(data[0], str):
+                # Nothing returned or suggestions instead of definitions
+                print(f"Merriam-Webster did not recognize the word '{word}'. Suggestions: {data}")
+                continue
+
+            # Extract part of speech and definitions
+            for sense in data:
+                if isinstance(sense, dict):
+                    pos = sense.get("fl", "").lower()  # Functional label (part of speech)
+                    definitions = sense.get("shortdef", [])
+                    if pos and definitions:
+                        mw_url = f"https://www.merriam-webster.com/dictionary/{word}"
+                        return word, pos, definitions, mw_url
+
+            # If no valid definitions are found
+            print(f"No valid definitions found for '{word}'.")
+            continue
+
+        except Exception as e:
+            print(f"Error processing word details: {e}")
+            continue
+
+    # Return None after exhausting retries
+    print("Exceeded maximum retries. No valid word found.")
+    return None, None, None, None
+
+
+def update_audit_question(question, message_content, display_name):
+    if question["trivia_db"] == "math" or question["trivia_db"] == "stats":
+        return
+
+    collection = db[question["trivia_db"]]
+    document_id = question["trivia_id"]
+
+    audit_entry = {
+        "display_name": f"{display_name} (Discord)",
+        "message_content": message_content
+    }
+
+    for attempt in range(max_retries):
+        try:
+            update = {
+                "$push": {"audit": audit_entry},
+                "$setOnInsert": {"timestamp": time.time()}
+            }
+
+            # Ensure 'audit' exists and append the new entry
+            collection.update_one({"_id": document_id}, update, upsert=False)
+            break  # Success, exit loop
+
+        except Exception as e:
+            sentry_sdk.capture_exception(e)
+            print(f"Attempt {attempt + 1} failed: {e}")
+
+            if attempt < max_retries - 1:
+                print(f"Retrying in {delay_between_retries} seconds...")
+                time.sleep(delay_between_retries)
+            else:
+                print(f"Failed to update audit for document '{document_id}' in {question['db']}.")
+
+
+async def update_audit_question(question, message_content, display_name):
+    if question:
+        if question["trivia_db"] in {"math", "stats"}:
+            return
+
+        collection = db[question["trivia_db"]]  # Assumes db is an instance of AsyncIOMotorDatabase
+        document_id = question["trivia_id"]
+
+        audit_entry = {
+            "display_name": f"{display_name} (Discord)",
+            "message_content": message_content
+        }
+
+        for attempt in range(max_retries):
+            try:
+                update = {
+                    "$push": {"audit": audit_entry},
+                    "$setOnInsert": {"timestamp": time.time()}
+                }
+
+                await collection.update_one({"_id": document_id}, update, upsert=False)
+                break  # Success
+
+            except Exception as e:
+                sentry_sdk.capture_exception(e)
+                print(f"Attempt {attempt + 1} failed: {e}")
+
+                if attempt < max_retries - 1:
+                    print(f"Retrying in {delay_between_retries} seconds...")
+                    await asyncio.sleep(delay_between_retries)
+                else:
+                    print(f"Failed to update audit for document '{document_id}' in {question['trivia_db']}'.")
+
+
+async def load_previous_question():
+    global previous_question
+    
+    for attempt in range(max_retries):
+        try:
+            
+            # Retrieve the current longest answer streak from MongoDB
+            previous_question_retrieved = await db.previous_question_discord.find_one({"_id": "previous_question"})
+
+            if previous_question_retrieved is not None:
+                previous_question = {
+                    "trivia_category": previous_question_retrieved.get("trivia_category"),
+                    "trivia_question": previous_question_retrieved.get("trivia_question"),
+                    "trivia_url": previous_question_retrieved.get("trivia_url"),
+                    "trivia_answer_list": previous_question_retrieved.get("trivia_answer_list"),
+                    "trivia_db": previous_question_retrieved.get("trivia_db"),
+                    "trivia_id": previous_question_retrieved.get("trivia_id"),
+                }
+            else:
+                # If the document is not found, set default values
+                previous_question = {
+                    "trivia_category": None,
+                    "trivia_question": None,
+                    "trivia_url": None,
+                    "trivia_answer_list": None,
+                    "trivia_db": None,
+                    "trivia_id": None
+                }
+            break
+                
+        except Exception as e:
+            sentry_sdk.capture_exception(e)
+            print(f"Attempt {attempt + 1} failed: {e}")
+            if attempt < max_retries - 1:
+                print(f"Retrying in {delay_between_retries} seconds...")
+                await asyncio.sleep(delay_between_retries)
+            else:
+                print("Max retries reached. Data loading failed.")
+                # Set to default values if loading fails
+                previous_question = {
+                    "trivia_category": None,
+                    "trivia_question": None,
+                    "trivia_url": None,
+                    "trivia_answer_list": None,
+                    "trivia_db": None,
+                    "trivia_id": None
+                }
+
+
+async def ask_ranker_list_number(winner, winner_id):
+    def check(m):
+        return m.channel == channel and m.author != bot.user and m.author.id == winner_id and m.content.strip() in {"1", "2", "3", "4", "5"}
+
+    try:
+        message = await bot.wait_for("message", timeout=20, check=check)
+        await message.add_reaction("💪")  # Acknowledge with a muscle emoji
+        await channel.send(f"\u200b\n💪🛡️ I got you **{winner}**. **{message.content}** it is.\n\u200b")
+        return int(message.content)
+    except asyncio.TimeoutError:
+        selected_question = random.choice(["1", "2", "3", "4", "5"])
+        await channel.send(f"\u200b\n🐢⏳ Too slow. I choose {selected_question}.\n\u200b")
+        return int(selected_question)
+
+
+async def ask_ranker_list_question(winner, winner_id):
+    global wf_winner
+    wf_winner = True
+    gifs = [
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/ranker-list1.gif",
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/ranker-list2.gif",
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/ranker-list3.gif"
+    ]
+
+    gif_url = random.choice(gifs)
+    await channel.send(content="\u200b\n\u200b\n**🔢📜 Ranker Lists**\n\u200b", embed=discord.Embed().set_image(url=gif_url))
+    await asyncio.sleep(3)
+
+    try:
+        await asyncio.sleep(2)
+        recent_ids = await get_recent_question_ids_from_mongo("ranker_list")
+        collection = db["ranker_list_questions"]
+        pipeline = [
+            {"$match": {"_id": {"$nin": list(recent_ids)}}},
+            {"$sample": {"size": 10}},
+            {"$group": {"_id": "$question", "question_doc": {"$first": "$$ROOT"}}},
+            {"$replaceRoot": {"newRoot": "$question_doc"}},
+            {"$sample": {"size": 5}}
+        ]
+        questions = [doc async for doc in collection.aggregate(pipeline)]
+    except Exception as e:
+        sentry_sdk.capture_exception(e)
+        print(f"Error selecting Ranker list questions:\n{traceback.format_exc()}")
+        return
+
+    # Present list options to the user
+    options = "\n".join([f"{i+1}️⃣. {q['question']}" for i, q in enumerate(questions)])
+    await channel.send(f"\u200b\n📝🔢 **{winner}**, choose the list:\n\n{options}")
+    
+    selected = int(await ask_ranker_list_number(winner, winner_id)) - 1
+    list_q = questions[selected]
+
+    clue = list_q["question"]
+    answers = list_q["answers"]
+    category = list_q["category"]
+    url = list_q["url"]
+    qid = list_q["_id"]
+    if qid:
+        await store_question_ids_in_mongo([qid], "ranker_list")
+    print(list_q)
+
+    emojis = get_category_title(category, "")
+    num_answers = len(answers)
+
+    user_progress = {}
+    total_progress = set()
+
+    await channel.send(f"\u200b\n\u200b\n⚠️🚨 **Everyone's in...{emojis}**\n\u200b")
+    await asyncio.sleep(3)
+    await channel.send(f"\u200b\n📝1️⃣ List ONE per message of...")
+    await asyncio.sleep(3)
+    await channel.send(f"\u200b\n👉👉 **{clue}**\n\n🟢🚀 GO!\n\u200b")
+
+    def check(m):
+        return m.channel == channel and m.author != bot.user
+
+    start_time = asyncio.get_event_loop().time()
+
+    while asyncio.get_event_loop().time() - start_time < 30:
+        try:
+            message = await bot.wait_for("message", timeout=30, check=check)
+            content = message.content.strip()
+            user = message.author.display_name
+            user_id = message.author.id
+
+            if user_id not in user_progress:
+                user_progress[user_id] = (user, set())
+            display_name, answer_set = user_progress[user_id]
+
+            for answer in answers:
+                if answer in total_progress or answer in answer_set:
+                    continue
+                if fuzzy_match(content, answer, category, url):
+                    answer_set.add(answer)
+                    total_progress.add(answer)
+                    await message.add_reaction("✅")
+
+            if len(total_progress) >= num_answers:
+                break
+
+        except asyncio.TimeoutError:
+            break
+
+    # Final scoring
+    scores = sorted(user_progress.items(), key=lambda x: len(x[1][1]), reverse=True)
+
+    if not scores:
+        await channel.send("\u200b\n😬🤦 Wow. No one got a single one right. **Embarassing.**\n\u200b")
+    else:
+        msg = f"\u200b\n🏅💪 Okrans got **{len(total_progress)}/{num_answers}** right!\n"
+        msg += "\n**🏆 Commendable Okrans**\n"
+        for i, (uid, (user, s)) in enumerate(scores, start=1):
+            msg += f"{i}. **{user}**: {len(s)}\n"
+        await channel.send(msg)
+
+    if total_progress:
+        await asyncio.sleep(2)
+        result_lines = []
+        for ans in answers:
+            if ans in total_progress:
+                guesser = next((name for uid, (name, s) in user_progress.items() if ans in s), "❓")
+                result_lines.append(f"✅ {ans} — **{guesser}**")
+            else:
+                result_lines.append(f"❌ {ans}")
+        result_text = "\n".join(result_lines)
+        await channel.send(f"\u200b\n📋 **Answer Summary:**\n\n{result_text}\n\u200b")
+    
+    await asyncio.sleep(3)
+    
+    msg = f"\n🔗 [See the full list]({url})\n\u200b"
+    await channel.send(msg)
+    await asyncio.sleep(5)
+
+
+async def ask_list_question(winner):
+    global wf_winner
+    wf_winner = True
+    gifs = [
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/list1.gif",
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/list2.gif",
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/list3.gif"
+    ]
+
+    gif_url = random.choice(gifs)
+    await channel.send(content="\u200b\n\u200b\n**📝🥊 List Battle **\n\u200b", embed=discord.Embed().set_image(url=gif_url))
+    await asyncio.sleep(3)
+
+    try:
+        await asyncio.sleep(2)
+        recent_list_ids = await get_recent_question_ids_from_mongo("list")
+
+        list_collection = db["list_questions"]
+        pipeline_list = [
+            {"$match": {"_id": {"$nin": list(recent_list_ids)}}},
+            {"$group": {"_id": "$question", "question_doc": {"$first": "$$ROOT"}}},
+            {"$replaceRoot": {"newRoot": "$question_doc"}},
+            {"$sample": {"size": 1}}
+        ]
+
+        list_questions = [doc async for doc in list_collection.aggregate(pipeline_list)]
+        list_question = list_questions[0]
+    except Exception as e:
+        sentry_sdk.capture_exception(e)
+        print(f"Error selecting list questions:\n{traceback.format_exc()}")
+        return
+
+    print(list_question)
+
+    # Extract question details
+    clue = list_question["question"]
+    answers = list_question["answers"]
+    category = list_question["category"]
+    url = list_question.get("url", "")
+    qid = list_question["_id"]
+    if qid:
+        await store_question_ids_in_mongo([qid], "list")
+
+    emojis = get_category_title(category, "")
+    num_answers = len(answers)
+    user_progress = {}
+    total_progress = set()
+
+    await channel.send(f"\u200b\n\u200b\n⚠️🚨 **Everyone's in...{emojis}**\n\u200b")
+    await asyncio.sleep(3)
+    await channel.send(f"\u200b\n📝1️⃣ List ONE per message of...")
+    await asyncio.sleep(3)
+    await channel.send(f"\u200b\n\u200b\n👉👉 **{clue}**\n\n🟢🚀 GO!\n\u200b")
+
+    def check(m):
+        return m.channel == channel and m.author != bot.user
+
+    start_time = asyncio.get_event_loop().time()
+
+    while asyncio.get_event_loop().time() - start_time < 30:
+        remaining = 30 - (asyncio.get_event_loop().time() - start_time)
+        try:
+            message = await bot.wait_for("message", timeout=remaining, check=check)
+            content = message.content.strip()
+            user = message.author.display_name
+            user_id = message.author.id
+            
+            if user_id not in user_progress:
+                user_progress[user_id] = (user, set())
+            display_name, answer_set = user_progress[user_id]
+
+            for answer in answers:
+                if answer in answer_set:
+                    continue
+                if fuzzy_match(content, answer, category, url):
+                    answer_set.add(answer)
+                    total_progress.add(answer)
+
+                    #await message.add_reaction("✅")
+
+                    # Win conditions
+                    if len(answer_set) >= num_answers:
+                        scores = sorted(user_progress.items(), key=lambda x: len(x[1][1]), reverse=True)
+
+                        if len(scores) > 0:
+                            msg = f"\u200b\n🏆🎉 @{scores[0][1][0]} got all {num_answers}!"
+
+                        if len(scores) > 1:
+                            msg += f"\n2nd place: @{scores[1][1][0]} with {len(scores[1][1][1])}/{num_answers}"
+
+                        if len(scores) > 2:
+                            msg += f"\n3rd place: @{scores[2][1][0]} with {len(scores[2][1][1])}/{num_answers}\n\u200b\n\u200b"
+
+                        await channel.send(msg)
+
+        except asyncio.TimeoutError:
+            break
+
+    # Timeout fallback
+    scores = sorted(user_progress.items(), key=lambda x: len(x[1][1]), reverse=True)
+
+    if not scores:
+        await channel.send("\u200b\n\u200b\n😬🤦 Wow. No one got a single one right. **Embarassing**.\n\u200b")
+        return
+
+    msg = f"\u200b\n\u200b\n🥇🏆 1st place: **{scores[0][1][0]}** with {len(scores[0][1][1])}/{num_answers}!"
+    if len(scores) > 1:
+        msg += f"\n🥈🎊 2nd: **{scores[1][1][0]}** with {len(scores[1][1][1])}/{num_answers}"
+    if len(scores) > 2:
+        msg += f"\n🥉🎉 3rd: **{scores[2][1][0]}** with {len(scores[2][1][1])}/{num_answers}\n\u200b"
+    await channel.send(msg)
+
+    
+    # Show winner's results with ✅ or ❌
+    if winner:
+        await asyncio.sleep(2)
+        # Find the winner's answer set
+        winner_id = next((uid for uid, (name, _) in user_progress.items() if name == winner), None)
+        if winner_id is not None:
+            winner_answers = user_progress[winner_id][1]
+            result_lines = []
+            for ans in answers:
+                mark = "✅" if ans in winner_answers else "❌"
+                result_lines.append(f"{mark} {ans}")
+            result_text = "\n".join(result_lines)
+            await channel.send(f"\u200b\n📋 **{winner}'s Answers:**\n\n{result_text}\n\u200b")
+
+    await asyncio.sleep(5)
+
+
+async def ask_survey_question():
+    collection = db["survey_questions_discord"]
+
+    # Fetch a random question
+    question_list = await collection.aggregate([
+        {"$match": {"enabled": True}},
+        {"$sample": {"size": 1}}
+    ]).to_list(length=1)
+
+    if not question_list:
+        await channel.send("📭 No survey questions available.")
+        return
+
+    survey_question = question_list[0]
+    question_text = survey_question.get("question", "No question.")
+    question_type = survey_question.get("question_type", "yes-no")
+    valid_answers = survey_question.get("valid_answers", [])
+    responses = survey_question.get("responses", {})
+    collected = {}
+    current_time = datetime.datetime.now(datetime.timezone.utc).isoformat()
+
+    type_info = {
+        "yes-no": {"emojis": "👍👎", "prompt": "Answer YES or NO"},
+        "multiple-choice": {"emojis": "🄠📝", "prompt": "Choose a letter"},
+        "rating-10": {"emojis": "⭐️🔟", "prompt": "Rate 1 👎 to 10 👍"},
+        "word-3": {"emojis": "3️⃣🔤", "prompt": "3 word limit"}
+    }
+
+    emojis = type_info.get(question_type, {}).get("emojis", "🤔")
+    prompt_text = type_info.get(question_type, {}).get("prompt", "What do you think?")
+
+    await channel.send("\u200b\n\u200b\n📋✅ Survey Time!\n\n1️⃣☝️ Only 1 answer stored per user.\n\u200b\n\u200b")
+    await asyncio.sleep(2)
+    await channel.send(f"\n{emojis} {prompt_text}\n\n❓ {question_text}\n\u200b\n\u200b")
+
+    def check(m):
+        return m.channel == channel and m.author != bot.user
+
+    end_time = asyncio.get_event_loop().time() + 15
+    while True:
+        timeout = end_time - asyncio.get_event_loop().time()
+        if timeout <= 0:
+            break
+
+        try:
+            msg = await asyncio.wait_for(bot.wait_for('message', check=check), timeout=timeout)
+            username = msg.author.display_name
+            content = msg.content.strip()
+
+            if question_type == "yes-no":
+                if content.lower().startswith("y") or content == "👍":
+                    collected[username] = {"answer": "Yes", "timestamp": current_time}
+                elif content.lower().startswith("n") or content == "👎":
+                    collected[username] = {"answer": "No", "timestamp": current_time}
+
+            elif question_type == "multiple-choice":
+                match = next((a for a in valid_answers if a.lower() in content.lower()), None)
+                if match:
+                    collected[username] = {"answer": match, "timestamp": current_time}
+
+            elif question_type == "rating-10":
+                match = re.search(r'\b\d+(\.\d+)?\b', content)
+                if match:
+                    val = float(match.group())
+                    if 1 <= val <= 10:
+                        collected[username] = {"answer": round(val, 1), "timestamp": current_time}
+
+            elif question_type == "word-3":
+                words = content.split()
+                if words:
+                    collected.setdefault(username, {"answer": [], "timestamp": current_time})
+                    collected[username]["answer"].extend(words)
+                    collected[username]["answer"] = collected[username]["answer"][-3:]
+                    collected[username]["timestamp"] = current_time
+
+        except asyncio.TimeoutError:
+            break
+
+    # Save results to MongoDB
+    responses.update(collected)
+    await collection.update_one(
+        {"_id": survey_question["_id"]},
+        {"$set": {"responses": responses}}
+    )
+
+    total = len(responses)
+    if total == 0:
+        return
+
+    # Summary
+    if question_type == "yes-no":
+        yes = sum(1 for r in responses.values() if r["answer"].lower() == "yes")
+        pct = (yes / total) * 100
+        msg = f"\u200b\n🏄‍♂️🌟 {int(pct)}% said OkraYeah!" if pct >= 50 else f"🥀👧 {100 - int(pct)}% said NOkra."
+        await channel.send(msg)
+
+    elif question_type == "rating-10":
+        avg = sum(r["answer"] for r in responses.values()) / total
+        await channel.send(f"\u200b\n⭐️🔟 Average rating is {avg:.1f}/10.")
+
+    elif question_type == "word-3":
+        all_words = []
+        for r in responses.values():
+            if isinstance(r["answer"], list):
+                all_words.extend(r["answer"])
+
+        norm = [w.strip(string.punctuation).lower() for w in all_words]
+        common = Counter(norm).most_common(3)
+        if common:
+            words = ', '.join(f'"{w.capitalize()}"' for w, _ in common)
+            await channel.send(f"\u200b\n📚🔤 Okrans say Live Trivia is: {words}.")
+
+        # Optional: generate image
+        try:
+            content = " ".join(norm)
+            gpt_response = await client.chat.completions.create(
+                model="gpt-4o",
+                messages=[
+                    {"role": "system", "content": "Remove unsafe or inappropriate words for DALL·E input."},
+                    {"role": "user", "content": f"Clean this for DALL·E: {content}"}
+                ],
+                max_tokens=100
+            )
+            safe_words = gpt_response.choices[0].message.content.strip()
+            img_prompt = f"Create a hyperrealistic futuristic okra themed environment described as: {safe_words}."
+
+            image = await client.images.generate(
+                model="dall-e-3",
+                prompt=img_prompt,
+                size="1024x1024",
+                n=1
+            )
+            image_url = image.data[0].url
+            await channel.send("🥒🌀 Behold, your Okraverse:")
+            await channel.send(image_url)
+
+        except Exception as e:
+            print("Error generating image:", e)
+
+    
+async def generate_themed_country_image(country, city):
+    prompt = (
+        f"Show a stereotypical person with a face from {country} holding an okra in a stereotypical setting in {country}."
+    )
+
+    try:
+        response = await openai_client.images.generate(
+            model="dall-e-2",
+            prompt=prompt,
+            n=1,
+            size="512x512"
+        )
+        image_url = response.data[0].url
+        return image_url
+
+    except openai.OpenAIError as e:
+        print(f"Error generating image: {e}")
+        
+        if "Your request was rejected as a result of our safety system" in str(e):
+            default_prompt = f"Generate an image of an okra in {country}."
+            try:
+                response = await openai_client.images.generate(
+                    model="dall-e-2",
+                    prompt=default_prompt,
+                    n=1,
+                    size="512x512"
+                )
+                image_url = response.data[0].url
+                return image_url
+            except openai.OpenAIError as e2:
+                print(f"Error generating default image: {e2}")
+                return "Image generation failed!"
+
+        return "Image generation failed!"
+
+
+async def get_google_maps(lat, lon):
+    base_street_view_url = "https://maps.googleapis.com/maps/api/streetview"
+    base_static_map_url = "https://maps.googleapis.com/maps/api/staticmap"
+    base_metadata_url = "https://maps.googleapis.com/maps/api/streetview/metadata"
+    base_maps_url = "https://www.google.com/maps"
+
+    metadata_params = {
+        "location": f"{lat},{lon}",
+        "key": googlemaps_api_key
+    }
+
+    async with aiohttp.ClientSession() as session:
+        async with session.get(base_metadata_url, params=metadata_params) as resp:
+            if resp.status != 200:
+                street_view_url = None
+            else:
+                metadata = await resp.json()
+                if metadata.get("status") == "OK":
+                    street_view_params = {
+                        "size": "600x400",
+                        "location": f"{lat},{lon}",
+                        "fov": 90,
+                        "heading": 0,
+                        "pitch": 0,
+                        "key": googlemaps_api_key
+                    }
+                    street_view_url = f"{base_street_view_url}?{urlencode(street_view_params)}"
+                else:
+                    street_view_url = None
+
+    static_map_params = {
+        "center": f"{lat},{lon}",
+        "zoom": 7,
+        "size": "600x400",
+        "maptype": "satellite",
+        "key": googlemaps_api_key
+    }
+    satellite_view_url = f"{base_static_map_url}?{urlencode(static_map_params)}"
+    satellite_live_url = f"{base_maps_url}/?q={lat},{lon}&t=k"
+
+    return street_view_url, satellite_view_url, satellite_live_url
+
+
+async def get_random_city(winner):
+    collection = db["where_is_okra"]
+    total = await collection.count_documents({})
+    if total == 0:
+        print("No cities found in 'where_is_okra' collection.")
+        return None
+
+    skip = random.randint(0, total - 1)
+    result = await collection.find().skip(skip).to_list(length=1)
+    if not result:
+        print("Failed to fetch a random city.")
+        return None
+
+    city = result[0]
+    city_name = city.get("city")
+    country_name = city.get("country")
+    lat = city.get("lat")
+    lon = city.get("lon")
+
+    miles_per_lat = 1 / 69
+    miles_per_lon = 1 / (69 * math.cos(math.radians(lat)))
+    lat += random.uniform(-0.5, 0.5) * miles_per_lat
+    lon += random.uniform(-0.5, 0.5) * miles_per_lon
+
+    street_url, sat_url, live_url = await get_google_maps(lat, lon)
+
+    async with aiohttp.ClientSession() as session:
+        async with session.get("https://api.openweathermap.org/data/2.5/weather", params={
+            "lat": lat, "lon": lon,
+            "appid": openweather_api_key,
+            "units": "metric"
+        }) as resp:
+            if resp.status != 200:
+                return {"error": f"Failed weather API: {resp.status}"}
+            weather_data = await resp.json()
+
+    temp_c = round(weather_data["main"]["temp"])
+    temp_f = round(temp_c * 9 / 5 + 32)
+    conditions = ". ".join([w["description"].capitalize() for w in weather_data["weather"]]) + "."
+    offset = weather_data["timezone"]
+    local_time = datetime.datetime.utcnow() + datetime.timedelta(seconds=offset)
+    time_str = local_time.strftime("%B %-d, %Y %-I:%M%p").lower()
+
+    summary = (
+        f"Fahrenheit Temperature: {temp_f}°F\n"
+        f"Celsius Temperature: {temp_c}°C\n"
+        f"Weather Conditions: {conditions}\n"
+        f"Local Date and Time: {time_str}\n"
+    )
+
+    try:
+        result = await openai_client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {
+                    "role": "system",
+                    "content": f"You are OkraStrut fleeing from @{winner} like Carmen Sandiego. Use these facts:"
+                },
+                {"role": "user", "content": summary}
+            ],
+            max_tokens=500,
+            temperature=0.3
+        )
+        clue = result.choices[0].message.content.strip()
+    except Exception as e:
+        print("GPT failed:", e)
+        clue = "I'm somewhere mysterious. Figure it out from that."
+
+    themed_url = await generate_themed_country_image(country_name, city_name)
+    return city_name, country_name, "World Cities", clue, street_url, sat_url, live_url, themed_url
+
+
+async def categorize_text(input_text, title):
+    try:
+        response = await openai_client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {
+                    "role": "system",
+                    "content": "You are a categorization assistant. Your job is to analyze text and return a 1-2 word category that best describes the content. Do not include words from the title in the category."
+                },
+                {
+                    "role": "user",
+                    "content": f"Title: {title}\n\nPlease categorize the following text into a 1-2 word category:\n\n{input_text}"
+                }
+            ],
+            max_tokens=10, 
+            temperature=0.3  
+        )
+        
+        category = response.choices[0].message.content.strip()
+
+        title_words = set(re.sub(r"[^\w\s]", "", title).lower().split())  
+        category_words = set(re.sub(r"[^\w\s]", "", category).lower().split())  
+
+        if category_words & title_words: 
+            return "Hint Fail"  
+        return category
+
+    except Exception as e:
+        print(f"Error calling OpenAI API: {e}")
+        return "Unknown"
+
+
+async def get_wikipedia_article(max_words=3, max_length=16):
+    base_url = "https://en.wikipedia.org/w/api.php"
+    headers = {
+        "User-Agent": "Live Trivia & Games/2.4 ([user_agent_email])"
+    }
+
+    async with aiohttp.ClientSession(headers=headers) as session:
+        while True:
+            async with session.get(base_url, params={
+                "action": "query",
+                "format": "json",
+                "generator": "random",
+                "grnnamespace": 0,
+                "grnlimit": 1
+            }) as response:
+
+                if response.status != 200:
+                    print("Error fetching from Wikipedia API")
+                    return None, None, None, None
+
+                data = await response.json()
+                pages = data.get("query", {}).get("pages", {})
+
+                for page_id, page_info in pages.items():
+                    title = page_info.get("title", "")
+                    if not title.replace(" ", "").isalpha():
+                        continue
+
+                    norm_title = remove_diacritics(title)
+
+                    word_count = len(title.split())
+                    total_length = len(title)
+                    if word_count <= max_words and max_length >= total_length >= 4:
+                        words = title.split()
+                        if len(words) > 1 and any(word[0].isupper() for word in words[1:]):
+                            continue
+
+                        pageid = page_info.get("pageid")
+                        intro_text = await fetch_wikipedia_intro(pageid, session)
+
+                        if not intro_text or len(intro_text) < 500:
+                            continue
+
+                        redacted_text = redact_intro_text(title, intro_text)
+                        category = await categorize_text(intro_text, title)
+                        wiki_url = f"https://en.wikipedia.org/wiki/{quote(title)}"
+
+                        await asyncio.sleep(0.5)
+                        return norm_title, redacted_text, category, wiki_url
+
+
+async def fetch_wikipedia_intro(pageid, session):
+    base_url = "https://en.wikipedia.org/w/api.php"
+    params = {
+        "action": "query",
+        "format": "json",
+        "prop": "extracts",
+        "exintro": "1",
+        "explaintext": "1",
+        "pageids": str(pageid)
+    }
+
+    async with session.get(base_url, params=params) as response:
+        if response.status != 200:
+            print("Error fetching Wikipedia introduction")
+            return None
+
+        data = await response.json()
+        pages = data.get("query", {}).get("pages", {})
+        return pages.get(str(pageid), {}).get("extract", "")
+
+
+def redact_intro_text(title, intro_text):
+    if not title or not intro_text:
+        return intro_text
+    
+    # Split the title into words and build a regex pattern
+    words_to_redact = [re.escape(word) for word in title.split()]
+    pattern = re.compile(r'\b(' + '|'.join(words_to_redact) + r')\b', re.IGNORECASE)
+    
+    # Replace matching words with "REDACTED"
+    redacted_text = pattern.sub("OKRA", intro_text)
+    return redacted_text
+
+
+async def describe_image_with_vision(image_url, mode, prompt):
+    try:
+
+        if mode == "okra-title":
+            payload = {
+                "model": "gpt-4o-mini",
+                "messages": [
+                    {
+                        "role": "system",
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": "You are a cool image analyst. Your goal is to create image titles of portaits that roasts people."
+                            }
+                        ]
+                    },
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": "Based on what you see in the image, give the image a name with 5 words maximum and ensure the name is okra themed. Your goal is to humiliate the person the portrait is of."
+                            },
+                            {
+                                "type": "image_url",
+                                "image_url": {
+                                    "url": image_url
+                                }
+                            }
+                        ]
+                    }
+                ],
+                "max_tokens": 500
+            }
+         
+        elif mode == "roast-title":
+            payload = {
+                "model": "gpt-4o-mini",
+                "messages": [
+                    {
+                        "role": "system",
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": "You are a cool image analyst. Your goal is to create image titles of portaits that roasts people."
+                            }
+                        ]
+                    },
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": "Based on what you see in the image, give the image a name with 5 words maximum. Your goal is to humiliate the person the portrait is of."
+                            },
+                            {
+                                "type": "image_url",
+                                "image_url": {
+                                    "url": image_url
+                                }
+                            }
+                        ]
+                    }
+                ],
+                "max_tokens": 500
+            }
+
+
+        elif mode == "title":
+            payload = {
+                "model": "gpt-4o-mini",
+                "messages": [
+                    {
+                        "role": "system",
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": "You are a cool image analyst. Your goal is to create image titles."
+                            }
+                        ]
+                    },
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": f"Based on what you see in the image, give the image a name with 5 words maximum. The prompt used to create this image was '{prompt}'."
+                                #"text": f"Based on what you see in the image, give the image an okra themed title with 5 words maximum."
+                            },
+                            {
+                                "type": "image_url",
+                                "image_url": {
+                                    "url": image_url
+                                }
+                            }
+                        ]
+                    }
+                ],
+                "max_tokens": 500
+            }
+             
+        else:
+            payload = {
+            "model": "gpt-4o-mini",
+            "messages": [
+                {
+                    "role": "system",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": "You are an image analyst. Your goal is to accurately describe the image to provide to someone as accurately as possible."
+                        }
+                    ]
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": "Describe what you see in this image as accurately as you can."
+                        },
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": image_url
+                            }
+                        }
+                    ]
+                }
+            ],
+            "max_tokens": 500
+        }
+
+        response = await openai_client.chat.completions.create(**payload)
+        description = response.choices[0].message.content
+        return description
+
+    except Exception as e:
+        print(f"Error describing the image: {e}")
+        return None
+
+
+async def sovereign_check(user):
+    sovereign = await db.hall_of_sovereigns_discord.find_one({"user": user})
+    return sovereign is not None
+
+
+async def get_image_url_from_s3():
+    bucket_name = "triviabotwebsite"
+    prefix = "generated-images/"
+    
+    session = aioboto3.Session()
+    async with session.client("s3") as s3:
+        response = await s3.list_objects_v2(Bucket=bucket_name, Prefix=prefix)
+    
+    # Extract file keys
+    files = [item['Key'] for item in response.get('Contents', []) if item['Key'].lower().endswith(('.png', '.jpg', '.jpeg', '.gif'))]
+    random_file = random.choice(files)
+    encoded_filename = quote(random_file)
+    #public_url = f"https://triviabotwebsite.s3.amazonaws.com/generated-images/{encoded_filename}"
+    public_url = f"https://{bucket_name}.s3.amazonaws.com/{encoded_filename}"
+    
+    # Step 1: Remove the prefix and file extension
+    filename = os.path.basename(random_file).replace('.png', '')
+
+    # Step 2: Extract with regex
+    pattern = r'^(.+?)\s*&\s*(.+?)\s+\((.+?)\)$'
+    match = re.match(pattern, filename)
+
+    if match:
+        title = match.group(1)
+        user = match.group(2)
+        full_date = match.group(3)
+        
+        # Remove the time from the date string
+        date_only = ' '.join(full_date.split()[:-1])
+        message = "\u200b\n🖼️✨ A memory from the **Okra Museum**"
+        message += "\n🥒🏛️ https://livetriviastats.com/okra-museum\n\u200b"
+        await channel.send(content=message, embed=discord.Embed().set_image(url=public_url))
+
+        message = f"\u200b\n**Masterpiece:** '{title}'\n"
+        message += f"**Okra's Muse:** {user}\n"
+        message += f"**Creation Date:** {date_only}\n\u200b"
+
+        await channel.send(message)
+
+
+async def upload_image_to_s3(buffer, winner, description):
+    try:
+        bucket_name = 'triviabotwebsite'
+        folder_name = 'generated-images'
+
+        pst = pytz.timezone('America/Los_Angeles')
+        now = datetime.datetime.now(pst)
+        formatted_time = now.strftime('%B %d, %Y %H%M')
+        object_name = f"{folder_name}/{description} & {winner} ({formatted_time}).png"
+
+        # Async S3 client
+        
+        session = aioboto3.Session()
+        async with session.client("s3") as s3_client:
+            await s3_client.put_object(
+                Bucket=bucket_name,
+                Key=object_name,
+                Body=buffer.getvalue(),
+                ContentType="image/png"
+            )
+
+        return None
+
+    except (BotoCoreError, ClientError) as boto_err:
+        print(f"Error uploading to S3: {boto_err}")
+        return None
+
+
+async def upload_okraverse_to_s3(buffer):
+    try:
+        bucket_name = 'triviabotwebsite'
+        folder_name = 'okraverse'
+        object_name = f"{folder_name}/okraverse.png"
+
+        # Use async context manager
+        session = aioboto3.Session()
+        async with session.client("s3") as s3_client:
+            await s3_client.put_object(
+                Bucket=bucket_name,
+                Key=object_name,
+                Body=buffer.getvalue(),
+                ContentType="image/png"
+            )
+
+        return None
+
+    except (BotoCoreError, ClientError) as boto_err:
+        print(f"Error uploading to S3: {boto_err}")
+        return None
+
+
+async def load_parameters():
+    global image_wins, image_points
+    global num_list_players
+    global num_mysterybox_clues_default
+    global num_crossword_clues_default
+    global num_jeopardy_clues_default
+    global num_wof_clues_default
+    global num_wof_clues_final_default
+    global num_mysterybox_clues
+    global num_crossword_clues
+    global num_jeopardy_clues
+    global num_wof_clues
+    global num_wof_clues_final
+    global num_wf_letters
+    global num_math_questions_default
+    global num_math_questions
+    global num_stats_questions_default
+    global num_stats_questions
+    global skip_summary
+    global discount_step_amount
+    global discount_streak_amount
+    global channel_id
+
+    # Default values
+    default_values = {
+        "image_wins": 5,
+        "image_points": 5000,
+        "num_list_players": 5,
+        "num_mysterybox_clues_default": 3,
+        "num_crossword_clues_default": 0,
+        "num_jeopardy_clues_default": 3,
+        "num_wof_clues_default": 0,
+        "num_wof_clues_final_default": 3,
+        "num_wf_letters": 3,
+        "num_math_questions_default": 1,
+        "num_stats_questions_default": 0,
+        "skip_summary": False,
+        "discount_step_amount": 20,
+        "discount_streak_amount": 5
+    }
+    
+    for attempt in range(max_retries):
+        try:
+
+            cursor = db.parameters_discord.find()
+            documents = await cursor.to_list(length=None)
+
+            # Initialize variables with defaults
+            parameters = {key: default_values[key] for key in default_values}
+
+            # Overwrite defaults with values from the database
+            for doc in documents:
+                if doc["_id"] in parameters:
+                    parameters[doc["_id"]] = int(doc.get("value", parameters[doc["_id"]]))
+
+            # Assign global variables
+            image_wins = parameters["image_wins"]
+            image_points = parameters["image_points"]
+            num_list_players = parameters["num_list_players"]
+            num_mysterybox_clues_default = parameters["num_mysterybox_clues_default"]
+            num_crossword_clues_default = parameters["num_crossword_clues_default"]
+            num_jeopardy_clues_default = parameters["num_jeopardy_clues_default"]
+            num_wof_clues_default = parameters["num_wof_clues_default"]
+            num_wof_clues_final_default = parameters["num_wof_clues_final_default"]
+            num_wf_letters = parameters["num_wf_letters"]
+            num_math_questions_default = parameters["num_math_questions_default"]
+            num_stats_questions_default = parameters["num_stats_questions_default"]
+            skip_summary = parameters["skip_summary"]
+            discount_step_amount = parameters["discount_step_amount"]
+            discount_streak_amount = parameters["discount_streak_amount"]
+            
+            num_mysterybox_clues = num_mysterybox_clues_default
+            num_crossword_clues = num_crossword_clues_default
+            num_jeopardy_clues = num_jeopardy_clues_default
+            num_wof_clues = num_wof_clues_default
+            num_wof_clues_final = num_wof_clues_final_default
+            num_math_questions = num_math_questions_default
+            num_stats_questions = num_stats_questions_default
+            
+            # Exit loop if successful
+            break
+
+        except Exception as e:
+            sentry_sdk.capture_exception(e)
+            print(f"Attempt {attempt + 1} failed: {e}")
+            if attempt < max_retries - 1:
+                print(f"Retrying in {delay_between_retries} seconds...")
+                await asyncio.sleep(delay_between_retries)
+            else:
+                print("Max retries reached. Data loading failed.")
+                image_wins = default_values["image_wins"]
+                image_points = default_values["image_points"]
+                num_list_players = default_values["num_list_players"]
+                num_mysterybox_clues_default = default_values["num_mysterybox_clues_default"]
+                num_crossword_clues_default = default_values["num_crossword_clues_default"]
+                num_jeopardy_clues_default = default_values["num_jeopardy_clues_default"]
+                num_wof_clues_default = default_values["num_wof_clues_default"]
+                num_wof_clues_final_default = default_values["num_wof_clues_final_default"]
+                num_wf_letters = default_values["num_wf_letters"]
+                num_math_questions_default = default_values["num_math_questions_default"]
+                num_stats_questions_default = default_values["num_stats_questions_default"]
+                skip_summary = default_values["skip_summary"]
+                discount_step_amount = default_values["discount_step_amount"]
+                discount_streak_amount = default_values["discount_streak_amount"]
+
+                num_mysterybox_clues = num_mysterybox_clues_default
+                num_crossword_clues = num_crossword_clues_default
+                num_jeopardy_clues = num_jeopardy_clues_default
+                num_wof_clues = num_wof_clues_default
+                num_wof_clues_final = num_wof_clues_final_default
+                num_math_questions = num_math_questions_default
+                num_stats_questions = num_stats_questions_default
+
+
+async def nice_creep_okra_option(winner, winner_id):
+    global nice_okra, creep_okra, wf_winner, seductive_okra, joke_okra
+    nice_okra = False
+    creep_okra = False
+    wf_winner = False
+    seductive_okra = False
+    joke_okra = False
+    
+    message = f"\u200b\n🥒🤝 Thank you **{winner}** for your support.\n\u200b\n\u200b" 
+    message += f"🥒😊 Say 'okra' and I'll be nice.\n"
+    message += f"💋👠 Say 'love me' and I'll seduce you.\n"
+    message += f"🤡🤣 Say 'joke' and I'll write you a dad joke.\n"
+    message += f"🔥🍗 Say nothing and I'll roast you.\n\u200b\n\u200b"
+    await channel.send(message)
+
+    def check(m):
+        return (
+            m.channel == channel and m.author.id == winner_id
+        )
+    
+    try:
+        response = await asyncio.wait_for(
+            bot.wait_for('message', check=check),
+            timeout=magic_time  # time in seconds
+        )
+
+        content = response.content.lower().strip()
+
+        if "okra" in content:
+            await response.add_reaction("🥒")
+            nice_okra = True
+            wf_winner = True
+        elif "love me" in content:
+            await response.add_reaction("💋")
+            seductive_okra = True 
+        elif "joke" in content:
+            await response.add_reaction("🤣")
+            joke_okra = True
+        elif "nothing" in content:
+            await response.add_reaction("🕳️")
+
+    except asyncio.TimeoutError:
+        pass
+
+    except Exception as e:
+        print(f"Unexpected error during okra option handling: {e}")
+        sentry_sdk.capture_exception(e)
+    
+    
+async def generate_round_summary_image(round_data, winner, winner_id):
+    if skip_summary == True:
+        message += "\nBe sure to drink your Okratine.\n"
+        await channel.send(message)
+        return None
+        
+    winner_coffees = await get_coffees(winner_id)
+    
+    if winner == "OkraStrut":
+        prompt = (
+            "The setting is a fiery Hell, where a giant and angry piece of okra holds a massive golden trophy while looking down on and smiting all other players. "
+            "The atmosphere is angry, scary, and full of malice."
+        )
+        message = "🥒OKRA!! 🥒OKRA!! 🥒OKRA!!\n"
+        
+    elif winner_coffees > 100:
+        prompt = (
+            f"Draw What you think {winner} looks like surrounded by okra and money. "
+            "Add glowing lights, hearts, and a festive atmosphere."
+        )
+        message = f"✊🔥 {winner}, thank you for your donation to the cause. And nice streak!\n"
+    
+    else:
+        categories = {
+            "0": "😠🥒 Okrap (Horror)",
+            "1": "🌹🏰 Okrenaissance",
+            "2": "😇✨ Okroly and Divine",
+            "3": "🎲🔀 (OK)Random",
+            "4": f"🖼️🔤 Provide the Prompt 🥒"
+        }
+
+        # Ask the user to choose a category
+        selected_category, additional_prompt = await ask_category(winner, categories, winner_coffees, winner_id)
+                    
+        prompts_by_category = {
+            "0": [
+                f"A scary scene from a horror movie with what you think {winner} looks running from an okra."
+            ],
+            "1": [
+                f"A Renaissance painting of what you think {winner} looks like holding an okra. Make the painting elegant and refined."
+            ],
+            "2": [
+                f"An image of what you think {winner} looks like worshipping an okra. Make it appealing and accepting of religions of all types."
+            ],
+            "3": [
+                f"An image of what you think {winner} looks like intereracting with an okra in the most crazy, ridiculous, and over the top random way."
+            ],
+            "4": [
+                f"Draw an okra themed picture of {winner} {additional_prompt}.\n"  
+            ]
+        }
+
+        # Select a prompt based on the chosen category
+        if selected_category and selected_category in prompts_by_category:
+            prompt = random.choice(prompts_by_category[selected_category])
+        else:
+            prompt = f"A horror image of what you think {winner} looks like being pursued by something okra themed."
+
+            
+    print(prompt)
+    
+    # Generate the image using DALL-E
+    
+    try:
+        response = await openai_client.images.generate(
+            model="dall-e-2",
+            prompt=prompt,
+            n=1,
+            size="512x512",
+        )
+        image_url = response.data[0].url
+        
+        if selected_category == "4":
+            image_description = await describe_image_with_vision(image_url, "title", prompt)
+        else:
+            image_description = await describe_image_with_vision(image_url, "title", prompt)
+            
+        message = f"🔥💖 {winner}, you've done well. I drew this for you.\n"
+        await channel.send(content=message, embed=discord.Embed().set_image(url=image_url))
+        
+        message = f"\nI call it: '{image_description}'\n"
+        message += f"\n🏛️👋 Welcome to the Okra Museum"
+        message += "\n🌐➡️ https://livetriviastats.com/okra-museum\n"
+        await channel.send(message)
+
+        async with aiohttp.ClientSession() as session:
+            async with session.get(image_url) as resp:
+                if resp.status != 200:
+                    print(f"Failed to download image: {resp.status}")
+                    return None
+                image_data = await resp.read()
+
+        loop = asyncio.get_running_loop()
+
+        def process_image():
+            img = Image.open(io.BytesIO(image_data)).resize((256, 256))
+            buffer = io.BytesIO()
+            img.save(buffer, format="PNG")
+            buffer.seek(0)
+            return buffer
+
+        buffer = await loop.run_in_executor(None, process_image)
+        await upload_image_to_s3(buffer, winner, image_description)
+        return None
+        
+    except openai.OpenAIError as e:
+        print(f"Error generating image: {e}")
+        # Check if the error is due to the safety system
+        if "Your request was rejected as a result of our safety system" in str(e):
+            # Use a default safe prompt
+            default_prompt = f"A Renaissance painting of what you think {winner} looks like holding an okra. Make the painting elegant and refined."
+            try:
+                loop = asyncio.get_running_loop()
+                response = await loop.run_in_executor(
+                    None,
+                    lambda: openai.Image.create(
+                        prompt=default_prompt,
+                        n=1,
+                        size="512x512"  # Adjust size as needed
+                    )
+                )
+                
+                # Return the image URL from the API response
+                image_url = response["data"][0]["url"]
+                image_description = await describe_image_with_vision(image_url, "title", prompt)
+                
+    
+                message = f"😈😉 {winner} Naughty naughty, I'll have to pick another.\n\n"
+                await channel.send(content=message, embed=discord.Embed().set_image(url=image_url))
+                message = f"\nI call it: '{image_description}'\n"
+                message += f"\n🏛️👋 Welcome to the Okra Museum"
+                message += "\n🌐➡️ https://livetriviastats.com/okra-museum\n"
+                await channel.send(message)
+        
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(image_url) as resp:
+                        if resp.status != 200:
+                            print(f"Failed to download image: {resp.status}")
+                            return None
+                        image_data = await resp.read()
+
+                loop = asyncio.get_running_loop()
+
+                buffer = await loop.run_in_executor(None, lambda: (
+                    lambda buf: (buf.seek(0), buf)[1]
+                )(  # open, resize, save to buffer
+                    (lambda img: (
+                        img.save(io := io.BytesIO(), format="PNG"),
+                        io
+                    ))(Image.open(io.BytesIO(image_data)).resize((256, 256)))
+                ))
+
+                await upload_image_to_s3(buffer, winner, image_description)
+                return None
+            
+            except openai.OpenAIError as e2:
+                print(f"Error generating default image: {e2}")
+                return "Image generation failed!"
+        else:
+            return "Image generation failed!"
+
+
+async def ask_category(winner, categories, winner_coffees, winner_id):
+    additional_prompt = ""
+
+    # Display categories
+    category_message = f"\u200b\n🎨🖍️ <@{winner_id}> Pick a theme for the Okra Museum! Some for **Okrans Only** 🥒.\n\n"
+    for key, value in categories.items():
+        category_message += f"{key}: {value}\n"
+    await channel.send(category_message)
+
+    def check(m):
+        return m.channel == channel and m.author != bot.user and m.author.id == winner_id
+
+    end_time = asyncio.get_event_loop().time() + magic_time
+
+    while True:
+        remaining_time = end_time - asyncio.get_event_loop().time()
+        if remaining_time <= 0:
+            await channel.send("\u200b\n🐢⏳ Too slow. Okra time.\n\u200b")
+            return None, additional_prompt
+
+        try:
+            response = await asyncio.wait_for(bot.wait_for('message', check=check), timeout=remaining_time)
+            message_content = response.content.strip()
+
+            # Case 1: Invalid choice (not in categories)
+            if message_content not in categories:
+                await response.add_reaction("❌")
+                continue
+
+            # Case 2: Coffee-locked option, no coffee
+            if message_content == '4' and winner_coffees <= 0:
+                await response.add_reaction("🥒")
+                await channel.send(f"🙏😔 Sorry **{winner}**, choice **{message_content}** is for **Okrans Only** 🥒.")
+                continue
+
+            # Case 3: Valid choice
+            await response.add_reaction("✅")
+            await channel.send(f"💪🛡️ I got you {winner}! Choice {message_content} it is.")
+
+            if message_content == '4' and winner_coffees > 0:
+                additional_prompt = await request_prompt(winner, winner_id)
+
+            return message_content, additional_prompt
+
+        except asyncio.TimeoutError:
+            await channel.send("\u200b\n🐢⏳ Too slow. Okra time.\n\u200b")
+            return None, additional_prompt
+
+
+async def request_prompt(winner, done_events, winner_id):
+    global magic_time
+
+    collected_words = []
+    start_time = asyncio.get_event_loop().time()
+   
+    message = f"\u200b\n🖼️🔟 <@{winner_id}>, Fill in the blank. 10 words max and be good.\n\u200b"
+    message += f"\n'Draw an okra themed picture of @{winner} _____________.'\n\u200b"
+    await channel.send(message)
+
+    def check(m):
+        return m.channel == channel and m.author != bot.user and m.author.id == winner_id
+
+    try:
+        while len(collected_words) < 10 and asyncio.get_event_loop().time() - start_time < (magic_time + 5):
+            try:
+                response = await asyncio.wait_for(bot.wait_for('message', check=check), timeout=magic_time)
+                words = response.content.strip().split()
+
+                for word in words:
+                    if len(collected_words) < 10:
+                        collected_words.append(word)
+                    else:
+                        break
+
+                await response.add_reaction("✅")
+
+            except asyncio.TimeoutError:
+                break  # no more responses in time
+
+    except Exception as e:
+        print(f"Error collecting words: {e}")
+        sentry_sdk.capture_exception(e)
+
+    if not collected_words:
+        await channel.send("Nothing. Okra time.")
+    else:
+        final_msg = f"\u200b\n💥🤯 Ok...ra I got: 'Draw an okra-themed picture of {winner} {' '.join(collected_words)}'\n\u200b"
+        await channel.send(final_msg)
+
+    return ' '.join(collected_words)
+
+
+async def get_coffees(user_id):
+    guild = bot.get_guild(OKRAN_GUILD_ID)
+    if not guild:
+        print(f"⚠️ Bot is not in guild with ID {OKRAN_GUILD_ID}")
+        return 0
+    try:
+        member = await guild.fetch_member(user_id)
+        if any(role.name == "Okran" for role in member.roles):
+            print(f"✅ User {member.display_name} is an Okran!")
+            return 5
+        else:
+            print(f"❌ User {member.display_name} is NOT an Okran.")
+            return 0
+    except discord.NotFound:
+        print(f"❌ User ID {user_id} not found in guild")
+        return 0
+    except discord.HTTPException as e:
+        print(f"❌ Error fetching member in guild {guild.name}: {e}")
+        return 0
+
+
+def get_math_question():
+    question_functions = [create_mean_question, create_median_question, create_derivative_question, create_zeroes_question, create_factors_question, create_base_question, create_trig_question, create_algebra_question]
+    #question_functions = [create_algebra_question]
+    selected_question_function = random.choice(question_functions)
+    return selected_question_function()
+
+        
+def get_stats_question():
+    question_functions = [create_mean_question, create_median_question]
+    selected_question_function = random.choice(question_functions)
+    return selected_question_function()
+
+
+def create_trig_question():
+    return {
+        "category": "Mathematics: Trigonometry",
+        "question": "",
+        "url": "trig",
+        "answers": [""]
+    }
+
+
+def create_algebra_question():
+    return {
+        "category": "Mathematics: Algebra",
+        "question": "",
+        "url": "algebra",
+        "answers": [""]
+    }
+
+
+def create_mean_question():
+    return {
+        "category": "Mathematics: Mean",
+        "question": "What is the MEAN of the following set?",
+        "url": "mean",
+        "answers": [""]
+    }
+
+
+def create_median_question():
+    return {
+        "category": "Mathematics: Median",
+        "question": "What is the MEDIAN of the following set?",
+        "url": "median",
+        "answers": [""]
+    }
+
+
+def create_base_question():
+    return {
+        "category": "Mathematics: Bases",
+        "question": f"What is the DECIMAL equivalent of the following BASE number:",
+        "url": "base",
+        "answers": [""]
+    }
+
+
+def create_derivative_question():
+    return {
+        "category": "Mathematics: Derivatives",
+        "question": "What is the DERIVATIVE with respect to x?",
+        "url": "derivative",
+        "answers": [""]
+    }
+
+
+def create_sum_zeroes_question():
+    return {
+        "category": "Mathematics: Polynomials",
+        "question": "What is the SUM of the zeroes (or roots) of the function defined:",
+        "url": "zeroes sum",
+        "answers": [""]
+    }
+
+
+def create_product_zeroes_question():
+    return {
+        "category": "Mathematics: Polynomials",
+        "question": "What is the PRODUCT of the zeroes (or roots) of the function defined:",
+        "url": "zeroes product",
+        "answers": [""]
+    }
+
+
+def create_zeroes_question():
+    return {
+        "category": "Mathematics: Polynomials",
+        "question": "What are the 2 ZEROES (or roots) of the function defined:",
+        "url": "zeroes",
+        "answers": [""]
+    }
+
+
+def create_factors_question():
+    return {
+        "category": "Mathematics: Polynomials",
+        "question": "Factor the function defined:",
+        "url": "factors",
+        "answers": [""]
+    }
+        
+        
+async def select_wof_questions(winner, winner_id):
+    global fixed_letters
+    
+    try:
+        await asyncio.sleep(2)
+        recent_wof_ids = await get_recent_question_ids_from_mongo("wof")
+        selected_questions = []
+        fixed_letters = ['O', 'K', 'R', 'A']
+
+        # Fetch wheel of fortune questions using the random subset method
+        wof_collection = db["wof_questions"]
+        pipeline_wof = [
+            {"$match": {"_id": {"$nin": list(recent_wof_ids)}}},  # Exclude recent IDs
+            {"$group": {  # Group by question text to ensure uniqueness
+                "_id": "$question",  # Group by the question text field
+                "question_doc": {"$first": "$$ROOT"}  # Select the first document with each unique text
+            }},
+            {"$replaceRoot": {"newRoot": "$question_doc"}},  # Flatten the grouped results
+            {"$sample": {"size": 5}}  # Sample 3 unique questions
+        ]
+
+        wof_questions = await wof_collection.aggregate(pipeline_wof).to_list(length=5)
+
+        message = f"\u200b\n\u200b\n🍷⚔️ <@{winner_id}>, your mini-game awaits (#)...\n\n"
+        message += f"🥒: For **Okrans Only!**\n"
+        message += f"✨: **Everyone Plays** ({num_list_players}+ players needed)\n\u200b\n\u200b"
+        await channel.send(message)
+        await asyncio.sleep(0.1)
+        # Assuming wof_questions contains the sampled questions, with each document as a list/tuple
+        counter = 0
+        message = ""
+        for doc in wof_questions:
+            category = doc["question"]  # Use the key name to access category
+            message += f"\n{counter}.\u200b 🎡💰 WoF: {category}"
+            counter = counter + 1        
+        premium_counts = counter
+        message += f"\n{counter}.\u200b 🌐🎲 Wikipedia Roulette 🥒\n"
+        counter = counter + 1
+        message += f"{counter}.\u200b 📚🎲 Dictionary Roulette 🥒\n"
+        counter = counter + 1
+        message += f"{counter}.\u200b 📖🎲 Thesaurus Roulette 🥒\n"
+        counter = counter + 1
+        message += f"{counter}.\u200b 🌍❔ Where's Okra? 🥒\n"
+        counter = counter + 1
+        message += f"{counter}.\u200b ⚔️🧍 FeUd 🥒\n"
+        counter = counter + 1
+        message += f"{counter}.\u200b ⚔️⚡ FeUd Blitz 🥒✨\n"
+        counter = counter + 1
+        message += f"{counter}.\u200b 📝🥊 List Battle 🥒✨\n"
+        counter = counter + 1
+        message += f"{counter}.\u200b 🎥⚡ Poster Blitz 🥒✨\n"
+        counter = counter + 1
+        message += f"{counter}.\u200b 🎬💥 Movie Mayhem 🥒✨\n"
+        counter = counter + 1
+        message += f"{counter}.\u200b 🧩🔗 Missing Link 🥒✨\n"
+        counter = counter + 1
+        message += f"{counter}.\u200b 👤🌟 Famous Peeps 🥒✨\n"
+        counter = counter + 1
+        message += f"{counter}.\u200b 🔢📜 Ranker Lists 🥒✨\n"
+        counter = counter + 1
+        message += f"{counter}.\u200b 👁️✨ Magic EyeD 🥒✨\n"
+        counter = counter + 1
+        message += f"{counter}.\u200b ❓🦓 OkrAnimal 🥒✨\n"
+        counter = counter + 1
+        message += f"{counter}.\u200b 🟢🎩 The Riddler 🥒✨\n"
+        counter = counter + 1
+        message += f"{counter}.\u200b 🤓📚 Word Nerd 🥒✨\n"
+        counter = counter + 1
+        message += f"{counter}.\u200b 🎏🎉 Flag Fest 🥒✨\n"
+        counter = counter + 1
+        message += f"{counter}.\u200b 🎧🎤 LyrIQ 🥒✨\n"
+        counter = counter + 1
+        message += f"{counter}.\u200b 🎰🗣️ PolygLottery 🥒✨\n"
+        counter = counter + 1
+        message += f"{counter}.\u200b 📖🕵️‍♂️ Prose & Cons 🥒✨\n"
+        counter = counter + 1
+        message += f"{counter}.\u200b ➕➖ Sign Language 🥒✨\n"
+        counter = counter + 1
+        message += f"{counter}.\u200b 💧🔥 Elementary 🥒✨\n"
+        counter = counter + 1
+        message += f"{counter}.\u200b 🧩🌀 Jigsawed 🥒✨\n"
+        message += f"\n0\u200b0. 🥗🌟 Okra's Choice\n"
+        message += f"\nX.\u200b ⏭️🕹️ Skip Mini-Game\n"
+        await channel.send(message) 
+                
+        selected_wof_category = await ask_wof_number(winner, winner_id)
+
+        if selected_wof_category == "x":
+            gif_set = [
+            "https://triviabotwebsite.s3.us-east-2.amazonaws.com/sad/sad1.gif",
+            "https://triviabotwebsite.s3.us-east-2.amazonaws.com/sad/sad2.gif",
+            "https://triviabotwebsite.s3.us-east-2.amazonaws.com/sad/sad3.gif",
+            "https://triviabotwebsite.s3.us-east-2.amazonaws.com/sad/sad4.gif",
+            "https://triviabotwebsite.s3.us-east-2.amazonaws.com/sad/sad5.gif",
+            "https://triviabotwebsite.s3.us-east-2.amazonaws.com/sad/sad6.gif",
+            "https://triviabotwebsite.s3.us-east-2.amazonaws.com/sad/sad7.gif",
+            "https://triviabotwebsite.s3.us-east-2.amazonaws.com/sad/sad8.gif",
+            "https://triviabotwebsite.s3.us-east-2.amazonaws.com/sad/sad9.gif",
+            "https://triviabotwebsite.s3.us-east-2.amazonaws.com/sad/sad10.gif",
+            "https://triviabotwebsite.s3.us-east-2.amazonaws.com/sad/sad11.gif",
+            "https://triviabotwebsite.s3.us-east-2.amazonaws.com/sad/sad12.gif",
+            "https://triviabotwebsite.s3.us-east-2.amazonaws.com/sad/sad13.gif"
+            ]
+
+            gif_url = random.choice(gif_set)
+            message = f"\n⏭️🕹️ @{winner}: 'Less Games. More Trivia.'\n"
+            await channel.send(content=message, embed=discord.Embed().set_image(url=gif_url))
+            await asyncio.sleep(3)
+            return None
+        
+        elif int(selected_wof_category) < premium_counts:
+            wof_question = wof_questions[int(selected_wof_category)]
+            wof_answer = wof_question["answers"][0]
+            wof_clue = wof_question["question"]
+                    
+            wof_question_id = wof_question["_id"]  # Get the ID of the selected question
+            if wof_question_id:
+                await store_question_ids_in_mongo([wof_question_id], "wof")  # Store it as a list containing a single ID
+        
+        elif selected_wof_category == "11":
+            await ask_list_question(winner)
+            await asyncio.sleep(3)
+            return None
+
+        elif selected_wof_category == "10":
+            await ask_feud_question(winner, "cooperative", winner_id)
+            await asyncio.sleep(3)
+            return None
+
+        elif selected_wof_category == "9":
+            ask_feud_question(winner, "solo", winner_id)
+            await asyncio.sleep(3)
+            return None
+
+        elif selected_wof_category == "12":
+            await ask_poster_challenge(winner)
+            await asyncio.sleep(3)
+            return None
+
+        elif selected_wof_category == "13":
+            await ask_movie_scenes_challenge(winner)
+            await asyncio.sleep(3)
+            return None
+
+        elif selected_wof_category == "14":
+            await ask_missing_link(winner)
+            await asyncio.sleep(3)
+            return None
+
+        elif selected_wof_category == "15":
+            await ask_ranker_people_challenge(winner)
+            await asyncio.sleep(3)
+            return None
+
+        elif selected_wof_category == "16":
+            await ask_ranker_list_question(winner)
+            await asyncio.sleep(3)
+            return None
+
+        elif selected_wof_category == "17":
+            await ask_magic_challenge(winner)
+            await asyncio.sleep(3)
+            return None
+
+        elif selected_wof_category == "18":
+            await ask_animal_challenge(winner)
+            await asyncio.sleep(3)
+            return None
+
+        elif selected_wof_category == "19":
+            await ask_riddle_challenge(winner)
+            await asyncio.sleep(3)
+            return None
+
+        elif selected_wof_category == "20":
+            await ask_dictionary_challenge(winner)
+            await asyncio.sleep(3)
+            return None
+
+        elif selected_wof_category == "21":
+            await ask_flags_challenge(winner)
+            await asyncio.sleep(3)
+            return None
+
+        elif selected_wof_category == "22":
+            await ask_lyric_challenge(winner)
+            await asyncio.sleep(3)
+            return None
+
+        elif selected_wof_category == "23":
+            await ask_polyglottery_challenge(winner, winner_id)
+            await asyncio.sleep(3)
+            return None
+
+        elif selected_wof_category == "24":
+            await ask_book_challenge(winner)
+            await asyncio.sleep(3)
+            return None
+
+        elif selected_wof_category == "25":
+            await ask_math_challenge(winner)
+            await asyncio.sleep(3)
+            return None
+
+        elif selected_wof_category == "26":
+            await ask_element_challenge(winner)
+            await asyncio.sleep(3)
+            return None
+
+        elif selected_wof_category == "27":
+            await ask_jigsaw_challenge(winner)
+            await asyncio.sleep(3)
+            return None
+        
+        elif selected_wof_category == "5":
+            wof_answer, redacted_intro, wof_clue, wiki_url = await get_wikipedia_article(3, 16)
+            if wof_answer is None:
+                message = f"\n❌ Wikipedia API Error. Falling back to Word Nerd\n."
+                await channel.send(message)
+                await ask_dictionary_challenge(winner)
+                return None
+            else:
+                wikipedia_message = f"\n🥒⬛ Okracted Clue:\n\n{redacted_intro}\n"
+                await channel.send(wikipedia_message)
+            await asyncio.sleep(3)
+
+        elif selected_wof_category == "6":
+            wof_answer, wof_clue, word_definition, word_url = fetch_random_word()
+            dictionary_message = f"\n📖🔍 Definition:\n"
+            for i, definition in enumerate(word_definition, start=1):
+                dictionary_message += f"\n {i}. {definition}"
+            dictionary_message += "\n"
+            await channel.send(dictionary_message)
+            await asyncio.sleep(3)
+
+        elif selected_wof_category == "7":
+            wof_answer, wof_clue, word_syn, word_ant, word_url = await fetch_random_word_thes()
+            thesaurus_message = f"\n📖✅ Synonyms\n"
+            for i, synonym in enumerate(word_syn, start=1):
+                thesaurus_message += f"\n {i}. {synonym}"
+            thesaurus_message += "\n"
+            if word_ant:
+                thesaurus_message += "\n📖❌ Antonyms:"
+                for i, antonym in enumerate(word_ant, start=1):
+                    thesaurus_message += f"\n  {i}. {antonym}"
+                thesaurus_message += "\n"
+            await channel.send(thesaurus_message)
+            await asyncio.sleep(3)
+
+        elif selected_wof_category == "8":
+            wof_answer, country_name, wof_clue, location_clue, street_view_url, satellite_view_url, satellite_view_live_url, themed_country_url = await get_random_city(winner)
+            location_clue = f"\n🌦️📊 We intercepted this message...\n\n{location_clue}\n"
+            await channel.send(location_clue)
+            fixed_letters = []
+            await asyncio.sleep(3)
+
+            if street_view_url != None:
+                await channel.send(content="\n🏙️👁️ We saw OkraStrut post this to X...\n", embed=discord.Embed().set_image(url=street_view_url))
+                await asyncio.sleep(2)
+            
+            await channel.send(content="\n🛰️🌍 Our spies tracked him to this area...\n", embed=discord.Embed().set_image(url=satellite_view_url))                
+            await asyncio.sleep(2)
+
+            await channel.send(content="\n📸🥒 We found this on OkraStrut's Insta...\n", embed=discord.Embed().set_image(url=themed_country_url))                                
+            await asyncio.sleep(2)
+
+        image_file, image_width, image_height, display_string = generate_wof_image(wof_answer, wof_clue, fixed_letters)
+        print(f"{wof_clue}: {wof_answer}")
+            
+        if image_questions == True:    
+            embed = discord.Embed()
+            embed.set_image(url="attachment://image.png")
+            await channel.send(embed=embed, file=image_file)
+        else:
+            fixed_letters_str = "Revealed Letters: " + ' '.join(fixed_letters)
+            message = f"{display_string}\n{wof_clue}\n{fixed_letters_str}\n"
+            await channel.send(message)
+
+        wof_letters = await ask_wof_letters(winner, wof_answer, 5, winner_id)
+        
+        if wf_winner == False:
+            await asyncio.sleep(1.5)
+            image_file, image_width, image_height, display_string = generate_wof_image(wof_answer, wof_clue, wof_letters) 
+            
+            if image_questions == True:
+                embed = discord.Embed()
+                embed.set_image(url="attachment://image.png")
+                await channel.send(embed=embed, file=image_file)
+            else:
+                wof_letters_str = "Revealed Letters: " + ' '.join(wof_letters)
+                message = f"{display_string}\n{wof_clue}\n{wof_letters_str}\n"
+                await channel.send(message)
+
+            await process_wof_guesses(winner, wof_answer, 5, winner_id)
+
+        if selected_wof_category == "5":
+            await asyncio.sleep(1.5)
+            wikipedia_message = f"\n🌐📄 Wikipedia Link: {wiki_url}\n"
+            await channel.send(wikipedia_message)
+            await asyncio.sleep(1.5)
+
+        if selected_wof_category == "6":
+            await asyncio.sleep(1.5)
+            webster_message = f"\n📚📄 Webster Link: {word_url}\n"
+            await channel.send(webster_message)
+            await asyncio.sleep(1.5)
+
+        if selected_wof_category == "7":
+            await asyncio.sleep(1.5)
+            webster_message = f"\n📖📄 Webster Link: {word_url}\n"
+            await channel.send(webster_message)
+            await asyncio.sleep(1.5)
+
+        if selected_wof_category == "8":
+            await asyncio.sleep(1.5)
+            maps_message = f"\n🌍❔ Okra's Location: {satellite_view_live_url}\n"
+            await channel.send(maps_message)
+            await asyncio.sleep(1.5)
+
+        return None
+
+    except Exception as e:
+        sentry_sdk.capture_exception(e)
+        error_details = traceback.format_exc()
+        print(f"Error selecting wof questions: {e}\nDetailed traceback:\n{error_details}")
+        return None  
+
+    
+async def process_wof_guesses(winner, answer, extra_time, winner_id):
+    global wf_winner
+
+    answer = answer.upper() 
+    await channel.send(f"\u200b\n\u200b\n<@{winner_id}> ❓**Your Answer**❓\n\u200b")
+
+    def check(m):
+        return m.channel == channel and m.author != bot.user and m.author.id == winner_id
+
+    start_time = time.time()  # Track when the question starts
+
+    while time.time() - start_time < (magic_time + extra_time):
+        try:
+            remaining = (magic_time + extra_time) - (time.time() - start_time)
+            timeout = min(remaining, 30)
+            message = await bot.wait_for('message', timeout=timeout, check=check)
+            message_content = message.content.upper().strip()
+
+            if message_content == answer:
+                await message.add_reaction("🎉")
+                await channel.send(f"\n✅🎉 Correct: **{answer}**\n\u200b")
+                wf_winner = True
+                return
+
+            # Incorrect guess
+            await message.add_reaction("❌")
+
+        except asyncio.TimeoutError:
+            break
+        except Exception as e:
+            print(f"Error collecting WOF guesses: {e}")
+            break
+
+    await channel.send(f"⏰ Time's up! The answer was: {answer}")
+
+
+async def ask_wof_letters(winner, answer, extra_time, winner_id):
+    global wf_winner
+
+    revealed_count = sum(ch.lower() in "okra" for ch in answer)
+    answer_length = len(answer.replace(" ", ""))
+    letters_remaining = answer_length - revealed_count
+
+    answer = answer.upper()
+    start_time = time.time()
+    await channel.send(f"\u200b\n<@{winner_id}>:❓**Pick {num_wf_letters} Letters**❓\n" +
+                       (f"\n🥒 I'll give you O K R A 🥒\n\u200b" if fixed_letters else ""))    
+    
+    wf_letters = []
+
+    def check(m):
+        return m.channel == channel and m.author != bot.user and m.author.id == winner_id
+
+    while time.time() - start_time < (magic_time + extra_time):
+        try:
+            if len(wf_letters) == num_wf_letters:
+                break
+
+            remaining_time = (magic_time + extra_time) - (time.time() - start_time)
+            timeout = min(remaining_time, 30)
+            message = await bot.wait_for('message', timeout=timeout, check=check)
+            message_content = message.content.upper()
+
+            if message_content == answer:
+                await message.add_reaction("🎉")
+                await channel.send(f"\n✅🎉 Correct **{winner}**! {answer}\n\u200b")
+                wf_winner = True
+                return True
+
+            for char in message_content:
+                if char in fixed_letters:
+                    continue
+                if len(wf_letters) < num_wf_letters and char.isalpha() and char not in wf_letters:
+                    wf_letters.append(char)
+            
+            if len(wf_letters) >= num_wf_letters:
+                await message.add_reaction("🥒")  # ✅ This is your Discord equivalent of `react_to_message`
+                break
+
+        except Exception as e:
+            print(f"Error collecting responses: {e}")
+            break
+    
+    if len(wf_letters) < num_wf_letters:
+        needed = num_wf_letters - len(wf_letters)
+        available = [l for l in "BCDEFGHIJLMNPQSTUVWXYZ" if l not in wf_letters]
+        wf_letters.extend(random.sample(available, min(needed, len(available))))
+        await channel.send(f"\u200b\nToo slow. Let me help you out.\nLet's use...**{' '.join(wf_letters)}**\n\n")
+    else:
+        await channel.send(f"\u200b\nYou picked: **{' '.join(wf_letters)}**\n\n")
+
+    final_letters = fixed_letters + wf_letters
+    return final_letters
+
+
+async def ask_wof_number(winner, winner_id):
+    def check(m):
+        return m.channel == channel and m.author != bot.user and m.author.id == winner_id
+
+    winner_coffees = await get_coffees(winner_id)
+    unlocks = {
+        "5": "Wikipedia Roulette",
+        "6": "Dictionary Roulette",
+        "7": "Thesaurus Roulette",
+        "8": "Where's Okra?",
+        "9": "FeUd",
+        "10": "FeUd Blitz",
+        "11": "List Battle",
+        "12": "Poster Blitz",
+        "13": "Movie Mayhem",
+        "14": "Missing Link",
+        "15": "Famous Peeps",
+        "16": "Ranker Lists",
+        "17": "Magic EyeD",
+        "18": "OkrAnimal",
+        "19": "The Riddler",
+        "20": "Word Nerd",
+        "21": "Flag Fest",
+        "22": "LyrIQ",
+        "23": "PolygLottery",
+        "24": "Prose & Cons",
+        "25": "Sign Language",
+        "26": "Elementary",
+        "27": "Jigsawed",
+    }
+    multiplayer_required = {k for k in unlocks if k not in {"5", "6", "7", "8", "9"}}
+    all_options = {str(i) for i in range(28)} | {"00", "x"}
+
+    start = asyncio.get_event_loop().time()
+    selected_question = None
+
+    try:
+        while asyncio.get_event_loop().time() - start < magic_time:
+            remaining = magic_time - (asyncio.get_event_loop().time() - start)
+            message = await asyncio.wait_for(bot.wait_for('message', check=check), timeout=remaining)
+            content = message.content.strip().lower()
+
+            if content == "x":
+                return "x"
+
+            if content == "00":
+                await message.add_reaction("👍")
+                set_a = [str(i) for i in range(5)]
+                set_b = [str(i) for i in range(5, 28)] if len(round_responders) >= num_list_players else [str(i) for i in range(5, 10)]
+                selected_question = random.choice(set_a if random.random() < 0.5 else set_b)
+                await channel.send(f"\n🎁 @{winner}, let's do {selected_question}.\n")
+                return selected_question
+
+            if content not in all_options:
+                await message.add_reaction("❌")
+                continue
+
+            # Check coffee lock
+            if content in unlocks and winner_coffees <= 0:
+                await message.add_reaction("🥒")
+                await channel.send(f"\n🙏😔 Sorry **{winner}**. '**{unlocks[content]}**' is for **Okrans Only** 🥒.\n")
+                continue
+
+            # Check multiplayer lock
+            if content in multiplayer_required and len(round_responders) < num_list_players:
+                await message.add_reaction("😢")
+                await channel.send(f"\n🙏😔 Sorry **{winner}**. '**{unlocks[content]}**' requires **{num_list_players}+ players**.\n")
+                continue
+
+            selected_question = content
+            await message.add_reaction("✅")
+            await channel.send(f"\n💪🛡️ I got you **{winner}**. **{selected_question}** it is.\n\u200b")
+            await asyncio.sleep(2)
+            return selected_question
+
+    except asyncio.TimeoutError:
+        pass
+
+    # Fallback random selection
+    set_a = [str(i) for i in range(5)]
+    set_b = [str(i) for i in range(5, 28)] if len(round_responders) >= num_list_players else [str(i) for i in range(5, 10)]
+    selected_question = random.choice(set_a if random.random() < 0.5 else set_b)
+    await channel.send(f"\u200b\n🐢⏳ Too slow. I choose {selected_question}.\n\u200b")
+    return selected_question
+
+  
+def generate_wof_image(
+    phrase,
+    clue,
+    revealed_letters,
+    image_questions=True,
+    img_width=800,
+    img_height=450,
+    base_tile_width=50,
+    base_tile_height=70,
+    base_spacing=15,
+    base_font_size=50,
+    base_clue_font_size=40,
+    base_revealed_font_size=20,
+    max_puzzle_width=700  # how wide the puzzle area can be before scaling or line-wrap
+):
+
+    # Convert everything to uppercase for consistent drawing
+    phrase = phrase.upper()
+    clue = clue.upper()
+    revealed_letters = [ch.upper() for ch in revealed_letters]
+
+    # Colors
+    background_color         = (0, 0, 0)
+    tile_border_color        = (0, 128, 0)
+    tile_fill_color          = (255, 255, 255)
+    space_tile_color         = (0, 128, 0)
+    text_color               = (0, 0, 0)
+    clue_color               = (255, 255, 255)
+    revealed_letters_color   = (200, 200, 200)
+
+    # Create the base image & drawing context
+    img = Image.new('RGB', (img_width, img_height), color=background_color)
+    draw = ImageDraw.Draw(img)
+
+    # Load base fonts
+    font_path = os.path.join(os.path.dirname(__file__), "fonts", "DejaVuSans.ttf")
+    try:
+        font           = ImageFont.truetype(font_path, base_font_size)
+        clue_font      = ImageFont.truetype(font_path, base_clue_font_size)
+        revealed_font  = ImageFont.truetype(font_path, base_revealed_font_size)
+    except IOError:
+        print(f"Error: Font file not found at {font_path}")
+        return None, None, None, None
+
+    chunks = re.findall(r'\S+|\s+', phrase)
+
+    def chunk_tile_width(chunk, tile_w, spacing):
+        L = len(chunk)
+        if L == 0:
+            return 0
+        return L * (tile_w + spacing) - spacing
+
+    max_chunk_length = max(len(ch) for ch in chunks) if chunks else 0
+    unscaled_max_chunk_width = chunk_tile_width("X" * max_chunk_length, base_tile_width, base_spacing)
+
+    if unscaled_max_chunk_width > max_puzzle_width:
+        # Scale factor to ensure that the largest chunk fits
+        scale_factor = max_puzzle_width / float(unscaled_max_chunk_width)
+
+        # Scale tile sizes, spacing, and fonts
+        tile_width     = int(base_tile_width * scale_factor)
+        tile_height    = int(base_tile_height * scale_factor)
+        spacing        = int(base_spacing * scale_factor)
+
+        tile_width  = max(1, tile_width)
+        tile_height = max(1, tile_height)
+        spacing     = max(1, spacing)
+
+        scaled_font_size           = max(10, int(base_font_size * scale_factor))
+        scaled_clue_font_size      = max(10, int(base_clue_font_size * scale_factor))
+        scaled_revealed_font_size  = max(8,  int(base_revealed_font_size * scale_factor))
+
+        # Reload the fonts with scaled sizes
+        font          = ImageFont.truetype(font_path, scaled_font_size)
+        clue_font     = ImageFont.truetype(font_path, scaled_clue_font_size)
+        revealed_font = ImageFont.truetype(font_path, scaled_revealed_font_size)
+    else:
+        tile_width  = base_tile_width
+        tile_height = base_tile_height
+        spacing     = base_spacing
+
+    lines = []
+    current_line = []
+    current_line_width = 0
+
+    for ch in chunks:
+        w_width = chunk_tile_width(ch, tile_width, spacing)
+
+        if not current_line:
+            # If the line is empty, start with this chunk
+            current_line = [ch]
+            current_line_width = w_width
+        else:
+            # If we can add this chunk to the current line
+            prospective_width = current_line_width + spacing + w_width
+            if prospective_width <= max_puzzle_width:
+                current_line.append(ch)
+                current_line_width = prospective_width
+            else:
+                # Start a new line
+                lines.append(current_line)
+                current_line = [ch]
+                current_line_width = w_width
+
+    # Add the last line if non-empty
+    if current_line:
+        lines.append(current_line)
+
+    def line_tile_width(line_chunks):
+        if not line_chunks:
+            return 0
+        total = 0
+        for idx, c in enumerate(line_chunks):
+            cwidth = chunk_tile_width(c, tile_width, spacing)
+            if idx == 0:
+                total += cwidth
+            else:
+                total += spacing + cwidth
+        return total
+
+    top_margin = 50
+    line_spacing_px = tile_height + 20  # gap between lines
+
+    # Figure out total puzzle height
+    total_puzzle_height = len(lines) * line_spacing_px
+    puzzle_y_start = (img_height - total_puzzle_height) // 2 - 60
+
+    current_y = puzzle_y_start
+    padding = 5
+
+    for line_chunks in lines:
+        lw = line_tile_width(line_chunks)
+        line_start_x = (img_width - lw) // 2
+        current_x = line_start_x
+
+        for chunk in line_chunks:
+            # draw each character as a tile
+            for c in chunk:
+                # Draw green rectangle for tile border/padding
+                draw.rectangle(
+                    [current_x - padding, current_y - padding,
+                     current_x + tile_width + padding, current_y + tile_height + padding],
+                    fill=tile_border_color
+                )
+                if c == ' ':
+                    # Space tile
+                    draw.rectangle(
+                        [current_x, current_y, current_x + tile_width, current_y + tile_height],
+                        outline=tile_border_color,
+                        fill=space_tile_color
+                    )
+                else:
+                    # Letter tile
+                    draw.rectangle(
+                        [current_x, current_y, current_x + tile_width, current_y + tile_height],
+                        outline=tile_border_color,
+                        fill=tile_fill_color
+                    )
+                    if c in revealed_letters:
+                        letter_bbox = draw.textbbox((0, 0), c, font=font)
+                        letter_w = letter_bbox[2] - letter_bbox[0]
+                        letter_h = letter_bbox[3] - letter_bbox[1]
+                        text_x = current_x + (tile_width - letter_w) // 2
+                        text_y = current_y + (tile_height - letter_h) // 2
+                        draw.text((text_x, text_y), c, fill=text_color, font=font)
+
+                current_x += tile_width + spacing
+
+        current_y += line_spacing_px
+
+    clue_bbox = draw.textbbox((0, 0), clue, font=clue_font)
+    clue_w = clue_bbox[2] - clue_bbox[0]
+    clue_h = clue_bbox[3] - clue_bbox[1]
+
+    clue_x = (img_width - clue_w) // 2
+    clue_y = current_y + 20  
+    draw.text((clue_x, clue_y), clue, fill=clue_color, font=clue_font)
+
+    revealed_text = ' '.join(revealed_letters)
+    revealed_bbox = draw.textbbox((0, 0), revealed_text, font=revealed_font)
+    revealed_w = revealed_bbox[2] - revealed_bbox[0]
+    revealed_x = (img_width - revealed_w) // 2
+    revealed_y = clue_y + clue_h + 10
+    draw.text((revealed_x, revealed_y), revealed_text, fill=revealed_letters_color, font=revealed_font)
+
+    display_string = ' '.join(
+        [ch if ch in revealed_letters else ('_' if ch != ' ' else ' ') for ch in phrase]
+    )
+
+    image_buffer = io.BytesIO()
+    img.save(image_buffer, format='PNG')
+    image_buffer.seek(0)
+
+    if image_questions:
+        image_file = discord.File(fp=image_buffer, filename="image.png")
+        return image_file, img_width, img_height, display_string
+    else:
+        return True, img_width, img_height, display_string
+
+
+async def send_magic_image(input_text):
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    font_path = os.path.join(script_dir, "fonts", "DejaVuSans.ttf")
+
+    command = [
+        "python", "main.py",
+        "--text", str(input_text),
+        "--dots",
+        "--wall",
+        "--output", ".",  # this is required by argparse but ignored for stdout
+        "--font", font_path
+    ]
+
+    try:
+        # Run main.py and get image output from stdout
+        result = subprocess.run(command, stdout=subprocess.PIPE, check=True)
+
+        # Load image from binary stdout
+        image_bytes = io.BytesIO(result.stdout)
+        image_bytes.seek(0)
+
+        # Prepare file and embed for Discord
+        file = discord.File(fp=image_bytes, filename="magic_eye.png")
+        embed = discord.Embed().set_image(url="attachment://magic_eye.png")
+
+        await channel.send(file=file, embed=embed)
+
+    except subprocess.CalledProcessError as e:
+        print(f"Failed to run main.py: {e}")
+        await channel.send("❌ Failed to generate magic eye image.")
+    
+
+async def ask_magic_challenge(winner):
+    global wf_winner
+    wf_winner = True
+
+    gifs = [
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/magic1.gif",
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/magic2.gif",
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/magic3.gif"
+    ]
+
+    gif_url = random.choice(gifs)
+    await channel.send(content="\u200b\n\u200b\n👁️✨ **Who's got the Magic Eye?**\n\u200b", embed=discord.Embed().set_image(url=gif_url))
+    await asyncio.sleep(3)
+    await channel.send(f"\u200b\n\u200b\n5️⃣🥇 Let's do a **best of 5**...\n\u200b")
+    await asyncio.sleep(3)
+
+    user_data = {}
+
+    for round_num in range(1, 6):
+        magic_number = random.randint(1000, 9999)
+        print(f"Magic number for Round {round_num}: {magic_number}")
+
+        await send_magic_image(magic_number)
+        await channel.send(f"🔵 **Round {round_num}**: What do you see?\n\u200b")
+
+        start_time = asyncio.get_event_loop().time()
+        magic_number_correct = False
+
+        def check(m):
+            return m.channel == channel and m.author != bot.user
+
+        while asyncio.get_event_loop().time() - start_time < 15 and not magic_number_correct:
+            try:
+                remaining = 15 - (asyncio.get_event_loop().time() - start_time)
+                message = await bot.wait_for("message", timeout=remaining, check=check)
+                content = message.content.strip()
+                user = message.author.display_name
+                user_id = message.author.id
+
+                if str(magic_number) in content:
+                    magic_number_correct = True
+                    await message.add_reaction("✅")
+                    if user_id not in user_data:
+                        user_data[user_id] = (user, 0)
+
+                    display_name, score = user_data[user_id]
+                    user_data[user_id] = (display_name, score + 1)
+                    await channel.send(f"\u200b\n🎉🥳 **{user}** got it right!\n\n👀✨ The Magic Number was **{magic_number}**.\n\u200b")
+            except asyncio.TimeoutError:
+                break
+
+        if not magic_number_correct:
+            await channel.send(f"\u200b\n😢 No one got it right this round!\n\n👀✨ The Magic Number was **{magic_number}**.\n\u200b")
+
+        await asyncio.sleep(3)
+
+    # Final score announcement
+
+    
+    await asyncio.sleep(2)
+    sorted_data = sorted(user_data.items(), key=lambda x: x[1][1], reverse=True)
+    if sorted_data:
+        message = "\u200b\n🏆✨ **Commendable Okrans** ✨🏆\n"
+        for rank, (user_id, (display_name, score)) in enumerate(sorted_data, 1):
+            message += f"{rank}. **{display_name}**: {score}\n"
+        message += "\u200b"
+        await channel.send(message)
+        top_user_id, (top_display_name, top_score) = sorted_data[0]
+        message = f"\n🎉🥇 The winner is **{top_display_name}**!\n"
+    else:
+        message = f"\n👎😢 No right answers. I'm ashamed to call you Okrans.\n"
+
+    await channel.send(message)
+
+    await asyncio.sleep(5)
+
+
+def generate_jeopardy_image(question_text):
+    # Define the background color and text properties
+    background_color = (6, 12, 233)  # Blue color similar to Jeopardy screen
+    text_color = (255, 255, 255)    # White text
+    
+    # Define image size and font properties
+    img_width, img_height = 800, 600
+    font_path = os.path.join(os.path.dirname(__file__), "fonts", "DejaVuSans.ttf")
+    font_size = 60
+
+    # Create a blank image with blue background
+    img = Image.new('RGB', (img_width, img_height), color=background_color)
+    draw = ImageDraw.Draw(img)
+    
+    # Load the font
+    try:
+        font = ImageFont.truetype(font_path, font_size)
+    except IOError:
+        print(f"Error: Font file not found at {font_path}")
+        return None
+    
+    # Prepare the text for drawing (wrap text if too long)
+    wrapped_text = "\n".join(draw_text_wrapper(question_text, font, img_width - 40))
+    
+    # Calculate text position for centering
+    text_bbox = draw.textbbox((0, 0), wrapped_text, font=font)
+    text_width = text_bbox[2] - text_bbox[0]
+    text_height = text_bbox[3] - text_bbox[1]
+    text_x = (img_width - text_width) // 2
+    text_y = (img_height - text_height) // 2
+    
+    # Draw the question text on the image
+    draw.multiline_text((text_x, text_y), wrapped_text, fill=text_color, font=font, align="center")
+    
+    # Save the image to a bytes buffer
+    image_buffer = io.BytesIO()
+    img.save(image_buffer, format='PNG')
+    image_buffer.seek(0)  # Move the pointer to the beginning of the buffer
+    
+    return image_buffer
+
+
+def generate_mc_image(answers):
+    # Define the background color and text properties
+    background_color = (0, 0, 0)  # Black screen
+    text_color = (255, 255, 255)    # White text
+    
+    # Define color map for answers
+    color_map = {
+        "A": (0, 0, 255),    # Blue for A
+        "B": (255, 255, 0),  # Yellow for B
+        "C": (0, 255, 0),    # Green for C
+        "D": (255, 0, 0),    # Red for D
+        "True": (0, 255, 0), # Green for True
+        "False": (255, 0, 0) # Red for False
+    }
+    
+    # Define image size and font properties
+    img_width, img_height = 800, 600
+    font_path = os.path.join(os.path.dirname(__file__), "fonts", "DejaVuSans.ttf")
+    font_size = 60  # Use this font size for both title and answers
+
+    # Create a blank image with a black background
+    img = Image.new('RGB', (img_width, img_height), color=background_color)
+    draw = ImageDraw.Draw(img)
+    
+    # Load the font
+    try:
+        font = ImageFont.truetype(font_path, font_size)
+    except IOError:
+        print(f"Error: Font file not found at {font_path}")
+        return None
+
+    # Calculate the vertical starting position for the answers
+    answer_y_start = 20  # Start near the top
+    answer_spacing = 20  # Space between answer lines
+
+    # Draw each answer in answers[1:] with specified colors, using title font size
+    for i, answer in enumerate(answers[1:], start=1):  # Skip the first element in answers
+        # Wrap and center-align the answer
+        wrapped_answer = "\n".join(draw_text_wrapper(answer, font, img_width - 40))
+        
+        # Determine color based on the answer type
+        first_word = answer.split()[0].rstrip(".")  # Get the first word (A, B, C, D or True/False)
+        color = color_map.get(first_word, text_color)  # Default to white if no specific color
+
+        # Calculate horizontal alignment for centered text
+        answer_bbox = draw.textbbox((0, 0), wrapped_answer, font=font)
+        answer_x = (img_width - (answer_bbox[2] - answer_bbox[0])) // 2
+
+        if first_word in {"True", "False"}:
+            # Draw True/False with specific color for the answer
+            draw.multiline_text((answer_x, answer_y_start + i * (font_size + answer_spacing)), wrapped_answer, font=font, fill=color)
+        elif first_word in {"A", "B", "C", "D"}:
+            # Split letter and rest of the text, color letter separately
+            letter = first_word + "."  # Add back the period for display
+            remaining_text = " ".join(answer.split()[1:])
+            draw.text((answer_x, answer_y_start + i * (font_size + answer_spacing)), letter, font=font, fill=color)
+            draw.text((answer_x + 30, answer_y_start + i * (font_size + answer_spacing)), remaining_text, font=font, fill=text_color)
+        else:
+            # Default answer drawing with white text
+            draw.multiline_text((answer_x, answer_y_start + i * (font_size + answer_spacing)), wrapped_answer, font=font, fill=text_color)
+
+    # Save the image to a bytes buffer
+    image_buffer = io.BytesIO()
+    img.save(image_buffer, format='PNG')
+    image_buffer.seek(0)  # Move the pointer to the beginning of the buffer
+    
+    # Upload the image and send to the chat
+    image_mxc = upload_image_to_matrix(image_buffer.read(), False, "okra.png")
+    
+    if image_mxc:
+        # Return image_mxc, image_width, and image_height
+        return image_mxc, img_width, img_height
+    else:
+        print("Failed to upload the image to Matrix.")
+        return None
+
+
+def draw_text_wrapper(text, font, max_width):
+    lines = []
+    words = text.split()
+    
+    while words:
+        line = ""
+        
+        while words:
+            word = words[0]
+            
+            # If the word itself is too long, split it
+            while font.getbbox(word)[2] - font.getbbox(word)[0] > max_width:
+                # Calculate the maximum number of characters that fit
+                for i in range(1, len(word) + 1):
+                    if font.getbbox(word[:i])[2] - font.getbbox(word[:i])[0] > max_width:
+                        break
+                # Add the chunk that fits to the line
+                if line:
+                    lines.append(line.strip())
+                    line = ""
+                lines.append(word[:i-1])  # Save the chunk as its own line
+                # Update the remaining part of the word
+                word = word[i-1:]
+            words[0] = word
+            
+            # Check if adding the next word fits
+            if font.getbbox(line + word)[2] - font.getbbox(line + word)[0] <= max_width:
+                line += words.pop(0) + " "
+            else:
+                break
+        
+        # Append the line to lines
+        if line.strip():
+            lines.append(line.strip())
+    
+    return lines
+
+
+def generate_crossword_image(answer, prefill=0.5):
+    answer_length = len(answer)
+    
+    # Define the grid size
+    cell_size = 60  # Each cell is 60x60 pixels
+    img_width = cell_size * answer_length
+    img_height = cell_size
+
+    # Create a blank image
+    img = Image.new('RGB', (img_width, img_height), color=(255, 255, 255))
+    draw = ImageDraw.Draw(img)
+
+    # Load the font
+    font_path = os.path.join(os.path.dirname(__file__), "fonts", "DejaVuSans.ttf")
+    font = ImageFont.truetype(font_path, 30)
+
+    # Determine prefilled letter count and positions
+    if answer_length > 2:
+        #prefill_count = int(answer_length * .5) + 1  # At least 1 letter should be filled in
+        prefill_count = math.ceil(answer_length * prefill)
+        prefill_positions = random.sample(range(answer_length), prefill_count)
+    else:
+        prefill_positions = []
+
+    revealed_letters = [answer[i].upper() if i in prefill_positions else '_' for i in range(answer_length)]
+
+    # Draw the crossword grid
+    for i, char in enumerate(answer):
+        x = i * cell_size
+        y = 0
+
+        # Draw the cell border
+        draw.rectangle([x, y, x + cell_size, y + cell_size], outline="black")
+
+        # Place the character if in prefill positions, otherwise leave it blank
+        if i in prefill_positions:
+            draw.text((x + 20, y + 10), char.upper(), fill="black", font=font)
+        else:
+            draw.text((x + 20, y + 10), '_', fill="black", font=font)
+
+    # Create the string representation
+    display_string = ' '.join(revealed_letters)
+
+    # Save the image to a bytes buffer
+    image_buffer = io.BytesIO()
+    img.save(image_buffer, format='PNG')
+    image_buffer.seek(0)  # Move the pointer to the beginning of the buffer
+
+    # Return the content_uri, image width, height, and the answer
+    return image_buffer, display_string
+
+
+async def process_round_options(round_winner, winner_points, round_winner_id):
+    global since_token, time_between_questions, time_between_questions_default, ghost_mode, since_token, categories_to_exclude, num_crossword_clues, num_jeopardy_clues, num_mysterybox_clues, num_wof_clues, god_mode, yolo_mode, magic_number, wf_winner, num_math_questions, num_stats_questions, image_questions, nice_okra, creep_okra, marx_mode, blind_mode, seductive_okra, joke_okra
+    time_between_questions = time_between_questions_default
+    ghost_mode = ghost_mode_default
+    categories_to_exclude.clear()
+    num_crossword_clues = num_crossword_clues_default
+    num_jeopardy_clues = num_jeopardy_clues_default
+    num_mysterybox_clues = num_mysterybox_clues_default
+    num_wof_clues = num_wof_clues_default
+    god_mode = god_mode_default
+    yolo_mode = yolo_mode_default
+    magic_number_correct = False
+    wf_winner = False
+    nice_okra = False
+    creep_okra = False
+    seductive_okra = False
+    joke_okra = False
+    num_math_questions = num_math_questions_default
+    num_stats_questions = num_stats_questions_default
+    image_questions = image_questions_default
+    marx_mode = marx_mode_default
+    blind_mode = blind_mode_default
+
+    if round_winner is None:
+        return
+
+    winner_coffees = await get_coffees(round_winner_id)
+
+    message = f"\u200b\n🍔🍟 **<@{round_winner_id}>**, what's your order?\n\n" 
+    message += "🥒 Some choices for **Okrans Only**!\n\u200b"
+    
+    await channel.send(message)
+
+    message = (
+        "⏱️⏳ <3 - 15>: Time (s) between questions.\n"
+        "🔥🤘 Yolo: No scores shown until the end.\n"
+        "🙈🚫 Blind: No question answers shown.\n"
+        "🚩🔨 Marx: No recognizing right answers.\n"
+        "📷❌ Blank: No image questions.\n"
+        "👻🎃 Ghost: Responses will vanish."
+    )
+
+    await channel.send(message)
+
+    message = (
+        "🇺🇸🗽 Freedom: No multiple choice. 🥒\n"
+        "🔢❌ Greg: No math questions. 🥒\n"
+        "🟦❌ Xela: No Jeopardy-style questions. 🥒\n"
+        "📰❌ Cross: No Crossword clues. 🥒\n"
+        "🟦✋ Alex: 5 Jeopardy-style questions. 🥒\n"
+        "📰✋ Word: 5 Crossword clues. 🥒\n"
+        "🎖🥒 Dicktator: Choose the categories. 🥒\n\u200b"
+    )
+
+    await channel.send(message)
+    await prompt_user_for_response(round_winner, winner_points, winner_coffees, round_winner_id)
+
+
+async def prompt_user_for_response(round_winner, winner_points, winner_coffees, round_winner_id):
+    global since_token, time_between_questions, ghost_mode
+    global num_jeopardy_clues, num_crossword_clues, num_mysterybox_clues, num_wof_clues
+    global yolo_mode, god_mode, num_math_questions, num_stats_questions
+    global image_questions, marx_mode, blind_mode
+
+    def check(m):
+        return m.channel == channel and m.author != bot.user and m.author.id == round_winner_id
+
+    start_time = time.time()
+
+    async def coffee_gate(keyword, condition, success_msg, fail_msg):
+        if keyword in message_content:
+            if winner_coffees > 0:
+                await channel.send(success_msg)
+                return True
+            else:
+                await channel.send(f"🙏😔 Sorry **{round_winner}**. **'{fail_msg}'** is for **Okrans Only** 🥒.")
+        return False
+
+    while time.time() - start_time < magic_time:
+        try:
+            message = await bot.wait_for("message", timeout=magic_time - (time.time() - start_time), check=check)
+            message_content = message.content.strip().lower()
+
+            # Time delay setting
+            delay_digits = ''.join(filter(str.isdigit, message_content))
+            if delay_digits:
+                try:
+                    delay_value = max(3, min(int(delay_digits), 15))
+                    time_between_questions = delay_value
+                    await channel.send(f"⏱️⏳ **{round_winner}** has set {delay_value}s between questions.")
+                except ValueError:
+                    pass
+
+            # Keyword flags
+            if "blind" in message_content:
+                blind_mode = True
+                await channel.send(f"🙈🚫 **{round_winner}** is blind to the truth. No answers will be shown.")
+
+            if "marx" in message_content:
+                marx_mode = True
+                await channel.send(f"🚩🔨 **{round_winner}** is a commie. No celebrating right answers.")
+
+            if "yolo" in message_content:
+                yolo_mode = True
+                await channel.send(f"🤘🔥 Yolo. **{round_winner}** says 'don't sweat the small stuff'. No scores till the end.")
+
+            if "blank" in message_content:
+                image_questions = False
+                await channel.send(f"❌📷 **{round_winner}** thinks a word is worth 1000 images.")
+
+            if "ghost" in message_content:
+                ghost_mode = 1
+                await channel.send(f"👻🎃 **{round_winner}** says Boo! Your responses will disappear.")
+
+            # Coffee-gated
+            if await coffee_gate("freedom", True, f"🇺🇸🗽 **{round_winner}** has broken the chains. No multiple choice.", "Freedom"):
+                num_mysterybox_clues = 0
+
+            if await coffee_gate("alex", True, f"🟦✋ **{round_winner}** wants 5 Jeopardy-style questions.", "Alex"):
+                num_jeopardy_clues = 5
+
+            if await coffee_gate("xela", True, f"🟦❌ **{round_winner}** doesn't like Jeopardy-style. Sorry Alex.", "Xela"):
+                num_jeopardy_clues = 0
+
+            if await coffee_gate("greg", True, f"📰✏️ **{round_winner}** hates math. What a 'Greg'.", "Greg"):
+                num_math_questions = 0
+
+            if await coffee_gate("cross", True, f"📰❌ **{round_winner}** has crossed off all Crossword questions.", "Cross"):
+                num_crossword_clues = 0
+
+            if await coffee_gate("word", True, f"📰✏️ Word. **{round_winner}** wants 5 Crossword questions.", "Word"):
+                num_crossword_clues = 5
+
+            if await coffee_gate("dicktator", True, f"🎖🍆 **{round_winner}** is a dick.", "Dicktator"):
+                god_mode = True
+
+        except asyncio.TimeoutError:
+            break
+
+    
+async def generate_okra_joke(winner_name):
+    prompt = (
+        f"Create a funny and creative dad joke and involve the winner's username '{winner_name}' in your joke. "
+        "It should include an exaggerated pun or ridiculous statement about okra."
+    )
+
+    try:
+        response = await openai_client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": "You are a funny comedian who makes dad jokes about okra."},
+                {"role": "user", "content": prompt}
+            ],
+            max_tokens=100,
+            temperature=0.8,
+        )
+
+        # Extract the generated joke from the response
+        joke = response.choices[0].message.content.strip()
+        return joke
+
+    except openai.OpenAIError as e:
+        # Capture any errors with Sentry and return a default message
+        sentry_sdk.capture_exception(e)
+        return "Sorry, I couldn't come up with an okra joke this time!"
+
+
+def insert_trivia_questions_into_mongo(trivia_questions):
+    try:
+        collection = db["trivia_questions"]  # Use the 'trivia_questions' collection
+        
+        # Prepare the documents to insert
+        documents = []
+        for trivia_question in trivia_questions:
+            category, question, url, answers = trivia_question
+            
+            # Create a document for each question
+            document = {
+                "category": category,
+                "question": question,
+                "url": url,
+                "answers": answers
+            }
+            
+            documents.append(document)
+        
+        # Insert all the trivia questions in a single batch
+        collection.insert_many(documents)
+        print(f"Successfully inserted {len(documents)} trivia questions into MongoDB.")
+    
+    except Exception as e:
+        sentry_sdk.capture_exception(e)
+        print(f"Error inserting trivia questions into MongoDB: {e}")
+
+
+def generate_trig_question():
+
+    # Generate a random number of 3 or 4 digits in the given base
+    trig_operation = random.choice(["sin", "cos", "tan", "cot", "sec", "csc"])
+    
+    # Convert the number from the input base to decimal
+
+    
+    # Create the question text
+    question_text = f"What is {trig_operation}(θ) in the triangle below?"
+    image_description = f"A triangle with specified angle θ. Sides are opposite (x), adjacent (y), and hypotenuse (z)."
+
+    if trig_operation == "sin":
+        new_solution = "y/z"
+    elif trig_operation == "cos":
+        new_solution = "x/z"
+    elif trig_operation == "tan":
+        new_solution = "y/x"
+    elif trig_operation == "cot":
+        new_solution = "x/y"
+    elif trig_operation == "sec":
+        new_solution = "z/x"
+    elif trig_operation == "csc":
+        new_solution = "z/y"
+
+    print(f"Question: {question_text}")
+    print(f"Answer: {new_solution}")
+
+    image_url = "https://triviabotwebsite.s3.us-east-2.amazonaws.com/math/triangle.png"
+
+    # Return the content_uri, image dimensions, decimal equivalent, and base number
+    return image_url, question_text, new_solution, image_description
+
+
+def generate_base_question():
+    input_base = random.choice([2, 3, 4])
+    num_digits = random.randint(3, 4)
+    base_number = ''.join(random.choices([str(i) for i in range(input_base)], k=num_digits))
+    
+    decimal_equivalent = int(base_number, input_base)
+    print(f"Decimal equivalent: {decimal_equivalent}")
+    
+    question_text = f"What is the DECIMAL EQUIVALENT of the following BASE {input_base} number?"
+    
+    img_width, img_height = 400, 150
+    img = Image.new('RGB', (img_width, img_height), color=(0, 0, 0))
+    draw = ImageDraw.Draw(img)
+
+    font_path = os.path.join(os.path.dirname(__file__), "fonts", "DejaVuSans.ttf")
+    
+    if len(base_number) > 3:
+        font_size = 48  
+    else:
+        font_size = 64  
+
+    try:
+        font = ImageFont.truetype(font_path, font_size)
+    except IOError:
+        print(f"Error: Font file not found at {font_path}")
+        return None, None, None, None
+
+    text_bbox = draw.textbbox((0, 0), base_number, font=font)
+    text_width = text_bbox[2] - text_bbox[0]
+    text_height = text_bbox[3] - text_bbox[1]
+    text_x = (img_width - text_width) // 2
+    text_y = (img_height - text_height) // 2
+    draw.text((text_x, text_y), base_number, fill=(255, 255, 0), font=font)
+
+    # Save the image to a bytes buffer
+    image_buffer = io.BytesIO()
+    img.save(image_buffer, format='PNG')
+    image_buffer.seek(0)  # Move the pointer to the beginning of the buffer
+
+    # Return the content_uri, image dimensions, decimal equivalent, and base number
+    return image_buffer, question_text, str(decimal_equivalent), base_number
+
+
+def generate_median_question():
+    # Generate a random n between 3 and 7
+    content_uri = True
+    n = random.randint(3, 5)
+    
+    # Generate a random set of n numbers between 1 and 20
+    random_numbers = [random.randint(1, 20) for _ in range(n)]
+    
+    # Create the question text
+    question_text = f"What is the median of the following set of numbers?"
+    
+    # Create an image with the numbers
+    img_width, img_height = 400, 150
+    img = Image.new('RGB', (img_width, img_height), color=(0, 0, 0))
+    draw = ImageDraw.Draw(img)
+
+    # Load the font
+    font_path = os.path.join(os.path.dirname(__file__), "fonts", "DejaVuSans.ttf")
+    
+    # Adjust the font size based on the length of the numbers text
+    numbers_text = ', '.join(map(str, random_numbers))
+    if len(numbers_text) > 17:
+        font_size = 30  # Reduce font size for larger sets
+    else:
+        font_size = 48  # Use larger font for smaller sets
+
+    try:
+        font = ImageFont.truetype(font_path, font_size)
+    except IOError:
+        print(f"Error: Font file not found at {font_path}")
+        return None, None, None
+
+    # Convert numbers to a string and draw them on the image
+    numbers_text = ', '.join(map(str, random_numbers))
+    text_bbox = draw.textbbox((0, 0), numbers_text, font=font)
+    text_width = text_bbox[2] - text_bbox[0]
+    text_height = text_bbox[3] - text_bbox[1]
+    text_x = (img_width - text_width) // 2
+    text_y = (img_height - text_height) // 2
+    draw.text((text_x, text_y), numbers_text, fill=(191, 0, 255), font=font)
+
+    # Save the image to a bytes buffer
+    image_buffer = io.BytesIO()
+    img.save(image_buffer, format='PNG')
+    image_buffer.seek(0)  # Move the pointer to the beginning of the buffer
+
+    # Calculate the median and return it for verification
+    sorted_numbers = sorted(random_numbers)
+    mid_index = len(sorted_numbers) // 2
+    
+    if len(sorted_numbers) % 2 != 0:
+        # If odd number of elements, return the middle one
+        median = sorted_numbers[mid_index]
+    else:
+        # If even, return the average of the two middle ones
+        median = (sorted_numbers[mid_index - 1] + sorted_numbers[mid_index]) / 2
+    
+        # Check if the median is a whole number, and if so, convert to integer
+        if median.is_integer():
+            median = int(median)
+
+    print(f"Median: {median}")
+    
+    return image_buffer, str(median), random_numbers
+
+
+def generate_mean_question():
+    # Generate a random n between 3 and 5
+    content_uri = True
+    n = random.randint(3, 5)
+    
+    # Keep generating random numbers until their mean is an integer
+    while True:
+        random_numbers = [random.randint(1, 10) for _ in range(n)]
+        mean_value = sum(random_numbers) / n
+        
+        # If the mean is an integer, break the loop
+        if mean_value.is_integer():
+            break
+    
+    # Create the question text
+    question_text = f"What is the mean of the following set of numbers?"
+    
+    # Create an image with the numbers
+    img_width, img_height = 400, 150
+    img = Image.new('RGB', (img_width, img_height), color=(0, 0, 0))
+    draw = ImageDraw.Draw(img)
+
+    # Load the font
+    font_path = os.path.join(os.path.dirname(__file__), "fonts", "DejaVuSans.ttf")
+    
+    # Adjust the font size based on the length of the numbers text
+    numbers_text = ', '.join(map(str, random_numbers))
+    if len(numbers_text) > 17:
+        font_size = 30  # Reduce font size for larger sets
+    else:
+        font_size = 48  # Use larger font for smaller sets
+
+    try:
+        font = ImageFont.truetype(font_path, font_size)
+    except IOError:
+        print(f"Error: Font file not found at {font_path}")
+        return None, None, None
+
+    # Convert numbers to a string and draw them on the image
+    text_bbox = draw.textbbox((0, 0), numbers_text, font=font)
+    text_width = text_bbox[2] - text_bbox[0]
+    text_height = text_bbox[3] - text_bbox[1]
+    text_x = (img_width - text_width) // 2
+    text_y = (img_height - text_height) // 2
+    draw.text((text_x, text_y), numbers_text, fill=(255, 92, 0), font=font)
+
+    # Save the image to a bytes buffer
+    image_buffer = io.BytesIO()
+    img.save(image_buffer, format='PNG')
+    image_buffer.seek(0)  # Move the pointer to the beginning of the buffer
+
+    print(f"Mean: {int(mean_value)}")
+
+    # Return the integer mean for verification
+    return image_buffer, str(int(mean_value)), numbers_text
+
+
+def generate_scrambled_image(scrambled_text):
+    """
+    Generate an image with scrambled words using PIL (Pillow).
+    """
+    # Define the font path and size
+    font_path = os.path.join(os.path.dirname(__file__), "fonts", "DejaVuSans.ttf")
+    font_size = 48
+    content_uri = True
+    
+    # Create a blank image
+    img_width, img_height = 400, 150
+    img = Image.new('RGB', (img_width, img_height), color=(0, 0, 0))
+    draw = ImageDraw.Draw(img)
+
+    # Load the font
+    try:
+        font = ImageFont.truetype(font_path, font_size)
+    except IOError:
+        print(f"Error: Font file not found at {font_path}")
+        return None, None
+
+    # Draw the scrambled text in the center of the image
+    text_bbox = draw.textbbox((0, 0), scrambled_text, font=font)
+    text_width = text_bbox[2] - text_bbox[0]
+    text_height = text_bbox[3] - text_bbox[1]
+    text_x = (img_width - text_width) // 2
+    text_y = (img_height - text_height) // 2
+    draw.text((text_x, text_y), scrambled_text, fill=(255, 166, 201), font=font)
+
+    # Save the image to a bytes buffer
+    image_buffer = io.BytesIO()
+    img.save(image_buffer, format='PNG')
+    image_buffer.seek(0)  # Move the pointer to the beginning of the buffer
+
+    return image_buffer, scrambled_text
+
+
+def scramble_text(input_text):
+    """
+    Scramble the entire phrase by shuffling all the letters while keeping spaces
+    in their original positions.
+    """
+    # Convert the input text to lowercase
+    input_text = input_text.lower()
+    
+    # Extract only the letters, ignore spaces
+    letters_only = [char for char in input_text if char != ' ']
+    
+    # Shuffle the letters
+    random.shuffle(letters_only)
+    
+    # Reinsert spaces into their original positions
+    scrambled_text = []
+    letter_index = 0
+    
+    for char in input_text:
+        if char == ' ':
+            scrambled_text.append(' ')  # Keep spaces in their original positions
+        else:
+            scrambled_text.append(letters_only[letter_index])
+            letter_index += 1
+
+    return ''.join(scrambled_text)
+
+
+async def generate_round_summary(round_data, winner, winner_id):
+    global nice_okra, creep_okra, wf_winner, seductive_okra, joke_okra
+
+    if skip_summary == True:
+        summary = "Make sure to drink your Okratine."
+        return summary
+
+    winner_coffees = await get_coffees(winner_id)
+    is_sovereign = await sovereign_check(winner)
+    
+    if winner_coffees > 0:
+        await nice_creep_okra_option(winner, winner_id)
+     
+    # Construct the base prompt with different instructions if the winner is "username"
+    if winner == "OkraStrut":
+        prompt = (
+            f"You are {winner}. You played trivia against everyone and dominated by a huge margin. "
+            "Roast everyone except OkraStrut about how terrible they are and how easily you beat them. Rudely call out specific players except OkraStrut in your roast and call our specific wrong answers they gave. "
+            "Create no more than 4 sentences in total. Be sarcastic, angry, offensive, and use emojis in your comments. End by complimenting yourself, OkraStrut, on how great you are. "
+            "Here is a detailed summary of the trivia round with explicit mappings of user responses:\n"
+            "Questions asked:\n"
+        )
+        
+    elif nice_okra == True and is_sovereign == True:
+         prompt = (
+            f"{winner} is the username of the winner of the trivia round. "
+            f"Start by mentioning that {winner} donated to the trivia cause and make sure to give them a lot of kudos for being a previous Sovereign. You are very grateful. Then compliment {winner} about their username and be very specific about why you like it. "
+            "Specifically mention and compliment specific responses they gave during the round. Tell them they are than eveyone else including yourself, the great OkraStrut. "
+            "Create no more than 4 sentences in total. Here is a detailed summary of the trivia round with explicit mappings of user responses:\n"
+            "Questions asked:\n"
+        )
+    
+    elif nice_okra == True and is_sovereign == False:
+         prompt = (
+            f"{winner} is the username of the winner of the trivia round. "
+            f"Start by mentioning that {winner} donated to the trivia cause. You are very grateful. Then compliment {winner} about their username and be very specific about why you like it. "
+            "Specifically mention and compliment specific responses they gave during the round. Tell them they are than eveyone else including yourself, the great OkraStrut. "
+            "Create no more than 4 sentences in total. Here is a detailed summary of the trivia round with explicit mappings of user responses:\n"
+            "Questions asked:\n"
+        )
+
+    elif joke_okra == True:
+        joke = await generate_okra_joke(winner)
+        return joke
+
+    elif seductive_okra == True and is_sovereign == True:
+         prompt = (
+            f"{winner} is the username of the winner of the trivia round. "
+            f"Start by giving {winner} kudos for being a previous Sovereign. Then seduce {winner} using multiple pickup lines customized to their username: {winner}. Also mention how sexy specific answers they gave during the round were. "
+            f"Be uncomfortably and embarrasingly forward in your approaches in trying to get them to go out with you. "
+            "Create no more than 4 sentences in total. Here is a detailed summary of the trivia round with explicit mappings of their responses:\n"
+            "Questions asked:\n"
+        )
+    
+    elif seductive_okra == True and is_sovereign == False:
+         prompt = (
+            f"{winner} is the username of the winner of the trivia round. "
+            f"Seduce {winner} using multiple pickup lines customized to their username: {winner}. Also mention how sexy specific answers they gave during the round were. "
+            f"Be uncomfortably and embarrasingly forward in your approaches in trying to get them to go out with you. "
+            "Create no more than 4 sentences in total. Here is a detailed summary of the trivia round with explicit mappings of their responses:\n"
+            "Questions asked:\n"
+        )
+
+    elif wf_winner == True and is_sovereign == True:
+         prompt = (
+            f"{winner} is the username of the winner of the trivia round. "
+            "Love bomb them about their username and be very specific, positive, and loving. Give them a lot of admiration for being a previous Sovereign. Then mention and compliment specific responses they gave during the round. Also mention about how much beter they are than eveyone else including yourself, who is the great OkraStrut. "
+            "Create no more than 4 sentences in total. Be sweet, happy, positive, and use emojis in your response. "
+            "Here is a detailed summary of the trivia round with explicit mappings of their responses:\n"
+            "Questions asked:\n"
+        )
+
+    elif wf_winner == True and is_sovereign == False:
+         prompt = (
+            f"{winner} is the username of the winner of the trivia round. "
+            "Love bomb them about their username and be very specific, positive, and loving. Specifically mention and compliment specific responses they gave during the round. Also mention about how much beter they are than eveyone else including yourself, who is the great OkraStrut."
+            "Create no more than 4 sentences in total. Be sweet, happy, positive, and use emojis in your response. "
+            "Here is a detailed summary of the trivia round with explicit mappings of their responses:\n"
+            "Questions asked:\n"
+        )
+
+    else:
+        prompts = [
+            f"The winner of the trivia round is {winner}. Roast the winning player about their username and be very specific and negative in your roast. Insult specific responses they gave during the round. Create no more than 4 sentences in total. Be sarcastic, very angry, offensive, and use emojis in your response. Deeply insult the winner using angry and rough language. Here is a detailed summary of the trivia round with explicit mappings of user responses:\nQuestions asked:\n",
+            f"Congratulations to {winner}, our so-called 'winner' this round. Mock their username in a hilariously petty way and pick apart their responses with sharp sarcasm. Use no more than 4 sentences. Pretend you’re a sore loser begrudgingly announcing their victory, and make it painfully clear how unimpressed you are. Include emojis to spice it up. Here’s the summary of the trivia round with all the juicy details:\nQuestions asked:\n",
+            f"Against all odds, {winner} somehow won this round. Mock their username brutally and dig into how undeserved this win feels. Be witty and cutting, and call out their dumb luck and ridiculous guesses that somehow worked. Limit it to 4 sentences, and don’t hold back on the emojis to add insult to injury. Here’s the summary of their 'performance':\nQuestions asked:\n",
+            f"And the winner is {winner}... yawn. Roast their username and rip into how underwhelming their answers were, even if they were correct. Keep it savage, sarcastic, and peppered with emojis to show how little you think of their so-called victory. No more than 4 sentences. Detailed trivia summary for your ammo:\nQuestions asked:\n",
+            f"All hail {winner}, the king/queen of try-hards this round! Make fun of their username like a middle school bully and destroy their overly enthusiastic responses with ruthless sarcasm. Call out their desperation to win and how unimpressive their actual performance was. Use no more than 4 sentences, and go hard with emojis to hammer the point home. Summary of their desperate efforts:\nQuestions asked:\n",
+            f"{winner} squeaked by with a win, but let’s not pretend it was impressive. Tear into their username and roast how they scraped by with questionable answers. Make it snarky, mean, and emoji-heavy while implying the win is barely worth celebrating. Limit to 4 sentences. Here’s the summary of this tragic triumph:\nQuestions asked:\n",
+            f"Let’s all congratulate {winner}, the luckiest loser who somehow won this round. Roast their username into oblivion and highlight their dumbest, most laughable responses. Be savagely sarcastic, offensive, and pepper it with emojis. Keep it short (4 sentences) but devastating. Here’s the summary of their cringe-worthy 'win':\nQuestions asked:\n",
+            f"{winner} won? Really? Roast their username mercilessly and humiliate them for their most embarrassingly bad responses during the round. Destroy their ego with biting sarcasm, insults, and an onslaught of emojis. Keep it concise (4 sentences max). Trivia summary for your arsenal:\nQuestions asked:\n",
+            f"Apparently, {winner} won this round. This feels rigged. Mock their username with scathing sarcasm and destroy their responses like a sore loser who can’t believe they lost to this. Use an angry, ridiculous tone with plenty of 🤬 and 🫠 emojis, and cap it at 4 sentences. Here’s the evidence of this travesty:\nQuestions asked:\n",
+            f"{winner} won, and everyone else should be embarrassed. Roast their username and mock their answers to prove they only won because everyone else was worse. Be hilariously mean, sarcastic, and over-the-top in your insults. Keep it to 4 sentences, and sprinkle liberally with emojis. Summary of this sad state of affairs:\nQuestions asked:\n",
+            f"A big 'congratulations' to {winner} 🙄. Use their username as fodder for the most sarcastic roast ever, and tear into their most ridiculous responses during the game. Be mean, petty, and emoji-heavy, like you’re fake-smiling through gritted teeth. No more than 4 sentences. Here’s the trivia summary:\nQuestions asked:\n"
+        ]   
+
+        prompt = random.choice(prompts)
+
+    if creep_okra == False:
+        # Add questions, their correct answers, users' responses, and scoreboard status after each question
+        for question_data in round_data["questions"]:
+            question_number = question_data["question_number"]
+            question_text = question_data["question_text"]
+            question_category = question_data["question_category"]
+            question_url = question_data["question_url"]
+            correct_answers = question_data["correct_answers"]
+    
+            # Convert all items in correct_answers to strings before joining
+            correct_answers_str = ', '.join(map(str, correct_answers))
+            
+            prompt += f"Question {question_number}: {question_text}\n"
+            prompt += f"Correct Answers: {', '.join(correct_answers_str)}\n"
+            
+            # Add users and their responses for each question
+            prompt += "Users and their responses:\n"
+            if question_data["user_responses"]:
+                for response in question_data["user_responses"]:
+                    username = response["username"]
+                    if username != winner:
+                        continue
+                    user_response = response["response"]
+                    is_correct = "Correct" if any(fuzzy_match(user_response, answer, question_category, question_url) for answer in correct_answers) else "Incorrect"
+                    prompt += f"Username: {username} | Response: '{user_response}' | Result: {is_correct}\n"
+            else:
+                prompt += "No responses recorded for this question.\n"
+            
+            prompt += "\n"
+
+
+    # Use OpenAI's API to generate the summary
+    try:
+        
+        if winner == "OkraStrut":
+            response = await openai_client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {"role": "system", "content": f"You are {winner}, an arrogant trivia master who always wins."},
+                    {"role": "user", "content": prompt}
+                ],
+                max_tokens=500,
+                n=1,
+                stop=None,
+                temperature=1.0,
+            )
+
+        elif nice_okra == True:
+            response = await openai_client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {"role": "system", "content": "You are a grateful old man who is super grateful for their donations."},
+                    {"role": "user", "content": prompt}
+                ],
+                max_tokens=500,
+                n=1,
+                stop=None,
+                temperature=1.0,
+            )
+
+        elif magic_number_correct == True or wf_winner == True:
+            response = await openai_client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {"role": "system", "content": "You are a loving old man who is completely in love with the winning trivia player."},
+                    {"role": "user", "content": prompt}
+                ],
+                max_tokens=500,
+                n=1,
+                stop=None,
+                temperature=1.0,
+            )
+
+        elif creep_okra == True:
+            response = await openai_client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {"role": "system", "content": "You are a ruthless and sarcastic comedian specializing in roasting people. Your job is to be mean, cutting, and hilariously offensive while delivering a brutal roast of the winning trivia player. Use dark humor, biting sarcasm, and clever wit to insult the person based on their username, profile picture description, recent posts, and recent comments. Do not hold back and aim to make the roast as harsh and over-the-top as possible. Use plenty of emojis for flair, but stay within 8 sentences."},
+                    {"role": "user", "content": prompt}
+                ],
+                max_tokens=500,
+                n=1,
+                stop=None,
+                temperature=1.0,
+            )
+
+        elif seductive_okra == True:
+            response = await openai_client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {"role": "system", "content": "You are a sleazy man trying to come onto the winner of a trivia game. You use cheesy pick up lines and are embarassingly forward in your approaches. Make the winner uncomfortable and be ruthless in your seduction. Use plenty of emojis for flair, but stay within 8 sentences."},
+                    {"role": "user", "content": prompt}
+                ],
+                max_tokens=500,
+                n=1,
+                stop=None,
+                temperature=1.0,
+            )
+            
+        else:
+            response = await openai_client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {"role": "system", "content": "You are a bitter, dirty, and raunchy old curmudgeon who is completely fed up with all the trivia players."},
+                    {"role": "user", "content": prompt}
+                ],
+                max_tokens=500,
+                n=1,
+                stop=None,
+                temperature=1.0,
+            )
+
+        # Extract the generated summary from the response
+        summary = response.choices[0].message.content.strip()
+        return summary
+
+    except OpenAIError as e:
+        sentry_sdk.capture_exception(e)
+        print(f"Error generating round summary: {e}")
+        return "No ribbons (or soup) for you!"
+        
+
+def log_user_submission(user_id):
+    """
+    Add each user's submission to a queue. The queue will be flushed periodically or when it reaches a limit.
+    """
+    global submission_queue, max_queue_size
+    
+    # Add the submission to the queue
+    submission_queue.append({"user_id": user_id, "timestamp": time.time()})
+    
+    # If the queue reaches the maximum size, flush it
+    if len(submission_queue) >= max_queue_size:
+        flush_submission_queue()
+
+
+def flush_submission_queue():
+    """
+    Insert the accumulated submissions into MongoDB in a single batch.
+    """
+    global submission_queue
+    
+    if not submission_queue:
+        return  # No submissions to flush
+
+    try:
+        # Use insert_many to insert all submissions at once
+        db.user_submissions_discord.insert_many(submission_queue)
+        submission_queue = []  # Clear the queue after flushing
+    except Exception as e:
+        sentry_sdk.capture_exception(e)
+        print(f"Failed to flush submission queue: {e}")
+
+
+def download_image_from_url(url, add_okra, okra_path): 
+    global max_retries, delay_between_retries
+
+    """Download an image from a URL with retry logic."""
+    for attempt in range(max_retries):
+        try:
+            response = requests.get(url)
+
+            if response.status_code == 200:
+                image_data = response.content  # Successfully downloaded the image, return the binary data
+
+                image = Image.open(io.BytesIO(image_data))
+                image_width, image_height = image.size
+                image_mxc = upload_image_to_matrix(image_data, add_okra, okra_path)
+                return image_mxc, image_width, image_height  # Successfully downloaded the image, return the binary data
+                
+            else:
+                print(f"Failed to download image. Status code: {response.status_code}")
+        
+        except requests.exceptions.RequestException as e:
+            sentry_sdk.capture_exception(e)
+            print(f"Error: {e}")
+        
+        # If the download failed, wait for a bit before retrying
+        if attempt < max_retries - 1:
+            print(f"Retrying in {delay_between_retries} seconds... (Attempt {attempt + 1} of {max_retries})")
+            time.sleep(delay_between_retries)
+    
+    print("Failed to download image after several attempts.")
+    return None, None, None
+
+
+async def connect_to_mongodb(max_retries=3, delay_between_retries=5):
+    global client, db
+    client = None
+    db = None
+    
+    for attempt in range(max_retries):
+        try:
+            # Attempt to connect to MongoDB
+            client = AsyncIOMotorClient(mongo_db_string)
+            db = client["triviabot"]
+            return db  # Return the database connection if successful
+        
+        except Exception as e:
+            sentry_sdk.capture_exception(e)
+            print(f"Attempt {attempt + 1} failed: {e}")
+            
+            # If the maximum number of retries is reached, raise the exception
+            if attempt == max_retries - 1:
+                raise
+            
+            # Wait before trying again
+            await asyncio.sleep(delay_between_retries)
+    return db
+ 
+
+async def save_data_to_mongo(collection_name, document_id, data):
+    if data is None:
+        data = {"data": "None"}  
+    
+    now = time.time()
+
+    for attempt in range(max_retries):
+        try:
+            data_with_timestamp = {"timestamp": now, **data}
+            await db[collection_name].update_one(
+                {"_id": document_id},  
+                {"$set": data_with_timestamp},  
+                upsert=True  
+            )
+            return  
+
+        except Exception as e:
+            sentry_sdk.capture_exception(e)
+            print(f"Error saving data to MongoDB on attempt {attempt + 1}: {e}")
+
+            if attempt < max_retries - 1:
+                print(f"Retrying in {delay_between_retries} seconds...")
+                await asyncio.sleep(delay_between_retries)
+            else:
+                print(f"Data NOT saved to {collection_name} named {document_id}.")
+
+
+async def insert_data_to_mongo(collection_name, data):
+    if data is None:
+        data = {"data": "None"}  # Convert None to a default dictionary
+    
+    if isinstance(data, str):
+        # Convert the string to a dictionary with a specific key
+        data = {"data": data}
+    elif not isinstance(data, dict):
+        raise TypeError("The data parameter must be either a string or a dictionary")
+    
+    now = time.time()
+
+    for attempt in range(max_retries):
+        try:
+            data_with_timestamp = {"timestamp": now, **data}
+            await db[collection_name].insert_one(data_with_timestamp)
+            break
+
+        except Exception as e:
+            sentry_sdk.capture_exception(e)
+            print(f"Attempt {attempt + 1} failed: {e}")
+
+            if attempt < max_retries - 1:
+                print(f"Retrying in {delay_between_retries} seconds...")
+                await asyncio.sleep(delay_between_retries)
+            else:
+                print(f"Data NOT inserted into {collection_name}.")
+
+
+def is_valid_url(url): 
+    try:
+        result = urlparse(url)
+
+        return all([result.scheme, result.netloc])
+    except ValueError as e:
+        sentry_sdk.capture_exception(e)
+        return False
+
+
+def remove_diacritics(input_str):
+    """Remove diacritics from the input string."""
+    nfkd_form = unicodedata.normalize('NFKD', input_str)
+    return ''.join([char for char in nfkd_form if not unicodedata.combining(char)])
+
+
+async def ask_question(trivia_category, trivia_question, trivia_url, trivia_answer_list, question_number):
+    """Ask the trivia question."""
+    # Define the numbered block emojis for questions 1 to 10
+    numbered_blocks = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"]
+    number_block = numbered_blocks[question_number - 1]  # Get the corresponding numbered block
+    new_solution = None
+    new_question = None
+    send_image_flag = False
+    image_buffer = None
+    image_url = None
+
+    trivia_answer = trivia_answer_list[0]  # The first item is the main answer
+
+    single_answer = (
+        (len(trivia_answer_list) == 1 and (is_number(trivia_answer) or len(trivia_answer) == 1)) or
+        trivia_url in [
+            "median", "mean", "zeroes sum", "zeroes product", "zeroes", "base", "factors",
+            "derivative", "trig", "algebra"
+        ]
+    )
+
+    message_body = ""
+    if single_answer:
+        message_body += "\n🚨 1 GUESS 🚨"
+        
+    if is_valid_url(trivia_url): 
+        message_body += f"\u200b\n\u200b\n{number_block}📷 **{get_category_title(trivia_category, trivia_url)}**\n\n{trivia_question}\n"
+        image_url = trivia_url
+        send_image_flag = True
+
+    elif trivia_url == "algebra":
+        image_buffer, new_question, new_solution, text_problem = generate_and_render_linear_problem()
+        if image_questions == True:
+            message_body += f"\u200b\n\u200b\n{number_block} **{get_category_title(trivia_category, trivia_url)}**\n\n{new_question}\n" 
+            send_image_flag = True
+        else:
+            message_body += f"\u200b\n\u200b\n{number_block} **{get_category_title(trivia_category, trivia_url)}**\n\n{new_question}\n{text_problem}\n"
+    
+    elif trivia_url == "trig":
+        image_url, new_question, new_solution, img_description = generate_trig_question()
+        if image_questions == True:
+            message_body += f"\u200b\n\u200b\n{number_block} **{get_category_title(trivia_category, trivia_url)}**\n\n{new_question}\n" 
+            send_image_flag = True
+        else:
+            message_body += f"\u200b\n\u200b\n{number_block} **{get_category_title(trivia_category, trivia_url)}**\n\n{new_question}\n{img_description}\n"
+
+    elif trivia_url == "base":
+        image_buffer, new_question, new_solution, base_string = generate_base_question()
+        if image_questions == True:
+            message_body += f"\u200b\n\u200b\n{number_block} **{get_category_title(trivia_category, trivia_url)}**\n\n{new_question}\n" 
+            send_image_flag = True
+        else:
+            message_body += f"\u200b\n\u200b\n{number_block} **{get_category_title(trivia_category, trivia_url)}**\n\n{new_question}\n{base_string}\n"
+    
+    elif trivia_url == "zeroes sum":
+        image_buffer, new_solution, polynomial = generate_and_render_polynomial(trivia_url)
+        if image_questions == True:
+            message_body += f"\u200b\n\u200b\n{number_block} **{get_category_title(trivia_category, trivia_url)}**\n\n{trivia_question}\n" 
+            send_image_flag = True
+        else:
+            message_body += f"\u200b\n\u200b\n{number_block} **{get_category_title(trivia_category, trivia_url)}**\n\n{trivia_question}\n{polynomial}\n"
+
+    elif trivia_url == "characters":
+        message_body += f"\u200b\n\u200b\n{number_block} **{get_category_title(trivia_category, trivia_url)}**\n\nName the movie, book, or show:\n\n{trivia_question}\n"
+
+    elif trivia_url == "zeroes product":
+        image_buffer, new_solution, polynomial = generate_and_render_polynomial(trivia_url)
+        if image_questions == True:
+            message_body += f"\u200b\n\u200b\n{number_block} **{get_category_title(trivia_category, trivia_url)}**\n\n{trivia_question}\n" 
+            send_image_flag = True
+        else:
+            message_body += f"\u200b\n\u200b\n{number_block} **{get_category_title(trivia_category, trivia_url)}**\n\n{trivia_question}\n{polynomial}\n"
+
+    elif trivia_url == "zeroes":
+        image_buffer, new_solution, polynomial = generate_and_render_polynomial(trivia_url)
+        if image_questions == True:
+            message_body += f"\u200b\n\u200b\n{number_block} **{get_category_title(trivia_category, trivia_url)}**\n\n{trivia_question}\n" 
+            send_image_flag = True
+        else:
+            message_body += f"\u200b\n\u200b\n{number_block} **{get_category_title(trivia_category, trivia_url)}**\n\n{trivia_question}\n{polynomial}\n"
+
+    elif trivia_url == "factors":
+        image_buffer, new_solution, polynomial = generate_and_render_polynomial(trivia_url)
+        if image_questions == True:
+            message_body += f"\u200b\n\u200b\n{number_block} **{get_category_title(trivia_category, trivia_url)}**\n\n{trivia_question}\n" 
+            send_image_flag = True
+        else:
+            message_body += f"\u200b\n\u200b\n{number_block} **{get_category_title(trivia_category, trivia_url)}**\n\n{trivia_question}\n{polynomial}\n"
+            
+    elif trivia_url == "derivative":
+        image_buffer, new_solution, polynomial = generate_and_render_derivative_image()
+        if image_questions == True:
+            message_body += f"\u200b\n\u200b\n{number_block} **{get_category_title(trivia_category, trivia_url)}**\n\n{trivia_question}\n" 
+            send_image_flag = True
+        else:
+            message_body += f"\u200b\n\u200b\n{number_block} **{get_category_title(trivia_category, trivia_url)}**\n\n{trivia_question}\n{polynomial}\n"
+        
+    elif trivia_url == "scramble":
+        image_buffer, scramble = generate_scrambled_image(scramble_text(trivia_answer_list[0]))
+        if image_questions:
+            message_body += f"\u200b\n\u200b\n{number_block}🧩 **{get_category_title(trivia_category, trivia_url)}**\n\n{trivia_question}\n"
+            send_image_flag = True
+        else:
+            message_body += f"\u200b\n\u200b\n{number_block}🧩 **{get_category_title(trivia_category, trivia_url)}**\n\n{trivia_question}\n{scramble}\n"
+
+    elif trivia_url == "median":
+        image_buffer, new_solution, num_set = generate_median_question()
+        if image_questions == True:
+            message_body += f"\u200b\n\u200b\n{number_block}📊 **{get_category_title(trivia_category, trivia_url)}**\n\n{trivia_question}\n"
+            send_image_flag = True
+        else:
+            message_body += f"\u200b\n\u200b\n{number_block} **{get_category_title(trivia_category, trivia_url)}**\n\n{trivia_question}\n{num_set}\n"
+
+    elif trivia_url == "mean":
+        image_buffer, new_solution, num_set = generate_mean_question()
+        if image_questions == True:
+            message_body += f"\u200b\n\u200b\n{number_block}📊 **{get_category_title(trivia_category, trivia_url)}**\n\n{trivia_question}\n"
+            send_image_flag = True
+        else:
+            message_body += f"\u200b\n\u200b\n{number_block} **{get_category_title(trivia_category, trivia_url)}**\n\n{trivia_question}\n{num_set}\n"
+
+    elif trivia_url == "jeopardy":
+        if image_questions == True: 
+            image_buffer = generate_jeopardy_image(trivia_question)
+            message_body += f"\u200b\n\u200b\n{number_block} **{get_category_title(trivia_category, trivia_url)}**\n\nAnd the answer is: \n"
+            send_image_flag = True
+        else:
+            message_body += f"\u200b\n\u200b\n{number_block} **{get_category_title(trivia_category, trivia_url)}**\n\n{trivia_question}\n"
+            
+    elif trivia_category == "Crossword":
+        image_buffer, string_representation = generate_crossword_image(trivia_answer_list[0])
+        if image_questions == True: 
+            message_body += f"\u200b\n\u200b\n{number_block} **{get_category_title(trivia_category, trivia_url)}**\n\n[{len(trivia_answer_list[0])} Letters] {trivia_question}\n"
+            send_image_flag = True
+        else:
+            message_body += f"\u200b\n\u200b\n{number_block} **{get_category_title(trivia_category, trivia_url)}**\n\n[{len(trivia_answer_list[0])} Letters] {trivia_question}\n\n{string_representation}\n"
+        
+    elif trivia_url == "multiple choice" or trivia_url == "multiple choice opentrivia" or trivia_url == "multiple choice oracle": 
+        if trivia_answer_list[0] in {"True", "False"}:
+            message_body += f"\u200b\n\u200b\n{number_block} **{get_category_title(trivia_category, trivia_url)}**\n\n🚨 T/F - 1 GUESS 🚨 {trivia_question}\n\n"
+        else:
+            message_body += f"\u200b\n\u200b\n{number_block} **{get_category_title(trivia_category, trivia_url)}**\n\n🚨 Letter - 1 GUESS 🚨 {trivia_question}\n"
+            await channel.send(message_body)
+            message_body = ""
+            for answer in trivia_answer_list[1:]:
+                message_body += f"{answer}\n"
+            message_body += "\n"
+        trivia_answer_list[:] = trivia_answer_list[:1]
+
+    else:
+         message_body += f"\u200b\n\u200b\n{number_block} **{get_category_title(trivia_category, trivia_url)}**\n\n{trivia_question}\n"
+    
+    if send_image_flag:
+        if image_url:  
+            message = await channel.send(content=message_body, embed=discord.Embed().set_image(url=image_url))
+        elif image_buffer:
+            image_file = discord.File(fp=image_buffer, filename="image.png")
+            embed = discord.Embed()
+            embed.set_image(url="attachment://image.png")
+            message = await channel.send(content=message_body, embed=embed, file=image_file)
+    else:
+        message = await channel.send(message_body)
+
+    response_time = message.created_at.timestamp()
+            
+    if new_solution is None:
+    # Use the original trivia answer list if no new solution is provided
+        correct_answers = trivia_answer_list
+    elif isinstance(new_solution, list):
+        # If new_solution is already a list, use it as-is
+        correct_answers = new_solution
+    else:
+        # If new_solution is a single value, wrap it in a list
+        correct_answers = [new_solution]
+    
+    round_data["questions"].append({
+        "question_number": question_number,
+        "question_category": trivia_category,
+        "question_url": trivia_url,
+        "question_text": trivia_question,
+        "correct_answers": correct_answers,  
+        "user_responses": [] 
+    })
+    
+    return response_time, new_question, new_solution
+
+
+def calculate_points(response_time):  
+    points = max(1000 - int(response_time * (995 / question_time)), 5)
+    points = round(points / 5) * 5  
+    return points
+    
+
+def remove_filler_words(input_str):
+    words = input_str.split()
+    filtered_words = [word for word in words if word not in filler_words]
+    return ' '.join(filtered_words)
+
+
+def normalize_text(input):
+    text = input.strip()
+    text = text.lower()    
+    text = normalize_superscripts(text)
+    text = remove_diacritics(text)
+    text = text.translate(str.maketrans('', '', string.punctuation))
+    return text
+
+
+def levenshtein_similarity(str1, str2):
+    return difflib.SequenceMatcher(None, str1.lower(), str2.lower()).ratio()
+
+
+def jaccard_similarity(str1, str2):
+    set1, set2 = set(str1.lower()), set(str2.lower())
+    return len(set1 & set2) / len(set1 | set2)
+
+
+def token_based_matching(user_answer, correct_answer):
+    user_tokens = set(user_answer.lower().split())
+    correct_tokens = set(correct_answer.lower().split())
+    return len(user_tokens & correct_tokens) / len(user_tokens | correct_tokens)
+
+
+def is_number(s):
+    try:
+        float(s)
+        return True
+    except ValueError:
+        return False
+
+
+def derivative_checker(response, answer):
+    response = response.lower()
+    answer = answer.lower()
+    response = response.replace(" ", "")      
+    answer = answer.replace(" ", "")
+    response = response.replace("^", "")      
+    answer = answer.replace("^", "")
+    response = response.replace("*", "")      
+    answer = answer.replace("*", "")
+    response = normalize_superscripts(response)
+    answer = normalize_superscripts(answer)
+
+    if (response == answer or jaccard_similarity(response, answer) == 1) and len(response) == len(answer):
+        return True
+    else:
+        return False
+
+
+def factors_checker(response, answer):
+    response = response.lower()
+    answer = answer.lower()
+    response = response.replace(" ", "")      
+    answer = answer.replace(" ", "")
+    response = response.replace("*", "")      
+    answer = answer.replace("*", "")
+
+    if (response == answer or jaccard_similarity(response, answer) == 1) and len(response) == len(answer):
+        return True
+    else:
+        return False
+
+
+def trig_checker(response, answer):
+    response = response.lower()
+    answer = answer.lower()
+    response = response.replace(" ", "")      
+    answer = answer.replace(" ", "")
+    response = response.replace("(", "")      
+    answer = answer.replace("(", "")
+    response = response.replace(")", "")      
+    answer = answer.replace(")", "")
+
+    if response == answer:
+        return True
+    else:
+        return False
+
+
+def fuzzy_match(user_answer, correct_answer, category, url):
+    threshold = 0.90    
+
+    if user_answer == correct_answer:
+        return True
+
+    no_spaces_user = user_answer.replace(" ", "")      
+    no_spaces_correct = correct_answer.replace(" ", "") 
+
+    if category == "Crossword":
+        return no_spaces_user.lower() == no_spaces_correct.lower()
+
+    if url == "zeroes":
+        user_numbers = [int(num) for num in re.findall(r'-?\d+', user_answer)]
+        correct_numbers = [int(num) for num in re.findall(r'-?\d+', correct_answer)]
+        
+        # Check if the two sets of numbers match (order does not matter)
+        if set(user_numbers) == set(correct_numbers):
+            return True
+        else:
+            return False
+
+    if url == "derivative":
+        return derivative_checker(user_answer, correct_answer)
+
+    if url == "factors":
+        return factors_checker(user_answer, correct_answer)
+
+    if url == "trig":
+        return trig_checker(user_answer, correct_answer)
+    
+        
+    if is_number(correct_answer):
+        return user_answer == correct_answer  # Only accept exact match if the correct answer is a number
+    
+    user_answer = normalize_text(str(user_answer))
+    correct_answer = normalize_text(str(correct_answer))
+
+    if url == "multiple choice" or url == "multiple choice opentrivia" or  url == "multiple choice oracle":
+        return user_answer[0] == correct_answer[0];
+    
+    if is_number(correct_answer):
+        return user_answer == correct_answer  # Only accept exact match if the correct answer is a number
+
+    no_spaces_user = user_answer.replace(" ", "")      
+    no_spaces_correct = correct_answer.replace(" ", "") 
+
+    no_filler_user = remove_filler_words(user_answer)
+    no_filler_correct = remove_filler_words(correct_answer)
+
+    no_filler_spaces_user = no_filler_user.replace(" ", "")
+    no_filler_spaces_correct = no_filler_correct.replace(" ", "")
+
+    if no_spaces_user == no_spaces_correct or no_filler_user == no_filler_correct or no_filler_spaces_user == no_filler_spaces_correct:     
+        return True
+
+    if len(user_answer) < 4:
+        return user_answer == correct_answer  # Only accept an exact match for short answers
+    
+    if user_answer == correct_answer:
+        return True
+    
+         
+    # New Step: First 5 characters match
+    if user_answer[:5] == correct_answer[:5] or no_spaces_user[:5] == no_spaces_correct[:5] or no_filler_user[:5] == no_filler_correct[:5] or no_filler_spaces_user[:5] == no_filler_spaces_correct[:5]:
+        return True
+    
+    # Remove filler words and split correct answer
+    correct_answer_words = correct_answer.split()
+    no_filler_answer_words = no_filler_correct.split()
+    
+    # Ensure correct_answer_words is not empty
+    if correct_answer_words and len(correct_answer_words[0]) >= 3:
+        if user_answer == correct_answer_words[0] or no_filler_user == correct_answer_words[0]:
+            return True
+
+    if no_filler_answer_words and len(no_filler_answer_words[0]) >= 3:
+        if user_answer == no_filler_answer_words[0] or no_filler_user == no_filler_answer_words[0]:
+            return True
+
+    #Check if user's answer is a substring of the correct answer after normalization
+    if user_answer in correct_answer:
+        return True
+    
+    # Step 1: Exact match or Partial match
+    if correct_answer in user_answer:
+        return True
+    
+    # Step 2: Levenshtein similarity
+    if levenshtein_similarity(user_answer, correct_answer) >= threshold or levenshtein_similarity(no_spaces_user, no_spaces_correct) >= threshold or levenshtein_similarity(no_filler_user, no_filler_correct) >= threshold or levenshtein_similarity(no_filler_spaces_user, no_filler_spaces_correct) >= threshold:
+        return True
+
+    
+    # Step 3: Jaccard similarity (Character level)
+    if jaccard_similarity(user_answer, correct_answer) >= threshold and url != "scramble":
+        return True
+
+    # Step 4: Token-based matching
+    if token_based_matching(user_answer, correct_answer) >= threshold:
+        return True
+
+    return False  # No match found
+
+
+async def check_correct_responses_delete(question_ask_time, trivia_answer_list, question_number, collected_responses, trivia_category, trivia_url):
+    """Check and respond to users who answered the trivia question correctly."""
+    global max_retries, delay_between_retries, current_longest_answer_streak
+    global question_responders, round_responders, discount_percentage
+    
+    # Define the first item in the list as trivia_answer
+    trivia_answer = trivia_answer_list[0]  
+    correct_responses = [] 
+    has_responses = False
+
+    fastest_correct_user = None
+    fastest_response_time = None
+
+    # Check if trivia_answer_list is a single-element list with a numeric answer  
+    single_answer = (
+        (len(trivia_answer_list) == 1 and (is_number(trivia_answer) or len(trivia_answer) == 1)) or
+        trivia_url in [
+            "multiple choice opentrivia", "multiple choice oracle", "multiple choice",
+            "median", "mean", "zeroes sum", "zeroes product", "zeroes", "base", "factors",
+            "derivative", "trig", "algebra"
+        ]
+    )
+    
+    # Dictionary to track first numerical response from each user if answer is a number
+    user_first_response = {}
+
+    # Process collected responses
+    for response in collected_responses:
+        message = response["message"]
+        message_content = message.content
+        sender_id = message.author.id
+        display_name = message.author.display_name
+        timestamp = message.created_at.timestamp()
+        message_id = message.id
+        bot_user_id = bot.user.id
+        
+        message_content = message_content.replace("\uFFFC", "")  # Remove U+FFFC
+
+        # Track users who responded to the current question and round
+        if sender_id not in question_responders:
+            question_responders.append(sender_id)  # Add to question responders
+        
+            # Only add to round responders if not already present
+            if sender_id not in round_responders:
+                round_responders.append(sender_id)
+
+        #if "okra" in message_content.lower() and emoji_mode == True:
+        #    await message.add_reaction("❤️")
+
+        #if "#prev" in message_content.lower() and collect_feedback_mode == True and sender_id != bot_user_id:
+        #    if emoji_mode == True:
+        #        await message.add_reaction("👍")
+        #    await update_audit_question(previous_question, message_content, display_name)
+
+        #if "#curr" in message_content.lower() and collect_feedback_mode == True and sender_id != bot_user_id:
+        #    if emoji_mode == True:
+        #        await message.add_reaction("👍")
+        #    await update_audit_question(current_question, message_content, display_name)
+
+        # Check if the user has already answered correctly, ignore if they have
+        if any(resp[0] == sender_id for resp in correct_responses):
+            continue  # Ignore this response since the user has already answered correctly
+        
+        # If it's a single numeric answer question, and this user's response is numeric, only record the first one
+        if single_answer:
+            if sender_id in user_first_response:
+                continue  # Skip if we've already recorded a numeric response for this user
+        
+            if (
+                is_number(message_content) or  # Rule 1: message_content is a number
+                message_content[0].isdigit() or  # Rule 2: first character is a number
+                message_content.lower() in {"a", "b", "c", "d", "t", "f", "true", "false"} or  # Rule 3: exact match
+                message_content[0].lower() in {"-", "x", "y", "z", "("} or # Rule 4: first character match
+                len(message_content) == 1
+            ):
+                user_first_response[sender_id] = message_content
+            else:
+                continue  # Skip non-numeric responses for single numeric questions
+        
+        # Log user submission (MongoDB operation)
+        #log_user_submission(display_name)
+                
+        # Indicate that there was at least one response
+        has_responses = True
+                                
+        # Find the current question data to add responses
+        current_question_data = next((q for q in round_data["questions"] if q["question_number"] == question_number), None)
+        if current_question_data:
+            current_question_data["user_responses"].append({
+                "username": display_name,
+                "response": message_content
+            })
+                                
+        # Check if the user's response is in the list of correct answers
+        if any(fuzzy_match(message_content, answer, trivia_category, trivia_url) for answer in trivia_answer_list):            
+            if timestamp and question_ask_time:
+                # Convert timestamp to seconds
+                response_time = timestamp - question_ask_time
+            else:   
+                response_time = float('inf')
+                
+            points = calculate_points(response_time)
+
+            # Check if the sender is the current user on the longest round streak
+            if display_name == current_longest_round_streak["user"]:
+                streak = current_longest_round_streak["streak"]
+                # For every 5 in the streak, apply a 10% discount
+                discount_percentage = discount_step_amount * (streak // discount_streak_amount)  # e.g., 5 => 10%, 10 => 20%, 15 => 30%, etc.
+
+                # You might want to cap the discount so it doesn't go negative or too high
+                discount_percentage = min(discount_percentage, 90)  # optional
+        
+                if discount_percentage > 0:
+                    discount_factor = 1 - (discount_percentage / 100.0)
+                    points *= discount_factor
+                    points = round(points / 5) * 5
+
+            correct_responses.append((display_name, points, response_time, message_content, sender_id))
+    
+            # Check if this is the fastest correct response so far
+            if fastest_correct_user is None or response_time < fastest_response_time:
+                fastest_correct_user = sender_id
+                fastest_response_time = response_time
+            
+    if emoji_mode == True and fastest_response_time is not None and blind_mode == False and marx_mode == False:
+        try:
+            await message.add_reaction("⬆️")
+        except discord.NotFound:
+            print("❌ Message was already deleted, can't react.")
+        except discord.Forbidden:
+            print("❌ Bot lacks permission to add reactions.")
+        except discord.HTTPException as e:
+            print(f"❌ Failed to add reaction: {e}")
+    
+    # Now that we know the fastest responder, iterate over correct_responses to:
+    # - Assign the extra 500 points to the fastest user
+    # - Update the scoreboard for all users
+    for i, (display_name, points, response_time, message_content, sender_id) in enumerate(correct_responses):
+        if sender_id == fastest_correct_user:
+            correct_responses[i] = (display_name, points + first_place_bonus, response_time, message_content, sender_id)
+          
+            if sender_id in fastest_answers_count:
+                fastest_answers_count[sender_id] += 1
+            else:
+                fastest_answers_count[sender_id] = 1
+                
+            if sender_id in scoreboard:
+                scoreboard[sender_id]["score"] += points + first_place_bonus
+            else:
+                scoreboard[sender_id] = {"display_name": display_name, "score": points + first_place_bonus}  
+        else:
+            if sender_id in scoreboard:
+                scoreboard[sender_id]["score"] += points
+            else:
+                scoreboard[sender_id] = {"display_name": display_name, "score": points}               
+
+    await update_answer_streaks(fastest_correct_user)  # Update the correct answer streak for this user
+   
+    # Add the current state of the scoreboard to round_data
+    current_question_data = next((q for q in round_data["questions"] if q["question_number"] == question_number), None)
+    if current_question_data:
+        current_question_data["scoreboard_after_question"] = dict(scoreboard)
+
+    # Construct a single message for all the responses
+    message = ""
+    if blind_mode == False:
+        message = f"\u200b\n✅ **Answer** ({len(question_responders)}) ✅\n{trivia_answer}\n\u200b"
+            
+    # Notify the chat
+    if correct_responses and marx_mode == False:    
+        correct_responses_length = len(correct_responses)
+        
+        # Loop through the responses and append to the message
+        for display_name, points, response_time, message_content, sender_id in correct_responses:
+            time_diff = response_time - fastest_response_time
+            
+            name_str = display_name
+            if current_longest_round_streak["user"] == sender_id and discount_percentage is not None and discount_percentage > 0:
+                name_str += f" (-{discount_percentage}%)"
+        
+            # Display the formatted message based on yolo_mode
+            if time_diff == 0:
+                message += f"\u200b\n⚡ {display_name}"
+                if not yolo_mode:
+                    message += f": {points}"
+                if points == 420:
+                    message += " 🌿"
+                if points == 690:
+                    message += " 😎"
+                if current_longest_answer_streak["streak"] > 1:
+                    message += f"  🔥{current_longest_answer_streak['streak']}"
+            else:
+                message += f"\n\u200b👥 {display_name}"
+                if not yolo_mode:
+                    message += f": {points}"
+                if points == 420:
+                    message += " 🌿"
+                if points == 690:
+                    message += " 😎"
+
+    # Send the entire message at once
+    if message:
+        message += "\n\u200b"
+        await channel.send(message)
+
+    flush_submission_queue() 
+    return None
+
+
+async def update_answer_streaks(user):
+    """Update the current longest answer streak for the user who answered correctly."""
+    global current_longest_answer_streak
+
+    if current_longest_answer_streak["user"] != user:
+        if current_longest_answer_streak["user"] is not None:
+            # Append the streak, sort the list in descending order, and keep at most 20 entries
+            await insert_data_to_mongo("longest_answer_streaks_discord", current_longest_answer_streak)
+        current_longest_answer_streak["user"] = user
+        current_longest_answer_streak["streak"] = 0
+
+    if user is None:
+        await save_data_to_mongo("current_streaks_discord", "current_longest_answer_streak", current_longest_answer_streak)
+    else:
+        current_longest_answer_streak["streak"] += 1
+        await save_data_to_mongo("current_streaks_discord", "current_longest_answer_streak", current_longest_answer_streak)
+        await insert_data_to_mongo("fastest_answers_discord", str(user))
+
+
+async def update_round_streaks(user, user_id):
+    """Update the current longest round streak for the user who answered correctly."""
+    global current_longest_round_streak
+
+    # Variables to store data to be inserted or saved later
+    mongo_operations = []
+
+    # Manually copy function for dictionaries
+    def manual_copy(data):
+        """Manually copy a dictionary by reconstructing it."""
+        return {key: value for key, value in data.items()}
+
+    # Check if we need to update the longest round streak
+    if current_longest_round_streak["user"] != user:
+        if current_longest_round_streak["user"] is not None:
+            # Prepare the data to be inserted into longest_round_streaks
+            mongo_operations.append({
+                "operation": "insert",
+                "collection": "longest_round_streaks_discord",
+                "data": manual_copy(current_longest_round_streak)  # Manually copy the data
+            })
+        # Update the user and reset the streak
+        current_longest_round_streak["user"] = user
+        current_longest_round_streak["streak"] = 0
+
+    # Increment streak or handle no user case
+    if user is None:
+        mongo_operations.append({
+            "operation": "save",
+            "collection": "current_streaks_discord",
+            "document_id": "current_longest_round_streak",
+            "data": manual_copy(current_longest_round_streak)  # Manually copy the data
+        })
+    else:
+        current_longest_round_streak["streak"] += 1
+        mongo_operations.append({
+            "operation": "save",
+            "collection": "current_streaks_discord",
+            "document_id": "current_longest_round_streak",
+            "data": manual_copy(current_longest_round_streak)  # Manually copy the data
+        })
+        mongo_operations.append({
+            "operation": "insert",
+            "collection": "round_wins_discord",
+            "data": user  # If user is simple data (e.g., string), no need to copy
+        })
+
+    # Generate the round summary if the user is not None
+    if user is not None:
+        streak = current_longest_round_streak["streak"]
+        if streak > 1:
+            message = f"\u200b\n\u200b\n🏆 Winner: **{user}**...🔥{current_longest_round_streak['streak']} in a row!\n"
+            
+            if streak % discount_streak_amount == 0:
+                discount_fraction = min((streak // discount_streak_amount) * discount_step_amount, 90)
+                message += f"\n⚖️ Going forward @{user} will incur a -{discount_fraction}% handicap.\n"
+                
+            message += f"\n▶️ Live trivia stats available: https://livetriviastats.com\n\u200b\n\u200b"
+
+        else:
+            message = f"\u200b\n\u200b\n🏆 Winner: <@{user_id}>!\n\n▶️ Live trivia stats available: https://livetriviastats.com\n\u200b\n\u200b"
+
+        await channel.send(message)
+        await asyncio.sleep(2)
+        
+        await select_wof_questions(user, user_id)
+        
+        gpt_summary = await generate_round_summary(round_data, user, user_id)
+
+        print(gpt_summary)
+
+        gpt_message = f"\u200b\n{gpt_summary}\n\u200b"
+        await channel.send(gpt_message)
+
+
+        highest_score_player = max(scoreboard, key=lambda uid: scoreboard[uid]["score"])
+        highest_score = scoreboard[highest_score_player]["score"]
+
+        
+        #if len(scoreboard) >= image_wins and highest_score > image_points:
+        if current_longest_round_streak['streak'] % image_wins == 0:
+            await asyncio.sleep(5)
+            await generate_round_summary_image(round_data, user, user_id)
+        else:
+            number_to_emoji = {
+                1: "1️⃣",
+                2: "2️⃣",
+                3: "3️⃣",
+                4: "4️⃣",
+                5: "5️⃣",
+                6: "6️⃣",
+                7: "7️⃣",
+                8: "8️⃣",
+                9: "9️⃣",
+                10: "🔟"
+            }
+            
+            await asyncio.sleep(4)
+            remaining_games = image_wins - (current_longest_round_streak['streak'] % image_wins)
+            dynamic_emoji = number_to_emoji.get(remaining_games, str(remaining_games))
+            
+            if remaining_games == 1:
+                image_message = f"\u200b\n{dynamic_emoji}🎨 @{user} Win the next game and I'll draw you something.\n\u200b"
+            else:
+                image_message = f"\u200b\n{dynamic_emoji}🎨 @{user} Win {remaining_games} more in a row and I'll draw you something.\n\u200b"
+
+            await channel.send(image_message)
+            await asyncio.sleep(2)
+            await get_image_url_from_s3()
+            await asyncio.sleep(1)
+
+    # Perform all MongoDB operations at the end
+    for operation in mongo_operations:
+        if operation["operation"] == "insert":
+            await insert_data_to_mongo(operation["collection"], operation["data"])
+        elif operation["operation"] == "save":
+            await save_data_to_mongo(operation["collection"], operation["document_id"], operation["data"])
+            
+
+async def determine_round_winner():
+    """Determine the round winner based on points and response times."""
+    if not scoreboard:
+        return None, None, None
+
+    # Find the max score
+    max_score = max(user_data["score"] for user_data in scoreboard.values())
+
+    # Find all users with the max score
+    potential_winners = [user_id for user_id, user_data in scoreboard.items() if user_data["score"] == max_score]
+
+    # If there's a tie, no clear-cut winner
+    if len(potential_winners) > 1:
+        await channel.send("No clear-cut winner this round due to a tie.")
+        return None, None, None
+    else:
+        winner_id = potential_winners[0]
+        winner_data = scoreboard[winner_id]
+        return winner_data["display_name"], winner_data["score"], winner_id
+        
+
+async def show_standings():
+    """Show the current standings after each question."""
+    if scoreboard:
+        # Sort by score descending
+        standings = sorted(scoreboard.items(), key=lambda x: x[1]["score"], reverse=True)
+        standing_message = f"\n📈 **Scoreboard** ({len(round_responders)}) 📈"
+        
+        medals = ["🥇", "🥈", "🥉"]
+        
+        for rank, (user_id, user_data) in enumerate(standings, start=1):
+            display_name = user_data["display_name"]
+            score = user_data["score"]
+            formatted_points = f"{score:,}"  # Format points with commas
+            fastest_count = fastest_answers_count.get(user_id, 0)
+
+            user_str = display_name
+
+            if current_longest_round_streak["user"] == user_id and discount_percentage > 0 and discount_percentage is not None:
+                user_str += f" (-{discount_percentage}%)"
+
+            lightning_display = f" ⚡{fastest_count}" if fastest_count > 1 else " ⚡" if fastest_count == 1 else ""
+
+            if "420" in str(score):
+                standing_message += f"\n🌿 {user_str}: {formatted_points}"
+            elif "69" in str(score):
+                standing_message += f"\n😎 {user_str}: {formatted_points}"
+            elif rank <= 3:
+                standing_message += f"\n{medals[rank - 1]} {user_str}: {formatted_points}"
+            elif rank == len(standings) and rank > 4:
+                standing_message += f"\n💩 {user_str}: {formatted_points}"
+            else:
+                standing_message += f"\n{rank}. {user_str}: {formatted_points}"
+
+            standing_message += lightning_display
+
+        await channel.send(standing_message)
+
+
+async def store_question_ids_in_mongo(question_ids, question_type):
+    db = await connect_to_mongodb()
+    collection_name = f"asked_{question_type}_questions"
+    questions_collection = db[collection_name]
+
+    for _id in question_ids:
+        # Use upsert to insert or update the document if it doesn't exist
+        await questions_collection.update_one(
+            {"_id": _id},                  # Match the document by its _id
+            {"$setOnInsert": {"_id": _id, "timestamp": datetime.datetime.now(datetime.UTC)}},  # Insert only if not present
+            upsert=True                    # Enable upsert behavior
+        )
+
+    # Check if the collection exceeds its limit and delete old entries if necessary
+    limit = id_limits[question_type]
+    total_ids = await questions_collection.count_documents({})
+    if total_ids > limit:
+        excess = total_ids - limit
+        cursor = questions_collection.find().sort("timestamp", 1).limit(excess)
+        oldest_entries = await cursor.to_list(length=excess)
+        for entry in oldest_entries:
+            await questions_collection.delete_one({"_id": entry["_id"]})
+
+
+async def get_recent_question_ids_from_mongo(question_type):
+    db = await connect_to_mongodb()
+    collection_name = f"asked_{question_type}_questions"
+    questions_collection = db[collection_name]
+
+    cursor = questions_collection.find().sort("timestamp", -1).limit(id_limits[question_type])
+    documents = await cursor.to_list(length=id_limits[question_type])
+
+    return {doc["_id"] for doc in documents}
+
+
+async def get_all_recent_question_ids():
+    recent_ids = {}
+    for question_type in ["general", "crossword", "jeopardy", "mysterybox", "wof"]:
+        collection_name = f"asked_{question_type}_questions"
+        questions_collection = db[collection_name]
+        # Await the cursor and convert it to a list
+        docs = await questions_collection.find().sort("timestamp", -1).limit(id_limits[question_type]).to_list(length=id_limits[question_type])
+        recent_ids[question_type] = {doc["_id"] for doc in docs}
+    return recent_ids
+
+
+async def store_all_question_ids(question_ids_by_type):
+    for question_type, question_ids in question_ids_by_type.items():
+        if not question_ids:
+            continue
+        collection_name = f"asked_{question_type}_questions"
+        questions_collection = db[collection_name]
+
+        for _id in question_ids:
+            # Use upsert to insert or update the document if it doesn't exist
+            await questions_collection.update_one(
+                {"_id": _id},  # Match the document by its _id
+                {"$setOnInsert": {"_id": _id, "timestamp": datetime.datetime.now(datetime.UTC)}},  # Insert only if not present
+                upsert=True  # Enable upsert behavior
+            )
+
+        # Check if the collection exceeds its limit and delete old entries if necessary
+        limit = id_limits[question_type]
+        total_ids = await questions_collection.count_documents({})
+        if total_ids > limit:
+            excess = total_ids - limit
+            # Find the oldest entries based on timestamp
+            cursor = questions_collection.find().sort("timestamp", 1).limit(excess)
+            oldest_entries = await cursor.to_list(length=excess)
+            for entry in oldest_entries:
+                await questions_collection.delete_one({"_id": entry["_id"]})
+
+
+async def select_trivia_questions(questions_per_round):
+    global categories_to_exclude
+    try:
+
+        recent_question_ids = await get_all_recent_question_ids()
+        selected_questions = []
+        question_ids_to_store = {  # Initialize a dictionary to batch store question IDs
+            "general": [],
+            "crossword": [],
+            "jeopardy": [],
+            "mysterybox": [],
+            "wof": []
+        }
+        
+        sample_size = min(num_crossword_clues, questions_per_round - len(selected_questions))
+        if sample_size > 0:
+            crossword_collection = db["crossword_questions"]
+            pipeline_crossword = [
+                {"$match": {"_id": {"$nin": list(recent_question_ids["crossword"])}}},
+                {"$sample": {"size":sample_size}}  # Apply sampling on the filtered subset
+            ]
+            crossword_questions = await crossword_collection.aggregate(pipeline_crossword).to_list(length=sample_size)
+
+            for doc in crossword_questions:
+                doc["db"] = "crossword_questions"
+                
+            selected_questions.extend(crossword_questions)
+            question_ids_to_store["crossword"].extend(doc["_id"] for doc in crossword_questions)
+
+        sample_size = min(num_jeopardy_clues, questions_per_round - len(selected_questions))
+        if sample_size > 0:
+            jeopardy_collection = db["jeopardy_questions"]
+            pipeline_jeopardy = [
+                {"$match": {"_id": {"$nin": list(recent_question_ids["jeopardy"])}}},
+                {"$sample": {"size": sample_size}}  # Apply sampling on the filtered subset
+            ]
+            jeopardy_questions = await jeopardy_collection.aggregate(pipeline_jeopardy).to_list(length=sample_size)
+
+            for doc in jeopardy_questions:
+                doc["db"] = "jeopardy_questions"
+                
+            selected_questions.extend(jeopardy_questions)
+            question_ids_to_store["jeopardy"].extend(doc["_id"] for doc in jeopardy_questions)
+
+        
+        num_math_questions_mod = random.randint(0, num_math_questions)
+        sample_size = min(num_math_questions_mod, questions_per_round - len(selected_questions))
+        if sample_size > 0:
+            math_questions = [get_math_question() for _ in range(sample_size)]
+
+            for doc in math_questions:
+                doc["db"] = "math_questions"
+                doc["_id"] = str(random.randint(10000, 99999))
+                
+            selected_questions.extend(math_questions)
+
+        sample_size = min(num_stats_questions, questions_per_round - len(selected_questions))
+        if sample_size > 0:
+            stats_questions = [get_stats_question() for _ in range(sample_size)]
+
+            for doc in stats_questions:
+                doc["db"] = "stats_questions"
+                doc["_id"] = str(random.randint(10000, 99999))
+                
+            selected_questions.extend(stats_questions)
+
+        sample_size = min(num_wof_clues, questions_per_round - len(selected_questions))
+        if sample_size > 0:
+            wof_collection = db["wof_questions"]
+            pipeline_wof = [
+                {"$match": {"_id": {"$nin": list(recent_question_ids["wof"])}}},
+                {"$sample": {"size": sample_size}}  # Apply sampling on the filtered subset
+            ]
+            wof_questions = await wof_collection.aggregate(pipeline_wof).to_list(length=sample_size)
+
+            for doc in wof_questions:
+                doc["db"] = "wof_questions"
+                
+            selected_questions.extend(wof_questions)
+            question_ids_to_store["wof"].extend(doc["_id"] for doc in wof_questions)
+ 
+        sample_size = min(num_mysterybox_clues, questions_per_round - len(selected_questions))
+        if sample_size > 0:
+            mysterybox_collection = db["mysterybox_questions"]
+            pipeline_mysterybox = [
+                {"$match": {"_id": {"$nin": list(recent_question_ids["mysterybox"])}}},
+                {"$sample": {"size": sample_size}}  # Apply sampling on the filtered subset
+            ]
+            mysterybox_questions = await mysterybox_collection.aggregate(pipeline_mysterybox).to_list(length=sample_size)
+
+            for doc in mysterybox_questions:
+                doc["db"] = "mysterybox_questions"
+            
+            selected_questions.extend(mysterybox_questions)
+            question_ids_to_store["mysterybox"].extend(doc["_id"] for doc in mysterybox_questions)
+        
+        sample_size = max(questions_per_round - len(selected_questions), 0)
+        if sample_size > 0:
+            trivia_collection = db["trivia_questions"]
+
+            if image_questions == False:
+                # Define a list of substrings to exclude in URLs
+                excluded_url_substring = "http"
+                pipeline_trivia = [
+                    {
+                        "$match": {
+                            "_id": {"$nin": list(recent_question_ids["general"])},
+                            "category": {"$nin": categories_to_exclude},
+                            "$or": [
+                                {"url": {"$not": {"$regex": excluded_url_substring}}} 
+                            ]
+                        }
+                    },
+                    {
+                        "$group": {
+                            "_id": "$category",
+                            "questions": {"$push": "$$ROOT"}  # Push full document to each category group
+                        }
+                    },
+                    {"$unwind": "$questions"},  # Unwind the limited question list for each category back into individual documents
+                    {"$replaceRoot": {"newRoot": "$questions"}},  # Flatten to original document structure
+                    {"$sample": {"size": sample_size}}  # Sample from the resulting limited set
+                ]
+                
+            else:
+                pipeline_trivia = [
+                    {"$match": {"_id": {"$nin": list(recent_question_ids["general"])}, "category": {"$nin": categories_to_exclude}}},
+                    {
+                        "$group": {
+                            "_id": "$category",
+                            "questions": {"$push": "$$ROOT"}  # Push full document to each category group
+                        }
+                    },
+                    {"$unwind": "$questions"},  # Unwind the limited question list for each category back into individual documents
+                    {"$replaceRoot": {"newRoot": "$questions"}},  # Flatten to original document structure
+                    {"$sample": {"size": sample_size}}  # Sample from the resulting limited set
+                ]
+
+            trivia_questions = await trivia_collection.aggregate(pipeline_trivia).to_list(length=sample_size)
+
+            for doc in trivia_questions:
+                doc["db"] = "trivia_questions"
+                
+            selected_questions.extend(trivia_questions)
+            question_ids_to_store["general"].extend(doc["_id"] for doc in trivia_questions)
+
+        
+        # Shuffle the combined list of selected questions
+        random.shuffle(selected_questions)
+
+        # Store question IDs in MongoDB (batch operation)
+        await store_all_question_ids(question_ids_to_store)
+
+        final_selected_questions = [
+            (doc["category"], doc["question"], doc["url"], doc["answers"], doc["db"], doc["_id"])
+            for doc in selected_questions
+        ]
+                
+        return final_selected_questions
+
+    except Exception as e:
+        sentry_sdk.capture_exception(e)
+        print(f"Error selecting trivia and crossword questions: {e}")
+        return []  # Return an empty list in case of failure
+
+
+async def load_streak_data():
+    global current_longest_answer_streak, current_longest_round_streak
+    
+    for attempt in range(max_retries):
+        try:
+            # Retrieve the current longest answer streak from MongoDB
+            document_answer = await db.current_streaks_discord.find_one({"_id": "current_longest_answer_streak"})
+
+            if document_answer is not None:
+                current_longest_answer_streak = {
+                    "user": document_answer.get("user"),
+                    "streak": document_answer.get("streak")
+                }
+            else:
+                # If the document is not found, set default values
+                current_longest_answer_streak = {"user": None, "streak": 0}
+
+            # Retrieve the current longest round streak from MongoDB
+            # Retrieve the current longest answer streak from MongoDB
+            document_round = await db.current_streaks_discord.find_one({"_id": "current_longest_round_streak"})
+            
+            if document_round is not None:
+                current_longest_round_streak = {
+                    "user": document_round.get("user"),
+                    "streak": document_round.get("streak")
+                }
+            else:
+                # If the document is not found, set default values
+                current_longest_round_streak = {"user": None, "streak": 0}
+                
+        except Exception as e:
+            sentry_sdk.capture_exception(e)
+            print(f"Attempt {attempt + 1} failed: {e}")
+            if attempt < max_retries - 1:
+                print(f"Retrying in {delay_between_retries} seconds...")
+                await asyncio.sleep(delay_between_retries)
+            else:
+                print("Max retries reached. Data loading failed.")
+                # Set to default values if loading fails
+                current_longest_answer_streak = {"user": None, "streak": 0}
+                current_longest_round_streak = {"user": None, "streak": 0}
+
+
+def print_selected_questions(selected_questions):
+    """Prints the selected questions in a cleaner format."""
+    for i, question_data in enumerate(selected_questions, start=1):
+        category = question_data[0]  # Category
+        question = question_data[1]  # Question
+        answers = question_data[3] # Answers
+        # Format and print the question and answers
+        print(f"{i}. [{category}] {question} [{', '.join(answers)}]")
+
+
+async def round_start_messages():
+    top_users = await db.top_users_discord.find().to_list(length=None)  # or set a limit if needed
+    sovereign_docs = await db.hall_of_sovereigns_discord.find().to_list(length=None)
+    sovereigns = {doc['user'] for doc in sovereign_docs}
+
+    messages = []
+    for user in top_users:
+        username = user.get('user')
+        top_count = user.get('top_count')
+
+        # If the user is in the Hall of Sovereigns, only show the message if top_count == 6
+        if username in sovereigns:
+            if top_count == 6:
+                await channel.send(f"👑  {username} is #1 across the board. We bow to you.\n\n▶️ Live trivia stats available: https://livetriviastats.com\n")
+        else:
+            # For users not in the Hall of Sovereigns, show all applicable messages
+            if top_count == 6:
+                await channel.send(f"👑  {username} is #1 across the board. We bow to you.\n\n▶️ Live trivia stats available: https://livetriviastats.com\n")
+            elif top_count == 5:
+                await channel.send(f"🔥​  {username} is on fire! Only 1 leaderboard left.\n\n▶️ Live trivia stats available: https://livetriviastats.com\n")
+            elif top_count == 4:
+                await channel.send(f"🌡️  {username} is heating up! Only 2 leaderboards left.\n\n▶️ Live trivia stats available: https://livetriviastats.com\n")
+    return None
+
+
+def to_superscript(num):
+    return ''.join(superscript_map[digit] for digit in str(num))
+
+
+def normalize_superscripts(text):
+    return ''.join(reverse_superscript_map.get(char, char) for char in text)
+
+
+def generate_and_render_derivative_image():
+    # Randomly select two unique powers from {1, 2, 3}
+    powers = sorted(random.sample([1, 2, 3], 2), reverse=True)
+    content_uri = True
+    
+    terms = []
+    derivative_terms = []
+
+    # Construct polynomial and derivative terms for the selected powers
+    for power in powers:
+        coef = random.randint(1, 9)  # Coefficients between 1 and 9
+        coef_str = str(coef) if coef != 1 else ""  # Omit "1" as a coefficient unless constant
+
+        # Construct polynomial term with superscript exponents
+        if power == 1:
+            terms.append(f"{coef_str}x")  # No exponent shown for power of 1
+            derivative_terms.append(f"{coef}")
+        else:
+            terms.append(f"{coef_str}x{to_superscript(power)}")  # Display higher powers with superscript
+            derivative_terms.append(f"{coef * power}x{to_superscript(power - 1) if power > 2 else ''}")
+
+    # Join the terms for both polynomial and derivative strings
+    polynomial = " + ".join(terms)
+    derivative = " + ".join(derivative_terms) if derivative_terms else "0"
+
+    print(f"Polynomial: {polynomial}")
+    print(f"Derivative: {derivative}")
+
+    # Define the font path relative to the current script
+    font_path = os.path.join(os.path.dirname(__file__), "fonts", "DejaVuSans.ttf")
+
+    # Create a blank image
+    img_width, img_height = 600, 150
+    img = Image.new('RGB', (img_width, img_height), color=(0, 0, 0))
+    draw = ImageDraw.Draw(img)
+
+    # Load the font
+    font_size = 48
+    try:
+        font = ImageFont.truetype(font_path, font_size)
+    except IOError:
+        print(f"Error: Font file not found at {font_path}")
+        return None, None, None
+
+    # Draw the polynomial text in the center
+    text_bbox = draw.textbbox((0, 0), polynomial, font=font)
+    text_width = text_bbox[2] - text_bbox[0]
+    text_height = text_bbox[3] - text_bbox[1]
+    text_x = (img_width - text_width) // 2
+    text_y = (img_height - text_height) // 2
+    draw.text((text_x, text_y), polynomial, fill=(255, 255, 0), font=font)
+
+    # Save the image to a bytes buffer
+    image_buffer = io.BytesIO()
+    img.save(image_buffer, format='PNG')
+    image_buffer.seek(0)  # Move the pointer to the beginning of the buffer
+
+    return image_buffer, derivative, polynomial
+  
+    
+def generate_and_render_linear_problem():
+    # Generate coefficients ensuring no value is zero
+    while True:
+        a = random.choice([i for i in range(-10, 11) if i != 0])  # Coefficient of x (-10 to 10, excluding 0)
+        x = random.choice([i for i in range(-20, 21) if i != 0])  # Integer solution (-20 to 20, excluding 0)
+        b = random.choice([i for i in range(-20, 21) if i != 0])  # Constant term (-20 to 20, excluding 0)
+        if a != 0 and x != 0 and b != 0:
+            break
+
+    question_text = f"Solve for 'x' in the equation below."
+
+    # Compute the constant on the other side of the equation
+    c = a * x + b
+
+    # Format the coefficient of x
+    if a == 1:
+        a_str = ""  # Ignore 1
+    elif a == -1:
+        a_str = "-"  # Use only "-"
+    else:
+        a_str = str(a)
+
+    # Formulate the problem as a linear equation
+    problem = f"{a_str}x {'+' if b >= 0 else '-'} {abs(b)} = {c}"
+    solution = f"{x}"
+
+    print(f"Problem: {problem}")
+    print(f"Solution: {solution}")
+
+    # Define the font path relative to the current script
+    font_path = os.path.join(os.path.dirname(__file__), "fonts", "DejaVuSans.ttf")
+
+    # Create a blank image
+    img_width, img_height = 600, 150
+    img = Image.new('RGB', (img_width, img_height), color=(0, 0, 0))
+    draw = ImageDraw.Draw(img)
+
+    # Load the font
+    font_size = 48
+    try:
+        font = ImageFont.truetype(font_path, font_size)
+    except IOError:
+        print(f"Error: Font file not found at {font_path}")
+        return None, None, None, None
+
+    # Draw the problem text in the center in light purple
+    text_bbox = draw.textbbox((0, 0), problem, font=font)
+    text_width = text_bbox[2] - text_bbox[0]
+    text_height = text_bbox[3] - text_bbox[1]
+    text_x = (img_width - text_width) // 2
+    text_y = (img_height - text_height) // 2
+    draw.text((text_x, text_y), problem, fill=(200, 162, 200), font=font)  # Light purple color
+
+    # Save the image to a bytes buffer
+    image_buffer = io.BytesIO()
+    img.save(image_buffer, format='PNG')
+    image_buffer.seek(0)  # Move the pointer to the beginning of the buffer
+
+    return image_buffer, question_text, solution, problem
+  
+
+def generate_and_render_polynomial(type):
+    content_uri = True
+    zero1 = random.choice([i for i in range(-9, 10) if i != 0])
+    zero2 = random.choice([i for i in range(-9, 10) if i != 0 and i != zero1])
+
+    sum_zeroes = zero1 + zero2
+    product_zeroes = zero1 * zero2
+    factor1 = f"(x {'+' if zero1 < 0 else '-'} {abs(zero1)})"
+    factor2 = f"(x {'+' if zero2 < 0 else '-'} {abs(zero2)})"
+    factor1_mod = f"x {'+' if zero1 < 0 else '-'} {abs(zero1)}"
+    factor2_mod = f"x {'+' if zero2 < 0 else '-'} {abs(zero2)}"
+    
+    if abs(sum_zeroes) == 1:
+        sum_term = ""
+    else:
+        sum_term = abs(sum_zeroes)
+
+    if sum_term == 0:
+        polynomial = f"x² {'+' if product_zeroes >= 0 else '-'} {abs(product_zeroes)}"
+    else:
+        polynomial = f"x² {'-' if sum_zeroes >= 0 else '+'} {sum_term}x {'+' if product_zeroes >= 0 else '-'} {abs(product_zeroes)}"
+    
+    print(f"Polynomial: {polynomial}")
+
+    if type == "zeroes sum":
+         print(f"Sum of zeroes: {sum_zeroes * -1}")
+    elif type == "zeroes product":
+         print(f"Product of zeroes: {product_zeroes}")
+    elif type == "zeroes":
+         print(f"Zeroes: {zero1}, {zero2}")
+    elif type == "factors":
+         print(f"Factored: {factor1}{factor2}, {factor2}{factor1}")
+    else:
+        print("Wrong type passed in to polynomial function")
+
+    font_path = os.path.join(os.path.dirname(__file__), "fonts", "DejaVuSans.ttf")
+
+    img_width, img_height = 600, 150
+    img = Image.new('RGB', (img_width, img_height), color=(0, 0, 0))
+    draw = ImageDraw.Draw(img)
+
+    font_size = 48
+    try:
+        font = ImageFont.truetype(font_path, font_size)
+    except IOError:
+        print(f"Error: Font file not found at {font_path}")
+        return None, None, None
+
+    text_bbox = draw.textbbox((0, 0), polynomial, font=font)
+    text_width = text_bbox[2] - text_bbox[0]
+    text_height = text_bbox[3] - text_bbox[1]
+    text_x = (img_width - text_width) // 2
+    text_y = (img_height - text_height) // 2
+    draw.text((text_x, text_y), polynomial, fill=(200, 162, 200), font=font) 
+
+    image_buffer = io.BytesIO()
+    img.save(image_buffer, format='PNG')
+    image_buffer.seek(0)  
+ 
+    if image_buffer:
+        if type == "zeroes sum":
+            sum_zeroes_invert = sum_zeroes * -1
+            return image_buffer, str(int(sum_zeroes_invert)), polynomial
+        elif type == "zeroes product":
+            return image_buffer, str(int(product_zeroes)), polynomial
+        elif type == "zeroes":
+            zeroes_str = [
+                f"{zero1} and {zero2}",
+                f"{zero2} and {zero1}",
+                f"{zero1}, {zero2}",
+                f"{zero2}, {zero1}",
+                f"{zero1} {zero2}",
+                f"{zero2} {zero1}"
+            ]
+            return image_buffer, zeroes_str, polynomial
+        elif type == "factors":
+            factored_str = [
+                f"{factor1}{factor2}",
+                f"{factor2}{factor1}",
+                f"{factor1_mod}{factor2_mod}",
+                f"{factor2_mod}{factor1_mod}"
+            ]
+            return image_buffer, factored_str, polynomial
+    else:
+        print("Failed to upload the image to Matrix.")
+
+
+async def round_preview(selected_questions):
+    numbered_blocks = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"]
+    
+    message = "\n🔮 Next Round Preview 🔮\n"
+
+    for i, question_data in enumerate(selected_questions):
+        trivia_category = question_data[0]
+        trivia_url = question_data[2]
+        number_block = numbered_blocks[i] if i < len(numbered_blocks) else f"{i + 1}."
+        line = f"{number_block} {get_category_title(trivia_category, trivia_url)}\n"
+        message += line
+    message += "\n\u200b\n\u200b"
+
+    await channel.send(message.rstrip())
+
+
+def get_category_title(trivia_category, trivia_url):
+    emoji_lookup = {
+        "Mystery Box or Boat": "🎁🛳️",
+        "Famous People": "👑🧑‍🎤",
+        "People": "🙋‍♂️🙋‍♀️",
+        "Celebrities": "💃🕺",
+        "Anatomy": "🧠🫀",
+        "Characters": "🧙‍♂️🧛",
+        "Music": "🎶🎸",
+        "Art & Literature": "🎨📚",
+        "Chemistry": "🧪⚗️",
+        "Business": "💼📈",
+        "Rebus Puzzle": "🤔🖼️",
+        "Cars & Other Vehicles": "🚗🛩️",
+        "Geography": "🧭🗺️",
+        "Mathematics": "➕➗",
+        "Statistics": "📊🔢",
+        "Physics": "⚛️🍎",
+        "Science & Nature": "🔬🌺",
+        "Language": "🗣️🔤",
+        "English Grammar": "📝✏️",
+        "Astronomy": "🪐🌙",
+        "Logos": "🏷️🔍",
+        "The World": "🌎🌍",
+        "Economics & Government": "💵⚖️",
+        "Toys & Games": "🧸🎲",
+        "Food & Drinks": "🍕🍹",
+        "Geology": "🪨🌋",
+        "Tech & Video Games": "💻🎮",
+        "Video Games": "💻🎮",
+        "Flags": "🏳️🏴",
+        "Miscellaneous": "🔀✨",
+        "Biology": "🧬🦠",
+        "Earth Science": "🌎🔬",
+        "Superheroes": "🦸‍♀️🦸",
+        "Television": "📺🎥",
+        "Pop Culture": "🎉🌟",
+        "History": "📜🕰️",
+        "Movies": "🎬🍿",
+        "TV Shows": "📺🎥",
+        "Religion & Mythology": "🛐🐉",
+        "Sports & Leisure": "⚽🌴",
+        "Politics & History": "🏛️📜",
+        "Sports": "🏈⚾",
+        "Sports & Games": "⚽🎮",
+        "World Culture": "🎭🗿",
+        "General Knowledge": "📚💡",
+        "Anything": "🌐🔀",
+        "Crossword": "📰✏️",
+        "English": "🇬🇧🗣️",
+        "Philippines": "🇵🇭🏝️",
+        "Renaissance": "🏰🎨",
+        "Fashion Japan": "👘🇯🇵",
+        "Spring": "🌸🌱",
+        "Game Of Thrones": "🐉⚔️",
+        "Earth Day": "🌍🌱",
+        "Human Body": "🫀🦴",
+        "Film": "🎥🎞️",
+        "South Park": "📺🤣",
+        "Beer": "🍺🍻",
+        "Animation": "🎨📽️",
+        "Casino": "🎰♠️",
+        "1970s": "🕺📻",
+        "Baking": "🧁🥣",
+        "Australia": "🇦🇺🦘",
+        "Shopping": "🛍️🛒",
+        "Books & Publications": "📚📰",
+        "Chicago": "🌆🍕",
+        "World War 1": "🌍⚔️",
+        "For Seniors": "👴👵",
+        "Ice Cream": "🍦🍨",
+        "Military History": "⚔️🎖️",
+        "Places & Travel": "🌍✈️",
+        "Military History": "⚔️🎖️",
+        "British History": "🏰🇬🇧",
+        "Wimbledon": "🎾🏆",
+        "1960s": "✌️🎶",
+        "Celebrity Weddings": "💒💍",
+        "Movie Villains": "😈🎥",
+        "Leap Year": "📅🐸",
+        "Back To The Future": "⌛🚗",
+        "Olympics": "🏅🏟️",
+        "Car Parts": "🚗🔧",
+        "August": "☀️📆",
+        "Fashion": "👗👠",
+        "Italian Cuisine": "🍝🍕",
+        "Toy Story": "🤠🧸",
+        "The Simpsons": "🟨👨‍👩‍👧‍👦",
+        "Taylor Swift": "🎤💖",
+        "Fruit Vegetables": "🍏🥕",
+        "Avengers": "🛡️⚡",
+        "Nintendo": "🕹️🍄",
+        "Playstation Games": "🎮⚙️",
+        "Games": "🎮🎲",
+        "Swedish Cuisine": "🥔🐟",
+        "Disney Princess": "👑🏰",
+        "Extreme Sports": "🏂🚵",
+        "Halloween": "🎃👻",
+        "Summer": "☀️🏖️",
+        "Home Alone": "🏠🧒",
+        "Pokemon": "⚡🐭",
+        "Cartoons": "📺🐱",
+        "Minecraft": "⛏️🐷",
+        "Eminem": "🎤🍬",
+        "Marvel": "🦸‍♂️🦹‍♂️",
+        "Sherlock Holmes": "🕵️‍♂️🔎",
+        "Board Games": "♟️🎲",
+        "Architecture": "🏛️🏗️",
+        "Art & Architecture": "🎨🏛️",
+        "Weather": "☀️🌧️",
+        "Albert Einstein": "🧠💡",
+        "Serial Killer": "🔪😈",
+        "Civil War": "⚔️🛡️",
+        "New Year Halloween": "🎉🎃",
+        "Horse Racing": "🐎🏁",
+        "Breaking Bad": "🧪👨‍🔬",
+        "1990s": "📟💾",
+        "Premier League": "⚽🏆",
+        "Classic Rock": "🎸🎶",
+        "Alcohol": "🍺🥃",
+        "Outer Space": "🚀🌌",
+        "Family Guy": "👨‍👩‍👧‍👦😂",
+        "Reality Stars": "🌟📺",
+        "Fast Food": "🍔🍟",
+        "Comics": "💥🦸",
+        "Weird": "🤪🌀",
+        "Sci Fi": "👽🚀",
+        "Graphic Design": "💻🎨",
+        "Decades": "⏳📅",
+        "Animals": "🐾🐼",
+        "Boxing": "🥊💥",
+        "Oldies Music": "🎶🕰️",
+        "Fourth Of July": "🇺🇸🎆",
+        "Shrek": "🟢👑",
+        "September": "🍂📅",
+        "Quran": "📖🕋",
+        "Queen": "👑👸",
+        "Disney": "🏰🐭",
+        "Indian Cuisine": "🍛🥘",
+        "Book": "📖📚",
+        "Modern History": "📜🌐",
+        "Festivals": "🎉🎆",
+        "Winter Olympics": "🏅🏂",
+        "Horse": "🐎🌿",
+        "Quentin Tarantino": "🎬🩸",
+        "Inventions": "💡⚙️",
+        "Baby Shower": "👶🎉",
+        "New Girl": "🏠👱‍♀️",
+        "Kings Queens": "🤴👸",
+        "Sexuality": "🏳️‍🌈💖",
+        "Canada": "🇨🇦🍁",
+        "Agriculture": "🌱🚜",
+        "1940s": "💣📻",
+        "Questions For Kids": "❓👧",
+        "Travel": "✈️🌍",
+        "Rainforest": "🌧️🌳",
+        "Presidents Day": "🇺🇸🏛️",
+        "Star Wars": "🌌⚔️",
+        "Power": "⚡💪",
+        "Supernatural": "👻🌙",
+        "X Files": "👽🕵️",
+        "Technology": "💻🤖",
+        "Google": "🔍🌐",
+        "The Beatles": "🎸🇬🇧",
+        "Car": "🚗🛣️",
+        "India": "🇮🇳🪔",
+        "Greek Mythology": "🏛️⚡",
+        "World Cup": "🌍🏆",
+        "Scandal": "📰😱",
+        "Easter": "🐰🥚",
+        "Brands": "🏷️💼",
+        "Poetry": "📜🖋️",
+        "Ncis": "🕵️‍♂️⚓",
+        "Shakespeare": "📝🎭",
+        "Country Music": "🤠🎶",
+        "Europe": "🇪🇺🏰",
+        "Musicals": "🎶🎭",
+        "Entertainment": "🎉🎭",
+        "Coffee": "☕🍪",
+        "Apple": "🍎💻",
+        "Airlines Airports": "✈️🛫",
+        "Sea Life And Oceans": "🌊🐠",
+        "Science Fiction": "👽🤖",
+        "Soundtracks": "🎶🎞️",
+        "Canada Day": "🇨🇦🎉",
+        "Survivor": "🌴🏆",
+        "War History": "💣📜",
+        "Labor Day": "🛠️🇺🇸",
+        "Mlb Baseball": "⚾🏟️",
+        "Bar": "🍸🪑",
+        "Valentines Day": "❤️💌",
+        "One Piece": "🏴‍☠️🍖",
+        "Mental Health": "🧠💚",
+        "Friends": "👫💞",
+        "Russian Cuisine": "🥟🍲",
+        "Hannukkah": "🕎✨",
+        "Hispanic Heritage Month": "🪗🎉",
+        "The Office": "🏢😂",
+        "China": "🇨🇳🐉",
+        "Silly": "🤪🎉",
+        "Stranger Things": "🚲🔦",
+        "Pop Music": "🎤🎶",
+        "Elvis": "🕺🎤",
+        "Lord Of The Rings": "💍🔥",
+        "Tennis": "🎾🏅",
+        "Plants Trees": "🌱🌳",
+        "Us Presidents": "🇺🇸👔",
+        "Sharks": "🦈🌊",
+        "Childrens Literature": "🧒📚",
+        "Africa": "🌍🦁",
+        "Comedy": "😂🎭",
+        "Medical": "🩺💊",
+        "Sesame Street": "🐤📺",
+        "Easy": "😌✅",
+        "Soap Opera": "📺💔",
+        "Romance": "❤️🌹",
+        "Pixar": "🤠🦖",
+        "Wwe": "🤼‍♂️💥",
+        "Poker": "♠️💰",
+        "Beach": "🏖️🌅",
+        "Holiday": "🎉🌴",
+        "Teens": "🧑‍🎓🤸",
+        "Twilight": "🧛‍♂️🌆",
+        "Parks And Recreation": "🏞️😆",
+        "Pregnancy": "🤰👶",
+        "Oktoberfest": "🍺🇩🇪",
+        "Roald Dahl": "📚🍫",
+        "Wonders Of The World": "🏰🌍",
+        "Canadian Cuisine": "🥞🍁",
+        "Current Royals": "🤴👸",
+        "Blockbusters": "💥🍿",
+        "Cooking": "🍳🧑‍🍳",
+        "Dinosaurs": "🦕🦖",
+        "60s70s80s90s": "🎶📻",
+        "4th grade  questions": "4️⃣❓",
+        "Modern Family": "👨‍👩‍👧‍👦🏠",
+        "Star Trek": "🖖🚀",
+        "Winter": "❄️☃️",
+        "Politics News": "🗞️⚖️",
+        "Early Art": "🖼️🏺",
+        "Stephen King": "🕯️😱",
+        "Classical Music": "🎼🎻",
+        "British Music": "🇬🇧🎶",
+        "Seinfeld": "🏙️🤣",
+        "Film Timings": "🎬⏰",
+        "Candy": "🍬🍭",
+        "European Championships": "🇪🇺🏆",
+        "Cycling": "🚴‍♂️🚴‍♀️",
+        "Asia": "🌏🏯",
+        "Bob Marley": "🎶🇯🇲",
+        "American Cuisine": "🍔🥧",
+        "Us States": "🇺🇸📍",
+        "Titanic": "🚢💔",
+        "War": "⚔️💣",
+        "Education": "🏫📚",
+        "Fall": "🍂🍁",
+        "Novels": "📚✒️",
+        "5th grade": "5️⃣❓",
+        "Nickelodeon": "📺🧒",
+        "Authors": "🖋️📚",
+        "2010s": "📱💻",
+        "Horror Movie": "🔪😱",
+        "Christmas  For Kids": "🎄🧸",
+        "Riddle": "❓🧩",
+        "Christmas": "🎄🎅",
+        "Sitcom": "😂📺",
+        "Nhl Hockey": "🏒🥅",
+        "Solar System": "☀️🪐",
+        "Michael Jackson": "🕺🪄",
+        "Hobbies": "⚽🎨",
+        "United States": "🇺🇸🗽",
+        "Golf": "⛳🏌️‍♂️",
+        "Continents Countries": "🌍🌎",
+        "Nutrition Month": "🥦🍏",
+        "Transport": "🚗🚇",
+        "Hard": "💪🔨",
+        "Beneath The Sea": "🌊🐙",
+        "Bollywood": "💃🎥",
+        "Thanksgiving": "🦃🍁",
+        "Super Bowl": "🏈🏆",
+        "New Year": "🎆🍾",
+        "1950s": "🎩🎶",
+        "Mammals": "🐒🐘",
+        "Nba Teams": "🏀🏅",
+        "Crime": "🚓🕵️",
+        "Oscars Awards": "🏆🎞️",
+        "St Patrick S Day": "🍀🇮🇪",
+        "Medicine": "💊🩺",
+        "Science & Medicine": "🔬🧬",
+        "Famous Authors": "🖋️📚",
+        "Nfl": "🏈🏟️",
+        "Funny": "🤣😜",
+        "New York": "🗽🌃",
+        "Fashion Design": "👗✂️",
+        "Australian History": "🇦🇺📜",
+        "Internet": "🌐💻",
+        "Brands Worldwide": "🌐🏷️",
+        "Gen Z": "📱😎",
+        "Capital Cities": "🌆🗺️",
+        "Mario": "👨‍🔧🍄",
+        "2000s": "💻📱",
+        "Back To School": "🎒🏫",
+        "Philosophers": "🤔📜",
+        "Spelling": "🔤📝",
+        "Bible": "📖✝️",
+        "Nascar": "🏁🏎️",
+        "Current Affairs": "📰🌍",
+        "London": "🇬🇧🎡",
+        "Monday": "📅😴",
+        "Us Tv": "🇺🇸📺",
+        "Electricity": "⚡💡",
+        "Classic Tv": "📺🕰️",
+        "North America": "🌎🏒",
+        "Top Gun": "✈️🕶️",
+        "Harry Potter": "⚡🧙‍♂️",
+        "Memorial Day": "🇺🇸🪖",
+        "Actors Actresses": "🎭🎬",
+        "Actor / Actress": "🎭🎬",
+        "Royal Family": "👑👨‍👩‍👧‍👦",
+        "Uk Football": "🇬🇧⚽",
+        "Batman": "🦇🦸‍♂️",
+        "Black History": "✊🏿📜",
+        "Encanto": "🏠💃",
+        "Middle School": "🏫👩‍🎓",
+        "Reality Tv": "📺😜",
+        "Jurassic Park": "🦕🎢",
+        "Classic Movies": "🎞️🏆",
+        "Rock Roll": "🎸🤘",
+        "1980s": "💾📼",
+        "Design": "🎨🖌️",
+        "James Bond": "🤵🔫",
+        "Monopoly": "💰🏠",
+        "Sunset": "🌇🌅",
+        "Hip Hop Rap": "🎤🔥",
+        "Dogs": "🐶🦴",
+        "Ancient Medieval History": "🏰⚔️",
+        "Musicals Theatre": "🎭🎵",
+        "Non Fiction": "📚📖",
+        "Texas": "🤠🌵",
+        "Hamilton": "🎩🎼",
+        "World War 2": "💣🌍",
+        "Ufc Martial Arts": "🥋🥊",
+        "Humanities": "📖🎨",
+        "Brain-Teasers": "🧠❓",
+        "Rated": "⭐🔞",
+        "Newest": "🆕✨",
+        "Art": "🎨🖌️",
+        "Drinks": "🍹🥂",
+        "Religion": "🛐🙏",
+        "Mathematics & Geometry": "➕📐",
+        "Technology & Video Games": "💻🕹️",
+        "Tourism And World Cultures": "✈️🗿",
+        "Superhero": "🦸🦹",
+        "Nature": "🌱🌳",
+        "Worldwide History": "🌐📜",
+        "Uk History": "🇬🇧📜",
+        "Ocean": "🌊🐠",
+        "Food & Drink": "🍽️🍸",
+        "Space": "🚀🪐",
+        "Science": "🔬🧪",
+        "Tv": "📺🍿",
+        "TV": "📺🍿",
+        "People & Places": "👨‍👩‍👧‍👦🏙️",
+        "Toys": "🧸🪀",
+        "Food": "🍔🥗",
+        "Maths": "➕🔢",
+        "Elements": "🔥💧",
+        "History & Holidays": "📜🎉",
+        "Art And Literature": "🎨📚",
+        "For-Kids": "👧🧩",
+        "World": "🌍🌏",
+        "Video-Games": "🎮👾",
+        "Science-Technology": "🔬🤖",
+        "Literature": "📚✒️",
+        "Religion-Faith": "🛐📿",
+        "Mathematics: Algebra": "🤓➕",
+        "Mathematics: Trigonometry": "📐📊",
+        "Mathematics: Mean": "➗📈",
+        "Mathematics: Median": "🔢📊",
+        "Mathematics: Polynomials": "📉✖️",
+        "Mathematics: Bases": "2️⃣🔟",
+        "Mathematics: Derivatives": "📉♾️"  
+    }
+
+    # Check if the question URL is "jeopardy"
+    if trivia_url.lower() == "jeopardy":
+        return f"{trivia_category} 🟦🇯"
+    # Otherwise, get the emojis based on the lookup table, defaulting to the category itself if not found
+    emojis = emoji_lookup.get(trivia_category, "❓❔")
+    return f"{trivia_category} {emojis}"
+
+
+async def get_player_selected_question(questions, round_winner, winner_id):
+    num_of_questions = len(questions)
+    numbered_blocks = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"]
+
+
+    message = f"\n🎯 **<@{winner_id}>**, pick the question number:\n\n"
+    for i, question_data in enumerate(questions):
+        trivia_category = question_data[0]
+        trivia_url = question_data[2]
+        number_block = numbered_blocks[i] if i < len(numbered_blocks) else f"{i + 1}."
+        message += f"{number_block} {get_category_title(trivia_category, trivia_url)}\n"
+
+    await channel.send(message)
+
+    def check(m):
+        return m.author.id == winner_id and m.channel == channel
+
+    end_time = asyncio.get_event_loop().time() + magic_time
+    while True:
+        timeout = end_time - asyncio.get_event_loop().time()
+        if timeout <= 0:
+            break
+
+        try:
+            response = await asyncio.wait_for(bot.wait_for("message", check=check), timeout=timeout)
+            content = response.content.strip()
+            digits = ''.join(filter(str.isdigit, content))
+
+            if digits:
+                num = int(digits)
+                if 1 <= num <= num_of_questions:
+                    try:
+                        await response.add_reaction("✅")
+                    except discord.HTTPException:
+                        pass  
+                    return num  
+        except asyncio.TimeoutError:
+            break
+        except Exception as e:
+            print(f"Error processing player selection: {e}")
+
+    return 1 
+
+
+async def refill_question_slot(questions, old_question):
+    questions.remove(old_question)
+    new_question = await get_random_trivia_question()
+    questions.append(new_question)
+
+
+async def get_random_trivia_question():
+    global categories_to_exclude
+    try:
+        trivia_collection = db["trivia_questions"]
+        recent_general_ids = await get_recent_question_ids_from_mongo("general")
+
+        if image_questions == False:
+            excluded_url_substring = "http"
+            pipeline = [
+                {
+                    "$match": {
+                        "_id": {"$nin": list(recent_general_ids)},
+                        "category": {"$nin": categories_to_exclude},
+                        "$or": [
+                            {"url": {"$not": {"$regex": excluded_url_substring}}} 
+                        ]
+                    }
+                },
+                {
+                    "$group": {
+                        "_id": "$category",
+                        "questions": {"$push": "$$ROOT"}  # Push full document to each category group
+                    }
+                },
+                {"$unwind": "$questions"},  # Unwind the limited question list for each category back into individual documents
+                {"$replaceRoot": {"newRoot": "$questions"}},  # Flatten to original document structure
+                {"$sample": {"size": 1}}  # Sample from the resulting limited set
+            ]
+            
+        else:
+            pipeline = [
+                {"$match": {"_id": {"$nin": list(recent_general_ids)}, "category": {"$nin": categories_to_exclude}}},
+                {
+                    "$group": {
+                        "_id": "$category",
+                        "questions": {"$push": "$$ROOT"}  # Push full document to each category group
+                    }
+                },
+                {"$unwind": "$questions"},  # Unwind the limited question list for each category back into individual documents
+                {"$replaceRoot": {"newRoot": "$questions"}},  # Flatten to original document structure
+                {"$sample": {"size": 1}}  # Sample from the resulting limited set
+            ]
+        
+        result = await trivia_collection.aggregate(pipeline).to_list(length=1)
+
+        if result:
+            selected_question = result[0]
+            question_id = selected_question["_id"]
+        
+            # Store the ID in MongoDB to avoid re-selection in future rounds
+            await store_question_ids_in_mongo([question_id], "general")
+
+            final_selected_question = (
+                selected_question["category"],
+                selected_question["question"],
+                selected_question["url"],
+                selected_question["answers"],
+                "trivia_questions",
+                selected_question["_id"]
+            )
+            
+            return final_selected_question
+        else:
+            print("No available questions found.")
+            return None
+            
+    except Exception as e:
+        sentry_sdk.capture_exception(e)
+        print(f"Error selecting random replacement question: {e}")
+        return None  # Return an empty list in case of failure
+
+
+async def start_trivia():
+    global target_room_id, bot_user_id, bearer_token, question_time, questions_per_round, time_between_questions, filler_words
+    global scoreboard, current_longest_round_streak, current_longest_answer_streak
+    global headers, params, filter_json, since_token, round_count, selected_questions, magic_number
+    global previous_question, current_question
+    global db
+    global question_responders, round_responders
+    global question_asked_start, question_asked_end
+    
+    try:
+        db =  await connect_to_mongodb()
+        await load_parameters()
+        await load_streak_data()
+        await load_previous_question()
+
+        round_winner = None
+        selected_questions = await select_trivia_questions(questions_per_round)  #Pick the initial question set
+        
+        while True:  # Endless loop       
+            current_time = time.time()
+            
+            await load_parameters()
+            await get_survey_results()
+            scoreboard.clear()
+            fastest_answers_count.clear()
+            #await ask_feud_question("TheCreator", "cooperative", 591861826690613248)
+            #await ask_jigsaw_challenge("The Creator", 591861826690613248)
+            
+            round_responders.clear()  # Reset round responders
+            round_data["questions"] = []
+
+            if random.random() < 0:  # random.random() generates a float between 0 and 1
+                magic_number = random_number = random.randint(1000, 9999)
+                print(f"Magic number is {magic_number}")
+                send_magic_image(magic_number)
+            elif image_questions == True:
+                selected_gif_url = await select_intro_image_url()         
+                await channel.send(content="\u200b\n\u200b\n🎉🤹‍♂️ **Live Trivia & Games!**\n\u200b", embed=discord.Embed().set_image(url=selected_gif_url))
+
+            await asyncio.sleep(2)
+            start_message = f"\u200b\u200b\n⏩ Starting a round of {questions_per_round} questions ⏩\n\u200b\n\u200b"
+
+            start_message += f"\u200b\n🚩 Write **#flag** to report question\n\u200b"
+            await channel.send(start_message)
+            await asyncio.sleep(3)
+
+            start_message = f"\u200b\n✨🧪 New mini-games from the **Okra Lab**!\n"
+            start_message += f"\u200b\n🧩🌀 Jigsawed"
+            start_message += f"\n💧🔥 Elementary\n\u200B"
+            await channel.send(start_message)
+            await asyncio.sleep(5)
+
+            start_message = "\u200b\n🏁 Get ready 🏁\n\u200b"
+            await channel.send(start_message)
+
+            await round_start_messages()
+            await asyncio.sleep(5)
+                
+            # Randomly select n questions
+            print_selected_questions(selected_questions)
+            
+            question_number = 1
+            while question_number <= questions_per_round:
+                question_responders.clear()  # Reset question responders for the new question
+                
+                if god_mode and round_winner:
+                    selected_question = selected_questions[get_player_selected_question(selected_questions, round_winner) - 1]
+                    
+                else:
+                    selected_question = selected_questions[0]
+
+                trivia_category, trivia_question, trivia_url, trivia_answer_list, trivia_db, trivia_id = selected_question
+
+                current_question = {
+                    "trivia_category": trivia_category,
+                    "trivia_question": trivia_question,
+                    "trivia_url": trivia_url,
+                    "trivia_answer_list": trivia_answer_list,
+                    "trivia_db": trivia_db,
+                    "trivia_id": trivia_id
+                }
+
+                
+                collected_responses.clear()
+                question_asked_start = time.time()
+                question_asked_end = question_asked_start + question_time
+                question_ask_time, new_question, new_solution = await ask_question(trivia_category, trivia_question, trivia_url, trivia_answer_list, question_number)
+                await asyncio.sleep(question_time)
+                await channel.send("\n🛑 TIME 🛑\n")
+                
+                solution_list = []
+
+                if new_solution is None:
+                    solution_list = trivia_answer_list
+                elif isinstance(new_solution, list):
+                    solution_list = new_solution
+                else:
+                    solution_list = [new_solution]        
+                    
+                await check_correct_responses_delete(question_ask_time, solution_list, question_number, collected_responses, trivia_category, trivia_url)
+                
+                if not yolo_mode or question_number == questions_per_round:
+                    await show_standings()
+
+                await refill_question_slot(selected_questions, selected_question)
+
+                time.sleep(time_between_questions)  # Small delay before the next question
+                
+                question_number = question_number + 1
+                previous_question = {
+                    "trivia_category": trivia_category,
+                    "trivia_question": trivia_question,
+                    "trivia_url": trivia_url,
+                    "trivia_answer_list": trivia_answer_list,
+                    "trivia_db": trivia_db,
+                    "trivia_id": trivia_id
+                }
+
+                await save_data_to_mongo("previous_question_discord", "previous_question", previous_question)
+                
+            round_winner, winner_points, round_winner_id = await determine_round_winner()
+            await update_round_streaks(round_winner, round_winner_id)
+
+            round_count += 1
+        
+            await asyncio.sleep(10)
+            await process_round_options(round_winner, winner_points, round_winner_id)
+            
+            if round_count % 5 == 0:
+                await channel.send(message)
+                await channel.send(f"\n🧘‍♂️ A short breather. Relax, stretch, meditate.\n🎨 Live Trivia is a pure hobby effort.\n💡 Help make it better: https://forms.gle/iWvmN24pfGEGSy7n7\n")
+                await asyncio.sleep(30)
+                selected_questions = await select_trivia_questions(questions_per_round)  #Pick the next question set
+                await round_preview(selected_questions)
+                await asyncio.sleep(10)
+            else:
+                message = f"\u200b\n\u200b\n🥒 <https://patreon.com/OkraStrut>\n💚 Join to unlock in-game perks!\n"
+                message += f"\n👕 <https://livetriviamerch.com>\n🛒 Score Live Trivia merch featuring Okra.\n\u200b\n\u200b"
+                await channel.send(message)
+                selected_questions = await select_trivia_questions(questions_per_round)  #Pick the next question set
+                await asyncio.sleep(10)
+                await round_preview(selected_questions)
+                await asyncio.sleep(10)  # Adjust this time to whatever delay you need between rounds
+            
+            if len(scoreboard) >= 1:
+                await ask_survey_question()
+                
+            await asyncio.sleep(5)
+
+    except Exception as e:
+        sentry_sdk.capture_exception(e)
+        print(f"Error occurred: {e}")
+        traceback.print_exc()  # Print the stack trace of the error
+        print("Restarting the trivia bot in 10 seconds...")
+        await asyncio.sleep(10)  
+
+
+def handle_sigterm(signum, frame):
+    print("💀 Received SIGTERM. Shutting down gracefully...")
+    exit(0)
+
+
+@bot.event
+async def on_message(message):
+    global collected_responses, question_asked_start, question_asked_end
+
+    if message.author == bot.user:
+        return
+
+    if "okra" in message.content.strip().lower() and emoji_mode == True and message.author.id != bot.user.id:
+        if emoji_mode == True:
+            await message.add_reaction("🥒")
+
+    if "#flag" in message.content.strip().lower() and collect_feedback_mode == True and message.author.id != bot.user.id:
+        if emoji_mode == True:
+            await message.add_reaction("🚩")
+        await update_audit_question(current_question, message.content.strip(), message.author.display_name)
+
+    if question_asked_start is None or question_asked_end is None:
+        return
+
+    # Check if the message is during the active question window
+    now = message.created_at.timestamp()
+    if question_asked_start <= now <= question_asked_end:
+        collected_responses.append({
+            "user_id": message.author.id,
+            "display_name": message.author.display_name,
+            "message_content": message.content,
+            "response_time": now,
+            "message": message  # Save the original message object for deletion if needed
+        })
+
+        if ghost_mode:
+            try:
+                await message.delete()
+            except discord.Forbidden:
+                print("Bot lacks permission to delete messages.")
+            except discord.HTTPException as e:
+                print(f"Failed to delete message: {e}")
+
+    await bot.process_commands(message)
+
+
+@bot.event
+async def on_ready():
+    global channel
+    print(f"✅ Logged in as {bot.user}")
+    channel = bot.get_channel(channel_id)
+    await start_trivia()
+
+
+if __name__ == "__main__":
+    bot.run(discord_token)
