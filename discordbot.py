@@ -6812,6 +6812,8 @@ async def ask_question(trivia_category, trivia_question, trivia_url, trivia_answ
 
     else:
          message_body += f"\u200b\n\u200b\n{number_block} **{get_category_title(trivia_category, trivia_url)}**\n\n{trivia_question}\n"
+
+    message_body += "\u200b"
     
     if send_image_flag:
         if image_url:  
@@ -8603,7 +8605,7 @@ async def start_trivia():
                 question_asked_end = question_asked_start + question_time
                 question_ask_time, new_question, new_solution = await ask_question(trivia_category, trivia_question, trivia_url, trivia_answer_list, question_number)
                 await asyncio.sleep(question_time)
-                await channel.send("\n🛑 TIME 🛑\n")
+                await channel.send("\u200b\n🛑 TIME 🛑\n\u200b")
                 
                 solution_list = []
 
