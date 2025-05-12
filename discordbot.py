@@ -6800,9 +6800,9 @@ async def ask_question(trivia_category, trivia_question, trivia_url, trivia_answ
         
     elif trivia_url == "multiple choice" or trivia_url == "multiple choice opentrivia" or trivia_url == "multiple choice oracle": 
         if trivia_answer_list[0] in {"True", "False"}:
-            message_body += f"\u200b\n\u200b\n{number_block} **{get_category_title(trivia_category, trivia_url)}**\n\n🚨 T/F - 1 GUESS 🚨 {trivia_question}\n\n"
+            message_body += f"\u200b\n\u200b\n{number_block} **{get_category_title(trivia_category, trivia_url)}**\n\n🚨 **T/F - 1 GUESS** 🚨 {trivia_question}\n\n"
         else:
-            message_body += f"\u200b\n\u200b\n{number_block} **{get_category_title(trivia_category, trivia_url)}**\n\n🚨 Letter - 1 GUESS 🚨 {trivia_question}\n"
+            message_body += f"\u200b\n\u200b\n{number_block} **{get_category_title(trivia_category, trivia_url)}**\n\n🚨 **Letter - 1 GUESS** 🚨 {trivia_question}\n"
             await channel.send(message_body)
             message_body = ""
             for answer in trivia_answer_list[1:]:
