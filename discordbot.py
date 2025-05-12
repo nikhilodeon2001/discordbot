@@ -8605,7 +8605,7 @@ async def start_trivia():
                 question_asked_end = question_asked_start + question_time
                 question_ask_time, new_question, new_solution = await ask_question(trivia_category, trivia_question, trivia_url, trivia_answer_list, question_number)
                 await asyncio.sleep(question_time)
-                await channel.send("\u200b\n🛑 TIME 🛑\n\u200b")
+                #await channel.send("\u200b\n🛑 TIME 🛑\n\u200b")
                 
                 solution_list = []
 
