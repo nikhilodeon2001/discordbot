@@ -4948,7 +4948,7 @@ async def select_wof_questions(winner, winner_id):
             return None
 
         elif selected_wof_category == "16":
-            await ask_ranker_list_question(winner)
+            await ask_ranker_list_question(winner, winner_id)
             await asyncio.sleep(3)
             return None
 
@@ -4993,17 +4993,17 @@ async def select_wof_questions(winner, winner_id):
             return None
 
         elif selected_wof_category == "25":
-            await ask_math_challenge(winner)
+            await ask_math_challenge(winner, winner_id)
             await asyncio.sleep(3)
             return None
 
         elif selected_wof_category == "26":
-            await ask_element_challenge(winner)
+            await ask_element_challenge(winner, winner_id)
             await asyncio.sleep(3)
             return None
 
         elif selected_wof_category == "27":
-            await ask_jigsaw_challenge(winner)
+            await ask_jigsaw_challenge(winner, winner_id)
             await asyncio.sleep(3)
             return None
         
