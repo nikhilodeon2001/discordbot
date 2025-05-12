@@ -1,1 +1,1 @@
-worker: python triviabot.py
+worker: python discordbot.py
