@@ -55,9 +55,9 @@ import cairosvg
 import asyncio
 import difflib
 import nltk
+nltk.data.path.append("./nltk_data")
 from nltk.corpus import wordnet as wn
 from metaphone import doublemetaphone
-nltk.data.path.append("./nltk_data")
 import discord
 from discord.ext import commands
 import aiohttp
