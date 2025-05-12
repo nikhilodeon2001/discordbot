@@ -90,7 +90,7 @@ submission_queue = []
 max_queue_size = 100  # Number of submissions to accumulate before flushing
 
 # Initialize all variables
-discord_token = os.getenv("DISCORD_TOKEN")
+discord_token = os.getenv("discord_token")
 mongo_db_string = os.getenv("mongo_db_string")
 openai_api_key = os.getenv("openai_api_key")
 openweather_api_key = os.getenv("openweather_api_key")
