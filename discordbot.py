@@ -8653,8 +8653,8 @@ async def start_trivia():
                 await round_preview(selected_questions)
                 await asyncio.sleep(10)
             else:
-                message = f"\u200b\n\u200b\n🥒 Unlock perks? Become an Okran!\n💚 <https://patreon.com/OkraStrut>\n"
-                message += f"\n🛒 Score Live Trivia merch featuring Okra!\n👕 <https://livetriviamerch.com>\n\u200b"
+                message = f"\u200b\n\u200b\n🥒 **Unlock perks? Become an Okran!**\n💚 <https://patreon.com/OkraStrut>\n"
+                message += f"\n🛒 **Score Live Trivia merch featuring Okra!**\n👕 <https://livetriviamerch.com>\n\u200b"
                 
                 await channel.send(message)
                 selected_questions = await select_trivia_questions(questions_per_round)  #Pick the next question set
