@@ -6684,7 +6684,7 @@ async def ask_question(trivia_category, trivia_question, trivia_url, trivia_answ
 
     message_body = ""
     if single_answer:
-        message_body += "\n🚨 1 GUESS 🚨"
+        message_body += "\u200b\n🚨 1 GUESS 🚨"
         
     if is_valid_url(trivia_url): 
         message_body += f"\u200b\n\u200b\n{number_block}📷 **{get_category_title(trivia_category, trivia_url)}**\n\n{trivia_question}\n"
