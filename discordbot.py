@@ -4496,11 +4496,11 @@ async def generate_round_summary_image(round_data, winner, winner_id):
         else:
             image_description = await describe_image_with_vision(image_url, "title", prompt)
             
-        message = f"🔥💖 {winner}, you've done well. I drew this for you.\n"
+        message = f"🔥💖 **{winner}**, you've done well. I drew this **for you**.\n"
         await channel.send(content=message, embed=discord.Embed().set_image(url=image_url))
         
-        message = f"\nI call it: '{image_description}'\n"
-        message += f"\n🏛️👋 Welcome to the Okra Museum"
+        message = f"\n**I call it**...*{image_description}*\n"
+        message += f"\n🏛️👋 **Welcome to the Okra Museum**"
         message += "\n🌐➡️ https://livetriviastats.com/okra-museum\n"
         await channel.send(message)
 
@@ -4618,7 +4618,7 @@ async def ask_category(winner, categories, winner_coffees, winner_id):
 
             # Case 3: Valid choice
             await response.add_reaction("✅")
-            await channel.send(f"💪🛡️ I got you {winner}! Choice {message_content} it is.")
+            await channel.send(f"💪🛡️ I got you **{winner}**! Choice {message_content} it is.")
 
             if message_content == '4' and winner_coffees > 0:
                 additional_prompt = await request_prompt(winner, winner_id)
@@ -4636,8 +4636,8 @@ async def request_prompt(winner, winner_id):
     collected_words = []
     start_time = asyncio.get_event_loop().time()
    
-    message = f"\u200b\n🖼️🔟 <@{winner_id}>, Fill in the blank. 10 words max and be good.\n\u200b"
-    message += f"\n'Draw an okra themed picture of @{winner} _____________.'\n\u200b"
+    message = f"\u200b\n🖼️🔟 <@{winner_id}>, Fill in the blank. *10 words max* and **be good**.\n\u200b"
+    message += f"\n*Draw an okra themed picture of **{winner}**...*\n\u200b"
     await channel.send(message)
 
     def check(m):
@@ -4667,7 +4667,7 @@ async def request_prompt(winner, winner_id):
     if not collected_words:
         await channel.send("Nothing. Okra time.")
     else:
-        final_msg = f"\u200b\n💥🤯 Ok...ra I got: 'Draw an okra-themed picture of {winner} {' '.join(collected_words)}'\n\u200b"
+        final_msg = f"\u200b\n💥🤯 **Ok...ra I got**: 'Draw an okra-themed picture of **{winner}** {' '.join(collected_words)}'\n\u200b"
         await channel.send(final_msg)
 
     return ' '.join(collected_words)
@@ -5852,7 +5852,7 @@ async def process_round_options(round_winner, winner_points, round_winner_id):
 
     winner_coffees = await get_coffees(round_winner_id)
 
-    message = f"\u200b\n🍔🍟 **<{round_winner_id}>**, what's your order?\n\n" 
+    message = f"\u200b\n🍔🍟 **<@{round_winner_id}>**, what's your order?\n\n" 
     message += "🥒 Some choices for **Okrans Only**!\n\u200b"
     
     await channel.send(message)
