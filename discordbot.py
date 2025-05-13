@@ -8694,13 +8694,10 @@ async def on_message(message):
     if "#perks" in message.content.strip().lower() and message.author.id != bot.user.id:
         try:
             dm_channel = await message.author.create_dm()
-            await dm_channel.send("🔓✨ Here's the link to become an Okran and unlock perks!\n<https://patreon.com/OkraStrut>")
-            await message.channel.send(f"\u200b\n{message.author.mention} 📬 Check your DMs for your perks link!\n\u200b")
+            await dm_channel.send("\u200b\n🔓✨ Here's the link to become an Okran and unlock perks!\n<https://patreon.com/OkraStrut>\n\u200b")
         except Exception as e:
-            #await message.reply("⚠️ I couldn't DM you. Make sure your DMs are open.")
-            await message.channel.send(f"\u200b\n{message.author.mention} ⚠️ I couldn't DM you. Make sure your DMs are open.\n\u200b")
+            await message.channel.send(f"\u200b\n{message.author.mention} ⚠️ I couldn't message you. Make sure your DMs are open.\n\u200b")
             print(f"Error sending DM: {e}")
-
 
     if "okra" in message.content.strip().lower() and emoji_mode == True and message.author.id != bot.user.id:
         if emoji_mode == True:
