@@ -3008,7 +3008,7 @@ async def ask_feud_question(winner, mode, winner_id):
         await asyncio.sleep(5)
 
         prompt_message = f"\u200b\n\u200b\n👉👉 **{feud_prompt.upper()}**\n"
-        prompt_message += f"\n📜🔢 List as many as you can. GO! 🏁🚀\n\u200b"
+        prompt_message += f"\n📜🔢 List as many as you can. **GO!** 🏁🚀\n\u200b"
 
         await channel.send(prompt_message)
 
@@ -3353,7 +3353,7 @@ async def ask_ranker_list_number(winner, winner_id):
         return int(message.content)
     except asyncio.TimeoutError:
         selected_question = random.choice(["1", "2", "3", "4", "5"])
-        await channel.send(f"\u200b\n🐢⏳ Too slow. I choose {selected_question}.\n\u200b")
+        await channel.send(f"\u200b\n🐢⏳ Too slow. I choose **{selected_question}**.\n\u200b")
         return int(selected_question)
 
 
@@ -3411,9 +3411,9 @@ async def ask_ranker_list_question(winner, winner_id):
 
     await channel.send(f"\u200b\n\u200b\n⚠️🚨 **Everyone's in...{emojis}**\n\u200b")
     await asyncio.sleep(3)
-    await channel.send(f"\u200b\n📝1️⃣ List ONE per message of...")
+    await channel.send(f"\u200b\n📝1️⃣ List **ONE per message** of...")
     await asyncio.sleep(3)
-    await channel.send(f"\u200b\n👉👉 **{clue}**\n\n🟢🚀 GO!\n\u200b")
+    await channel.send(f"\u200b\n👉👉 **{clue}**\n\n🟢🚀 **GO!**\n\u200b")
 
     def check(m):
         return m.channel == channel and m.author != bot.user
@@ -3528,7 +3528,7 @@ async def ask_list_question(winner):
     await asyncio.sleep(3)
     await channel.send(f"\u200b\n📝1️⃣ List ONE per message of...")
     await asyncio.sleep(3)
-    await channel.send(f"\u200b\n\u200b\n👉👉 **{clue}**\n\n🟢🚀 GO!\n\u200b")
+    await channel.send(f"\u200b\n\u200b\n👉👉 **{clue}**\n\n🟢🚀 **GO!**\n\u200b")
 
     def check(m):
         return m.channel == channel and m.author != bot.user
@@ -5302,7 +5302,7 @@ async def ask_wof_number(winner, winner_id):
     set_a = [str(i) for i in range(5)]
     set_b = [str(i) for i in range(5, 28)] if len(round_responders) >= num_list_players else [str(i) for i in range(5, 10)]
     selected_question = random.choice(set_a if random.random() < 0.5 else set_b)
-    await channel.send(f"\u200b\n🐢⏳ Too slow. I choose {selected_question}.\n\u200b")
+    await channel.send(f"\u200b\n🐢⏳ Too slow. I choose **{selected_question}**.\n\u200b")
     return selected_question
 
   
