@@ -2129,7 +2129,7 @@ async def ask_riddle_challenge(winner):
         await asyncio.sleep(1)
         await channel.send(f"\u200b\n🎉🥇 The winner is **{sorted_data[0][1][0]}**!\n\u200b")
     else:
-        await channel.send("\u200b\n👎😢 No right answers. I'm ashamed to call you Okrans.\n\u200b")
+        await channel.send("\u200b\n👎😢 **No right answers**. I'm ashamed to call you Okrans.\n\u200b")
 
     await asyncio.sleep(5)
 
@@ -4185,8 +4185,11 @@ async def get_image_url_from_s3():
 
     if match:
         title = match.group(1)
+        clean_title = re.sub(r"[\"']", "", title)
         user = match.group(2)
         full_date = match.group(3)
+        
+
         
         # Remove the time from the date string
         date_only = ' '.join(full_date.split()[:-1])
@@ -4194,9 +4197,10 @@ async def get_image_url_from_s3():
         message += "\n🥒🏛️ https://livetriviastats.com/okra-museum\n\u200b"
         await channel.send(content=message, embed=discord.Embed().set_image(url=public_url))
 
-        message = f"\u200b\n**Masterpiece:** '{title}'\n"
-        message += f"**Okra's Muse:** {user}\n"
-        message += f"**Creation Date:** {date_only}\n\u200b"
+        #message = f"\u200b\n**Masterpiece:** '{title}'\n"
+        message = f"\u200b\n**Masterpiece**: *{clean_title}*\n"
+        message += f"**Okra's Muse:** *{user}*\n"
+        message += f"**Creation Date:** *{date_only}*\n\u200b"
 
         await channel.send(message)
 
@@ -4375,10 +4379,10 @@ async def nice_creep_okra_option(winner, winner_id):
     joke_okra = False
     
     message = f"\u200b\n🥒🤝 Thank you **{winner}** for your support.\n\u200b\n\u200b" 
-    message += f"🥒😊 Say 'okra' and I'll be nice.\n"
-    message += f"💋👠 Say 'love me' and I'll seduce you.\n"
-    message += f"🤡🤣 Say 'joke' and I'll write you a dad joke.\n"
-    message += f"🔥🍗 Say nothing and I'll roast you.\n\u200b\n\u200b"
+    message += f"🥒😊 Say **okra** and I'll be nice.\n"
+    message += f"💋👠 Say **love me** and I'll seduce you.\n"
+    message += f"🤡🤣 Say **joke** and I'll write you a dad joke.\n"
+    message += f"🔥🍗 Say **nothing** and I'll roast you.\n\u200b\n\u200b"
     await channel.send(message)
 
     def check(m):
@@ -5266,7 +5270,7 @@ async def ask_wof_number(winner, winner_id):
                 set_a = [str(i) for i in range(5)]
                 set_b = [str(i) for i in range(5, 28)] if len(round_responders) >= num_list_players else [str(i) for i in range(5, 10)]
                 selected_question = random.choice(set_a if random.random() < 0.5 else set_b)
-                await channel.send(f"\n🎁 @{winner}, let's do {selected_question}.\n")
+                await channel.send(f"\n🎁 **<@{winner_id}>**, let's do {selected_question}.\n")
                 return selected_question
 
             if content not in all_options:
@@ -5848,7 +5852,7 @@ async def process_round_options(round_winner, winner_points, round_winner_id):
 
     winner_coffees = await get_coffees(round_winner_id)
 
-    message = f"\u200b\n🍔🍟 **<@{round_winner_id}>**, what's your order?\n\n" 
+    message = f"\u200b\n🍔🍟 **<{round_winner_id}>**, what's your order?\n\n" 
     message += "🥒 Some choices for **Okrans Only**!\n\u200b"
     
     await channel.send(message)
@@ -7322,7 +7326,7 @@ async def update_round_streaks(user, user_id):
     if user is not None:
         streak = current_longest_round_streak["streak"]
         if streak > 1:
-            message = f"\u200b\n\u200b\n🏆 Winner: **{user}**...🔥{current_longest_round_streak['streak']} in a row!\n"
+            message = f"\u200b\n\u200b\n🏆 Winner: **<@{user_id}>**...🔥{current_longest_round_streak['streak']} in a row!\n"
             
             if streak % discount_streak_amount == 0:
                 discount_fraction = min((streak // discount_streak_amount) * discount_step_amount, 90)
@@ -7333,7 +7337,7 @@ async def update_round_streaks(user, user_id):
 
         else:
             #message = f"\u200b\n\u200b\n🏆 Winner: <@{user_id}>!\n\n▶️ Live trivia stats available: https://livetriviastats.com\n\u200b\n\u200b"
-            message = f"\u200b\n\u200b\n🏆 Winner: <@{user_id}>!\n\n▶️ Live trivia stats for Discord coming soon.\u200b\n\u200b"
+            message = f"\u200b\n\u200b\n🏆 Winner: **<@{user_id}>**!\n\n▶️ Live trivia stats for Discord coming soon.\u200b\n\u200b"
 
         await channel.send(message)
         await asyncio.sleep(2)
@@ -7375,9 +7379,9 @@ async def update_round_streaks(user, user_id):
             dynamic_emoji = number_to_emoji.get(remaining_games, str(remaining_games))
             
             if remaining_games == 1:
-                image_message = f"\u200b\n{dynamic_emoji}🎨 @{user} Win the next game and I'll draw you something.\n\u200b"
+                image_message = f"\u200b\n{dynamic_emoji}🎨 **<@{user_id}>**, win the next game and I'll draw you something.\n\u200b"
             else:
-                image_message = f"\u200b\n{dynamic_emoji}🎨 @{user} Win {remaining_games} more in a row and I'll draw you something.\n\u200b"
+                image_message = f"\u200b\n{dynamic_emoji}🎨 **<@{user_id}>**, win {remaining_games} more in a row and I'll draw you something.\n\u200b"
 
             await channel.send(image_message)
             await asyncio.sleep(2)
@@ -7436,15 +7440,15 @@ async def show_standings():
             lightning_display = f" ⚡{fastest_count}" if fastest_count > 1 else " ⚡" if fastest_count == 1 else ""
 
             if "420" in str(score):
-                standing_message += f"\n🌿 {user_str}: {formatted_points}"
+                standing_message += f"\n🌿 **{user_str}**: {formatted_points}"
             elif "69" in str(score):
-                standing_message += f"\n😎 {user_str}: {formatted_points}"
+                standing_message += f"\n😎 **{user_str}**: {formatted_points}"
             elif rank <= 3:
-                standing_message += f"\n{medals[rank - 1]} {user_str}: {formatted_points}"
+                standing_message += f"\n{medals[rank - 1]} **{user_str}**: {formatted_points}"
             elif rank == len(standings) and rank > 4:
-                standing_message += f"\n💩 {user_str}: {formatted_points}"
+                standing_message += f"\n💩 **{user_str}**: {formatted_points}"
             else:
-                standing_message += f"\n{rank}. {user_str}: {formatted_points}"
+                standing_message += f"\n{rank}. **{user_str}**: {formatted_points}"
 
             standing_message += lightning_display
 
