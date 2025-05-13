@@ -2121,7 +2121,7 @@ async def ask_riddle_challenge(winner):
     await asyncio.sleep(2)
     sorted_data = sorted(user_data.items(), key=lambda x: x[1][1], reverse=True)
     if sorted_data:
-        msg = "\u200b\n🏁🏆 **Commendable Okrans (Final)**\n"
+        msg = "\u200b\n🏁🏆 **Commendable Okrans**\n"
         for i, (uid, (name, score)) in enumerate(sorted_data, 1):
             msg += f"{i}. **{name}**: {score}\n"
         msg += "\u200b"
@@ -2249,7 +2249,7 @@ async def ask_animal_challenge(winner):
             if correct_guesses >= 20 else
             f"\u200b\n🎉✅ Congrats Okrans! You got **{correct_guesses}** right!\n"
         )
-        summary += "\n**🏆 Commendable Okrans (Final)**\n"
+        summary += "\n**🏆 Commendable Okrans**\n"
         sorted_users = sorted(user_correct_answers.items(), key=lambda x: x[1], reverse=True)
         for i, (user, count) in enumerate(sorted_users, 1):
             summary += f"{i}. **{user}**: {count}\n"
@@ -3073,7 +3073,7 @@ async def ask_feud_question(winner, mode, winner_id):
             result_message = f"\n🎉✅ Congrats Okrans! You got all **{num_answers}** right!\n"
 
         if user_correct_answers and mode == "cooperative":
-            result_message += "\n**🏆 Commendable Okrans (Final)**\n"
+            result_message += "\n**🏆 Commendable Okrans**\n"
             sorted_users = sorted(user_correct_answers.items(), key=lambda x: x[1], reverse=True)
             for i, (user, count) in enumerate(sorted_users, 1):
                 result_message += f"{i}. **{user}**: {count}\n"
@@ -4199,8 +4199,8 @@ async def get_image_url_from_s3():
 
         #message = f"\u200b\n**Masterpiece:** '{title}'\n"
         message = f"\u200b\n**Masterpiece**: *{clean_title}*\n"
-        message += f"**Okra's Muse:** *{user}*\n"
-        message += f"**Creation Date:** *{date_only}*\n\u200b"
+        message += f"**Okra's Muse**: *{user}*\n"
+        message += f"**Creation Date**: *{date_only}*\n\u200b"
 
         await channel.send(message)
 
