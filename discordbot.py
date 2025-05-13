@@ -7456,7 +7456,7 @@ async def show_standings():
 
 async def store_question_ids_in_mongo(question_ids, question_type):
     db = await connect_to_mongodb()
-    collection_name = f"asked_{question_type}_questions"
+    collection_name = f"asked_{question_type}_questions_discord"
     questions_collection = db[collection_name]
 
     for _id in question_ids:
@@ -7480,7 +7480,7 @@ async def store_question_ids_in_mongo(question_ids, question_type):
 
 async def get_recent_question_ids_from_mongo(question_type):
     db = await connect_to_mongodb()
-    collection_name = f"asked_{question_type}_questions"
+    collection_name = f"asked_{question_type}_questions_discord"
     questions_collection = db[collection_name]
 
     cursor = questions_collection.find().sort("timestamp", -1).limit(id_limits[question_type])
@@ -7492,7 +7492,7 @@ async def get_recent_question_ids_from_mongo(question_type):
 async def get_all_recent_question_ids():
     recent_ids = {}
     for question_type in ["general", "crossword", "jeopardy", "mysterybox", "wof"]:
-        collection_name = f"asked_{question_type}_questions"
+        collection_name = f"asked_{question_type}_questions_discord"
         questions_collection = db[collection_name]
         # Await the cursor and convert it to a list
         docs = await questions_collection.find().sort("timestamp", -1).limit(id_limits[question_type]).to_list(length=id_limits[question_type])
@@ -7504,7 +7504,7 @@ async def store_all_question_ids(question_ids_by_type):
     for question_type, question_ids in question_ids_by_type.items():
         if not question_ids:
             continue
-        collection_name = f"asked_{question_type}_questions"
+        collection_name = f"asked_{question_type}_questions_discord"
         questions_collection = db[collection_name]
 
         for _id in question_ids:
