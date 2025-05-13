@@ -4630,7 +4630,7 @@ async def ask_category(winner, categories, winner_coffees, winner_id):
             return None, additional_prompt
 
 
-async def request_prompt(winner, done_events, winner_id):
+async def request_prompt(winner, winner_id):
     global magic_time
 
     collected_words = []
