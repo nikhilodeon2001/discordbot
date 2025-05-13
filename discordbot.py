@@ -73,8 +73,8 @@ round_data = {
 }
 
 fastest_answers_count = {}
-current_longest_answer_streak = {"user": None, "streak": 0}
-current_longest_round_streak = {"user": None, "streak": 0}
+current_longest_answer_streak = {"user": None, "user_id": None, "streak": 0}
+current_longest_round_streak = {"user": None, "user_id": None, "streak": 0}
 
 # Store since_token and responses
 since_token = None
@@ -7057,6 +7057,7 @@ async def check_correct_responses_delete(question_ask_time, trivia_answer_list, 
     has_responses = False
 
     fastest_correct_user = None
+    fastest_correct_user_id = None
     fastest_response_time = None
 
     # Check if trivia_answer_list is a single-element list with a numeric answer  
@@ -7091,19 +7092,6 @@ async def check_correct_responses_delete(question_ask_time, trivia_answer_list, 
             # Only add to round responders if not already present
             if sender_id not in round_responders:
                 round_responders.append(sender_id)
-
-        #if "okra" in message_content.lower() and emoji_mode == True:
-        #    await message.add_reaction("❤️")
-
-        #if "#prev" in message_content.lower() and collect_feedback_mode == True and sender_id != bot_user_id:
-        #    if emoji_mode == True:
-        #        await message.add_reaction("👍")
-        #    await update_audit_question(previous_question, message_content, display_name)
-
-        #if "#curr" in message_content.lower() and collect_feedback_mode == True and sender_id != bot_user_id:
-        #    if emoji_mode == True:
-        #        await message.add_reaction("👍")
-        #    await update_audit_question(current_question, message_content, display_name)
 
         # Check if the user has already answered correctly, ignore if they have
         if any(resp[0] == sender_id for resp in correct_responses):
@@ -7150,7 +7138,7 @@ async def check_correct_responses_delete(question_ask_time, trivia_answer_list, 
             points = calculate_points(response_time)
 
             # Check if the sender is the current user on the longest round streak
-            if display_name == current_longest_round_streak["user"]:
+            if sender_id == current_longest_round_streak["user_id"]:
                 streak = current_longest_round_streak["streak"]
                 # For every 5 in the streak, apply a 10% discount
                 discount_percentage = discount_step_amount * (streak // discount_streak_amount)  # e.g., 5 => 10%, 10 => 20%, 15 => 30%, etc.
@@ -7167,7 +7155,8 @@ async def check_correct_responses_delete(question_ask_time, trivia_answer_list, 
     
             # Check if this is the fastest correct response so far
             if fastest_correct_user is None or response_time < fastest_response_time:
-                fastest_correct_user = sender_id
+                fastest_correct_user_id = sender_id
+                fastest_correct_user = display_name
                 fastest_response_time = response_time
             
     if emoji_mode == True and fastest_response_time is not None and blind_mode == False and marx_mode == False:
@@ -7202,7 +7191,7 @@ async def check_correct_responses_delete(question_ask_time, trivia_answer_list, 
             else:
                 scoreboard[sender_id] = {"display_name": display_name, "score": points}               
 
-    await update_answer_streaks(fastest_correct_user)  # Update the correct answer streak for this user
+    await update_answer_streaks(fastest_correct_user, fastest_correct_user_id)  # Update the correct answer streak for this user
    
     # Add the current state of the scoreboard to round_data
     current_question_data = next((q for q in round_data["questions"] if q["question_number"] == question_number), None)
@@ -7223,7 +7212,7 @@ async def check_correct_responses_delete(question_ask_time, trivia_answer_list, 
             time_diff = response_time - fastest_response_time
             
             name_str = display_name
-            if current_longest_round_streak["user"] == sender_id and discount_percentage is not None and discount_percentage > 0:
+            if current_longest_round_streak["user_id"] == sender_id and discount_percentage is not None and discount_percentage > 0:
                 name_str += f" (-{discount_percentage}%)"
         
             # Display the formatted message based on yolo_mode
@@ -7255,14 +7244,15 @@ async def check_correct_responses_delete(question_ask_time, trivia_answer_list, 
     return None
 
 
-async def update_answer_streaks(user):
+async def update_answer_streaks(user, user_id):
     """Update the current longest answer streak for the user who answered correctly."""
     global current_longest_answer_streak
 
-    if current_longest_answer_streak["user"] != user:
-        if current_longest_answer_streak["user"] is not None:
+    if current_longest_answer_streak["user_id"] != user_id:
+        if current_longest_answer_streak["user_id"] is not None:
             # Append the streak, sort the list in descending order, and keep at most 20 entries
             await insert_data_to_mongo("longest_answer_streaks_discord", current_longest_answer_streak)
+        current_longest_answer_streak["user_id"] = user_id
         current_longest_answer_streak["user"] = user
         current_longest_answer_streak["streak"] = 0
 
@@ -7287,8 +7277,8 @@ async def update_round_streaks(user, user_id):
         return {key: value for key, value in data.items()}
 
     # Check if we need to update the longest round streak
-    if current_longest_round_streak["user"] != user:
-        if current_longest_round_streak["user"] is not None:
+    if current_longest_round_streak["user_id"] != user_id:
+        if current_longest_round_streak["user_id"] is not None:
             # Prepare the data to be inserted into longest_round_streaks
             mongo_operations.append({
                 "operation": "insert",
@@ -7297,6 +7287,7 @@ async def update_round_streaks(user, user_id):
             })
         # Update the user and reset the streak
         current_longest_round_streak["user"] = user
+        current_longest_round_streak["user_id"] = user_id
         current_longest_round_streak["streak"] = 0
 
     # Increment streak or handle no user case
@@ -7318,7 +7309,10 @@ async def update_round_streaks(user, user_id):
         mongo_operations.append({
             "operation": "insert",
             "collection": "round_wins_discord",
-            "data": user  # If user is simple data (e.g., string), no need to copy
+            "data": {
+                "user": user,
+                "user_id": user_id
+            }
         })
 
     # Generate the round summary if the user is not None
@@ -7433,7 +7427,7 @@ async def show_standings():
 
             user_str = display_name
 
-            if current_longest_round_streak["user"] == user_id and discount_percentage > 0 and discount_percentage is not None:
+            if current_longest_round_streak["user_id"] == user_id and discount_percentage > 0 and discount_percentage is not None:
                 user_str += f" (-{discount_percentage}%)"
 
             lightning_display = f" ⚡{fastest_count}" if fastest_count > 1 else " ⚡" if fastest_count == 1 else ""
@@ -7704,11 +7698,12 @@ async def load_streak_data():
             if document_answer is not None:
                 current_longest_answer_streak = {
                     "user": document_answer.get("user"),
+                    "user_id": document_answer.get("user_id"),
                     "streak": document_answer.get("streak")
                 }
             else:
                 # If the document is not found, set default values
-                current_longest_answer_streak = {"user": None, "streak": 0}
+                current_longest_answer_streak = {"user": None, "user_id": None, "streak": 0}
 
             # Retrieve the current longest round streak from MongoDB
             # Retrieve the current longest answer streak from MongoDB
@@ -7717,11 +7712,12 @@ async def load_streak_data():
             if document_round is not None:
                 current_longest_round_streak = {
                     "user": document_round.get("user"),
+                    "user_id": document_round.get("user_id"),
                     "streak": document_round.get("streak")
                 }
             else:
                 # If the document is not found, set default values
-                current_longest_round_streak = {"user": None, "streak": 0}
+                current_longest_round_streak = {"user": None, "user_id": None,  "streak": 0}
                 
         except Exception as e:
             sentry_sdk.capture_exception(e)
@@ -7732,8 +7728,8 @@ async def load_streak_data():
             else:
                 print("Max retries reached. Data loading failed.")
                 # Set to default values if loading fails
-                current_longest_answer_streak = {"user": None, "streak": 0}
-                current_longest_round_streak = {"user": None, "streak": 0}
+                current_longest_answer_streak = {"user": None, "user_id": None, "streak": 0}
+                current_longest_round_streak = {"user": None, "user_id": None, "streak": 0}
 
 
 def print_selected_questions(selected_questions):
