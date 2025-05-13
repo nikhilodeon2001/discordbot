@@ -7993,7 +7993,7 @@ def generate_and_render_polynomial(type):
 async def round_preview(selected_questions):
     numbered_blocks = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"]
     
-    message = "\n🔮 Next Round Preview 🔮\n"
+    message = "\n🔮 **Next Round Preview** 🔮\n"
 
     for i, question_data in enumerate(selected_questions):
         trivia_category = question_data[0]
