@@ -1212,7 +1212,7 @@ async def ask_dictionary_challenge(winner):
             return
 
         await channel.send(f"\u200b\n🧠❓ Word **{round_num}/5**\n")
-        await channel.send(f"\u200b\n🔤 Starts with **{first_char}**\n🔢 **{word_len}** characters\n📘📝 Definition: **{redacted_def}**\n\n🟢💨 **GO!**\n\u200b")
+        await channel.send(f"\u200b\n🔤 Starts with: **{first_char}**\n🔢 Characters: **{word_len}** characters\n\n📘📝 Definition: **{redacted_def}**\n\n🟢💨 **GO!**\n\u200b")
 
         start_time = asyncio.get_event_loop().time()
         answered = False
@@ -4587,7 +4587,7 @@ async def ask_category(winner, categories, winner_coffees, winner_id):
     # Display categories
     category_message = f"\u200b\n🎨🖍️ <@{winner_id}> Pick a theme for the Okra Museum! Some for **Okrans Only** 🥒.\n\n"
     for key, value in categories.items():
-        category_message += f"{key}: {value}\n"
+        category_message += f"**{key}**: {value}\n"
     await channel.send(category_message)
 
     def check(m):
@@ -7330,7 +7330,7 @@ async def update_round_streaks(user, user_id):
             
             if streak % discount_streak_amount == 0:
                 discount_fraction = min((streak // discount_streak_amount) * discount_step_amount, 90)
-                message += f"\n⚖️ Going forward @{user} will incur a -{discount_fraction}% handicap.\n"
+                message += f"\n⚖️ Going forward <@{user_id}> will incur a -{discount_fraction}% handicap.\n"
                 
             #message += f"\n▶️ Live trivia stats available: https://livetriviastats.com\n\u200b\n\u200b"
             message += f"\n▶️ Live trivia stats for Discord coming soon.\n\u200b\n\u200b"
