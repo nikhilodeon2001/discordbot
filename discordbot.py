@@ -2227,7 +2227,7 @@ async def ask_animal_challenge(winner):
 
                 if fuzzy_match(content, name, category, detail_url):
                     await message.add_reaction("✅")
-                    await channel.send(f"\u200b\n✅🎉 Correct! **{user}** got it! **{name.upper()}**\n")
+                    await channel.send(f"\u200b\n✅🎉 Correct! **{user}** got it! **{name.upper()}**\n\n<{detail_url}>\n\u200b")
                     correct_guesses += 1
                     user_correct_answers[user] = user_correct_answers.get(user, 0) + 1
                     right_answer = True
