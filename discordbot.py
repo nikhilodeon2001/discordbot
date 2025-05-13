@@ -7261,7 +7261,10 @@ async def update_answer_streaks(user, user_id):
     else:
         current_longest_answer_streak["streak"] += 1
         await save_data_to_mongo("current_streaks_discord", "current_longest_answer_streak", current_longest_answer_streak)
-        await insert_data_to_mongo("fastest_answers_discord", str(user))
+        await insert_data_to_mongo("fastest_answers_discord", {
+            "user": user,
+            "user_id": user_id
+        })
 
 
 async def update_round_streaks(user, user_id):
