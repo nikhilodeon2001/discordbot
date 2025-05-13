@@ -8573,7 +8573,7 @@ async def start_trivia():
             await channel.send(start_message)
             await asyncio.sleep(5)
 
-            start_message = "\u200b\n🏁 Get ready 🏁\n\u200b"
+            start_message = "\u200b\n🏁 **Get ready** 🏁\n\u200b"
             await channel.send(start_message)
 
             #await round_start_messages()
