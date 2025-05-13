@@ -8562,14 +8562,14 @@ async def start_trivia():
             await asyncio.sleep(2)
             start_message = f"\u200b\u200b\n⏩ **Starting a round of {questions_per_round} questions!** ⏩\n\u200b\n\u200b"
 
-            start_message += f"\u200b\n🚩 Enter **#flag** to report question\n"
-            start_message += f"🗝️ Enter **#perks** for a link to unlock\n\u200b"
+            start_message += f"\u200b\n🚩 Type **#flag** to report question\n"
+            start_message += f"🗝️ Type **#perks** for a Patreon unlock link\n\u200b"
             await channel.send(start_message)
             await asyncio.sleep(3)
 
             start_message = f"\u200b\n✨🧪 New mini-games from the **Okra Lab**!\n"
-            start_message += f"\u200b\n🧩🌀 Jigsawed"
-            start_message += f"\n💧🔥 Elementary\n\u200B"
+            start_message += f"\u200b\n🧩🌀 **Jigsawed**"
+            start_message += f"\n💧🔥 **Elementary**\n\u200B"
             await channel.send(start_message)
             await asyncio.sleep(5)
 
