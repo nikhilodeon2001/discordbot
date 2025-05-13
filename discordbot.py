@@ -7163,15 +7163,15 @@ async def check_correct_responses_delete(question_ask_time, trivia_answer_list, 
                 fastest_correct_user = display_name
                 fastest_response_time = response_time
             
-    if emoji_mode == True and fastest_response_time is not None and blind_mode == False and marx_mode == False:
-        try:
-            await message.add_reaction("⬆️")
-        except discord.NotFound:
-            print("❌ Message was already deleted, can't react.")
-        except discord.Forbidden:
-            print("❌ Bot lacks permission to add reactions.")
-        except discord.HTTPException as e:
-            print(f"❌ Failed to add reaction: {e}")
+            if emoji_mode == True and fastest_response_time is not None and blind_mode == False and marx_mode == False:
+                try:
+                    await message.add_reaction("⬆️")
+                except discord.NotFound:
+                    print("❌ Message was already deleted, can't react.")
+                except discord.Forbidden:
+                    print("❌ Bot lacks permission to add reactions.")
+                except discord.HTTPException as e:
+                    print(f"❌ Failed to add reaction: {e}")
     
     # Now that we know the fastest responder, iterate over correct_responses to:
     # - Assign the extra 500 points to the fastest user
@@ -7326,7 +7326,7 @@ async def update_round_streaks(user, user_id):
     if user is not None:
         streak = current_longest_round_streak["streak"]
         if streak > 1:
-            message = f"\u200b\n\u200b\n🏆 Winner: **<@{user_id}>**...🔥{current_longest_round_streak['streak']} in a row!\n"
+            message = f"\u200b\n\u200b\n🏆 **Winner**: **<@{user_id}>**...🔥{current_longest_round_streak['streak']} in a row!\n"
             
             if streak % discount_streak_amount == 0:
                 discount_fraction = min((streak // discount_streak_amount) * discount_step_amount, 90)
@@ -7337,7 +7337,7 @@ async def update_round_streaks(user, user_id):
 
         else:
             #message = f"\u200b\n\u200b\n🏆 Winner: <@{user_id}>!\n\n▶️ Live trivia stats available: https://livetriviastats.com\n\u200b\n\u200b"
-            message = f"\u200b\n\u200b\n🏆 Winner: **<@{user_id}>**!\n\n▶️ Live trivia stats for Discord coming soon.\u200b\n\u200b"
+            message = f"\u200b\n\u200b\n🏆 **Winner**: **<@{user_id}>**!\n\n▶️ Live trivia stats for Discord coming soon.\u200b\n\u200b"
 
         await channel.send(message)
         await asyncio.sleep(2)
