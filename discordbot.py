@@ -8561,7 +8561,7 @@ async def start_trivia():
                 await channel.send(content="\u200b\n\u200b\n🎉🤹‍♂️ **Live Trivia & Games for Discord (Beta)!**\n\u200b", embed=discord.Embed().set_image(url=selected_gif_url))
 
             await asyncio.sleep(2)
-            start_message = f"\u200b\u200b\n⏩ **Starting a round of {questions_per_round} questions!** ⏩\n\u200b\n\u200b"
+            start_message = f"\u200b\n\u200b\n⏩ **Starting a round of {questions_per_round} questions!** ⏩\n\u200b\n\u200b"
 
             start_message += f"\u200b\n🚩 Type **#flag** to report question\n"
             start_message += f"🗝️ Type **#perks** for a Patreon unlock link\n\u200b"
