@@ -8568,7 +8568,7 @@ async def start_trivia():
             await channel.send(start_message)
             await asyncio.sleep(3)
 
-            start_message = f"\u200b\n🕹🥒🎁 Okran perks available to all during Beta!\n"
+            start_message = f"\u200b\n🥒🎁 Beta: **Free Okran perks**\n"
             #start_message = f"\u200b\n✨🧪 New mini-games from the **Okra Lab**!\n"
             #start_message += f"\u200b\n🧩🌀 **Jigsawed**"
             #start_message += f"\n💧🔥 **Elementary**\n\u200B"
