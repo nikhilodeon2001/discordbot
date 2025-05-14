@@ -4674,6 +4674,7 @@ async def request_prompt(winner, winner_id):
 
 
 async def get_coffees(user_id):
+    return 5
     guild = bot.get_guild(OKRAN_GUILD_ID)
     if not guild:
         print(f"⚠️ Bot is not in guild with ID {OKRAN_GUILD_ID}")
@@ -8557,7 +8558,7 @@ async def start_trivia():
                 send_magic_image(magic_number)
             elif image_questions == True:
                 selected_gif_url = await select_intro_image_url()         
-                await channel.send(content="\u200b\n\u200b\n🎉🤹‍♂️ **Live Trivia & Games!**\n\u200b", embed=discord.Embed().set_image(url=selected_gif_url))
+                await channel.send(content="\u200b\n\u200b\n🎉🤹‍♂️ **Live Trivia & Games for Discord (Beta)!**\n\u200b", embed=discord.Embed().set_image(url=selected_gif_url))
 
             await asyncio.sleep(2)
             start_message = f"\u200b\u200b\n⏩ **Starting a round of {questions_per_round} questions!** ⏩\n\u200b\n\u200b"
@@ -8567,9 +8568,10 @@ async def start_trivia():
             await channel.send(start_message)
             await asyncio.sleep(3)
 
-            start_message = f"\u200b\n✨🧪 New mini-games from the **Okra Lab**!\n"
-            start_message += f"\u200b\n🧩🌀 **Jigsawed**"
-            start_message += f"\n💧🔥 **Elementary**\n\u200B"
+            start_message = f"\u200b\n🕹🥒🎁 Okran perks available to all during Beta!\n"
+            #start_message = f"\u200b\n✨🧪 New mini-games from the **Okra Lab**!\n"
+            #start_message += f"\u200b\n🧩🌀 **Jigsawed**"
+            #start_message += f"\n💧🔥 **Elementary**\n\u200B"
             await channel.send(start_message)
             await asyncio.sleep(5)
 
