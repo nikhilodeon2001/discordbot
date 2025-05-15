@@ -7149,31 +7149,30 @@ async def check_correct_responses_delete(question_ask_time, trivia_answer_list, 
                     points *= discount_factor
                     points = round(points / 5) * 5
 
-            correct_responses.append((display_name, points, response_time, message_content, sender_id))
+            correct_responses.append((display_name, points, response_time, message_content, sender_id, message))
     
             # Check if this is the fastest correct response so far
             if fastest_correct_user is None or response_time < fastest_response_time:
                 fastest_correct_user_id = sender_id
                 fastest_correct_user = display_name
                 fastest_response_time = response_time
+                fastest_correct_message = message
             
-            if emoji_mode == True and fastest_response_time is not None and blind_mode == False and marx_mode == False:
-                try:
-                    await message.add_reaction("⬆️")
-                except discord.NotFound:
-                    print("❌ Message was already deleted, can't react.")
-                except discord.Forbidden:
-                    print("❌ Bot lacks permission to add reactions.")
-                except discord.HTTPException as e:
-                    print(f"❌ Failed to add reaction: {e}")
-    
+    if emoji_mode == True and fastest_response_time is not None and blind_mode == False and marx_mode == False:
+        try:
+            await fastest_correct_message.add_reaction("⬆️")
+        except discord.NotFound:
+            print("❌ Message was already deleted, can't react.")
+        except discord.Forbidden:
+            print("❌ Bot lacks permission to add reactions.")
+        except discord.HTTPException as e:
+            print(f"❌ Failed to add reaction: {e}")
+
     # Now that we know the fastest responder, iterate over correct_responses to:
     # - Assign the extra 500 points to the fastest user
     # - Update the scoreboard for all users
-    for i, (display_name, points, response_time, message_content, sender_id) in enumerate(correct_responses):
-        if sender_id == fastest_correct_user:
-            correct_responses[i] = (display_name, points + first_place_bonus, response_time, message_content, sender_id)
-          
+    for i, (display_name, points, response_time, message_content, sender_id, message) in enumerate(correct_responses):
+        if sender_id == fastest_correct_user_id:
             if sender_id in fastest_answers_count:
                 fastest_answers_count[sender_id] += 1
             else:
