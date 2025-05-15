@@ -7083,6 +7083,9 @@ async def check_correct_responses_delete(question_ask_time, trivia_answer_list, 
         
         message_content = message_content.replace("\uFFFC", "")  # Remove U+FFFC
 
+        if not message_content.strip():
+            continue  # skip empty messages
+
         # Track users who responded to the current question and round
         if sender_id not in question_responders:
             question_responders.append(sender_id)  # Add to question responders
