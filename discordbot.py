@@ -8399,12 +8399,13 @@ async def get_player_selected_question(questions, round_winner, winner_id):
     numbered_blocks = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"]
 
 
-    message = f"\n🎯 **<@{winner_id}>**, pick the question number:\n\n"
+    message = f"\u200b\n🎯 **<@{winner_id}>**, pick the question number:\n\n"
     for i, question_data in enumerate(questions):
         trivia_category = question_data[0]
         trivia_url = question_data[2]
         number_block = numbered_blocks[i] if i < len(numbered_blocks) else f"{i + 1}."
         message += f"{number_block} {get_category_title(trivia_category, trivia_url)}\n"
+    message += f"\u200b"
 
     await channel.send(message)
 
