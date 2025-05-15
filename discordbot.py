@@ -8584,7 +8584,7 @@ async def start_trivia():
                 question_responders.clear()  # Reset question responders for the new question
                 
                 if god_mode and round_winner:
-                    selected_question = selected_questions[get_player_selected_question(selected_questions, round_winner) - 1]
+                    selected_question = selected_questions[get_player_selected_question(selected_questions, round_winner, round_winner_id) - 1]
                     
                 else:
                     selected_question = selected_questions[0]
