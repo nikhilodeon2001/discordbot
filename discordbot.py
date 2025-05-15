@@ -7092,7 +7092,7 @@ async def check_correct_responses_delete(question_ask_time, trivia_answer_list, 
                 round_responders.append(sender_id)
 
         # Check if the user has already answered correctly, ignore if they have
-        if any(resp[0] == sender_id for resp in correct_responses):
+        if any(resp[4] == sender_id for resp in correct_responses):
             continue  # Ignore this response since the user has already answered correctly
         
         # If it's a single numeric answer question, and this user's response is numeric, only record the first one
