@@ -5852,31 +5852,24 @@ async def process_round_options(round_winner, winner_points, round_winner_id):
         return
 
     winner_coffees = await get_coffees(round_winner_id)
-
-    message = f"\u200b\n🍔🍟 **<@{round_winner_id}>**, what's your order?\n\n" 
-    message += "🥒 Some choices for **Okrans Only**!\n\u200b"
     
-    await channel.send(message)
+    message = f"\u200b\n🍔🍟 **<@{round_winner_id}>**, what's your order?\n\n" 
+    message += "🥒 Some choices for **Okrans Only**!\n\n"
 
-    message = (
-        "⏱️⏳ <3 - 15>: Time (s) between questions.\n"
-        "🔥🤘 Yolo: No scores shown until the end.\n"
-        "🙈🚫 Blind: No question answers shown.\n"
-        "🚩🔨 Marx: No recognizing right answers.\n"
-        "📷❌ Blank: No image questions.\n"
-        "👻🎃 Ghost: Responses will vanish."
-    )
-
-    await channel.send(message)
-
-    message = (
-        "🇺🇸🗽 Freedom: No multiple choice. 🥒\n"
-        "🔢❌ Greg: No math questions. 🥒\n"
-        "🟦❌ Xela: No Jeopardy-style questions. 🥒\n"
-        "📰❌ Cross: No Crossword clues. 🥒\n"
-        "🟦✋ Alex: 5 Jeopardy-style questions. 🥒\n"
-        "📰✋ Word: 5 Crossword clues. 🥒\n"
-        "🎖🥒 Dicktator: Choose the categories. 🥒\n\u200b"
+    message += (
+        "⏱️⏳ **<3 - 15>** Time (s) between questions.\n"
+        "🔥🤘 **Yolo** No scores shown until the end.\n"
+        "🙈🚫 **Blind** No question answers shown.\n"
+        "🚩🔨 **Marx** No recognizing right answers.\n"
+        "📷❌ **Blank** No image questions.\n"
+        "👻🎃 **Ghost** Responses will vanish.\n"
+        "🇺🇸🗽 **Freedom** No multiple choice. 🥒\n"
+        "🔢❌ **Greg** No math questions. 🥒\n"
+        "🟦❌ **Xela** No Jeopardy-style questions. 🥒\n"
+        "📰❌ **Cross** No Crossword clues. 🥒\n"
+        "🟦✋ **Alex** 5 Jeopardy-style questions. 🥒\n"
+        "📰✋ **Word** 5 Crossword clues. 🥒\n"
+        "🎖🥒 **Dicktator** Choose the categories. 🥒\n\u200b"
     )
 
     await channel.send(message)
