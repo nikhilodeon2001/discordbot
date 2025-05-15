@@ -6979,7 +6979,7 @@ def fuzzy_match(user_answer, correct_answer, category, url):
     correct_answer = normalize_text(str(correct_answer))
 
     if url == "multiple choice" or url == "multiple choice opentrivia" or  url == "multiple choice oracle":
-        return user_answer[0] == correct_answer[0];
+        return user_answer[0].lower() == correct_answer[0].lower();
     
     if is_number(correct_answer):
         return user_answer == correct_answer  # Only accept exact match if the correct answer is a number
