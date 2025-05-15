@@ -7171,7 +7171,7 @@ async def check_correct_responses_delete(question_ask_time, trivia_answer_list, 
     # Now that we know the fastest responder, iterate over correct_responses to:
     # - Assign the extra 500 points to the fastest user
     # - Update the scoreboard for all users
-    for i, (display_name, points, response_time, message_content, sender_id, message) in enumerate(correct_responses):
+    for i, (display_name, points, response_time, message_content, sender_id, discord_message) in enumerate(correct_responses):
         if sender_id == fastest_correct_user_id:
             if sender_id in fastest_answers_count:
                 fastest_answers_count[sender_id] += 1
@@ -7205,7 +7205,7 @@ async def check_correct_responses_delete(question_ask_time, trivia_answer_list, 
         correct_responses_length = len(correct_responses)
         
         # Loop through the responses and append to the message
-        for display_name, points, response_time, message_content, sender_id in correct_responses:
+        for display_name, points, response_time, message_content, sender_id, discord_message in correct_responses:
             time_diff = response_time - fastest_response_time
             
             name_str = display_name
