@@ -16,7 +16,7 @@ import unicodedata
 import datetime
 from datetime import timezone
 import time
-import pytzd
+import pytz
 import os
 from motor.motor_asyncio import AsyncIOMotorClient
 import difflib
