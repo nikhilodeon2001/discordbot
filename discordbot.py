@@ -16,7 +16,7 @@ import unicodedata
 import datetime
 from datetime import timezone
 import time
-import pytz
+import pytzd
 import os
 from motor.motor_asyncio import AsyncIOMotorClient
 import difflib
@@ -6962,7 +6962,13 @@ def trig_checker(response, answer):
 
 
 def fuzzy_match(user_answer, correct_answer, category, url):
-    threshold = 0.90    
+    threshold = 0.90   
+    
+    if not isinstance(user_answer, str) or not isinstance(correct_answer, str):
+        return False
+    if not user_answer.strip() or not correct_answer.strip():
+        return False
+ 
 
     if user_answer == correct_answer:
         return True
