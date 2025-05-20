@@ -6968,6 +6968,8 @@ def fuzzy_match(user_answer, correct_answer, category, url):
         return False
     if not user_answer.strip() or not correct_answer.strip():
         return False
+    if not user_answer or not correct_answer:
+        return False
  
 
     if user_answer == correct_answer:
@@ -7005,8 +7007,11 @@ def fuzzy_match(user_answer, correct_answer, category, url):
     user_answer = normalize_text(str(user_answer))
     correct_answer = normalize_text(str(correct_answer))
 
-    if url == "multiple choice" or url == "multiple choice opentrivia" or  url == "multiple choice oracle":
-        return user_answer[0].lower() == correct_answer[0].lower();
+    if url in {"multiple choice", "multiple choice opentrivia", "multiple choice oracle"}:
+        if user_answer and correct_answer:
+            return user_answer[0].lower() == correct_answer[0].lower()
+        else:
+            return False
     
     if is_number(correct_answer):
         return user_answer == correct_answer  # Only accept exact match if the correct answer is a number
