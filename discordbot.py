@@ -7355,12 +7355,12 @@ async def update_round_streaks(user, user_id):
                 discount_fraction = min((streak // discount_streak_amount) * discount_step_amount, 90)
                 message += f"\n⚖️ Going forward <@{user_id}> will incur a -{discount_fraction}% handicap.\n"
                 
-            #message += f"\n▶️ Live trivia stats available @ <https://livetriviastats.com/discord>\n\u200b\n\u200b"
-            message += f"\n▶️ Live trivia stats for Discord coming soon.\n\u200b\n\u200b"
+            message += f"\n▶️ **Discord Stats**: <https://livetriviastats.com/discord>\n\u200b\n\u200b"
+            #message += f"\n▶️ Live trivia stats for Discord coming soon.\n\u200b\n\u200b"
 
         else:
-            #message = f"\u200b\n\u200b\n🏆 **Winner**: **<@{user_id}>**!\n\n▶️ Live trivia stats available @ <https://livetriviastats.com/discord>\n\u200b\n\u200b"
-            message = f"\u200b\n\u200b\n🏆 **Winner**: **<@{user_id}>**!\n\n▶️ Live trivia stats for Discord coming soon.\u200b\n\u200b"
+            message = f"\u200b\n\u200b\n🏆 **Winner**: **<@{user_id}>**!\n\n▶️ **Discord Stats**: <https://livetriviastats.com/discord>\n\u200b\n\u200b"
+            #message = f"\u200b\n\u200b\n🏆 **Winner**: **<@{user_id}>**!\n\n▶️ Live trivia stats for Discord coming soon.\u200b\n\u200b"
 
         await safe_send(channel, message)
         await asyncio.sleep(2)
