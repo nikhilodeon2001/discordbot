@@ -113,7 +113,7 @@ intents.messages = True
 intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 openai_client = AsyncOpenAI(api_key=openai_api_key)
-id_limits = {"general": 2000, "mysterybox": 2000, "crossword": 100000, "jeopardy": 100000, "wof": 1500, "list": 20, "feud": 1000, "posters": 2000, "movie_scenes": 5000, "missing_link": 2500, "people": 2500, "ranker_list": 4000, "animal": 2000, "riddle": 2500, "dictionary": 100000, "flags": 800, "lyric": 500, "polyglottery": 80, "book": 80, "element": 100, "jigsaw": 30000}
+id_limits = {"general": 2000, "mysterybox": 2000, "crossword": 100000, "jeopardy": 100000, "wof": 1500, "list": 20, "feud": 1000, "posters": 2000, "movie_scenes": 5000, "missing_link": 2500, "people": 2500, "ranker_list": 4000, "animal": 2000, "riddle": 2500, "dictionary": 100000, "flags": 800, "lyric": 500, "polyglottery": 80, "book": 80, "element": 100, "jigsaw": 30000, "border": 100}
 first_place_bonus = 0
 magic_time = 10
 magic_number = 0000
@@ -2153,6 +2153,139 @@ async def ask_riddle_challenge(winner):
         await safe_send(channel, "\u200b\n👎😢 **No right answers**. I'm ashamed to call you Okrans.\n\u200b")
 
     await asyncio.sleep(5)
+
+
+
+async def ask_border_challenge(winner, winner_id):
+    global wf_winner
+    wf_winner = True
+
+    border_gifs = [
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/border1.gif",
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/border2.gif",
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/border3.gif",
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/border4.gif",
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/border5.gif"
+    ]
+
+    gif_url = random.choice(border_gifs)
+
+    await safe_send(channel, content="\u200b\n\u200b\n🗺️❓ **Borderline: Guess the Country**\n\u200b", embed=discord.Embed().set_image(url=gif_url))
+    await asyncio.sleep(3)
+
+    await safe_send(channel, f"\u200b\n🕹️🚀 **{winner}**, select the mode:\n\n🧸 **Normal** or 🧨 **Okrap**.\n\u200b")
+    try:
+        msg = await bot.wait_for("message", timeout=magic_time + 5, check=lambda m: m.author.id == winner_id and m.author != bot.user and m.channel == channel and m.content.lower() in {"normal", "okrap"})
+        game_mode = msg.content.lower()
+        await msg.add_reaction("✅")
+    except asyncio.TimeoutError:
+        game_mode = "normal"
+
+    await safe_send(channel, f"\u200b\n💥🤯 Ok...ra! We're going with **{game_mode.upper()}** baby!\n\u200b")
+    await asyncio.sleep(2)
+    await safe_send(channel, "\u200b\n5️⃣🥇 Let's do a best of 5...\n\u200b")
+    await asyncio.sleep(3)
+
+    user_data = {}
+
+    for round_num in range(1, 6):
+        try:
+            recent_border_ids = await get_recent_question_ids_from_mongo("border")
+            border_collection = db["border_questions"]
+            pipeline_border = [
+                {"$match": {
+                    "_id": {"$nin": list(recent_border_ids)},
+                    "neighbours": {"$regex": r"\S"} 
+                }},
+                {"$sample": {"size": 20}},
+                {"$group": {"_id": "$question", "question_doc": {"$first": "$$ROOT"}}},
+                {"$replaceRoot": {"newRoot": "$question_doc"}},
+                {"$sample": {"size": 1}}
+            ]
+
+            border_questions = [doc async for doc in border_collection.aggregate(pipeline_border)]
+            border_question = border_questions[0]
+
+            border_neighbors = border_question["neighbours"]
+            border_country = border_question["country"]
+            border_capital = border_question["capital"]
+            border_area = border_question["area_km2"]
+            border_population = border_question["population"]
+            border_continent = border_question["continent"]
+            border_iso_code = border_question["iso_code"]
+            border_currency = border_question["currency"]
+            border_languages = border_question["languages"]
+            border_category = "border"
+            border_url = ""
+            border_question_id = border_question["_id"] 
+
+            if border_question_id:
+                await store_question_ids_in_mongo([border_question_id], "border")  # Store it as a list containing a single ID
+  
+            print(f"Country: {border_country}")
+            answered = False
+            
+            message = f"\u200b\n🗣💬❓ **Round {round_num}/5**\n\u200b"      
+            await safe_send(channel, message)
+            await asyncio.sleep(2)
+
+            message = f"\u200b\n**Neighbors**: {border_neighbors}"   
+
+            if game_mode == "normal":        
+                message += f"\n**Capital**: {border_capital}"
+                message += f"\n**Continent**: {border_continent}"
+                message += f"\n**ISO Codes**: {border_iso_code}"
+            message += "\n\u200b"
+               
+            await safe_send(channel, message)
+
+            start_time = asyncio.get_event_loop().time()
+
+            def check(m):
+                return m.channel == channel and m.author != bot.user
+
+            while asyncio.get_event_loop().time() - start_time < 20 and not answered:
+                try:
+                    msg = await bot.wait_for("message", timeout=20 - (asyncio.get_event_loop().time() - start_time), check=check)
+                    guess = normalize_text(msg.content).replace(" ", "")
+                    user = msg.author.display_name
+                    uid = msg.author.id
+                                                
+                    if fuzzy_match(guess, border_country, border_category, border_url):
+                        await msg.add_reaction("✅")
+                        await safe_send(channel, f"\u200b\n✅🎉 **{user}** got it! **{border_country.upper()}**\n\u200b")
+                        user_data[uid] = (user, user_data.get(uid, (user, 0))[1] + 1)
+                        answered = True
+                        break
+                except asyncio.TimeoutError:
+                    break
+
+            if not answered:
+                message = f"\u200b\n❌😢 No one got it.\n\nAnswer: **{border_country.upper()}**\n\u200b"
+                await safe_send(channel, message)
+
+            await asyncio.sleep(5)
+
+        except Exception as e:
+            sentry_sdk.capture_exception(e)
+            print(traceback.format_exc())
+            await safe_send(channel, "\u200b\n⚠️ Error during round, skipping.\n\u200b")
+            continue
+
+    await asyncio.sleep(2)
+    sorted_data = sorted(user_data.items(), key=lambda x: x[1][1], reverse=True)
+    if sorted_data:
+        standings = "\n".join([f"{i+1}. **{name}**: {score}" for i, (_, (name, score)) in enumerate(sorted_data)])
+        await safe_send(channel, f"\u200b\n🏁🏆 **Commendable Okrans**\n{standings}\n\u200b")
+        await asyncio.sleep(2)
+        await safe_send(channel, f"\u200b\n🎉🥇 The winner is **{sorted_data[0][1][0]}**!\n\u200b")
+    else:
+        await safe_send(channel, "\u200b\n👎😢 **No right answers**. I'm ashamed to call you Okrans.\n\u200b")
+
+    await asyncio.sleep(5)
+
+
+
 
 
 async def ask_animal_challenge(winner):
@@ -4900,6 +5033,8 @@ async def select_wof_questions(winner, winner_id):
         message += f"{counter}.\u200b 💧🔥 Elementary 🥒✨\n"
         counter = counter + 1
         message += f"{counter}.\u200b 🧩🌀 Jigsawed 🥒✨\n"
+        counter = counter + 1
+        message += f"{counter}.\u200b 🗺️❓ Borderline 🥒✨\n"
         message += f"\n0\u200b0. 🥗🌟 Okra's Choice\n"
         message += f"\nX.\u200b ⏭️🕹️ Skip Mini-Game\n"
         await safe_send(channel, message) 
@@ -5030,6 +5165,11 @@ async def select_wof_questions(winner, winner_id):
 
         elif selected_wof_category == "27":
             await ask_jigsaw_challenge(winner, winner_id)
+            await asyncio.sleep(3)
+            return None
+
+        elif selected_wof_category == "28":
+            await ask_border_challenge(winner, winner_id)
             await asyncio.sleep(3)
             return None
         
@@ -5271,9 +5411,10 @@ async def ask_wof_number(winner, winner_id):
         "25": "Sign Language",
         "26": "Elementary",
         "27": "Jigsawed",
+        "28": "Borderline",
     }
     multiplayer_required = {k for k in unlocks if k not in {"5", "6", "7", "8", "9"}}
-    all_options = {str(i) for i in range(28)} | {"00", "x"}
+    all_options = {str(i) for i in range(29)} | {"00", "x"}
 
     start = asyncio.get_event_loop().time()
     selected_question = None
@@ -5290,7 +5431,7 @@ async def ask_wof_number(winner, winner_id):
             if content == "00":
                 await message.add_reaction("👍")
                 set_a = [str(i) for i in range(5)]
-                set_b = [str(i) for i in range(5, 28)] if len(round_responders) >= num_list_players else [str(i) for i in range(5, 10)]
+                set_b = [str(i) for i in range(5, 29)] if len(round_responders) >= num_list_players else [str(i) for i in range(5, 10)]
                 selected_question = random.choice(set_a if random.random() < 0.5 else set_b)
                 await safe_send(channel, f"\n🎁 **<@{winner_id}>**, let's do {selected_question}.\n")
                 return selected_question
@@ -5322,7 +5463,7 @@ async def ask_wof_number(winner, winner_id):
 
     # Fallback random selection
     set_a = [str(i) for i in range(5)]
-    set_b = [str(i) for i in range(5, 28)] if len(round_responders) >= num_list_players else [str(i) for i in range(5, 10)]
+    set_b = [str(i) for i in range(5, 29)] if len(round_responders) >= num_list_players else [str(i) for i in range(5, 10)]
     selected_question = random.choice(set_a if random.random() < 0.5 else set_b)
     await safe_send(channel, f"\u200b\n🐢⏳ Too slow. I choose **{selected_question}**.\n\u200b")
     return selected_question
@@ -8576,6 +8717,7 @@ async def start_trivia():
             fastest_answers_count.clear()
             #await ask_feud_question("TheCreator", "cooperative", 591861826690613248)
             #await ask_jigsaw_challenge("The Creator", 591861826690613248)
+            #await ask_border_challenge("The Creator", 591861826690613248)
             
             round_responders.clear()  # Reset round responders
             round_data["questions"] = []
@@ -8597,9 +8739,8 @@ async def start_trivia():
             await asyncio.sleep(3)
 
             start_message = f"\u200b\n🥒🎁 Beta: **Free Okran perks**\n\u200b"
-            #start_message = f"\u200b\n✨🧪 New mini-games from the **Okra Lab**!\n"
-            #start_message += f"\u200b\n🧩🌀 **Jigsawed**"
-            #start_message += f"\n💧🔥 **Elementary**\n\u200B"
+            start_message += f"\u200b\n✨🧪 New mini-game from the **Okra Lab**!\n"
+            start_message += f"\n🗺️❓ **Borderline**\n\u200b"
             await safe_send(channel, start_message)
             await asyncio.sleep(5)
 
