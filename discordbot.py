@@ -7247,7 +7247,8 @@ async def check_correct_responses_delete(question_ask_time, trivia_answer_list, 
     # Process collected responses
     for response in collected_responses:
         message = response["message"]
-        message_content = message.content
+        #message_content = message.content
+        message_content = response["message_content"]
         sender_id = message.author.id
         display_name = message.author.display_name
         timestamp = message.created_at.timestamp()
