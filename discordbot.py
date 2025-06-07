@@ -1090,7 +1090,7 @@ async def ask_polyglottery_challenge(winner, winner_id):
 
     user_data = {}
 
-    for round_num in range(1, 6):
+    for round_num in range(1, 8):
         try:
             recent_ids = await get_recent_question_ids_from_mongo("polyglottery")
             collection = db["polyglottery_questions"]
@@ -2188,7 +2188,7 @@ async def ask_border_challenge(winner, winner_id):
 
     user_data = {}
 
-    for round_num in range(1, 6):
+    for round_num in range(1, 8):
         try:
             recent_border_ids = await get_recent_question_ids_from_mongo("border")
             border_collection = db["border_questions"]
