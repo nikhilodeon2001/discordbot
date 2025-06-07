@@ -8839,7 +8839,7 @@ async def start_trivia():
                 await round_preview(selected_questions)
                 await asyncio.sleep(10)  # Adjust this time to whatever delay you need between rounds
             
-            if len(scoreboard) >= 1:
+            if len(scoreboard) >= 10:
                 await ask_survey_question()
                 
             await asyncio.sleep(5)
