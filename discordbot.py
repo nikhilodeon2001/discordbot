@@ -1085,7 +1085,7 @@ async def ask_polyglottery_challenge(winner, winner_id):
         await safe_send(channel, f"\n💥🤯 Ok...ra we're going with:\n\n`{collected_words}`")
 
     await asyncio.sleep(2)
-    await safe_send(channel, f"\u200b\n5️⃣🥇 Let's do a **best of 5**...\n\u200b")
+    await safe_send(channel, f"\u200b\n5️⃣🥇 Let's do a **best of 7**...\n\u200b")
     await asyncio.sleep(3)
 
     user_data = {}
@@ -2183,7 +2183,7 @@ async def ask_border_challenge(winner, winner_id):
 
     await safe_send(channel, f"\u200b\n💥🤯 Ok...ra! We're going with **{game_mode.upper()}** baby!\n\u200b")
     await asyncio.sleep(2)
-    await safe_send(channel, "\u200b\n5️⃣🥇 Let's do a best of 5...\n\u200b")
+    await safe_send(channel, "\u200b\n5️⃣🥇 Let's do a best of 7...\n\u200b")
     await asyncio.sleep(3)
 
     user_data = {}
