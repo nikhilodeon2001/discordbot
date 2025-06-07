@@ -8907,6 +8907,23 @@ async def on_message(message):
 
 
 @bot.event
+async def on_message_edit(before, after):
+    if question_asked_start and question_asked_end:
+        edited_time = after.edited_at.timestamp() if after.edited_at else time.time()
+        if question_asked_start <= edited_time <= question_asked_end:
+            try:
+                await after.reply(
+                    f"🛑 {after.author.mention}, edited messages are **NOT** accepted for trivia answers. "
+                    "Your original answer is the only one that counts.",
+                    mention_author=False
+                )
+            except discord.Forbidden:
+                print("Bot lacks permission to reply to the edited message.")
+            except Exception as e:
+                print(f"Failed to reply to edited message: {e}")
+
+
+@bot.event
 async def on_ready():
     global channel
     print(f"✅ Logged in as {bot.user}")
