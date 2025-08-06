@@ -98,22 +98,32 @@ googlemaps_api_key = os.getenv("googlemaps_api_key")
 googletranslate_api_key = os.getenv("googletranslate_api_key")
 webster_api_key = os.getenv("webster_api_key")
 webster_thes_api_key = os.getenv("webster_thes_api_key")
-
 question_time = int(os.getenv("question_time"))
 channel_id = int(os.getenv("channel_id"))
 
-questions_per_round = int(os.getenv("questions_per_round"))
-time_between_questions = int(os.getenv("time_between_questions"))
-time_between_questions_default = time_between_questions
-max_retries = int(os.getenv("max_retries"))
-delay_between_retries = int(os.getenv("delay_between_retries"))
+
+# Initialize all variables
+#discord_token = "REMOVED_DISCORD_TOKEN"
+#discord_token = ""
+#mongo_db_string = "mongodb+srv://nsharma2:REMOVED_MONGO_PASSWORD@staging.oxez2.mongodb.net/?retryWrites=true&w=majority&appName=staging"
+#openai_api_key = "REMOVED_OPENAI_KEY_V1"
+#openweather_api_key = "REMOVED_OPENWEATHER_KEY"
+#googlemaps_api_key = "REMOVED_GOOGLEMAPS_KEY"
+#googletranslate_api_key = "REMOVED_GOOGLETRANSLATE_KEY"
+#webster_api_key = "REMOVED_WEBSTER_KEY"
+#webster_thes_api_key = "REMOVED_WEBSTER_THES_KEY"
+#channel_id = 1375328414151610458
+#channel_id = 1402517943979343942
+
 
 intents = discord.Intents.default()
 intents.messages = True
 intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 openai_client = AsyncOpenAI(api_key=openai_api_key)
-id_limits = {"general": 2000, "mysterybox": 2000, "crossword": 100000, "jeopardy": 100000, "wof": 1500, "list": 20, "feud": 1000, "posters": 2000, "movie_scenes": 5000, "missing_link": 2500, "people": 2500, "ranker_list": 4000, "animal": 2000, "riddle": 2500, "dictionary": 100000, "flags": 800, "lyric": 500, "polyglottery": 80, "book": 80, "element": 100, "jigsaw": 30000, "border": 100}
+id_limits = {"general": 2000, "mysterybox": 2000, "crossword": 5000, "jeopardy": 5000, "wof": 1500, "list": 20, "feud": 1000, "posters": 2000, "movie_scenes": 5000, "missing_link": 2500, "people": 2500, "ranker_list": 4000, "animal": 2000, "riddle": 2500, "dictionary": 5000, "flags": 800, "lyric": 500, "polyglottery": 80, "book": 80, "element": 100, "jigsaw": 5000, "border": 100, "faceoff": 5000, "president": 80, "wordle": 1400, "myopic": 5000}
+max_retries = 3
+delay_between_retries = 3
 first_place_bonus = 0
 magic_time = 10
 magic_number = 0000
@@ -507,7 +517,7 @@ async def shuffle_image_pieces(image_url, num_pieces=9, tint_mode="none", tint_c
     return image_buffer
 
 
-async def ask_jigsaw_challenge(winner, winner_id):
+async def ask_jigsaw_challenge(winner, winner_id, num=7):
     global wf_winner
     wf_winner = True
 
@@ -535,12 +545,16 @@ async def ask_jigsaw_challenge(winner, winner_id):
 
     await safe_send(channel, f"\u200b\n💥🤯 Ok...ra! We're going with **{num_pieces}** pieces!\n\u200b")
     await asyncio.sleep(2)
-    await safe_send(channel, "\u200b\n5️⃣🥇 Let's do a **best of 5**...\n\u200b")
-    await asyncio.sleep(3)
 
     user_data = {}
 
-    for round_num in range(1, 6):
+    if num > 1:
+        message = f"\u200b\n5️⃣🥇 Let's do a best of **{num}**...\n\u200b"
+        await safe_send(channel, message)
+        await asyncio.sleep(3)
+
+    round_num = 1
+    while round_num <= num:
         try:
             recent_ids = await get_recent_question_ids_from_mongo("jigsaw")
             collection = db["jigsaw_questions"]
@@ -644,17 +658,220 @@ async def ask_jigsaw_challenge(winner, winner_id):
             await safe_send(channel, "\u200b\n⚠️ Error during round, skipping.\n\u200b")
             continue
 
+        await asyncio.sleep(1)
+
+        round_num = round_num + 1
+        
+        message = ""
+
+        sorted_users = sorted(user_data.items(), key=lambda x: x[1][1], reverse=True)
+
+        if num == 1:
+            if sorted_users:
+                jigsaw_winner_id, (display_name, final_score) = sorted_users[0]
+                return jigsaw_winner_id
+            else:
+                return None
+            
+        if sorted_users:
+            if round_num > num:
+                message += "\u200b\n🏁🏆 Final Standings\n\u200b"
+            else:   
+                message += "\u200b\n📊🏆 Current Standings\n\u200b"
+
+        for counter, (user_id, (display_name, count)) in enumerate(sorted_users, start=1):
+            message += f"{counter}. **{display_name}**: {count}\n"
+            message += "\u200b"
+            
+        if message:
+            await safe_send(channel, message)
+        
+        await asyncio.sleep(3)
+
+    await asyncio.sleep(2)
+    if sorted_users:
+        jigsaw_winner_id, (display_name, final_score) = sorted_users[0]
+        message = f"\u200b\n🎉🥇 The winner is **{display_name}**!\n\u200b"
+    else:
+        message = f"\u200b\n👎😢 **No right answers**. I'm ashamed to call you Okrans.\n\u200b"
+    
+    await safe_send(channel, message)
+    
+    wf_winner = True
     await asyncio.sleep(3)
-    sorted_data = sorted(user_data.items(), key=lambda x: x[1][1], reverse=True)
-    if sorted_data:
-        standings = "\n".join([f"{i+1}. **{name}**: {score}" for i, (_, (name, score)) in enumerate(sorted_data)])
-        await safe_send(channel, f"\u200b\n🏁🏆 **Commendable Okrans**\n{standings}\n\u200b")
+    
+    if sorted_users:
+        return jigsaw_winner_id
+    else:
+        return None
+
+
+    
+
+
+
+async def ask_faceoff_challenge(winner, winner_id, num=7):
+    global wf_winner
+    wf_winner = True
+
+    faceoff_gifs = [
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/faceoff1.gif",
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/faceoff2.gif",
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/faceoff3.gif",
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/faceoff4.gif",
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/faceoff5.gif",
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/faceoff6.gif"
+    ]
+    gif_url = random.choice(faceoff_gifs)
+
+    await safe_send(channel, content="\u200b\n🙃🙂 Face/Off: 'I want to take his Face..Off'.\n\u200b", embed=discord.Embed().set_image(url=gif_url))
+    await asyncio.sleep(3)
+
+    await safe_send(channel, f"\u200b\n🪚🔢 **{winner}**, how many face pieces?\n👉 **4, 9, 16, 25, 36, 49, 64, 81, or 100**\n\u200b")
+    try:
+        msg = await bot.wait_for("message", timeout=magic_time + 5, check=lambda m: m.author.id == winner_id and m.channel == channel and m.content in {"4", "9", "16", "25", "36", "49", "64", "81", "100"})
+        num_pieces = int(msg.content)
+        await msg.add_reaction("✅")
+    except asyncio.TimeoutError:
+        num_pieces = 16
+        await safe_send(channel, "\u200b\n😬⏱️ Time's up! We'll go with **16** pieces.\n\u200b")
+
+    await safe_send(channel, f"\u200b\n💥🤯 Ok...ra! We're going with **{num_pieces}** pieces!\n\u200b")
+    await asyncio.sleep(2)
+
+    if num > 1:
+        await safe_send(channel, f"\u200b\n5️⃣🥇 Let's do a best of **{num}**...\n\u200b")
         await asyncio.sleep(2)
-        await safe_send(channel, f"\u200b\n🎉🥇 The winner is **{sorted_data[0][1][0]}**!\n\u200b")
+
+    user_scores = {}
+
+    faceoff_num = 1
+    while faceoff_num <= num:
+        try:
+            recent_ids = await get_recent_question_ids_from_mongo("faceoff")
+            collection = db["faceoff_questions"]
+            pipeline = [
+                {"$match": {"_id": {"$nin": list(recent_ids)}}},
+                {"$sample": {"size": 5}},
+                {"$group": {"_id": "$question", "question_doc": {"$first": "$$ROOT"}}},
+                {"$replaceRoot": {"newRoot": "$question_doc"}},
+                {"$sample": {"size": 1}}
+            ]
+            docs = [doc async for doc in collection.aggregate(pipeline)]
+            q = docs[0]
+
+            qid = q["_id"]
+            image_url = q["url"]
+            answers = q["answers"]
+            main_answer = answers[0]
+            category = q["category"]
+            question_text = q["question"]
+
+            print(answers)
+
+            if qid:
+                await store_question_ids_in_mongo([qid], "faceoff")
+
+            buffer = await shuffle_image_pieces(image_url, num_pieces=num_pieces)
+            embed = discord.Embed()
+            embed.set_image(url="attachment://faceoff.png")
+            await safe_send(channel, f"\u200b\n⚠️🚨 Everyone's in!\n\n🗣💬❓ **Face {faceoff_num}** of {num}: Who is **THIS**?!?\n\u200b", embed=embed, file=discord.File(buffer, "faceoff.png"))
+
+            answered = False
+            processed = set()
+            start_time = asyncio.get_event_loop().time()
+
+            def check(m):
+                return m.channel == channel and m.author != bot.user
+
+            while asyncio.get_event_loop().time() - start_time < 20 and not answered:
+                try:
+                    timeout = 20 - (asyncio.get_event_loop().time() - start_time)
+                    msg = await bot.wait_for("message", timeout=timeout, check=check)
+                    content = normalize_text(msg.content).replace(" ", "")
+                    key = (msg.author.id, content)
+
+                    if key in processed:
+                        continue
+                    processed.add(key)
+
+                    for a in answers:
+                        if fuzzy_match(content, normalize_text(a).replace(" ", ""), category, image_url):
+                            await msg.add_reaction("✅")
+                            await safe_send(
+                                channel,
+                                f"\u200b\n✅🎉 Correct! {msg.author.display_name} got it! {a.upper()}\n\n📝🧠 All Answers:\n" +
+                                "\n".join(x.upper() for x in answers) +
+                                "\n\u200b"
+                            )
+                            embed = discord.Embed()
+                            embed.set_image(url=image_url)
+                            await safe_send(channel, embed=embed)
+                            uid = msg.author.id
+                            user_scores[uid] = (msg.author.display_name, user_scores.get(uid, (msg.author.display_name, 0))[1] + 1)
+                            answered = True
+                            break
+                except asyncio.TimeoutError:
+                    break
+
+            if not answered:
+                await safe_send(channel, f"\u200b\n❌😢 No one got it.\n\n📝🧠 Answers:\n" + "\n\u200b".join(x.upper() for x in answers))
+                embed = discord.Embed()
+                embed.set_image(url=image_url)
+                await safe_send(channel, embed=embed)
+
+            await asyncio.sleep(3)
+
+        except Exception as e:
+            sentry_sdk.capture_exception(e)
+            print(traceback.format_exc())
+            await safe_send(channel, "\u200b\n⚠️ Error during round, skipping.\n\u200b")
+            continue
+
+        faceoff_num += 1
+
+        message = ""
+
+        sorted_scores = sorted(user_scores.items(), key=lambda x: x[1][1], reverse=True)
+        
+        if num == 1:
+            if sorted_scores:
+                faceoff_winner_id, (display_name, final_score) = sorted_scores[0]
+                return faceoff_winner_id
+            else:
+                return None
+
+        if sorted_scores:
+            if faceoff_num > num:
+                message += "\u200b\n🏁🏆 Final Standings\n\u200b"
+            else:   
+                message += "\u200b\n📊🏆 Current Standings\n\u200b"
+
+        for counter, (user_id, (display_name, count)) in enumerate(sorted_scores, start=1):
+            message += f"{counter}. **{display_name}**: {count}\n"
+            message += "\u200b"
+            
+        if message:
+            await safe_send(channel, message)
+        
+        await asyncio.sleep(3)
+
+    await asyncio.sleep(2)
+
+    if sorted_scores:
+        faceoff_winner_id, (display_name, final_score) = sorted_scores[0]
+        await safe_send(channel, f"\u200b\n🎉🥇 The winner is **{display_name}**!\n\u200b")
     else:
         await safe_send(channel, "\u200b\n👎😢 **No right answers**. I'm ashamed to call you Okrans.\n\u200b")
 
-    await asyncio.sleep(5)
+    wf_winner = True
+    await asyncio.sleep(3)
+    
+    if sorted_scores:
+        return faceoff_winner_id
+    else:
+        return None
+
 
 
 def get_largest_fitting_font(draw, text, box_width, box_height, font_path, padding=6):
@@ -777,7 +994,7 @@ def highlight_element(x, y, width, height, hex_color, blank=True, symbol="", hig
     return image_buffer
 
 
-async def ask_element_challenge(winner, winner_id):
+async def ask_element_challenge(winner, winner_id, num=7):
     global wf_winner
     wf_winner = True
 
@@ -806,12 +1023,16 @@ async def ask_element_challenge(winner, winner_id):
 
     await safe_send(channel, f"\u200b\n💥🤯 Ok...ra! We're going with **{game_mode.upper()}** baby!\n\u200b")
     await asyncio.sleep(2)
-    await safe_send(channel, "\u200b\n5️⃣🥇 Let's do a best of 5...\n\u200b")
-    await asyncio.sleep(3)
 
     user_data = {}
 
-    for round_num in range(1, 6):
+    if num > 1:
+        message = f"\u200b\n5️⃣🥇 Let's do a best of **{num}**...\n\u200b"
+        await safe_send(channel, message)
+        await asyncio.sleep(3)
+
+    round_num = 1
+    while round_num <= num:
         try:
             recent_element_ids = await get_recent_question_ids_from_mongo("element")
             element_collection = db["element_questions"]
@@ -863,136 +1084,166 @@ async def ask_element_challenge(winner, winner_id):
                 element_answers = element_question["answers"]
                 element_coordinate_data = element_question["elements"]
 
-            
             element_category = "element"
             element_url = ""
             element_question_id = element_question["_id"] 
 
             if element_question_id:
                 await store_question_ids_in_mongo([element_question_id], "element")  # Store it as a list containing a single ID
-
-            if element_question_type == "single":
-                
-                if game_mode == "normal":
-                    element_crossword_buffer, element_crossword_string = generate_crossword_image(element_name, prefill=0.3)
-                    element_image_buffer = highlight_element(element_x, element_y, element_width, element_height, element_color, blank=False, symbol=element_symbol)
-                else:
-                    element_image_buffer = highlight_element(element_x, element_y, element_width, element_height, element_color)
-                #element_bohr_mxc, element_bohr_width, element_bohr_height = download_image_from_url(element_bohr_url, False, "okra.png") 
-
-            elif element_question_type == "multiple" or element_question_type == "multiple-single-answer":
-                highlight_boxes = [
-                    {
-                        "x": el["x"],
-                        "y": el["y"],
-                        "width": el["width"],
-                        "height": el["height"],
-                        "color": f"#{el['cpk-hex']}" if el.get('cpk-hex') else "#ffffff"
-                    }
-                    for el in element_coordinate_data
-                ]
-                if game_mode == "normal":
-                    element_crossword_buffer, element_crossword_string = generate_crossword_image(element_group, prefill=0.3)
-                    
-                element_image_buffer = highlight_element(0, 0, 0, 0, "#ffffff", blank=True, symbol="", highlight_boxes=highlight_boxes)
-            
-            if element_question_type == "single":
-                correct_answers = [element_name]
-                element_answers = None
-            elif element_question_type == "multiple":
-                correct_answers = [answer for answer in element_answers]
-            elif element_question_type == "multiple-single-answer":
-                correct_answers = [element_group]
-            
-            print(correct_answers)
-            answered = False
-
-            message = "\u200b\n"
-            if element_question_type == "single":
-                message += f"\n🗣💬❓ **({round_num}/5)** Name this **element**.\n"
-            elif element_question_type == "multiple-single-answer":
-                message += f"\n🗣💬❓ **({round_num}/5)** What is this **group of elements** called?\n"
-            elif element_question_type == "multiple":
-                message += f"\n🗣💬❓ **({round_num}/5)** Name **one element** in this group: **{element_group.upper()}**\n"
-            message += "\n\u200b"
-               
-            file = discord.File(fp=element_image_buffer, filename="element.png")
-            embed = discord.Embed()
-            embed.set_image(url="attachment://element.png")
-            await safe_send(channel, content=message, embed=embed, file=file)   
-
-            if element_question_type == "single":
-                if game_mode == "normal":
-                    redacted_element_summary = replace_element_references(element_summary, element_name=element_name)
-                elif game_mode == "okrap":
-                    redacted_element_summary = replace_element_references(element_summary, element_name=element_name, element_symbol=element_symbol)
-                message = f"\n🔍🧪 {redacted_element_summary}\n"
-                await safe_send(channel, message)
-
-            if game_mode == "normal" and (element_question_type == "multiple-single-answer" or element_question_type == "single"):
-                file = discord.File(fp=element_crossword_buffer, filename="element.png")
-                embed = discord.Embed()
-                embed.set_image(url="attachment://element.png")
-                await safe_send(channel, embed=embed, file=file)   
-
-            start_time = asyncio.get_event_loop().time()
-
-            def check(m):
-                return m.channel == channel and m.author != bot.user
-
-            while asyncio.get_event_loop().time() - start_time < 20 and not answered:
-                try:
-                    msg = await bot.wait_for("message", timeout=20 - (asyncio.get_event_loop().time() - start_time), check=check)
-                    guess = normalize_text(msg.content).replace(" ", "")
-                    user = msg.author.display_name
-                    uid = msg.author.id
-                    for correct in correct_answers:
-                        normalized_answer = normalize_text(correct).replace(" ", "")
-                        if (((guess == normalized_answer or guess[:-1] == normalized_answer) and game_mode == "okrap") or (fuzzy_match(guess, normalized_answer, element_category, element_url) and game_mode == "normal")):
-                            await msg.add_reaction("✅")
-                            await safe_send(channel, f"\u200b\n✅🎉 **{user}** got it! **{correct.upper()}**\n\u200b")
-                            user_data[uid] = (user, user_data.get(uid, (user, 0))[1] + 1)
-                            message = ""
-                            if element_answers:
-                                formatted_answers = ", ".join(name.title() for name in element_answers)
-                                message += f"\n🗒️📋 Full List\n{formatted_answers}\n"
-                                await safe_send(channel, message)
-                            answered = True
-                            break
-                except asyncio.TimeoutError:
-                    break
-
-            if not answered:
-                if element_question_type == "single":
-                    message = f"\u200b\n❌😢 No one got it.\n\nAnswer: **{element_name.upper()}**\n\u200b"
-                if element_question_type == "multiple-single-answer":
-                    message = f"\u200b\n❌😢 No one got it.\n\nAnswer: **{element_group.upper()}**\n\u200b"
-                    formatted_answers = ", ".join(name.title() for name in element_answers)
-                    message += f"\u200b\n🗒️📋 **Full List**\n{formatted_answers}\n\u200b"
-                if element_question_type == "multiple":
-                    formatted_answers = ", ".join(name.title() for name in element_answers)
-                    message = f"\u200b\n❌😢 No one got it.\n\n**Full List**\n{formatted_answers}\n\u200b"
-                await safe_send(channel, message)
-
-            await asyncio.sleep(5)
-
+        
         except Exception as e:
             sentry_sdk.capture_exception(e)
-            print(traceback.format_exc())
-            await safe_send(channel, "\u200b\n⚠️ Error during round, skipping.\n\u200b")
-            continue
+            error_details = traceback.format_exc()
+            print(f"Error selecting element questions: {e}\nDetailed traceback:\n{error_details}")
+            return None  # Return an empty list in case of failure
+        
+        if element_question_type == "single":
+            
+            if game_mode == "normal":
+                element_crossword_buffer, element_crossword_string = generate_crossword_image(element_name, prefill=0.3)
+                element_image_buffer = highlight_element(element_x, element_y, element_width, element_height, element_color, blank=False, symbol=element_symbol)
+            else:
+                element_image_buffer = highlight_element(element_x, element_y, element_width, element_height, element_color)
+            #element_bohr_mxc, element_bohr_width, element_bohr_height = download_image_from_url(element_bohr_url, False, "okra.png") 
+
+        elif element_question_type == "multiple" or element_question_type == "multiple-single-answer":
+            highlight_boxes = [
+                {
+                    "x": el["x"],
+                    "y": el["y"],
+                    "width": el["width"],
+                    "height": el["height"],
+                    "color": f"#{el['cpk-hex']}" if el.get('cpk-hex') else "#ffffff"
+                }
+                for el in element_coordinate_data
+            ]
+            if game_mode == "normal":
+                element_crossword_buffer, element_crossword_string = generate_crossword_image(element_group, prefill=0.3)
+                
+            element_image_buffer = highlight_element(0, 0, 0, 0, "#ffffff", blank=True, symbol="", highlight_boxes=highlight_boxes)
+        
+        if element_question_type == "single":
+            correct_answers = [element_name]
+            element_answers = None
+        elif element_question_type == "multiple":
+            correct_answers = [answer for answer in element_answers]
+        elif element_question_type == "multiple-single-answer":
+            correct_answers = [element_group]
+        
+        print(correct_answers)
+        answered = False
+
+        message = "\u200b\n⚠️🚨 **Everyone's in!**\n"
+        if element_question_type == "single":
+            message += f"\n🗣💬❓ **({round_num}/5)** Name this **element**.\n"
+        elif element_question_type == "multiple-single-answer":
+            message += f"\n🗣💬❓ **({round_num}/5)** What is this **group of elements** called?\n"
+        elif element_question_type == "multiple":
+            message += f"\n🗣💬❓ **({round_num}/5)** Name **one element** in this group: **{element_group.upper()}**\n"
+        message += "\n\u200b"
+            
+        file = discord.File(fp=element_image_buffer, filename="element.png")
+        embed = discord.Embed()
+        embed.set_image(url="attachment://element.png")
+        await safe_send(channel, content=message, embed=embed, file=file)   
+
+        if element_question_type == "single":
+            if game_mode == "normal":
+                redacted_element_summary = replace_element_references(element_summary, element_name=element_name)
+            elif game_mode == "okrap":
+                redacted_element_summary = replace_element_references(element_summary, element_name=element_name, element_symbol=element_symbol)
+            message = f"\n🔍🧪 {redacted_element_summary}\n"
+            await safe_send(channel, message)
+
+        if game_mode == "normal" and (element_question_type == "multiple-single-answer" or element_question_type == "single"):
+            file = discord.File(fp=element_crossword_buffer, filename="element.png")
+            embed = discord.Embed()
+            embed.set_image(url="attachment://element.png")
+            await safe_send(channel, embed=embed, file=file)   
+
+        start_time = asyncio.get_event_loop().time()
+
+        def check(m):
+            return m.channel == channel and m.author != bot.user
+
+        while asyncio.get_event_loop().time() - start_time < 20 and not answered:
+            try:
+                msg = await bot.wait_for("message", timeout=20 - (asyncio.get_event_loop().time() - start_time), check=check)
+                guess = normalize_text(msg.content).replace(" ", "")
+                user = msg.author.display_name
+                uid = msg.author.id
+                for correct in correct_answers:
+                    normalized_answer = normalize_text(correct).replace(" ", "")
+                    if (((guess == normalized_answer or guess[:-1] == normalized_answer) and game_mode == "okrap") or (fuzzy_match(guess, normalized_answer, element_category, element_url) and game_mode == "normal")):
+                        await msg.add_reaction("✅")
+                        await safe_send(channel, f"\u200b\n✅🎉 **{user}** got it! **{correct.upper()}**\n\u200b")
+                        user_data[uid] = (user, user_data.get(uid, (user, 0))[1] + 1)
+                        message = ""
+                        if element_answers:
+                            formatted_answers = ", ".join(name.title() for name in element_answers)
+                            message += f"\n🗒️📋 Full List\n{formatted_answers}\n"
+                            await safe_send(channel, message)
+                        answered = True
+                        break
+            except asyncio.TimeoutError:
+                break
+
+        if not answered:
+            if element_question_type == "single":
+                message = f"\u200b\n❌😢 No one got it.\n\nAnswer: **{element_name.upper()}**\n\u200b"
+            if element_question_type == "multiple-single-answer":
+                message = f"\u200b\n❌😢 No one got it.\n\nAnswer: **{element_group.upper()}**\n\u200b"
+                formatted_answers = ", ".join(name.title() for name in element_answers)
+                message += f"\u200b\n🗒️📋 **Full List**\n{formatted_answers}\n\u200b"
+            if element_question_type == "multiple":
+                formatted_answers = ", ".join(name.title() for name in element_answers)
+                message = f"\u200b\n❌😢 No one got it.\n\n**Full List**\n{formatted_answers}\n\u200b"
+            await safe_send(channel, message)
+
+        await asyncio.sleep(1)
+
+        round_num = round_num + 1
+        
+        message = ""
+
+        sorted_users = sorted(user_data.items(), key=lambda x: x[1][1], reverse=True)
+
+        if num == 1:
+            if sorted_users:
+                element_winner_id, (display_name, final_score) = sorted_users[0]
+                return element_winner_id
+            else:
+                return None
+            
+        if sorted_users:
+            if round_num > num:
+                message += "\u200b\n🏁🏆 Final Standings\n\u200b"
+            else:   
+                message += "\u200b\n📊🏆 Current Standings\n\u200b"
+
+        for counter, (user_id, (display_name, count)) in enumerate(sorted_users, start=1):
+            message += f"{counter}. **{display_name}**: {count}\n"
+            message += "\u200b"
+            
+        await safe_send(channel, message)
+        await asyncio.sleep(3)
 
     await asyncio.sleep(2)
-    sorted_data = sorted(user_data.items(), key=lambda x: x[1][1], reverse=True)
-    if sorted_data:
-        standings = "\n".join([f"{i+1}. **{name}**: {score}" for i, (_, (name, score)) in enumerate(sorted_data)])
-        await safe_send(channel, f"\u200b\n🏁🏆 **Commendable Okrans**\n{standings}\n\u200b")
-        await asyncio.sleep(2)
-        await safe_send(channel, f"\u200b\n🎉🥇 The winner is **{sorted_data[0][1][0]}**!\n\u200b")
+    if sorted_users:
+        element_winner_id, (display_name, final_score) = sorted_users[0]
+        message = f"\u200b\n🎉🥇 The winner is **{display_name}**!\n\u200b"
     else:
-        await safe_send(channel, "\u200b\n👎😢 **No right answers**. I'm ashamed to call you Okrans.\n\u200b")
+        message = f"\u200b\n👎😢 **No right answers**. I'm ashamed to call you Okrans.\n\u200b"
+    await safe_send(channel, message)
+    
+    wf_winner = True
+    await asyncio.sleep(3)
+    
+    if sorted_users:
+        return element_winner_id
+    else:
+        return None
 
-    await asyncio.sleep(5)
 
 
 def replace_element_references(element_summary, element_name=None, element_symbol=None):
@@ -1058,7 +1309,7 @@ async def translate_text(collected_words: str, lang_code: str, google_api_key: s
                 return collected_words 
 
 
-async def ask_polyglottery_challenge(winner, winner_id):
+async def ask_polyglottery_challenge(winner, winner_id, num=7):
     global wf_winner
     wf_winner = True
 
@@ -1072,25 +1323,51 @@ async def ask_polyglottery_challenge(winner, winner_id):
     gif_url = random.choice(gifs)
 
     await safe_send(channel, content="\u200b\n\u200b\n🎰🗣️ **PolygLottery: Guess the Language**\n\u200b", embed=discord.Embed().set_image(url=gif_url))
-    await asyncio.sleep(3)
+    await asyncio.sleep(5)
 
     # Collect phrase
     await safe_send(channel, f"\u200b\n✍️🌍 **{winner}**, give me **3–5 words** to translate...\n\u200b")
     collected_words = await collect_words_from_user(winner, winner_id)
 
     if len(collected_words.split()) < 3:
+        okra_sentences = [
+            "Okra stole my left sock.",
+            "I dreamt about okra karaoke.",
+            "My okra talks to pigeons.",
+            "Dancing okra invaded the office.",
+            "Okra wears sunglasses at night.",
+            "I married an okra magician.",
+            "Okra joined a punk band.",
+            "That okra moonwalks on command.",
+            "Grandma’s okra knows dark secrets.",
+            "Okra challenged me to chess.",
+            "We adopted an emotional okra.",
+            "Okra runs faster than turtles.",
+            "Psychic okra told my future.",
+            "The okra demanded a crown.",
+            "Okra hosts a cooking podcast.",
+            "Three okras rode tiny scooters.",
+            "Okra eloped with a mushroom.",
+            "Okra formed a jazz quartet.",
+            "Why is okra wearing lipstick?",
+            "That okra smells like Tuesdays."
+        ]
         collected_words = random.choice(okra_sentences)
-        await safe_send(channel, f"\n🤖📢 Not enough words, so I'm picking this:\n\n`{collected_words}`")
+        await safe_send(channel, f"\u200b\n🤖📢 Not enough words, so I'm picking this:\n\n`{collected_words}`\n\u200b")
     else:
-        await safe_send(channel, f"\n💥🤯 Ok...ra we're going with:\n\n`{collected_words}`")
+        await safe_send(channel, f"\u200b\n💥🤯 Ok...ra we're going with:\n\n`{collected_words}`\n\u200b")
 
     await asyncio.sleep(2)
-    await safe_send(channel, f"\u200b\n5️⃣🥇 Let's do a **best of 7**...\n\u200b")
-    await asyncio.sleep(3)
 
     user_data = {}
+    
+    if num > 1:
+        message = f"\u200b\n5️⃣🥇 Let's do a best of **{num}**...\n\u200b"
+        await safe_send(channel, message)
+        await asyncio.sleep(3)
 
-    for round_num in range(1, 8):
+    round_num = 1
+    while round_num <= num:
         try:
             recent_ids = await get_recent_question_ids_from_mongo("polyglottery")
             collection = db["polyglottery_questions"]
@@ -1163,26 +1440,55 @@ async def ask_polyglottery_challenge(winner, winner_id):
         if not answered:
             await safe_send(channel, f"\u200b\n❌😢 No one got it.\n\nAnswer: **{lang_name.upper()}**\n\u200b")
 
-        await asyncio.sleep(5)
+        await asyncio.sleep(1)
 
-    # Final scores
+        round_num = round_num + 1
+        
+        message = ""
+
+        sorted_users = sorted(user_data.items(), key=lambda x: x[1][1], reverse=True)
+
+        if num == 1:
+            if sorted_users:
+                polyglottery_winner_id, (display_name, final_score) = sorted_users[0]
+                return polyglottery_winner_id
+            else:
+                return None
+            
+        if sorted_users:
+            if round_num > num:
+                message += "\u200b\n🏁🏆 Final Standings\n\u200b"
+            else:   
+                message += "\u200b\n📊🏆 Current Standings\n\u200b"
+
+        for counter, (user_id, (display_name, count)) in enumerate(sorted_users, start=1):
+            message += f"{counter}. **{display_name}**: {count}\n"
+            message += "\u200b"
+            
+        if message:
+            await safe_send(channel, message)
+        
+        await asyncio.sleep(3)
+
     await asyncio.sleep(2)
-    sorted_data = sorted(user_data.items(), key=lambda x: x[1][1], reverse=True)
-    if sorted_data:
-        msg = "\u200b\n🏁🏆 **Commendable Okrans**\n"
-        for i, (uid, (name, score)) in enumerate(sorted_data, 1):
-            msg += f"{i}. **{name}**: {score}\n"
-        msg += "\u200b"
-        await safe_send(channel, msg)
-        await asyncio.sleep(2)
-        await safe_send(channel, f"\u200b\n🎉🥇 The winner is **{sorted_data[0][1][0]}**!\n\u200b")
+    if sorted_users:
+        polyglottery_winner_id, (display_name, final_score) = sorted_users[0]
+        message = f"\u200b\n🎉🥇 The winner is **{display_name}**!\n\u200b"
     else:
-        await safe_send(channel, "\u200b\n👎😢 **No right answers**. I'm ashamed to call you Okrans.\n\u200b")
+        message = f"\u200b\n👎😢 **No right answers**. I'm ashamed to call you Okrans.\n\u200b"
+    await safe_send(channel, message)
+    
+    wf_winner = True
+    await asyncio.sleep(3)
 
-    await asyncio.sleep(5)
+    if sorted_users:
+        return polyglottery_winner_id
+    else:
+        return None
 
 
-async def ask_dictionary_challenge(winner):
+
+async def ask_dictionary_challenge(winner, winner_id, num=7):
     global wf_winner
     wf_winner = True
 
@@ -1194,13 +1500,17 @@ async def ask_dictionary_challenge(winner):
     gif_url = random.choice(gifs)
 
     await safe_send(channel, content="\u200b\n\u200b\n🤓📚 **Word Nerd**\n\u200b", embed=discord.Embed().set_image(url=gif_url))
-    await asyncio.sleep(3)
-    await safe_send(channel, "\u200b\n5️⃣🥇 Let's do a **best of 5**...\n\n😏🎯 I'll take the **best answer per person**.\n\u200b")
     await asyncio.sleep(5)
 
     user_data = {}
 
-    for round_num in range(1, 6):
+    if num > 1:
+        message = f"\u200b\n5️⃣🥇 Let's do a best of **{num}**...\n\u200b"
+        await safe_send(channel, message)
+        await asyncio.sleep(3)
+
+    round_num = 1
+    while round_num <= num:
         try:
             recent_ids = await get_recent_question_ids_from_mongo("dictionary")
             collection = db["dictionary_questions"]
@@ -1232,8 +1542,8 @@ async def ask_dictionary_challenge(winner):
             print(f"Error selecting dictionary question:\n{traceback.format_exc()}")
             return
 
-        await safe_send(channel, f"\u200b\n🧠❓ Word **{round_num}/5**\n")
-        await safe_send(channel, f"\u200b\n🔤 Starts with: **{first_char}**\n🔢 Characters: **{word_len}** characters\n\n📘📝 Definition: **{redacted_def}**\n\n🟢💨 **GO!**\n\u200b")
+        await safe_send(channel, f"\u200b\n🧠❓ **Word {round_num}**/5\n")
+        await safe_send(channel, f"\u200b\n🔤 **{first_char}** is the first letter\n🔢 **{word_len}** characters\n\n📘📝 **Definition:** {redacted_def}\n\n🟢💨 **GO!**\n\u200b")
 
         start_time = asyncio.get_event_loop().time()
         answered = False
@@ -1274,26 +1584,56 @@ async def ask_dictionary_challenge(winner):
                 for i, (uid, (display_name, guess, score)) in enumerate(sorted_closest[:3], 1):
                     msg += f"{i}. **{display_name}**: \"{guess}\" — score: {score:.2f}\n\u200b"
                     current_score = user_data.get(uid, (display_name, 0))[1]
-                    user_data[uid] = (display_name, current_score + score * 0.5)
+                    user_data[uid] = (display_name, current_score + score * 1.0)
                 await safe_send(channel, msg)
-                await asyncio.sleep(1)
-                await safe_send(channel, "\n\u200b🥈🤡 50% credit for your 'effort'.\n\u200b")
+                #await asyncio.sleep(1)
+                #await safe_send(channel, "\n\u200b🥈🤡 50% credit for your 'effort'.\n\u200b")
     
-        sorted_data = sorted(user_data.items(), key=lambda x: x[1][1], reverse=True)
-        if sorted_data:
-            msg = "\u200b\n🏁🏆 **Commendable Okrans**\n"
-            for i, (uid, (name, score)) in enumerate(sorted_data, 1):
-                msg += f"{i}. **{name}**: {score:.2f}\n"
-            msg += "\u200b"
-            await safe_send(channel, msg)
-            await asyncio.sleep(5)
+        await asyncio.sleep(1)
 
-    if sorted_data:
-        await safe_send(channel, f"\u200b\n🎉🥇 The winner is **{sorted_data[0][1][0]}**!\n\u200b")
+        round_num = round_num + 1
+        
+        message = ""
+
+        sorted_users = sorted(user_data.items(), key=lambda x: x[1][1], reverse=True)
+
+        if num == 1:
+            if sorted_users:
+                winner_user_id, _ = sorted_users[0]
+                return winner_user_id
+            else:
+                return None
+            
+        if sorted_users:
+            if round_num > num:
+                message += "\u200b\n🏁🏆 Final Standings\n\u200b"
+            else:   
+                message += "\u200b\n📊🏆 Current Standings\n\u200b"
+
+        for counter, (user_id, (display_name, count)) in enumerate(sorted_users, start=1):
+            message += f"{counter}. **{display_name}**: {count}\n"
+            message += "\u200b"
+            
+        if message:
+            await safe_send(channel, message)
+        
+        await asyncio.sleep(3)
+
+    await asyncio.sleep(2)
+    if sorted_users:
+        winning_user_id, (winner_name, winner_score) = sorted_users[0]
+        message = f"\u200b\n🎉🥇 The winner is **{winner_name}**!\n\u200b"
     else:
-        await safe_send(channel, "\u200b\n👎😢 **No right answers**. I'm ashamed to call you Okrans.\n\u200b")
-
-    await asyncio.sleep(5)
+        message = f"\u200b\n👎😢 **No right answers**. I'm ashamed to call you Okrans.\n\u200b"
+    await safe_send(channel, message)
+    
+    wf_winner = True
+    await asyncio.sleep(3)
+    
+    if sorted_users:
+        return winning_user_id
+    else:
+        return None
 
 
 def generate_text_image(question_text, red_value_bk, green_value_bk, blue_value_bk, red_value_f, green_value_f, blue_value_f, add_okra, okra_path, lang_code="en", font_size=60, highlight_missing_operator=False):
@@ -1610,7 +1950,7 @@ def generate_math_puzzle(n):
             }
 
 
-async def ask_math_challenge(winner, winner_id):
+async def ask_math_challenge(winner, winner_id, num=7):
     global wf_winner
     wf_winner = True
 
@@ -1648,18 +1988,22 @@ async def ask_math_challenge(winner, winner_id):
             break
 
     if user_number:
-        await safe_send(channel, f"\n💥🤯 Ok...ra! We're going with **{user_number}** missing signs!\n")
+        await safe_send(channel, f"\u200b\n💥🤯 Ok...ra! We're going with **{user_number}** missing signs!\n\u200b")
     else:
         user_number = 2
-        await safe_send(channel, f"\n⏱️ Time's up! Defaulting to **2** missing signs!\n")
+        await safe_send(channel, f"\u200b\n⏱️ Time's up! Defaulting to **2** missing signs!\n\u200b")
 
     await asyncio.sleep(2)
-    await safe_send(channel, "\u200b\n5️⃣🥇 Let's do a **best of 5**...\n\u200b")
-    await asyncio.sleep(3)
+
+    if num > 1:
+        message = f"\u200b\n5️⃣🥇 Let's do a best of **{num}**...\n\u200b"
+        await safe_send(channel, message)
+        await asyncio.sleep(3)
 
     user_data = {}
 
-    for round_num in range(1, 6):
+    round_num = 1
+    while round_num <= num:
         puzzle = generate_math_puzzle(user_number)
         math_string = puzzle["math_string"]
         answer_string = puzzle["answer_string"]
@@ -1672,7 +2016,12 @@ async def ask_math_challenge(winner, winner_id):
         file = discord.File(fp=image_buffer, filename="math.png")
         embed = discord.Embed().set_image(url="attachment://math.png")
 
-        await safe_send(channel, f"\u200b\n⚠️ Equation **{round_num}/5**: Use **[+ - / *  x]**\n\u200b", file=file, embed=embed)
+        prompt = (
+            f"\u200b\n⚠️🚨 Everyone's in!\n"
+            f"\u200b\n✖️🧠 Equation {round_num}/5: Use **[+ - /\\ * x]**\n\u200b"
+        )
+
+        await safe_send(channel, content=prompt, file=file, embed=embed)
 
         start_time = asyncio.get_event_loop().time()
         answered = False
@@ -1685,7 +2034,7 @@ async def ask_math_challenge(winner, winner_id):
             try:
                 timeout = 20 - (asyncio.get_event_loop().time() - start_time)
                 msg = await bot.wait_for("message", timeout=timeout, check=check)
-                content = msg.content.strip().replace(" ", "").replace("x", "*").lower()
+                content = msg.content.strip().replace(" ", "").replace("x", "*").replace("\\", "/").lower()
                 user = msg.author.display_name
                 user_id = msg.author.id
                 key = (user_id, content)
@@ -1707,25 +2056,292 @@ async def ask_math_challenge(winner, winner_id):
         if not answered:
             await safe_send(channel, f"\u200b\n❌😢 No one got it.\n\nAnswer: **{pretty_answer_string}**\n\u200b")
 
-        await asyncio.sleep(5)
+        await asyncio.sleep(1)
+
+        round_num = round_num + 1
+        
+        message = ""
+
+        sorted_users = sorted(user_data.items(), key=lambda x: x[1][1], reverse=True)
+
+        if num == 1:
+            if sorted_users:
+                math_winner_id, (display_name, final_score) = sorted_users[0]
+                return math_winner_id
+            else:
+                return None
+            
+        if sorted_users:
+            if round_num > num:
+                message += "\u200b\n🏁🏆 Final Standings\n\u200b"
+            else:   
+                message += "\u200b\n📊🏆 Current Standings\n\u200b"
+
+        for counter, (user_id, (display_name, count)) in enumerate(sorted_users, start=1):
+            message += f"{counter}. **{display_name}**: {count}\n"
+            message += "\u200b"
+            
+        if message:
+            await safe_send(channel, message)
+        
+        await asyncio.sleep(3)
 
     await asyncio.sleep(2)
-    sorted_data = sorted(user_data.items(), key=lambda x: x[1][1], reverse=True)
-    if sorted_data:
-        msg = "\u200b\n🏁🏆 **Commendable Okrans**\n"
-        for i, (uid, (name, score)) in enumerate(sorted_data, 1):
-            msg += f"{i}. **{name}**: {score}\n"
-        msg += "\u200b"
-        await safe_send(channel, msg)
-        await asyncio.sleep(2)
-        await safe_send(channel, f"\u200b\n🎉🥇 The winner is **{sorted_data[0][1][0]}**!\n\u200b")
+    if sorted_users:
+        math_winner_id, (display_name, final_score) = sorted_users[0]
+        message = f"\u200b\n🎉🥇 The winner is **{display_name}**!\n\u200b"
     else:
-        await safe_send(channel, "\u200b\n👎😢 **No right answers. I'm ashamed to call you Okrans.**\n\u200b")
+        message = f"\u200b\n👎😢 **No right answers**. I'm ashamed to call you Okrans.\n\u200b"
+    
+    await safe_send(channel, message)
+    
+    wf_winner = True
+    await asyncio.sleep(3)
+    
+    if sorted_users:
+        return math_winner_id
+    else:
+        return None
 
-    await asyncio.sleep(5)
+
+async def ask_music_challenge(winner, winner_id, num=7):
+    global wf_winner
+    wf_winner = True
+
+    music_gifs = [
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/music1.gif",
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/music2.gif",
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/music3.gif",
+    ]
+
+    gif_url = random.choice(music_gifs)
+    await safe_send(channel, content="\u200b\n🎼🎵 **MusIQ: Name the Notes**\n\u200b", embed=discord.Embed().set_image(url=gif_url))
+    await asyncio.sleep(3)
+
+    await safe_send(channel, f"\u200b\n✍️🌍 **{winner}**, how many **music notes**? [**2** to **7**]\n\u200b")
+
+    user_number = None
+    start_time = asyncio.get_event_loop().time()
+
+    def check(m):
+        return m.author.id == winner_id and m.channel == channel and m.author != bot.user and m.content.strip() in {"2", "3", "4", "5", "6", "7"}
+
+    while asyncio.get_event_loop().time() - start_time < magic_time + 5:
+        try:
+            timeout = magic_time + 5 - (asyncio.get_event_loop().time() - start_time)
+            msg = await bot.wait_for("message", timeout=timeout, check=check)
+            user_number = int(msg.content.strip())
+            await msg.add_reaction("🎵")
+            break
+        except asyncio.TimeoutError:
+            break
+
+    if user_number:
+        await safe_send(channel, f"\u200b\n💥🤯 Ok...ra! We're going with **{user_number}** music notes!\n\u200b")
+    else:
+        user_number = 3
+        await safe_send(channel, "\u200b\n😬⏱️ Time's up! We're going with **3** music notes!\n\u200b")
+
+    await asyncio.sleep(2)
+
+    if num > 1:
+        await safe_send(channel, f"\u200b\n5️⃣🥇 Let's do a best of **{num}**...\n\u200b")
+        await asyncio.sleep(3)
+
+    user_data = {}
+    music_num = 1
+
+    while music_num <= num:
+        music_mxc, music_answer = generate_music_puzzle(user_number)
+        print(f"Music Notes: {music_answer}")
+
+        image_file = discord.File(music_mxc, filename="music.png")  # Adjust if needed
+        embed = discord.Embed().set_image(url="attachment://music.png")
+
+        message = f"\u200b\n⚠️🚨 Everyone's in!\n\n🎼🔢 **Sequence {music_num}** of {num} (Treble Clef 𝄞)\n\u200b"
+        await safe_send(channel, content=message, file=image_file, embed=embed)
+        await asyncio.sleep(2)
+
+        start_time = asyncio.get_event_loop().time()
+        answered = False
+        processed_users = set()
+
+        def check(m):
+            return m.channel == channel and m.author != bot.user
+
+        while asyncio.get_event_loop().time() - start_time < 20 and not answered:
+            try:
+                timeout = 20 - (asyncio.get_event_loop().time() - start_time)
+                msg = await bot.wait_for("message", timeout=timeout, check=check)
+                user = msg.author.display_name
+                user_id = msg.author.id
+                guess = msg.content.strip().replace(" ", "").replace(",", "").lower()
+                correct = music_answer[1].replace(" ", "").replace(",", "").lower()
+
+                key = (user_id, guess)
+                if key in processed_users:
+                    continue
+                processed_users.add(key)
+
+                if guess == correct:
+                    await msg.add_reaction("✅")
+                    await safe_send(channel, f"\u200b\n✅🎉 Correct! **{user}** got it! **{music_answer[1]}**\n\u200b")
+                    if user_id not in user_data:
+                        user_data[user_id] = (user, 0)
+                    user_data[user_id] = (user, user_data[user_id][1] + 1)
+                    answered = True
+            except asyncio.TimeoutError:
+                break
+
+        if not answered:
+            await safe_send(channel, f"\u200b\n❌😢 No one got it.\n\nAnswer: **{music_answer[1]}**\n\u200b")
+
+        await asyncio.sleep(2)
+        music_num += 1
+
+        message = ""
+        sorted_users = sorted(user_data.items(), key=lambda x: x[1][1], reverse=True)
+
+        if num == 1:
+            if sorted_users:
+                music_winner_id, (display_name, final_score) = sorted_users[0]
+                return music_winner_id
+            else:
+                return None
+
+        if sorted_users:
+            if music_num > num:
+                message += "\u200b\n🏁🏆 **Final Standings**\n"
+            else:
+                message += "\u200b\n📊🏆 **Current Standings**\n"
+
+        for counter, (_, (display_name, count)) in enumerate(sorted_users, start=1):
+            message += f"{counter}. **{display_name}**: {count}\n"
+
+        if message:
+            await safe_send(channel, message)
+        await asyncio.sleep(2)
+
+    if sorted_users:
+        music_winner_id, (display_name, final_score) = sorted_users[0]
+        await safe_send(channel, f"\u200b\n🎉🥇 The winner is **{display_name}**!\n\u200b")
+    else:
+        await safe_send(channel, f"\u200b\n👎😢 No right answers. **I'm ashamed to call you Okrans**.\n\u200b")
+
+    await asyncio.sleep(3)
+    
+    if sorted_users:
+        return music_winner_id
+    else:
+        return None
 
 
-async def ask_lyric_challenge(winner):
+
+def generate_music_puzzle(number_of_notes):
+    # Only notes between E4 and F5 inclusive
+    allowed_notes = [
+        ("E", 4),
+        ("F", 4),
+        ("G", 4),
+        ("A", 4),
+        ("B", 4),
+        ("C", 5),
+        ("D", 5),
+        ("E", 5),
+        ("F", 5)
+    ]
+
+    selected = random.choices(allowed_notes, k=number_of_notes)
+
+    # First string: include octaves to distinguish high/low
+    with_octave = [f"{note}{octave}" for note, octave in selected]
+
+    # Second string: just the note names
+    without_octave = [note for note, _ in selected]
+
+    music_note_array = [", ".join(with_octave), ", ".join(without_octave)]
+
+    music_buffer = generate_music_image(music_note_array[0])
+
+    return music_buffer, music_note_array
+
+
+def generate_music_image(note_string):
+    from PIL import Image, ImageDraw
+    import io
+
+    if isinstance(note_string, list):
+        notes = [n.strip().upper() for n in note_string]
+    else:
+        notes = [n.strip().upper() for n in note_string.split(',')]
+
+    num_notes = len(notes)
+
+    # Diatonic scale positions relative to E4
+    staff_positions = {
+        "E4": 0,  # bottom line
+        "F4": 1,
+        "G4": 2,
+        "A4": 3,
+        "B4": 4,
+        "C5": 5,
+        "D5": 6,
+        "E5": 7,
+        "F5": 8  # top line
+    }
+
+    def get_staff_step(note):
+        """Return the number of diatonic steps above E4"""
+        return staff_positions.get(note, 0)
+
+    # Drawing parameters
+    note_spacing = 90
+    staff_line_spacing = 20
+    left_margin = 40
+    right_margin = 40
+    top_margin = 40
+    bottom_margin = 40
+
+    img_width = left_margin + right_margin + num_notes * note_spacing
+    staff_height = 4 * staff_line_spacing
+    e4_y = top_margin + 4 * staff_line_spacing  # E4 is the bottom line
+    img_height = top_margin + staff_height + bottom_margin
+
+    # Create image
+    img = Image.new("RGB", (img_width, img_height), "white")
+    draw = ImageDraw.Draw(img)
+
+    # Draw 5 staff lines
+    for i in range(5):
+        y = e4_y - i * staff_line_spacing
+        draw.line([(left_margin, y), (img_width - right_margin, y)], fill="black", width=2)
+
+    # Draw each note
+    for i, note in enumerate(notes):
+        step = get_staff_step(note)
+        x = left_margin + i * note_spacing + 30
+        y = e4_y - step * (staff_line_spacing // 2)
+
+        # Draw note head
+        draw.ellipse((x - 10, y - 7, x + 10, y + 7), fill="black")
+
+        # Draw stem upward
+        draw.line([(x + 10, y), (x + 10, y - 30)], fill="black", width=2)
+
+    # Export to buffer
+    image_buffer = io.BytesIO()
+    img.save(image_buffer, format='PNG')
+    image_buffer.seek(0)
+
+    if image_buffer:
+        return image_buffer
+    else:
+        print("❌ Failed to get image buffer.")
+        return None
+
+
+
+async def ask_lyric_challenge(winner, winner_id, num=7):
     global wf_winner
     wf_winner = True
 
@@ -1738,12 +2354,16 @@ async def ask_lyric_challenge(winner):
 
     await safe_send(channel, content="\u200b\n\u200b\n🎧🎤 **LyrIQ: Name the Song OR Artist**\n\u200b", embed=discord.Embed().set_image(url=gif_url))
     await asyncio.sleep(3)
-    await safe_send(channel, "\u200b\n5️⃣🥇 Let's do a **best of 5**...\n\u200b")
-    await asyncio.sleep(3)
 
     user_data = {}
 
-    for round_num in range(1, 6):
+    if num > 1:
+        message = f"\u200b\n5️⃣🥇 Let's do a best of **{num}**...\n\u200b"
+        await safe_send(channel, message)
+        await asyncio.sleep(3)
+
+    round_num = 1
+    while round_num <= num:
         try:
             recent_ids = await get_recent_question_ids_from_mongo("lyric")
             collection = db["lyric_questions"]
@@ -1832,23 +2452,51 @@ async def ask_lyric_challenge(winner):
         if not answered:
             await safe_send(channel, f"\u200b\n❌😢 No one got it.\n\nAnswer: **{artist.upper()} - {title.upper()}**\n\u200b")
 
-        await asyncio.sleep(5)
+        await asyncio.sleep(1)
 
-    # Final scoreboard
-    await asyncio.sleep(2)
-    sorted_data = sorted(user_data.items(), key=lambda x: x[1][1], reverse=True)
-    if sorted_data:
-        msg = "\u200b\n🏁🏆 **Commendable Okrans**\n"
-        for i, (uid, (name, score)) in enumerate(sorted_data, 1):
-            msg += f"{i}. **{name}**: {score}\n"
-        msg += "\u200b"
-        await safe_send(channel, msg)
+        round_num = round_num + 1
+        
+        message = ""
+
+        sorted_users = sorted(user_data.items(), key=lambda x: x[1][1], reverse=True)
+
+        if num == 1:
+            if sorted_users:
+                lyric_winner_id, (display_name, final_score) = sorted_users[0]
+                return lyric_winner_id
+            else:
+                return None
+            
+        if sorted_users:
+            if round_num > num:
+                message += "\u200b\n🏁🏆 Final Standings\n\u200b"
+            else:   
+                message += "\u200b\n📊🏆 Current Standings\n\u200b"
+
+        for counter, (user_id, (display_name, count)) in enumerate(sorted_users, start=1):
+            message += f"{counter}. **{display_name}**: {count}\n"
+            message += "\u200b"
+            
+        if message:
+            await safe_send(channel, message)
+        
         await asyncio.sleep(3)
-        await safe_send(channel, f"\u200b\n🎉🥇 The winner is **{sorted_data[0][1][0]}**!\n\u200b")
-    else:
-        await safe_send(channel, "\u200b\n👎😢 **No right answers**. I'm ashamed to call you Okrans.\n\u200b")
 
-    await asyncio.sleep(5)
+    await asyncio.sleep(2)
+    if sorted_users:
+        lyric_winner_id, (display_name, final_score) = sorted_users[0]
+        message = f"\u200b\n🎉🥇 The winner is **{display_name}**!\n\u200b"
+    else:
+        message = f"\u200b\n👎😢 **No right answers**. I'm ashamed to call you Okrans.\n\u200b"
+    await safe_send(channel, message)
+    
+    wf_winner = True
+    await asyncio.sleep(3)
+    
+    if sorted_users:
+        return lyric_winner_id
+    else:
+        return None
 
 
 class HTMLTextExtractor(HTMLParser):
@@ -1928,7 +2576,7 @@ async def get_random_epub_snippets(book_epub_url, snippet_length=300, count=2):
         return []
 
 
-async def ask_book_challenge(winner):
+async def ask_book_challenge(winner, winner_id, num=7):
     global wf_winner
     wf_winner = True
 
@@ -1941,12 +2589,16 @@ async def ask_book_challenge(winner):
 
     await safe_send(channel, content="\u200b\n\u200b\n📖🕵️‍♂️ **Prose & Cons: Name the Book OR Author**\n\u200b", embed=discord.Embed().set_image(url=gif_url))
     await asyncio.sleep(3)
-    await safe_send(channel, "\u200b\n5️⃣🥇 Let's do a **best of 5**...\n\u200b")
-    await asyncio.sleep(3)
 
     user_data = {}
 
-    for round_num in range(1, 6):
+    if num > 1:
+        message = f"\u200b\n5️⃣🥇 Let's do a best of **{num}**...\n\u200b"
+        await safe_send(channel, message)
+        await asyncio.sleep(3)
+
+    round_num = 1
+    while round_num <= num:
         try:
             recent_ids = await get_recent_question_ids_from_mongo("book")
             collection = db["book_questions"]
@@ -2031,26 +2683,54 @@ async def ask_book_challenge(winner):
         if not answered:
             await safe_send(channel, f"\u200b\n❌😢 No one got it.\n\n📚 **{title.upper()}** by **{author.upper()}**\n\u200b")
 
-        await asyncio.sleep(5)
+        await asyncio.sleep(1)
 
-    # Final scoreboard
+        round_num = round_num + 1
+        
+        message = ""
+
+        sorted_users = sorted(user_data.items(), key=lambda x: x[1][1], reverse=True)
+
+        if num == 1:
+            if sorted_users:
+                book_winner_id, (display_name, final_score) = sorted_users[0]
+                return book_winner_id
+            else:
+                return None
+            
+        if sorted_users:
+            if round_num > num:
+                message += "\u200b\n🏁🏆 Final Standings\n\u200b"
+            else:   
+                message += "\u200b\n📊🏆 Current Standings\n\u200b"
+
+        for counter, (user_id, (display_name, count)) in enumerate(sorted_users, start=1):
+            message += f"{counter}. **{display_name}**: {count}\n"
+            message += "\u200b"
+            
+        if message:
+            await safe_send(channel, message)
+
+        await asyncio.sleep(3)
+
     await asyncio.sleep(2)
-    sorted_data = sorted(user_data.items(), key=lambda x: x[1][1], reverse=True)
-    if sorted_data:
-        msg = "\u200b\n🏁🏆 **Commendable Okrans**\n"
-        for i, (uid, (name, score)) in enumerate(sorted_data, 1):
-            msg += f"{i}. **{name}**: {score}\n"
-        msg += "\u200b"
-        await safe_send(channel, msg)
-        await asyncio.sleep(2)
-        await safe_send(channel, f"\u200b\n🎉🥇 The winner is **{sorted_data[0][1][0]}**!\n\u200b")
+    if sorted_users:
+        book_winner_id, (display_name, final_score) = sorted_users[0]
+        message = f"\u200b\n🎉🥇 The winner is **{display_name}**!\n\u200b"
     else:
-        await safe_send(channel, "\u200b\n👎😢 **No right answers**. I'm ashamed to call you Okrans.\n\u200b")
+        message = f"\u200b\n👎😢 **No right answers**. I'm ashamed to call you Okrans.\n\u200b"
+    await safe_send(channel, message)
+    
+    wf_winner = True
+    await asyncio.sleep(3)
+    
+    if sorted_users:
+        return book_winner_id
+    else:
+        return None
 
-    await asyncio.sleep(5)
 
-
-async def ask_riddle_challenge(winner):
+async def ask_riddle_challenge(winner, winner_id, num=7):
     global wf_winner
     wf_winner = True
 
@@ -2062,13 +2742,17 @@ async def ask_riddle_challenge(winner):
     gif_url = random.choice(gifs)
 
     await safe_send(channel, content="\u200b\n\u200b\n🟢🎩 **The Riddler**\n\u200b", embed=discord.Embed().set_image(url=gif_url))
-    await asyncio.sleep(3)
-    await safe_send(channel, "\u200b\n5️⃣🥇 Let's do a **best of 5**...\n\u200b")
-    await asyncio.sleep(3)
+    await asyncio.sleep(5)
 
     user_data = {}
+    
+    if num > 1:
+        message = f"\u200b\n5️⃣🥇 Let's do a best of **{num}**...\n\u200b"
+        await safe_send(channel, message)
+        await asyncio.sleep(3)
 
-    for round_num in range(1, 6):
+    round_num = 1
+    while round_num <= num:
         try:
             recent_ids = await get_recent_question_ids_from_mongo("riddle")
             collection = db["riddle_questions"]
@@ -2099,8 +2783,12 @@ async def ask_riddle_challenge(winner):
             print(f"Error selecting riddle question:\n{traceback.format_exc()}")
             return
 
-        await safe_send(channel, f"\u200b\n🧠❓ **Riddle {round_num}/5**: {riddle_text}\n\u200b")
-        await asyncio.sleep(1)
+        prompt = (
+            f"\u200b\n⚠️🚨 **Everyone's in!**\n"
+            f"\u200b\n🧠❓ **Riddle {round_num}/5**: {riddle_text}\n\u200b"
+        )
+
+        await safe_send(channel, prompt)
 
         start_time = asyncio.get_event_loop().time()
         answered = False
@@ -2137,26 +2825,55 @@ async def ask_riddle_challenge(winner):
         if not answered:
             await safe_send(channel, f"\u200b\n❌😢 No one got it.\n\nAnswer: **{main_answer.upper()}**\n\u200b")
 
-        await asyncio.sleep(5)
+        await asyncio.sleep(1)
+                            
+        round_num = round_num + 1
+        
+        message = ""
+
+        sorted_users = sorted(user_data.items(), key=lambda x: x[1][1], reverse=True)
+
+        if num == 1:
+            if sorted_users:
+                riddle_winner_id, (winner_name, winner_score) = sorted_users[0]
+                return riddle_winner_id if winner_name is not None else None
+            else:
+                return None
+            
+        if sorted_users:
+            if round_num > num:
+                message += "\u200b\n🏁🏆 Final Standings\n\u200b"
+            else:   
+                message += "\u200b\n📊🏆 Current Standings\n\u200b"
+
+        for counter, (user_id, (display_name, count)) in enumerate(sorted_users, start=1):
+            message += f"{counter}. **{display_name}**: {count}\n"
+            message += "\u200b"
+            
+        if message:
+            await safe_send(channel, message)
+        
+        await asyncio.sleep(3)
 
     await asyncio.sleep(2)
-    sorted_data = sorted(user_data.items(), key=lambda x: x[1][1], reverse=True)
-    if sorted_data:
-        msg = "\u200b\n🏁🏆 **Commendable Okrans**\n"
-        for i, (uid, (name, score)) in enumerate(sorted_data, 1):
-            msg += f"{i}. **{name}**: {score}\n"
-        msg += "\u200b"
-        await safe_send(channel, msg)
-        await asyncio.sleep(1)
-        await safe_send(channel, f"\u200b\n🎉🥇 The winner is **{sorted_data[0][1][0]}**!\n\u200b")
+    if sorted_users:
+        riddle_winner_id, (winner_name, winner_score) = sorted_users[0]
+        message = f"\u200b\n🎉🥇 The winner is **{winner_name}**!\n\u200b"
     else:
-        await safe_send(channel, "\u200b\n👎😢 **No right answers**. I'm ashamed to call you Okrans.\n\u200b")
+        message = f"\u200b\n👎😢 **No right answers**. I'm ashamed to call you Okrans.\n\u200b"
+    await safe_send(channel, message)
+    
+    wf_winner = True
+    await asyncio.sleep(3)
+    
+    if sorted_users:
+        return riddle_winner_id
+    else:
+        return None
 
-    await asyncio.sleep(5)
 
 
-
-async def ask_border_challenge(winner, winner_id):
+async def ask_border_challenge(winner, winner_id, num=7):
     global wf_winner
     wf_winner = True
 
@@ -2183,12 +2900,16 @@ async def ask_border_challenge(winner, winner_id):
 
     await safe_send(channel, f"\u200b\n💥🤯 Ok...ra! We're going with **{game_mode.upper()}** baby!\n\u200b")
     await asyncio.sleep(2)
-    await safe_send(channel, "\u200b\n5️⃣🥇 Let's do a best of 7...\n\u200b")
-    await asyncio.sleep(3)
 
     user_data = {}
 
-    for round_num in range(1, 8):
+    if num > 1:
+        message = f"\u200b\n5️⃣🥇 Let's do a best of **{num}**...\n\u200b"
+        await safe_send(channel, message)
+        await asyncio.sleep(3)
+
+    round_num = 1
+    while round_num <= num:
         try:
             recent_border_ids = await get_recent_question_ids_from_mongo("border")
             border_collection = db["border_questions"]
@@ -2225,7 +2946,8 @@ async def ask_border_challenge(winner, winner_id):
             print(f"Country: {border_country}")
             answered = False
             
-            message = f"\u200b\n🗣💬❓ **Round {round_num}/7**\n\u200b"      
+            message = f"\u200b\n⚠️🚨 **Everyone's in!**\n"
+            message += f"\n🗣💬❓ **Country {round_num}**/{num}\n\u200b"      
             await safe_send(channel, message)
             await asyncio.sleep(2)
 
@@ -2263,32 +2985,63 @@ async def ask_border_challenge(winner, winner_id):
             if not answered:
                 message = f"\u200b\n❌😢 No one got it.\n\nAnswer: **{border_country.upper()}**\n\u200b"
                 await safe_send(channel, message)
-
-            await asyncio.sleep(5)
-
+        
         except Exception as e:
             sentry_sdk.capture_exception(e)
             print(traceback.format_exc())
             await safe_send(channel, "\u200b\n⚠️ Error during round, skipping.\n\u200b")
             continue
 
+        await asyncio.sleep(1)
+
+        round_num = round_num + 1
+        
+        message = ""
+
+        sorted_users = sorted(user_data.items(), key=lambda x: x[1][1], reverse=True)
+
+        if num == 1:
+            if sorted_users:
+                border_winner_id, (display_name, final_score) = sorted_users[0]
+                return border_winner_id
+            else:
+                return None
+            
+        if sorted_users:
+            if round_num > num:
+                message += "\u200b\n🏁🏆 Final Standings\n\u200b"
+            else:   
+                message += "\u200b\n📊🏆 Current Standings\n\u200b"
+
+        for counter, (user_id, (display_name, count)) in enumerate(sorted_users, start=1):
+            message += f"{counter}. **{display_name}**: {count}\n"
+            message += "\u200b"
+            
+        if message:
+            await safe_send(channel, message)
+        
+        await asyncio.sleep(3)
+
     await asyncio.sleep(2)
-    sorted_data = sorted(user_data.items(), key=lambda x: x[1][1], reverse=True)
-    if sorted_data:
-        standings = "\n".join([f"{i+1}. **{name}**: {score}" for i, (_, (name, score)) in enumerate(sorted_data)])
-        await safe_send(channel, f"\u200b\n🏁🏆 **Commendable Okrans**\n{standings}\n\u200b")
-        await asyncio.sleep(2)
-        await safe_send(channel, f"\u200b\n🎉🥇 The winner is **{sorted_data[0][1][0]}**!\n\u200b")
+    if sorted_users:
+        border_winner_id, (display_name, final_score) = sorted_users[0]
+        message = f"\u200b\n🎉🥇 The winner is **{display_name}**!\n\u200b"
     else:
-        await safe_send(channel, "\u200b\n👎😢 **No right answers**. I'm ashamed to call you Okrans.\n\u200b")
+        message = f"\u200b\n👎😢 **No right answers**. I'm ashamed to call you Okrans.\n\u200b"
+    
+    await safe_send(channel, message)
+    
+    wf_winner = True
+    await asyncio.sleep(3)
+    
+    if sorted_users:
+        return border_winner_id
+    else:
+        return None
 
-    await asyncio.sleep(5)
 
 
-
-
-
-async def ask_animal_challenge(winner):
+async def ask_animal_challenge(winner, winner_id, num=7):
     global wf_winner
     wf_winner = True
 
@@ -2302,13 +3055,17 @@ async def ask_animal_challenge(winner):
     await safe_send(channel, content="\u200b\n\u200b\n❓🦓 **Name That OkrAnimal!**\n\u200b", embed=discord.Embed().set_image(url=gif_url))
     await asyncio.sleep(3)
 
-    num_of_xs = 0
-    correct_guesses = 0
     user_correct_answers = {}
     animal_main_url = "https://a-z-animals.com/animals/"
     category = "Animals"
 
-    while num_of_xs < 3 and correct_guesses < 20:
+    if num > 1:
+        message = f"\u200b\n5️⃣🥇 Let's do a best of **{num}**...\n\u200b"
+        await safe_send(channel, message)
+        await asyncio.sleep(3)
+
+    animal_num = 1
+    while animal_num <= num:
         try:
             recent_ids = await get_recent_question_ids_from_mongo("animal")
             collection = db["animal_questions"]
@@ -2340,26 +3097,19 @@ async def ask_animal_challenge(winner):
 
         processed_users = set()
 
-        start_message = f"\u200b\n\u200b\n{'🟩' if num_of_xs == 0 else '🟨' if num_of_xs == 1 else '🟥'}🤔 Okrans, you have **{num_of_xs}/3** strikes.\n"
-    
-        if correct_guesses > 0:
-            start_message += f"\nCorrect guesses: **{correct_guesses}**\n"
-        start_message += f"\n⚠️🚨 **Everyone's in!**\n\u200b"
+        prompt = (
+            f"\n⚠️🚨 **Everyone's in!**\n\u200b"
+            f"\u200b\n❓🦓 The **$@!#** is dat?!?\n\n"
+            f"👑 **Kingdom**: {fields['kingdom']}\n"
+            f"🧩 **Phylum**: {fields['phylum']}\n"
+            f"🏫 **Class**: {fields['class']}\n"
+            f"🧾 **Order**: {fields['order']}\n"
+            f"👨‍👩‍👧 **Family**: {fields['family']}\n"
+            f"🔬 **Genus**: {fields['genus']}\n"
+            f"🐾 **Species**: {fields['species']}\n\u200b"
+        )
 
-        await safe_send(channel, start_message)
-
-        await asyncio.sleep(3)
-
-        await safe_send(channel, embed=discord.Embed().set_image(url=image_url))
-
-        await safe_send(channel, f"\u200b\n❓🦓 The **$@!#** is dat?!?\n\n"
-                           f"👑 **Kingdom**: {fields['kingdom']}\n"
-                           f"🧩 **Phylum**: {fields['phylum']}\n"
-                           f"🏫 **Class**: {fields['class']}\n"
-                           f"🧾 **Order**: {fields['order']}\n"
-                           f"👨‍👩‍👧 **Family**: {fields['family']}\n"
-                           f"🔬 **Genus**: {fields['genus']}\n"
-                           f"🐾 **Species**: {fields['species']}\n\u200b")
+        await safe_send(channel, content=prompt, embed=discord.Embed().set_image(url=image_url))
 
         start_time = asyncio.get_event_loop().time()
         right_answer = False
@@ -2373,6 +3123,7 @@ async def ask_animal_challenge(winner):
                 message = await bot.wait_for("message", timeout=remaining, check=check)
                 content = message.content.strip()
                 user = message.author.display_name
+                user_id = message.author.id
                 key = (message.author.id, content.lower())
 
                 if key in processed_users:
@@ -2382,38 +3133,69 @@ async def ask_animal_challenge(winner):
                 if fuzzy_match(content, name, category, detail_url):
                     await message.add_reaction("✅")
                     await safe_send(channel, f"\u200b\n✅🎉 Correct! **{user}** got it! **{name.upper()}**\n\n<{detail_url}>\n\u200b")
-                    correct_guesses += 1
-                    user_correct_answers[user] = user_correct_answers.get(user, 0) + 1
+                    if user_id not in user_correct_answers:
+                            user_correct_answers[user_id] = (user, 0)
+                    user_correct_answers[user_id] = (user, user_correct_answers[user_id][1] + 1)
                     right_answer = True
             except asyncio.TimeoutError:
                 break
 
         if not right_answer:
-            num_of_xs += 1
             await safe_send(channel, f"\u200b\n❌😢 No one got it.\n\nAnswer: **{name.upper()}**\n\n<{detail_url}>\n\u200b")
 
-        await asyncio.sleep(5)
+        await asyncio.sleep(1)
+                            
+        animal_num = animal_num + 1
+        
+        message = ""
 
-    # Wrap up
-    if correct_guesses == 0:
-        await safe_send(channel, "\u200b\n👎😢 No right answers. **I'm ashamed to call you Okrans.**\n\u200b")
+        sorted_users = sorted(user_correct_answers.items(), key=lambda x: x[1][1], reverse=True)
+
+        if num == 1:
+            if sorted_users:
+                animal_winner_id, (winner_name, winner_score) = sorted_users[0]
+                return animal_winner_id if winner_name is not None else None
+            else:
+                return None
+            
+        if sorted_users:
+            if animal_num > num:
+                message += "\u200b\n🏁🏆 Final Standings\n\u200b"
+            else:   
+                message += "\u200b\n📊🏆 Current Standings\n\u200b"
+
+        for counter, (uid, (name, score)) in enumerate(sorted_users, start=1):
+            message += f"{counter}. **{name}**: {score}\n"
+            message += "\u200b"
+            
+        if message:
+            await safe_send(channel, message)
+        
+        await asyncio.sleep(3)
+
+    await asyncio.sleep(2)
+    if sorted_users:
+        aniaml_winner_id, (winner_name, winner_score) = sorted_users[0]
+        message = f"\u200b\n🎉🥇 The winner is **{winner_name}**!\n\u200b"
     else:
-        summary = (
-            f"\u200b\n✅✌️ **{correct_guesses}** right! I get the point. Let's move on.\n"
-            if correct_guesses >= 20 else
-            f"\u200b\n🎉✅ Congrats Okrans! You got **{correct_guesses}** right!\n"
-        )
-        summary += "\n**🏆 Commendable Okrans**\n"
-        sorted_users = sorted(user_correct_answers.items(), key=lambda x: x[1], reverse=True)
-        for i, (user, count) in enumerate(sorted_users, 1):
-            summary += f"{i}. **{user}**: {count}\n"
-        summary += f"\nSee more cute animals at:\n<{animal_main_url}>\n\u200b"
-        await safe_send(channel, summary)
+        message = f"\u200b\n👎😢 **No right answers**. I'm ashamed to call you Okrans.\n\u200b"
+    await safe_send(channel, message)
+    
+    wf_winner = True
+    await asyncio.sleep(2)
+        
+    summary = f"\nSee more cute animals at:\n<{animal_main_url}>\n\u200b"
+    await safe_send(channel, summary)
 
-    await asyncio.sleep(5)
+    await asyncio.sleep(3)
+
+    if sorted_users:
+        return animal_winner_id
+    else:
+        return None
 
 
-async def ask_ranker_people_challenge(winner):
+async def ask_ranker_people_challenge(winner, winner_id, num=7):
     global wf_winner
 
     gifs = [
@@ -2425,17 +3207,21 @@ async def ask_ranker_people_challenge(winner):
 
     gif_url = random.choice(gifs)
     await safe_send(channel, content="\u200b\n\u200b\n 👤🌟 Famous Peeps\n\u200b", embed=discord.Embed().set_image(url=gif_url))
-    await asyncio.sleep(3)
+    await asyncio.sleep(2)
 
     await safe_send(channel, f"\u200b\n👤🌟 ID Ranker.com's All Time Greats\n\u200b")
-    await asyncio.sleep(3)
+    await asyncio.sleep(5)
 
-    num_of_xs = 0
-    correct_guesses = 0
     user_correct_answers = {}
     ranker_url = "https://www.ranker.com/crowdranked-list/the-most-influential-people-of-all-time"
 
-    while num_of_xs < 3 and correct_guesses < 20:
+    if num > 1:
+        message = f"\u200b\n5️⃣🥇 Let's do a best of **{num}**...\n\u200b"
+        await safe_send(channel, message)
+        await asyncio.sleep(3)
+
+    people_num = 1
+    while people_num <= num:
         try:
             recent_ids = await get_recent_question_ids_from_mongo("people")
             collection = db["ranker_people_questions"]
@@ -2457,6 +3243,9 @@ async def ask_ranker_people_challenge(winner):
             nationality = question["nationality"]
             profession = question["profession"]
             image_url = question["url"]
+            nationality = nationality or "Missing"
+            profession = profession or "Missing"  
+            birthplace = birthplace or "Missing"      
 
             if question["_id"]:
                 await store_question_ids_in_mongo([question["_id"]], "people")
@@ -2469,25 +3258,14 @@ async def ask_ranker_people_challenge(winner):
 
         processed_users = set()
 
-        # Display strikes and progress
-        start_msg = f"\u200b\n{'🟩' if num_of_xs == 0 else '🟨' if num_of_xs == 1 else '🟥'}🤔 Okrans, you have **{num_of_xs}/3** strikes!\n"
-        if correct_guesses > 0:
-            start_msg += f"\nCorrect guesses: **{correct_guesses}**\n\u200b"
-        await safe_send(channel, start_msg)
-        await asyncio.sleep(2)
-
-        prompt = f"\u200b\n⚠️🚨 **Everyone's in!**\n\u200b"
-        await safe_send(channel, prompt)
-
-        await asyncio.sleep(3)
-
-        # Image and clues
         prompt = (
-            f"\u200b\n👤🌟 **Rank #{rank}** - Who dat?!?\n"
+            f"\u200b\n⚠️🚨 **Everyone's in!**\n\u200b"
+            f"\u200b\n👤🌟 **Person {people_num}** of {num} (Rank #{rank}):  Who dat?!?\n"
             f"\n🌍🏡 Birthplace: **{birthplace}**"
             f"\n🏳️🆔 Nationality: **{nationality}**"
             f"\n💼⚒️ Profession: **{profession}**\n\u200b"
         )
+
 
         await safe_send(channel, embed=discord.Embed(description=f"Rank #{rank}").set_image(url=image_url))
         await safe_send(channel, prompt)
@@ -2503,6 +3281,7 @@ async def ask_ranker_people_challenge(winner):
                 remaining = 15 - (asyncio.get_event_loop().time() - start_time)
                 message = await bot.wait_for("message", timeout=remaining, check=check)
                 user = message.author.display_name
+                user_id = message.author.id
                 content = message.content.strip()
                 key = (message.author.id, content.lower())
 
@@ -2514,8 +3293,9 @@ async def ask_ranker_people_challenge(winner):
                     if fuzzy_match(content, answer, "Ranker People", image_url):
                         await message.add_reaction("✅")
                         await safe_send(channel, f"\u200b\n✅🎉 Correct! **{user}** got it! **{answer.upper()}**")
-                        correct_guesses += 1
-                        user_correct_answers[user] = user_correct_answers.get(user, 0) + 1
+                        if user_id not in user_correct_answers:
+                            user_correct_answers[user_id] = (user, 0)
+                        user_correct_answers[user_id] = (user, user_correct_answers[user_id][1] + 1)
                         right_answer = True
                         break
             except asyncio.TimeoutError:
@@ -2523,10 +3303,6 @@ async def ask_ranker_people_challenge(winner):
 
         if not right_answer:
             msg = f"\u200b\n❌😢 No one got it.\n\nAnswer: **{main_answer.upper()}**\n"
-            if int(rank) > 2500:
-                msg += "\n🆓✅ No penalty for 2500+.\n\u200b"
-            else:
-                num_of_xs += 1
             await safe_send(channel, msg)
 
         detail_url = detail_url if detail_url.startswith("http") else "https://" + detail_url.lstrip("/")
@@ -2534,37 +3310,60 @@ async def ask_ranker_people_challenge(winner):
         msg = f"\u200b\n[More info about {main_answer}]({detail_url})\n\u200b"
         await safe_send(channel, msg)
 
-        await asyncio.sleep(5)
+        await asyncio.sleep(1)
 
-    # Wrap-up
-    if correct_guesses == 0:
-        await safe_send(channel, "\u200b\n👎😢 No right answers. **I'm ashamed to call you Okrans.**\n\u200b")
+        people_num = people_num + 1
+
+        message = ""
+
+        sorted_users = sorted(user_correct_answers.items(), key=lambda x: x[1][1], reverse=True)
+
+        if num == 1:
+            if sorted_users:
+                people_winner_id, (winner_name, winner_score) = sorted_users[0]
+                return people_winner_id if winner_name is not None else None
+            else:
+                return None
+            
+        if sorted_users:
+            if people_num > num:
+                message += "\u200b\n🏁🏆 Final Standings\n\u200b"
+            else:   
+                message += "\u200b\n📊🏆 Current Standings\n\u200b"
+
+        for counter, (uid, (name, score)) in enumerate(sorted_users, start=1):
+            message += f"{counter}. **{name}**: {score}\n"
+            message += "\u200b"
+            
+        if message:
+            await safe_send(channel, message)
+        
+        await asyncio.sleep(3)
+
+    await asyncio.sleep(2)
+    if sorted_users:
+        people_winner_id, (winner_name, winner_score) = sorted_users[0]
+        message = f"\u200b\n🎉🥇 The winner is **{winner_name}**!\n\u200b"
     else:
-        summary = (
-            f"\u200b\n✅✌️ **{correct_guesses}** right! I get the point. Let's move on.\n"
-            if correct_guesses >= 20 else
-            f"\u200b\n🎉✅ Congrats Okrans! You got **{correct_guesses}** right!\n"
-        )
-        summary += "\n**🏆 Commendable Okrans**\n"
-        sorted_users = sorted(user_correct_answers.items(), key=lambda x: x[1], reverse=True)
-        for i, (user, count) in enumerate(sorted_users, 1):
-            summary += f"{i}. **{user}**: {count}\n"
-        summary += "\u200b"
-        await safe_send(channel, summary)
+        message = f"\u200b\n👎😢 **No right answers**. I'm ashamed to call you Okrans.\n\u200b"
+    await safe_send(channel, message)
 
-    
-
+    await asyncio.sleep(2)
 
     ranker_url = ranker_url if ranker_url.startswith("http") else "https://" + detail_url.lstrip("/")
     await safe_send(channel, f"\u200b\n📝 Ranks from Ranker.com\n{ranker_url}\n\u200b")
-
-    #await safe_send(channel, msg)
-    await asyncio.sleep(2)
+    
     wf_winner = True
-    await asyncio.sleep(5)
+    await asyncio.sleep(3)
+    
+    if sorted_users:
+        return people_winner_id
+    else:
+        return None
+    
 
 
-async def ask_flags_challenge(winner):
+async def ask_flags_challenge(winner, winner_id, num=7):
     global wf_winner
     wf_winner = True
 
@@ -2577,12 +3376,16 @@ async def ask_flags_challenge(winner):
     await safe_send(channel, content="\u200b\n\u200b\n🎏🎉 **Flag Fest!**\n\u200b", embed=discord.Embed().set_image(url=gif_url))
     await asyncio.sleep(3)
 
-    num_of_xs = 0
-    correct_guesses = 0
     user_correct_answers = {}
     flag_reference_url = "http://flags.net/"
 
-    while num_of_xs < 3 and correct_guesses < 20:
+    if num > 1:
+        message = f"\u200b\n5️⃣🥇 Let's do a best of **{num}**...\n\u200b"
+        await safe_send(channel, message)
+        await asyncio.sleep(3)
+
+    flag_num = 1
+    while flag_num <= num:
         try:
             recent_ids = await get_recent_question_ids_from_mongo("flags")
             collection = db["flags_questions"]
@@ -2613,14 +3416,6 @@ async def ask_flags_challenge(winner):
 
         processed_users = set()
 
-        start_message = f"\u200b\n\u200b\n{'🟩' if num_of_xs == 0 else '🟨' if num_of_xs == 1 else '🟥'}🤔 Okrans, you have **{num_of_xs}/3** strikes.\n"
-        if correct_guesses > 0:
-            start_message += f"\nCorrect guesses: **{correct_guesses}**\n\u200b"
-        await safe_send(channel, start_message)
-        await asyncio.sleep(3)
-
-        await safe_send(channel, embed=discord.Embed().set_image(url=image_url))
-
         if category == "country_region_org":
             prompt = "\u200b\n🌍🏳️ Which **country or international organization** does this flag represent?\n\n✋🔤 *Do NOT abbreviate countries.*\n\u200b"
         elif category == "signal":
@@ -2628,7 +3423,7 @@ async def ask_flags_challenge(winner):
         else:
             prompt = "\u200b\n🏳️ What does this flag represent?\n\u200b"
 
-        await safe_send(channel, prompt)
+        await safe_send(channel, content=prompt, embed=discord.Embed().set_image(url=image_url))
 
         start_time = asyncio.get_event_loop().time()
         right_answer = False
@@ -2642,6 +3437,7 @@ async def ask_flags_challenge(winner):
                 message = await bot.wait_for("message", timeout=timeout, check=check)
                 content = message.content.strip()
                 user = message.author.display_name
+                user_id = message.author.id
                 key = (message.author.id, content.lower())
 
                 if key in processed_users:
@@ -2651,38 +3447,359 @@ async def ask_flags_challenge(winner):
                 if fuzzy_match(content, answer, category, image_url):
                     await message.add_reaction("✅")
                     await safe_send(channel, f"\u200b\n✅🎉 **{user}** got it! **{answer.upper()}**\n\n🏴‍☠️📖 {detail}\n👀➡️ <{source_url}>\n\u200b")
-                    correct_guesses += 1
-                    user_correct_answers[user] = user_correct_answers.get(user, 0) + 1
+                    if user_id not in user_correct_answers:
+                            user_correct_answers[user_id] = (user, 0)
+                    user_correct_answers[user_id] = (user, user_correct_answers[user_id][1] + 1)
                     right_answer = True
             except asyncio.TimeoutError:
                 break
 
         if not right_answer:
-            num_of_xs += 1
             await safe_send(channel, f"\u200b\n❌😢 No one got it.\n\nAnswer: **{answer.upper()}**\n\n🏴‍☠️📖 {detail}\n👀➡️ <{source_url}>\n\u200b")
 
-        await asyncio.sleep(5)
+        await asyncio.sleep(1)
+                            
+        flag_num = flag_num + 1
+        
+        message = ""
 
-    # Wrap up
-    if correct_guesses == 0:
-        await safe_send(channel, "\u200b\n👎😢 **No right answers**. I'm ashamed to call you Okrans.\n\u200b")
+        sorted_users = sorted(user_correct_answers.items(), key=lambda x: x[1][1], reverse=True)
+
+        if num == 1:
+            if sorted_users:
+                flag_winner_id, (winner_name, winner_score) = sorted_users[0]
+                return flag_winner_id
+            else:
+                return None
+            
+        if sorted_users:
+            if flag_num > num:
+                message += "\u200b\n🏁🏆 Final Standings\n\u200b"
+            else:   
+                message += "\u200b\n📊🏆 Current Standings\n\u200b"
+
+        for counter, (uid, (name, score)) in enumerate(sorted_users, start=1):
+            message += f"{counter}. **{name}**: {score}\n"
+            message += "\u200b"
+            
+        if message:
+            await safe_send(channel, message)
+        
+        await asyncio.sleep(3)
+
+    await asyncio.sleep(2)
+    if sorted_users:
+        flag_winner_id, (winner_name, winner_score) = sorted_users[0]
+        message = f"\u200b\n🎉🥇 The winner is **{winner_name}**!\n\u200b"
     else:
-        summary = (
-            f"\u200b\n✅✌️ **{correct_guesses}** right! I get the point. Let's move on.\n"
-            if correct_guesses >= 20 else
-            f"\u200b\n🎉✅ Congrats Okrans! You got **{correct_guesses}** right!\n"
-        )
-        summary += "\n**🏆 Commendable Okrans**\n"
-        sorted_users = sorted(user_correct_answers.items(), key=lambda x: x[1], reverse=True)
-        for i, (user, count) in enumerate(sorted_users, 1):
-            summary += f"{i}. **{user}**: {count}\n"
-        summary += f"\n👀➡️ See more flags at:\n<{flag_reference_url}>\n\u200b"
-        await safe_send(channel, summary)
+        message = f"\u200b\n👎😢 **No right answers**. I'm ashamed to call you Okrans.\n\u200b"
+    
+    await safe_send(channel, message)
 
+    await asyncio.sleep(2)
+    
+    summary = f"\n👀➡️ See more flags at:\n<{flag_reference_url}>\n\u200b"
+    
+    await safe_send(channel, summary)
+    
+    wf_winner = True
+    await asyncio.sleep(3)
+    
+    if sorted_users:
+        return flag_winner_id
+    else:
+        return None
+        
+
+async def ask_chaos_challenge(winner, winner_id, num_of_games):
+    global wf_winner
+
+    gifs = [
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/chaos1.gif",
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/chaos2.gif",
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/chaos3.gif"
+    ]
+
+    gif_url = random.choice(gifs)
+
+    intro_message = f"\u200b\n🌀🤯 **CHAOS MODE** has begun!\n\u200b"
+    await safe_send(channel, content=intro_message, embed=discord.Embed().set_image(url=gif_url))
     await asyncio.sleep(5)
 
+    if num_of_games > 1:
+        await safe_send(channel, f"\u200b\n🎲 Picking **{num_of_games}** random mini-games for you maniacs...\n\u200b")
+        await asyncio.sleep(3)
 
-async def ask_poster_challenge(winner):
+    wf_winner = True
+    scoreboard = {}
+
+    challenge_functions = [
+        ask_poster_challenge,
+        ask_movie_scenes_challenge,
+        ask_missing_link,
+        ask_ranker_people_challenge,
+        ask_magic_challenge,
+        ask_animal_challenge,
+        ask_riddle_challenge,
+        ask_dictionary_challenge,
+        ask_flags_challenge,
+        ask_lyric_challenge,
+        ask_polyglottery_challenge,
+        ask_book_challenge,
+        ask_math_challenge,
+        ask_element_challenge,
+        ask_jigsaw_challenge,
+        ask_border_challenge,
+        ask_faceoff_challenge,
+        ask_president_challenge,
+        ask_wordle_challenge,
+        ask_list_question,
+        ask_ranker_list_question,
+        ask_music_challenge,
+        ask_myopic_challenge
+    ]
+
+    num_of_games = min(num_of_games, len(challenge_functions))
+    selected_challenges = random.sample(challenge_functions, k=num_of_games)
+
+    for i, challenge_fn in enumerate(selected_challenges, 1):
+        await safe_send(channel, f"\u200b\n🧠 **Mini-Game {i}** of {num_of_games} starting...\n\u200b")
+        await asyncio.sleep(1)
+
+        result = await challenge_fn(winner, winner_id, num=1)
+        if result:
+            print(result)
+            # Try to get display name (either from winner if same user, or via Discord lookup)
+            if result in scoreboard:
+                display_name, current_score = scoreboard[result]
+                scoreboard[result] = (display_name, current_score + 1)
+            else:
+                try:
+                    member = channel.guild.get_member(result) or await channel.guild.fetch_member(result)
+                    display_name = member.display_name
+                except Exception:
+                    display_name = f"<@{result}>"
+
+                scoreboard[result] = (display_name, 1)
+
+        if scoreboard:
+            sorted_scores = sorted(scoreboard.items(), key=lambda x: x[1], reverse=True)
+            scoreboard_msg = "\u200b\n📊 **Scoreboard**\n\u200b"
+            for user_id, (display_name, score) in sorted_scores:
+                scoreboard_msg += f"• **{display_name}**: {score} point{'s' if score != 1 else ''}\n"
+            await safe_send(channel, scoreboard_msg)
+            await asyncio.sleep(2)
+
+    # Final results
+    if scoreboard:
+        sorted_scores = sorted(scoreboard.items(), key=lambda x: x[1], reverse=True)
+        top_score = sorted_scores[0][1][1]
+        top_winners = [uid for uid, (_, score) in sorted_scores if score == top_score]
+
+        await asyncio.sleep(2)
+        if len(top_winners) == 1:
+            winner_id = top_winners[0]
+            winner_name = scoreboard[winner_id][0]
+            message = f"\u200b\n👑 **Overall Winner:** **{winner_name}** with **{top_score}** point{'s' if top_score != 1 else ''}!\n\u200b"
+        else:
+            message = f"\u200b\n🤝 It's a tie! **Winners:**\n\u200b"
+            for winner_id in top_winners:
+                winner_name = scoreboard[winner_id][0]
+                message += f"• **{winner_name}** ({top_score} pts)\n"
+            message += "\u200b"
+    else:
+        message = "\u200b\n😶 No winners this time... chaos reigns.\n\u200b"
+
+    await safe_send(channel, message)
+    await asyncio.sleep(3)
+
+
+
+async def ask_president_challenge(winner, winner_id, num=7):
+    global wf_winner
+    wf_winner = True
+
+    user_data = {}
+
+    gifs = [
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/president1.gif"
+    ]
+    gif_url = random.choice(gifs)
+
+    await safe_send(channel, content="\u200b\n🦅🇺🇸 **Rushmore**\n\u200b", embed=discord.Embed().set_image(url=gif_url))
+    await asyncio.sleep(3)
+
+    if num > 1:
+        await safe_send(channel, f"\u200b\n5️⃣🥇 Let's do a best of **{num}**...\n\u200b")
+        await asyncio.sleep(3)
+
+    round_num = 1
+    while round_num <= num:
+        try:
+            recent_ids = await get_recent_question_ids_from_mongo("president")
+            collection = db["president_questions"]
+            pipeline = [
+                {"$match": {"_id": {"$nin": list(recent_ids)}}},
+                {"$sample": {"size": 10}},
+                {"$group": {"_id": "$question", "question_doc": {"$first": "$$ROOT"}}},
+                {"$replaceRoot": {"newRoot": "$question_doc"}},
+                {"$sample": {"size": 1}}
+            ]
+            questions = [doc async for doc in collection.aggregate(pipeline)]
+            q = questions[0]
+
+            qid = q["_id"]
+            pres_number = q["number"]
+            game_mode = q["type"]
+            pres_name = q["name"]
+            pres_url = q["url"]
+            y1_start = q["year_start_1"]
+            y1_end = q["year_end_1"]
+            y2_start = q["year_start_2"]
+            y2_end = q["year_end_2"]
+            category = "Presidents"
+
+            print(f"{pres_name} {y1_start}-{y1_end}")
+            
+            if qid:
+                await store_question_ids_in_mongo([qid], "president")
+
+            main_img = q["url"]
+            embed = discord.Embed()
+            embed.set_image(url=main_img)
+
+            # Odd Duck Mode
+            if game_mode == "odd_duck":
+                valid_pairs = []
+                for i in range(1, 47):
+                    pair = (i, i + 1)
+                    if any(n in pair for n in [pres_number - 1, pres_number, pres_number + 1]):
+                        continue
+                    valid_pairs.append(pair)
+
+                n1, n2 = random.choice(valid_pairs)
+                img_urls = [
+                    q["url"],
+                    f"https://triviabotwebsite.s3.us-east-2.amazonaws.com/presidents/{n1}.jpg",
+                    f"https://triviabotwebsite.s3.us-east-2.amazonaws.com/presidents/{n2}.jpg"
+                ]
+                random.shuffle(img_urls)
+
+            await safe_send(channel, f"\u200b\n⚠️🚨 Everyone's in!\n\u200b\n🦅🇺🇸 President **{round_num}** of **{num}**\n\u200b")
+            if game_mode == "years":
+                await safe_send(channel, content="\u200b\n📅 Name a **YEAR** during their time in office.\n\u200b")
+                await safe_send(channel, embed=embed)
+            elif game_mode == "odd_duck":
+                await safe_send(channel, content="\u200b\n🦆 Who's the **odd duck**?\n\u200b")
+                for img in img_urls:
+                    emb = discord.Embed()
+                    emb.set_image(url=img)
+                    await safe_send(channel, embed=emb)
+
+            answered = False
+            processed_users = set()
+            start_time = asyncio.get_event_loop().time()
+
+            def check(m):
+                return m.channel == channel and m.author != bot.user
+
+            while asyncio.get_event_loop().time() - start_time < 20 and not answered:
+                try:
+                    timeout = 20 - (asyncio.get_event_loop().time() - start_time)
+                    msg = await bot.wait_for("message", timeout=timeout, check=check)
+                    guess = msg.content.strip()
+                    uid = msg.author.id
+                    display = msg.author.display_name
+                    key = (uid, guess)
+
+                    if key in processed_users:
+                        continue
+                    processed_users.add(key)
+
+                    # Years mode
+                    if game_mode == "years" and guess.isdigit() and len(guess) == 4:
+                        year = int(guess)
+                        if (int(y1_start) <= year <= int(y1_end)) or (y2_start and int(y2_start) <= year <= int(y2_end)):
+                            await msg.add_reaction("✅")
+                            user_data[uid] = (display, user_data.get(uid, (display, 0))[1] + 1)
+                            desc = f"({y1_start}-{y1_end}, {y2_start}-{y2_end})" if y2_start else f"({y1_start}-{y1_end})"
+                            await safe_send(channel, f"\u200b\n✅🎉 **{display}** got it! **{pres_name.upper()}** {desc}\n\u200b")
+                            answered = True
+                            break
+
+                    # Odd Duck
+                    if game_mode == "odd_duck" and fuzzy_match(guess, pres_name, category, pres_url):
+                        await msg.add_reaction("✅")
+                        user_data[uid] = (display, user_data.get(uid, (display, 0))[1] + 1)
+                        desc = f"({y1_start}-{y1_end}, {y2_start}-{y2_end})" if y2_start else f"({y1_start}-{y1_end})"
+                        await safe_send(channel, f"\u200b\n✅🎉 **{display}** got it! **{pres_name.upper()}** {desc}\n\u200b")
+                        answered = True
+                        break
+
+                except asyncio.TimeoutError:
+                    break
+
+            if not answered:
+                desc = f"({y1_start}-{y1_end}, {y2_start}-{y2_end})" if y2_start else f"({y1_start}-{y1_end})"
+                await safe_send(channel, f"\u200b\n❌😢 No one got it.\n\n📝🧠 Answer: **{pres_name.upper()}** {desc}\n\u200b")
+                #embed = discord.Embed()
+                #embed.set_image(url=main_img)
+                #await safe_send(channel, embed=embed)
+
+            await asyncio.sleep(5)
+
+        except Exception as e:
+            sentry_sdk.capture_exception(e)
+            print(traceback.format_exc())
+            await safe_send(channel, "\u200b\n⚠️ Error during round, skipping.\n\u200b")
+            continue
+
+        await asyncio.sleep(1)
+
+        round_num += 1
+
+        message = ""
+        sorted_users = sorted(user_data.items(), key=lambda x: x[1][1], reverse=True)
+
+        if num == 1:
+            if sorted_users:
+                president_winner_id, (display_name, final_score) = sorted_users[0]
+                return president_winner_id
+            else:
+                return None
+
+        if sorted_users:
+            if round_num > num:
+                message += "\u200b\n🏁🏆 Final Standings\n\u200b"
+            else:
+                message += "\u200b\n📊🏆 Current Standings\n\u200b"
+
+            for counter, (uid, (name, score)) in enumerate(sorted_users, start=1):
+                message += f"{counter}. **{name}**: {score}\n\u200b"
+
+        if message:
+            await safe_send(channel, message)
+        await asyncio.sleep(3)
+
+    await asyncio.sleep(2)
+    if sorted_users:
+        president_winner_id, (display_name, final_score) = sorted_users[0]
+        await safe_send(channel, f"\u200b\n🎉🥇 The winner is **{display_name}**!\n\u200b")
+    else:
+        await safe_send(channel, f"\u200b\n👎😢 **No right answers**. I'm ashamed to call you Okrans.\n\u200b")
+
+    wf_winner = True
+    await asyncio.sleep(3)
+    
+    if sorted_users:
+        return president_winner_id
+    else:
+        return None
+
+
+
+
+async def ask_poster_challenge(winner, winner_id, num=7):
     global wf_winner
 
     gifs = [
@@ -2694,15 +3811,18 @@ async def ask_poster_challenge(winner):
     gif_url = random.choice(gifs)
     
     message = f"\u200b\n\u200b\n 🎥⚡ Poster Blitz\n\u200b"
-
     await safe_send(channel, content=message, embed=discord.Embed().set_image(url=gif_url))
-    await asyncio.sleep(3)
+    await asyncio.sleep(5)
 
-    num_of_xs = 0
-    correct_guesses = 0
     user_correct_answers = {}
 
-    while num_of_xs < 3 and correct_guesses < 20:
+    if num > 1:
+        message = f"\u200b\n5️⃣🥇 Let's do a best of **{num}**...\n\u200b"
+        await safe_send(channel, message)
+        await asyncio.sleep(3)
+
+    poster_num = 1
+    while poster_num <= num:
         try:
             recent_posters_ids = await get_recent_question_ids_from_mongo("posters")
             posters_collection = db["posters_questions"]
@@ -2731,23 +3851,9 @@ async def ask_poster_challenge(winner):
 
         processed_users = set()
 
-        start_message = ""
-        if num_of_xs == 0:
-            start_message += f"\u200b\n🟩🤔 Okrans, you have **0/3** strikes.\n"
-        elif num_of_xs == 1:
-            start_message += f"\u200b\n🟨🤔 Okrans, you have **1/3** strikes...\n"
-        elif num_of_xs == 2:
-            start_message += f"\u200b\n🟥🤔 Okrans, you have **2/3** strikes!\n"
-
-        if correct_guesses > 0:
-            start_message += f"\nCorrect guesses: **{correct_guesses}**\n"
-        start_message += f"\n⚠️🚨 **Everyone's in!**\n\u200b"
-
-        await safe_send(channel, start_message)
-        await asyncio.sleep(2)
-
         prompt = (
-            f"\u200b\n\u200b\n🎥🌟 What **{posters_category.upper()}** is depicted in the poster above?\n"
+            f"\u200b\n⚠️🚨 **Everyone's in!**\n"
+            f"\n\n🎥🌟 **Poster {poster_num}** of {num}: What **{posters_category.upper()}** is depicted in the poster above?\n"
             f"\n📅💡 Year: **{posters_year}**\n\u200b"
         )
         
@@ -2765,6 +3871,7 @@ async def ask_poster_challenge(winner):
                 remaining = 15 - (asyncio.get_event_loop().time() - start_time)
                 message = await bot.wait_for("message", timeout=remaining, check=check)
                 user = message.author.display_name
+                user_id = message.author.id
                 content = message.content.strip()
                 key = (message.author.id, content.lower())
 
@@ -2776,8 +3883,9 @@ async def ask_poster_challenge(winner):
                     if fuzzy_match(content, answer, posters_category, posters_url):
                         await message.add_reaction("✅")
                         await safe_send(channel, f"\u200b\n✅🎉 Correct! **{user}** got it! **{answer.upper()}**\n\u200b")
-                        correct_guesses += 1
-                        user_correct_answers[user] = user_correct_answers.get(user, 0) + 1
+                        if user_id not in user_correct_answers:
+                            user_correct_answers[user_id] = (user, 0)
+                        user_correct_answers[user_id] = (user, user_correct_answers[user_id][1] + 1)
                         right_answer = True
                         
                         break
@@ -2785,32 +3893,558 @@ async def ask_poster_challenge(winner):
                 break
 
         if not right_answer:
-            num_of_xs += 1
             await safe_send(channel, f"\u200b\n❌😢 No one got it.\n\nAnswer: **{posters_main_answer.upper()}**\n\u200b")
         
-        await asyncio.sleep(5)
+        await asyncio.sleep(1)
+                            
+        poster_num = poster_num + 1
+        
+        message = ""
 
-    # Wrap up
-    if correct_guesses == 0:
-        await safe_send(channel, "\u200b\n👎😢 No right answers. **I'm ashamed to call you Okrans.**\n\u200b")
+        sorted_users = sorted(user_correct_answers.items(), key=lambda x: x[1][1], reverse=True)
+
+        if num == 1:
+            if sorted_users:
+                poster_winner_id, (winner_name, winner_score) = sorted_users[0]
+                return poster_winner_id if winner_name is not None else None
+            else:
+                return None
+            
+        if sorted_users:
+            if poster_num > num:
+                message += "\u200b\n🏁🏆 Final Standings\n\u200b"
+            else:   
+                message += "\u200b\n📊🏆 Current Standings\n\u200b"
+
+        for counter, (uid, (name, score)) in enumerate(sorted_users, start=1):
+            message += f"{counter}. **{name}**: {score}\n"
+            message += "\u200b"
+            
+        if message:
+            await safe_send(channel, message)
+        
+        await asyncio.sleep(3)
+
+    await asyncio.sleep(2)
+    if sorted_users:
+        poster_winner_id, (winner_name, winner_score) = sorted_users[0]
+        message = f"\u200b\n🎉🥇 The winner is **{winner_name}**!\n\u200b"
     else:
-        summary = (
-            f"\u200b\n✅✌️ **{correct_guesses}** right! I get the point. Let's move on.\n"
-            if correct_guesses >= 20 else
-            f"\u200b\n🎉✅ Congrats Okrans! You got **{correct_guesses}** right!\n"
-        )
-        summary += "\u200b\n **🏆 Commendable Okrans**\n"
-        sorted_users = sorted(user_correct_answers.items(), key=lambda x: x[1], reverse=True)
-        for i, (user, count) in enumerate(sorted_users, 1):
-            summary += f"{i}. **{user}**: {count}\n"
-        summary += "\u200b"
-        await safe_send(channel, summary)
-
+        message = f"\u200b\n👎😢 **No right answers**. I'm ashamed to call you Okrans.\n\u200b"
+    
+    await safe_send(channel, message)
+    
     wf_winner = True
+    await asyncio.sleep(3)
+    
+    if sorted_users:
+        return poster_winner_id
+    else:
+        return None
+
+
+
+def generate_wordle_image(wordle_word, guesses):
+    wordle_word = wordle_word.lower()
+    word_length = len(wordle_word)
+    num_rows = word_length
+    box_size = 80
+    margin = 10
+    font_path = os.path.join(os.path.dirname(__file__), "DejaVuSerif.ttf")
+    font_size = 36
+
+    img_width = word_length * (box_size + margin) + margin
+    img_height = num_rows * (box_size + margin) + margin
+
+    img = Image.new('RGB', (img_width, img_height), color=(0, 0, 0))
+    draw = ImageDraw.Draw(img)
+
+    try:
+        font = ImageFont.truetype(font_path, font_size)
+    except IOError:
+        print(f"Font not found at {font_path}")
+        return None
+
+    for row in range(num_rows):
+        guess = guesses[row].lower() if row < len(guesses) else ""
+        matched = [False] * word_length
+
+        # First pass: Green squares for correct positions
+        for col in range(word_length):
+            x0 = margin + col * (box_size + margin)
+            y0 = margin + row * (box_size + margin)
+            x1 = x0 + box_size
+            y1 = y0 + box_size
+
+            fill_color = "white"
+            if col < len(guess):
+                if guess[col] == wordle_word[col]:
+                    fill_color = "#6aaa64"  # green
+                    matched[col] = True
+
+            draw.rectangle([x0, y0, x1, y1], fill=fill_color)
+
+        # Second pass: Yellow squares for misplaced letters
+        for col in range(word_length):
+            if col >= len(guess) or guess[col] == wordle_word[col]:
+                continue
+            letter = guess[col]
+            if letter in wordle_word:
+                for i in range(word_length):
+                    if wordle_word[i] == letter and not matched[i]:
+                        x0 = margin + col * (box_size + margin)
+                        y0 = margin + row * (box_size + margin)
+                        x1 = x0 + box_size
+                        y1 = y0 + box_size
+                        draw.rectangle([x0, y0, x1, y1], fill="#c9b458")  # yellow
+                        matched[i] = True
+                        break
+
+        # Draw letters centered
+        for col in range(word_length):
+            if col >= len(guess): continue
+            letter = guess[col].upper()
+            x0 = margin + col * (box_size + margin)
+            y0 = margin + row * (box_size + margin)
+            text_x = x0 + box_size // 2
+            
+            text_y = y0 + box_size // 2
+            draw.text((text_x, text_y), letter, fill="black", font=font, anchor="mm")
+
+    buffer = io.BytesIO()
+    img.save(buffer, format="PNG")
+    buffer.seek(0)
+
+    return buffer
+
+def wordle_score(wordle_word, guess):
+    wordle_word = wordle_word.lower()
+    guess = guess.lower()
+
+    if len(wordle_word) != len(guess):
+        raise ValueError("Guess and wordle_word must be the same length")
+
+    score = 0
+    used_indices = [False] * len(wordle_word)
+
+    # First pass: exact matches (green)
+    for i in range(len(wordle_word)):
+        if guess[i] == wordle_word[i]:
+            score += 2
+            used_indices[i] = True
+
+    # Second pass: partial matches (yellow)
+    for i in range(len(wordle_word)):
+        if guess[i] != wordle_word[i]:
+            for j in range(len(wordle_word)):
+                if not used_indices[j] and guess[i] == wordle_word[j]:
+                    score += 1
+                    used_indices[j] = True
+                    break
+
+    return score
+
+async def ask_wordle_challenge(winner, winner_id, num=1):
+    global wf_winner
+    wf_winner = True
+
+    gifs = [
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/wordle1.gif",
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/wordle2.gif",
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/wordle3.gif",
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/wordle4.gif",
+    ]
+
+    gif_url = random.choice(gifs)
+    await safe_send(channel, content="\u200b\n🟩🟨 **Wordle War**\n\u200b", embed=discord.Embed().set_image(url=gif_url))
     await asyncio.sleep(5)
 
+    user_correct_answers = {}
 
-async def ask_missing_link(winner):
+    if num > 1:
+        await safe_send(channel, f"\u200b\n5️⃣🥇 Let's do a best of **{num}**...\n\u200b")
+        await asyncio.sleep(3)
+
+    wordle_num = 1
+    while wordle_num <= num:
+        try:
+            recent_wordle_ids = await get_recent_question_ids_from_mongo("wordle")
+            wordle_collection = db["wordle_questions"]
+            pipeline = [
+                {"$match": {"_id": {"$nin": list(recent_wordle_ids)}}},
+                {"$sample": {"size": 50}},
+                {"$group": {"_id": "$question", "question_doc": {"$first": "$$ROOT"}}},
+                {"$replaceRoot": {"newRoot": "$question_doc"}},
+                {"$sample": {"size": 1}}
+            ]
+            questions = [doc async for doc in wordle_collection.aggregate(pipeline)]
+            q = questions[0]
+            word = q["word"]
+            wordle_word_length = len(word)
+            wordle_guesses = []
+
+            if wordle_word_length == 4:
+                valid_words_file = "4letterwords.csv"
+            elif wordle_word_length == 5:
+                valid_words_file = "5letterwords.csv"
+            else:
+                valid_words_file = "45letterwords.csv"
+
+            with open(valid_words_file, "r") as f:
+                VALID_WORDS = set(line.strip().lower() for line in f)
+
+            if q["_id"]:
+                await store_question_ids_in_mongo([q["_id"]], "wordle")
+
+            print(f"Word: {word}")
+
+        except Exception as e:
+            sentry_sdk.capture_exception(e)
+            print(f"Error selecting wordle questions:\n{traceback.format_exc()}")
+            return
+
+        num_of_guesses = wordle_word_length
+        guess_num = 1
+        right_answer = False
+        sorted_users = []
+
+        while guess_num <= num_of_guesses and not right_answer:
+            await safe_send(channel, "\u200b\n⚠️🚨 Everyone's in! **One guess per person**!\n\u200b")
+            await asyncio.sleep(1)
+            await safe_send(channel, f"\u200b\n🟩🟨 Wordle {wordle_num}, Round {guess_num}...\n\u200b")
+            await asyncio.sleep(1)
+
+            img_buf = generate_wordle_image(word, wordle_guesses)
+            embed = discord.Embed()
+            file = discord.File(fp=img_buf, filename="wordle.png")
+            embed.set_image(url="attachment://wordle.png")
+            await safe_send(channel, embed=embed, file=file)
+
+            start_time = asyncio.get_event_loop().time()
+            processed_users = set()
+            highest_score = 0
+            top_user = None
+            top_word = ""
+
+            def check(m):
+                return m.channel == channel and m.author != bot.user
+
+            while asyncio.get_event_loop().time() - start_time < 20 and not right_answer:
+                try:
+                    timeout = 20 - (asyncio.get_event_loop().time() - start_time)
+                    msg = await bot.wait_for("message", timeout=timeout, check=check)
+                    guess = msg.content.strip().lower()
+                    user = msg.author.display_name
+                    uid = msg.author.id
+                    key = (uid, guess)
+
+                    if uid in processed_users:
+                        continue
+
+                    if len(guess) != wordle_word_length:
+                        continue
+
+                    processed_users.add(uid)
+
+                    if guess not in VALID_WORDS:
+                        continue
+                    if guess in wordle_guesses:
+                        continue
+
+                    score = wordle_score(word, guess)
+                    #user_correct_answers[user] = user_correct_answers.get(user, 0) + score
+
+                    prev_display, prev_score = user_correct_answers.get(uid, (user, 0))
+                    user_correct_answers[uid] = (prev_display, prev_score + score)
+                    
+                    if guess == word.lower():
+                        wordle_guesses.append(word)
+                        img_buf = generate_wordle_image(word, wordle_guesses)
+                        embed = discord.Embed()
+                        file = discord.File(fp=img_buf, filename="wordle.png")
+                        embed.set_image(url="attachment://wordle.png")
+                        await safe_send(channel, file=file, embed=embed)
+                        await safe_send(channel, f"\u200b\n✅🎉 Correct! **{user}** got it! **{word.upper()}** ({score})\n\u200b")
+                        right_answer = True
+                        break
+                    else:
+                        if score > highest_score:
+                            highest_score = score
+                            top_user = user
+                            top_word = guess
+
+                except asyncio.TimeoutError:
+                    break
+
+            if not right_answer and not top_user:
+                await safe_send(channel, "\u200b\n❌😢 No (good) attempts...\n\u200b")
+                wordle_guesses.append(" " * wordle_word_length)
+            elif not right_answer:
+                wordle_guesses.append(top_word)
+                img_buf = generate_wordle_image(word, wordle_guesses)
+                embed = discord.Embed()
+                file = discord.File(fp=img_buf, filename="wordle.png")
+                embed.set_image(url="attachment://wordle.png")
+                await safe_send(channel, file=file, embed=embed)
+                await safe_send(channel, f"\u200b\n🟡🎉 **{top_user}** had the closest guess! **{top_word.upper()}** ({highest_score})\n\u200b")
+
+            await asyncio.sleep(2)
+
+            sorted_users = sorted(user_correct_answers.items(), key=lambda x: x[1][1], reverse=True)
+
+            if sorted_users:
+                standings = "\n".join(
+                    f"{i+1}. **{display_name}**: {score}" 
+                    for i, (user_id, (display_name, score)) in enumerate(sorted_users)
+                )
+                await safe_send(channel, f"\u200b\n📊🏆 Standings\n{standings}\n\u200b")
+
+            guess_num += 1
+
+        if not right_answer:
+            await safe_send(channel, f"\u200b\n❌😢 No one got the Wordle!\n\nAnswer: **{word.upper()}**\n\u200b")
+        
+        await asyncio.sleep(1)
+
+        wordle_num = wordle_num + 1
+        
+        message = ""
+
+        sorted_users = sorted(user_correct_answers.items(), key=lambda x: x[1][1], reverse=True)
+
+        if num == 1:
+            if sorted_users:
+                wordle_winner_id, (winner_name, winner_score) = sorted_users[0]
+                return wordle_winner_id
+            else:
+                return None
+            
+        #if sorted_users:
+        #    if wordle_num > num:
+        #        message += "\u200b\n🏁🏆 Final Standings\n\u200b"
+        #    else:   
+        #        message += "\u200b\n📊🏆 Current Standings\n\u200b"
+
+        #for counter, (user_id, (display_name, score)) in enumerate(sorted_users, start=1):
+        #    message += f"{counter}. **{display_name}**: {score}\n"
+            
+        #if message:
+        #    message += "\u200b"
+        #    await safe_send(channel, message)
+        
+        await asyncio.sleep(3)
+
+    #await asyncio.sleep(2)
+    if sorted_users:
+        wordle_winner_id, (winner_name, winner_score) = sorted_users[0]
+        message = f"\u200b\n🎉🥇 The winner is **{winner_name}**!\n\u200b"
+    else:
+        message = f"\u200b\n👎😢 **No points**. I'm ashamed to call you Okrans.\n\u200b"
+    
+    await safe_send(channel, message)
+    
+    wf_winner = True
+    await asyncio.sleep(3)
+    
+    if sorted_users:
+        return wordle_winner_id
+    else:
+        return None
+        
+        
+async def ask_myopic_challenge(winner, winner_id, num=3):
+    global wf_winner
+    wf_winner = True
+
+    gifs = [
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/myopic1.gif",
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/myopic2.gif",
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/myopic3.gif",
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/myopic4.gif"
+    ]
+
+    gif_url = random.choice(gifs)
+    embed = discord.Embed().set_image(url=gif_url)
+    await safe_send(channel, content="\u200b\n👓🕵️‍♂️ **Myopic Mystery: Identify the images**\n\u200b", embed=embed)
+    await asyncio.sleep(5)
+
+    user_correct_answers = {}
+
+    if num > 1:
+        await safe_send(channel, f"\u200b\n5️⃣🥇 Let's do a best of **{num}**...\n\u200b")
+        await asyncio.sleep(3)
+
+    myopic_num = 1
+    while myopic_num <= num:
+        try:
+            recent_ids = await get_recent_question_ids_from_mongo("myopic")
+            collection = db["jigsaw_questions"]
+            pipeline = [
+                {"$match": {"_id": {"$nin": list(recent_ids)}, "question": "caltech"}},
+                {"$sample": {"size": 10}},
+                {"$sample": {"size": 1}}
+            ]
+            q_list = [doc async for doc in collection.aggregate(pipeline)]
+            q = q_list[0]
+            url = q["url"]
+            answers = q["answers"]
+            main_answer = answers[0]
+            category = q["category"]
+            question_text = q["question"]
+            qid = q["_id"]
+
+            print(f"Answer: {answers}")
+
+            if qid:
+                await store_question_ids_in_mongo([qid], "myopic")
+
+        except Exception as e:
+            sentry_sdk.capture_exception(e)
+            print(f"Error selecting myopic question:\n{traceback.format_exc()}")
+            return
+
+        right_answer = False
+        round_num = 1
+
+        for blur_strength in [20.0, 15.0, 10.0, 3.0]:
+            if right_answer:
+                break
+
+            img_buf = await blur_image(url, blur_strength=blur_strength)
+            file = discord.File(img_buf, filename="blur.png")
+            embed = discord.Embed().set_image(url="attachment://blur.png")
+
+            prompt = (
+                f"\u200b\n⚠️🚨 Everyone's in!\n"
+                f"\n🗣💬❓ **Image {myopic_num}** of {num}: Who or what is THIS?!?\n"
+                f"\n🌀👓 **Blur Strength**: {blur_strength}\n\u200b"
+            )
+
+            await safe_send(channel, content=prompt, file=file, embed=embed)
+            await asyncio.sleep(1)
+
+            start_time = asyncio.get_event_loop().time()
+            processed_users = set()
+
+            def check(m):
+                return m.channel == channel and m.author != bot.user
+
+            while asyncio.get_event_loop().time() - start_time < 20 and not right_answer:
+                try:
+                    timeout = 20 - (asyncio.get_event_loop().time() - start_time)
+                    msg = await bot.wait_for("message", timeout=timeout, check=check)
+                    guess = normalize_text(msg.content).replace(" ", "")
+                    user = msg.author.display_name
+                    uid = msg.author.id
+                    key = (uid, guess)
+
+                    if key in processed_users:
+                        continue
+                    processed_users.add(key)
+
+                    for ans in answers:
+                        if fuzzy_match(guess, normalize_text(ans).replace(" ", ""), category, url):
+                            #final_file = discord.File(final_image_buf, filename="final.png")
+                            final_embed = discord.Embed().set_image(url=url)
+
+                            await msg.add_reaction("✅")
+                            message = f"\u200b\n✅🎉 Correct! **{user}** got it! {ans.upper()}\n"
+                            message += f"\n📝🧠 All Answers:**\n" + "\n".join(a.upper() for a in answers) + "**\n\u200b"
+                            await safe_send(channel, content=message, embed=final_embed)
+
+                            if uid not in user_correct_answers:
+                                user_correct_answers[uid] = (user, 0)
+                            user_correct_answers[uid] = (user, user_correct_answers[uid][1] + 1)
+
+                            right_answer = True
+                            break
+                except asyncio.TimeoutError:
+                    break
+
+            round_num += 1
+
+        if not right_answer:
+            #img_buf = download_image_from_url(url, False, "okra.png")
+            #file = discord.File(img_buf, filename="final.png")
+            embed = discord.Embed().set_image(url=url)
+            message = f"\u200b\n❌😢 No one got it.\n\n📝🧠 Answers:**\n" + "\n".join(a.upper() for a in answers) + "**\n\u200b"
+            await safe_send(channel, content=message, embed=embed)
+
+        await asyncio.sleep(2)
+        myopic_num += 1
+
+        # standings
+        sorted_users = sorted(user_correct_answers.items(), key=lambda x: x[1][1], reverse=True)
+        message = ""
+
+        if num == 1:
+            if sorted_users:
+                myopic_winner_id, (winner_name, winner_score) = sorted_users[0]
+                return myopic_winner_id
+            else:
+                return None
+
+        if sorted_users:
+            if myopic_num > num:
+                message += "\u200b\n🏁🏆 **Final Standings**\n"
+            else:
+                message += "\u200b\n📊🏆 **Current Standings**\n"
+
+        for i, (_, (display_name, score)) in enumerate(sorted_users, start=1):
+            message += f"{i}. {display_name}: {score}\n"
+
+        await safe_send(channel, message)
+        await asyncio.sleep(2)
+
+    # final winner
+    sorted_users = sorted(user_correct_answers.items(), key=lambda x: x[1][1], reverse=True)
+
+    if sorted_users:
+        myopic_winner_id, (winner_name, winner_score) = sorted_users[0]
+        message = f"\u200b\n🎉🥇 The winner is **{winner_name}**!\n\u200b"
+    else:
+        message = f"\u200b\n👎😢 No right answers. **I'm ashamed to call you Okrans**.\n\u200b"
+
+    await safe_send(channel, message)
+    await asyncio.sleep(3)
+    
+    if sorted_users:
+        return myopic_winner_id
+    else:
+        return None
+
+
+
+async def blur_image(image_url, blur_strength=2.0):
+    """
+    Downloads an image from a URL, applies Gaussian blur, and returns a Discord-ready image buffer.
+    
+    Args:
+        image_url (str): URL of the image to process.
+        blur_strength (float): Standard deviation for Gaussian blur.
+    
+    Returns:
+        Tuple (image_buffer: BytesIO, width: int, height: int)
+    """
+    async with aiohttp.ClientSession() as session:
+        async with session.get(image_url) as resp:
+            if resp.status != 200:
+                raise Exception(f"Failed to download image from {image_url}")
+            data = await resp.read()
+
+    img = Image.open(io.BytesIO(data)).convert("RGB")
+
+    blurred_img = img.filter(ImageFilter.GaussianBlur(radius=blur_strength))
+
+    image_buffer = io.BytesIO()
+    blurred_img.save(image_buffer, format="PNG")
+    image_buffer.seek(0)
+
+    return image_buffer
+        
+
+
+async def ask_missing_link(winner, winner_id, num=7):
     global wf_winner
 
     gifs = [
@@ -2820,14 +4454,19 @@ async def ask_missing_link(winner):
     ]
 
     gif_url = random.choice(gifs)
+   
     await safe_send(channel, content="\u200b\n\u200b\n 🧩🔗 Missing Link\n\u200b", embed=discord.Embed().set_image(url=gif_url))
     await asyncio.sleep(3)
 
-    num_of_xs = 0
-    correct_guesses = 0
     user_correct_answers = {}
 
-    while num_of_xs < 3 and correct_guesses < 20:
+    if num > 1:
+        message = f"\u200b\n5️⃣🥇 Let's do a best of **{num}**...\n\u200b"
+        await safe_send(channel, message)
+        await asyncio.sleep(3)
+
+    link_num = 1
+    while link_num <= num:
         try:
             recent_ids = await get_recent_question_ids_from_mongo("missing_link")
             collection = db["missing_link_questions"]
@@ -2858,14 +4497,6 @@ async def ask_missing_link(winner):
 
         processed_users = set()
 
-        # Display strikes and progress
-        start_msg = "\u200b\n"
-        start_msg += f"{'🟩' if num_of_xs == 0 else '🟨' if num_of_xs == 1 else '🟥'}🤔 Okrans, you have **{num_of_xs}/3** strikes!\n"
-        if correct_guesses > 0:
-            start_msg += f"\nCorrect guesses: **{correct_guesses}**\n"
-        await safe_send(channel, start_msg)
-        await asyncio.sleep(2)
-
         if category == "Movie Characters":
             q_type = "MOVIE"
             header = "Characters"
@@ -2876,10 +4507,13 @@ async def ask_missing_link(winner):
             q_type = "ACTOR or ACTRESS"
             header = "Movies"
 
-        await safe_send(channel, f"\u200b\n⚠️🚨 **Everyone's in!**")
-        await asyncio.sleep(2)
+        prompt = (
+            f"\u200b\n⚠️🚨 **Everyone's in!**\n"
+            f"\n\n🎬🔎 **Link {link_num}** of {num}: What **{q_type}** is the missing link?\n"
+            f"\n📅💡 Clue: **{clue}**"
+        )
 
-        await safe_send(channel, f"\u200b\n🎬🔎 What **{q_type}** is the missing link?\n\n📅💡 Clue: **{clue}**")
+        await safe_send(channel, prompt)
 
         await asyncio.sleep(2)
         list_msg = f"\u200b\n**{header}**\n"
@@ -2898,6 +4532,7 @@ async def ask_missing_link(winner):
                 remaining = 15 - (asyncio.get_event_loop().time() - start_time)
                 message = await bot.wait_for("message", timeout=remaining, check=check)
                 user = message.author.display_name
+                user_id = message.author.id
                 content = message.content.strip()
                 key = (message.author.id, content.lower())
 
@@ -2909,40 +4544,66 @@ async def ask_missing_link(winner):
                     if fuzzy_match(content, answer, category, clue):
                         await message.add_reaction("✅")
                         await safe_send(channel, f"\u200b\n✅🎉 Correct! **{user}** got it! **{answer.upper()}**")
-                        correct_guesses += 1
-                        user_correct_answers[user] = user_correct_answers.get(user, 0) + 1
+                        if user_id not in user_correct_answers:
+                            user_correct_answers[user_id] = (user, 0)
+                        user_correct_answers[user_id] = (user, user_correct_answers[user_id][1] + 1)
                         right_answer = True
                         break
             except asyncio.TimeoutError:
                 break
 
         if not right_answer:
-            num_of_xs += 1
             await safe_send(channel, f"\u200b\n❌😢 No one got it.\n\nAnswer: **{main_answer.upper()}**\n")
         
-        await asyncio.sleep(5)
+        await asyncio.sleep(1)
+                            
+        link_num = link_num + 1
+        
+        message = ""
 
-    # Wrap-up message
-    if correct_guesses == 0:
-        await safe_send(channel, "\u200b\n👎😢 No right answers. **I'm ashamed to call you Okrans.**")
+        sorted_users = sorted(user_correct_answers.items(), key=lambda x: x[1][1], reverse=True)
+
+        if num == 1:
+            if sorted_users:
+                link_winner_id, (winner_name, winner_score) = sorted_users[0]
+                return link_winner_id if winner_name is not None else None
+            else:
+                return None
+            
+        if sorted_users:
+            if link_num > num:
+                message += "\u200b\n🏁🏆 Final Standings\n\u200b"
+            else:   
+                message += "\u200b\n📊🏆 Current Standings\n\u200b"
+
+        for counter, (uid, (name, score)) in enumerate(sorted_users, start=1):
+            message += f"{counter}. **{name}**: {score}\n"
+            message += "\u200b"
+            
+        if message:
+            await safe_send(channel, message)
+        
+        await asyncio.sleep(3)
+
+    await asyncio.sleep(2)
+    if sorted_users:
+        link_winner_id, (winner_name, winner_score) = sorted_users[0]
+        message = f"\u200b\n🎉🥇 The winner is **{winner_name}**!\n\u200b"
     else:
-        summary = (
-            f"\u200b\n✅✌️ **{correct_guesses}** right! I get the point. Let's move on.\n"
-            if correct_guesses >= 20 else
-            f"\u200b\n🎉✅ Congrats Okrans! You got **{correct_guesses}** right!\n"
-        )
-        summary += "\n**🏆 Commendable Okrans**\n"
-        sorted_users = sorted(user_correct_answers.items(), key=lambda x: x[1], reverse=True)
-        for i, (user, count) in enumerate(sorted_users, 1):
-            summary += f"{i}. **{user}**: {count}\n"
-        summary += "\u200b"
-        await safe_send(channel, summary)
-
+        message = f"\u200b\n👎😢 **No right answers**. I'm ashamed to call you Okrans.\n\u200b"
+    
+    await safe_send(channel, message)
+    
     wf_winner = True
-    await asyncio.sleep(5)
+    await asyncio.sleep(3)
+
+    if sorted_users:
+        return link_winner_id
+    else:
+        return None
 
 
-async def ask_movie_scenes_challenge(winner):
+async def ask_movie_scenes_challenge(winner, winner_id, num=7):
     global wf_winner
 
     gifs = [
@@ -2955,11 +4616,15 @@ async def ask_movie_scenes_challenge(winner):
     await safe_send(channel, content="\u200b\n\u200b\n 🎬💥 Movie Mayhem\n\u200b", embed=discord.Embed().set_image(url=gif_url))
     await asyncio.sleep(3)
 
-    num_of_xs = 0
-    correct_guesses = 0
     user_correct_answers = {}
 
-    while num_of_xs < 3 and correct_guesses < 20:
+    if num > 1:
+        message = f"\u200b\n5️⃣🥇 Let's do a best of **{num}**...\n\u200b"
+        await safe_send(channel, message)
+        await asyncio.sleep(3)
+
+    movie_num = 1
+    while movie_num <= num:
         try:
             recent_ids = await get_recent_question_ids_from_mongo("movie_scenes")
             collection = db["movie_scenes_questions"]
@@ -2990,26 +4655,13 @@ async def ask_movie_scenes_challenge(winner):
 
         processed_users = set()
 
-        # Strike and score banner
-        start_msg = "\u200b\n"
-        start_msg += f"{'🟩' if num_of_xs == 0 else '🟨' if num_of_xs == 1 else '🟥'}🤔 Okrans, you have **{num_of_xs}/3** strikes!\n"
-        if correct_guesses > 0:
-            start_msg += f"\nCorrect guesses: **{correct_guesses}**\n"
-        start_msg += "\u200b"
-
-        await safe_send(channel, start_msg)
-        await asyncio.sleep(3)
-
-        prompt = f"\u200b\n⚠️🚨 **Everyone's in!**\n\u200b"
-        await safe_send(channel, prompt)
-
-        await asyncio.sleep(3)
-        await safe_send(channel, embed=discord.Embed(description=f"{category.upper()} ({year})").set_image(url=image_url))
-
         prompt = (
-            f"\u200b\n🎬🌟 What **{category.upper()}** is depicted in the scene above?\n"
+            f"\u200b\n⚠️🚨 **Everyone's in!**\n\u200b"
+            f"\u200b\n🎬🌟 **Movie {movie_num}** of {num}: What **{category.upper()}** is depicted in the scene above?\n"
             f"\n📅💡 Year: **{year}**\n\u200b"
         )
+
+        await safe_send(channel, embed=discord.Embed(description=f"{category.upper()} ({year})").set_image(url=image_url))
         await safe_send(channel, prompt)
 
         start_time = asyncio.get_event_loop().time()
@@ -3023,6 +4675,7 @@ async def ask_movie_scenes_challenge(winner):
                 remaining = 15 - (asyncio.get_event_loop().time() - start_time)
                 message = await bot.wait_for("message", timeout=remaining, check=check)
                 user = message.author.display_name
+                user_id = message.author.id
                 content = message.content.strip()
                 key = (message.author.id, content.lower())
 
@@ -3034,36 +4687,65 @@ async def ask_movie_scenes_challenge(winner):
                     if fuzzy_match(content, answer, category, image_url):
                         await message.add_reaction("✅")
                         await safe_send(channel, f"\u200b\n✅🎉 Correct! **{user}** got it! **{answer.upper()}**")
-                        correct_guesses += 1
-                        user_correct_answers[user] = user_correct_answers.get(user, 0) + 1
+                        if user_id not in user_correct_answers:
+                            user_correct_answers[user_id] = (user, 0)
+                        user_correct_answers[user_id] = (user, user_correct_answers[user_id][1] + 1)
                         right_answer = True
                         break
             except asyncio.TimeoutError:
                 break
 
         if not right_answer:
-            num_of_xs += 1
             await safe_send(channel, f"\u200b\n❌😢 No one got it.\n\nAnswer: **{main_answer.upper()}**\n\u200b")
-        await asyncio.sleep(5)
+        
+        await asyncio.sleep(1)
+                            
+        movie_num = movie_num + 1
+        
+        message = ""
 
-    # Wrap-up message
-    if correct_guesses == 0:
-        await safe_send(channel, "\u200b\n👎😢 No right answers. **I'm ashamed to call you Okrans.**\n\u200b")
+        sorted_users = sorted(user_correct_answers.items(), key=lambda x: x[1][1], reverse=True)
+
+        if num == 1:
+            if sorted_users:
+                movie_winner_id, (winner_name, winner_score) = sorted_users[0]
+                return movie_winner_id if winner_name is not None else None
+            else:
+                return None
+            
+        if sorted_users:
+            if movie_num > num:
+                message += "\u200b\n🏁🏆 Final Standings\n\u200b"
+            else:   
+                message += "\u200b\n📊🏆 Current Standings\n\u200b"
+
+        for counter, (uid, (name, score)) in enumerate(sorted_users, start=1):
+            message += f"{counter}. **{name}**: {score}\n"
+            message += "\u200b"
+            
+        if message:
+            await safe_send(channel, message)
+
+        await asyncio.sleep(3)
+
+    await asyncio.sleep(2)
+    if sorted_users:
+        movie_winner_id, (winner_name, winner_score) = sorted_users[0]
+        message = f"\u200b\n🎉🥇 The winner is **{winner_name}**!\n\u200b"
     else:
-        summary = (
-            f"\u200b\n✅✌️ **{correct_guesses}** right! I get the point. Let's move on.\n"
-            if correct_guesses >= 20 else
-            f"\u200b\n🎉✅ Congrats Okrans! You got **{correct_guesses}** right!\n"
-        )
-        summary += "\n **🏆 Commendable Okrans**\n"
-        sorted_users = sorted(user_correct_answers.items(), key=lambda x: x[1], reverse=True)
-        for i, (user, count) in enumerate(sorted_users, 1):
-            summary += f"{i}. **{user}**: {count}\n"
-        summary += "\u200b"
-        await safe_send(channel, summary)
-
+        message = f"\u200b\n👎😢 **No right answers**. I'm ashamed to call you Okrans.\n\u200b"
+    
+    await safe_send(channel, message)
+    
     wf_winner = True
-    await asyncio.sleep(5)
+    await asyncio.sleep(3)
+
+    if sorted_users:
+        return movie_winner_id
+    else:
+        return None
+
+
 
 
 async def ask_feud_question(winner, mode, winner_id):
@@ -3496,7 +5178,7 @@ async def load_previous_question():
                 }
 
 
-async def ask_ranker_list_number(winner, winner_id):
+async def ask_ranker_list_number(winner, winner_id, num=7):
     def check(m):
         return m.channel == channel and m.author != bot.user and m.author.id == winner_id and m.content.strip() in {"1", "2", "3", "4", "5"}
 
@@ -3511,7 +5193,7 @@ async def ask_ranker_list_number(winner, winner_id):
         return int(selected_question)
 
 
-async def ask_ranker_list_question(winner, winner_id):
+async def ask_ranker_list_question(winner, winner_id, num=7):
     global wf_winner
     wf_winner = True
     gifs = [
@@ -3629,8 +5311,14 @@ async def ask_ranker_list_question(winner, winner_id):
     await safe_send(channel, msg)
     await asyncio.sleep(5)
 
+    if scores:
+        top_user_id, _ = scores[0]
+        return top_user_id
+    else:
+        return None
 
-async def ask_list_question(winner):
+
+async def ask_list_question(winner, winner_id, num=7):
     global wf_winner
     wf_winner = True
     gifs = [
@@ -3744,20 +5432,24 @@ async def ask_list_question(winner):
 
     
     # Show winner's results with ✅ or ❌
-    if winner:
+    if scores:
         await asyncio.sleep(2)
         # Find the winner's answer set
-        winner_id = next((uid for uid, (name, _) in user_progress.items() if name == winner), None)
-        if winner_id is not None:
-            winner_answers = user_progress[winner_id][1]
+        list_winner_id = next((uid for uid, (name, _) in user_progress.items() if name == winner), None)
+        if list_winner_id is not None:
+            winner_answers = user_progress[list_winner_id][1]
             result_lines = []
             for ans in answers:
                 mark = "✅" if ans in winner_answers else "❌"
                 result_lines.append(f"{mark} {ans}")
             result_text = "\n".join(result_lines)
             await safe_send(channel, f"\u200b\n📋 **{winner}'s Answers:**\n\n{result_text}\n\u200b")
+            
 
     await asyncio.sleep(5)
+
+    if scores:
+        return list_winner_id
 
 
 async def ask_survey_question():
@@ -4432,6 +6124,12 @@ async def load_parameters():
     global discount_step_amount
     global discount_streak_amount
     global channel_id
+    global time_between_questions_default
+    global time_between_questions
+    global max_retries
+    global delay_between_retries
+    global question_time
+    global questions_per_round
 
     # Default values
     default_values = {
@@ -4448,7 +6146,12 @@ async def load_parameters():
         "num_stats_questions_default": 0,
         "skip_summary": False,
         "discount_step_amount": 20,
-        "discount_streak_amount": 5
+        "discount_streak_amount": 5,
+        "time_between_questions_default": 5,
+        "max_retries": 3,
+        "delay_between_retries": 3,
+        "question_time": 10,
+        "questions_per_round": 10
     }
     
     for attempt in range(max_retries):
@@ -4480,6 +6183,11 @@ async def load_parameters():
             skip_summary = parameters["skip_summary"]
             discount_step_amount = parameters["discount_step_amount"]
             discount_streak_amount = parameters["discount_streak_amount"]
+            time_between_questions_default = parameters["time_between_questions_default"]
+            max_retries = parameters["max_retries"]
+            delay_between_retries = parameters["delay_between_retries"]
+            question_time = parameters["question_time"]
+            questions_per_round = parameters["questions_per_round"]
             
             num_mysterybox_clues = num_mysterybox_clues_default
             num_crossword_clues = num_crossword_clues_default
@@ -4488,6 +6196,7 @@ async def load_parameters():
             num_wof_clues_final = num_wof_clues_final_default
             num_math_questions = num_math_questions_default
             num_stats_questions = num_stats_questions_default
+            time_between_questions = time_between_questions_default
             
             # Exit loop if successful
             break
@@ -4514,6 +6223,11 @@ async def load_parameters():
                 skip_summary = default_values["skip_summary"]
                 discount_step_amount = default_values["discount_step_amount"]
                 discount_streak_amount = default_values["discount_streak_amount"]
+                time_between_questions_default = default_values["time_between_questions_default"]
+                max_retries = default_values["max_retries"]
+                delay_between_retries = default_values["delay_between_retries"]
+                question_time = default_values["question_time"]
+                questions_per_round = default_values["questions_per_round"]
 
                 num_mysterybox_clues = num_mysterybox_clues_default
                 num_crossword_clues = num_crossword_clues_default
@@ -4522,6 +6236,7 @@ async def load_parameters():
                 num_wof_clues_final = num_wof_clues_final_default
                 num_math_questions = num_math_questions_default
                 num_stats_questions = num_stats_questions_default
+                time_between_questions = time_between_questions_default
 
 
 async def nice_creep_okra_option(winner, winner_id):
@@ -5035,7 +6750,18 @@ async def select_wof_questions(winner, winner_id):
         message += f"{counter}.\u200b 🧩🌀 Jigsawed 🥒✨\n"
         counter = counter + 1
         message += f"{counter}.\u200b 🗺️❓ Borderline 🥒✨\n"
-        message += f"\n0\u200b0. 🥗🌟 Okra's Choice\n"
+        counter = counter + 1
+        message += f"{counter}.\u200b 🙃🙂 Face/Off ☕✨\n"
+        counter = counter + 1
+        message += f"{counter}.\u200b 🦅🇺🇸 Rushmore ☕✨\n"
+        counter = counter + 1
+        message += f"{counter}.\u200b 🟩🟨 Wordle War ☕✨\n"
+        counter = counter + 1
+        message += f"{counter}.\u200b 🎼🎵 MusIQ ☕✨\n"
+        counter = counter + 1
+        message += f"{counter}.\u200b 👓🕵️‍♂️ Myopic Mystery ☕✨\n"
+        message += f"99.\u200b 🌀🤯 CHAOS ☕✨\n"
+        message += f"\n00.\u200b 🥗🌟 Okra's Choice\n"
         message += f"\nX.\u200b ⏭️🕹️ Skip Mini-Game\n"
         await safe_send(channel, message) 
                 
@@ -5059,7 +6785,7 @@ async def select_wof_questions(winner, winner_id):
             ]
 
             gif_url = random.choice(gif_set)
-            message = f"\n⏭️🕹️ @{winner}: 'Less Games. More Trivia.'\n"
+            message = f"\n⏭️🕹️ {winner}: '**Less** Games. **More** Trivia.'\n"
             await safe_send(channel, content=message, embed=discord.Embed().set_image(url=gif_url))
             await asyncio.sleep(3)
             return None
@@ -5074,7 +6800,7 @@ async def select_wof_questions(winner, winner_id):
                 await store_question_ids_in_mongo([wof_question_id], "wof")  # Store it as a list containing a single ID
         
         elif selected_wof_category == "11":
-            await ask_list_question(winner)
+            await ask_list_question(winner, winner_id)
             await asyncio.sleep(3)
             return None
 
@@ -5089,22 +6815,22 @@ async def select_wof_questions(winner, winner_id):
             return None
 
         elif selected_wof_category == "12":
-            await ask_poster_challenge(winner)
+            await ask_poster_challenge(winner, winner_id)
             await asyncio.sleep(3)
             return None
 
         elif selected_wof_category == "13":
-            await ask_movie_scenes_challenge(winner)
+            await ask_movie_scenes_challenge(winner, winner_id)
             await asyncio.sleep(3)
             return None
 
         elif selected_wof_category == "14":
-            await ask_missing_link(winner)
+            await ask_missing_link(winner, winner_id)
             await asyncio.sleep(3)
             return None
 
         elif selected_wof_category == "15":
-            await ask_ranker_people_challenge(winner)
+            await ask_ranker_people_challenge(winner, winner_id)
             await asyncio.sleep(3)
             return None
 
@@ -5114,32 +6840,32 @@ async def select_wof_questions(winner, winner_id):
             return None
 
         elif selected_wof_category == "17":
-            await ask_magic_challenge(winner)
+            await ask_magic_challenge(winner, winner_id)
             await asyncio.sleep(3)
             return None
 
         elif selected_wof_category == "18":
-            await ask_animal_challenge(winner)
+            await ask_animal_challenge(winner, winner_id)
             await asyncio.sleep(3)
             return None
 
         elif selected_wof_category == "19":
-            await ask_riddle_challenge(winner)
+            await ask_riddle_challenge(winner, winner_id)
             await asyncio.sleep(3)
             return None
 
         elif selected_wof_category == "20":
-            await ask_dictionary_challenge(winner)
+            await ask_dictionary_challenge(winner, winner_id)
             await asyncio.sleep(3)
             return None
 
         elif selected_wof_category == "21":
-            await ask_flags_challenge(winner)
+            await ask_flags_challenge(winner, winner_id)
             await asyncio.sleep(3)
             return None
 
         elif selected_wof_category == "22":
-            await ask_lyric_challenge(winner)
+            await ask_lyric_challenge(winner, winner_id)
             await asyncio.sleep(3)
             return None
 
@@ -5149,7 +6875,7 @@ async def select_wof_questions(winner, winner_id):
             return None
 
         elif selected_wof_category == "24":
-            await ask_book_challenge(winner)
+            await ask_book_challenge(winner, winner_id)
             await asyncio.sleep(3)
             return None
 
@@ -5170,6 +6896,36 @@ async def select_wof_questions(winner, winner_id):
 
         elif selected_wof_category == "28":
             await ask_border_challenge(winner, winner_id)
+            await asyncio.sleep(3)
+            return None
+        
+        elif selected_wof_category == "29":
+            ask_faceoff_challenge(winner, winner_id)
+            await asyncio.sleep(3)
+            return None
+
+        elif selected_wof_category == "30":
+            ask_president_challenge(winner, winner_id)
+            await asyncio.sleep(3)
+            return None
+        
+        elif selected_wof_category == "31":
+            ask_wordle_challenge(winner, winner_id)
+            await asyncio.sleep(3)
+            return None
+        
+        elif selected_wof_category == "32":
+            ask_music_challenge(winner, winner_id)
+            await asyncio.sleep(3)
+            return None
+        
+        elif selected_wof_category == "33":
+            ask_myopic_challenge(winner, winner_id)
+            await asyncio.sleep(3)
+            return None
+
+        elif selected_wof_category == "99":
+            await ask_chaos_challenge(winner, winner_id, 5)
             await asyncio.sleep(3)
             return None
         
@@ -5412,9 +7168,15 @@ async def ask_wof_number(winner, winner_id):
         "26": "Elementary",
         "27": "Jigsawed",
         "28": "Borderline",
+        "29": "Face/Off",
+        "30": "Rushmore",
+        "31": "Wordle War",
+        "32": "MusIQ",
+        "33": "Myopic Mystery",
+        "99": "CHAOS"
     }
     multiplayer_required = {k for k in unlocks if k not in {"5", "6", "7", "8", "9"}}
-    all_options = {str(i) for i in range(29)} | {"00", "x"}
+    all_options = {str(i) for i in range(34)} | {"00", "x", "99"}
 
     start = asyncio.get_event_loop().time()
     selected_question = None
@@ -5431,7 +7193,7 @@ async def ask_wof_number(winner, winner_id):
             if content == "00":
                 await message.add_reaction("👍")
                 set_a = [str(i) for i in range(5)]
-                set_b = [str(i) for i in range(5, 29)] if len(round_responders) >= num_list_players else [str(i) for i in range(5, 10)]
+                set_b = [str(i) for i in range(5, 34)] if len(round_responders) >= num_list_players else [str(i) for i in range(5, 10)]
                 selected_question = random.choice(set_a if random.random() < 0.5 else set_b)
                 await safe_send(channel, f"\n🎁 **<@{winner_id}>**, let's do {selected_question}.\n")
                 return selected_question
@@ -5463,7 +7225,7 @@ async def ask_wof_number(winner, winner_id):
 
     # Fallback random selection
     set_a = [str(i) for i in range(5)]
-    set_b = [str(i) for i in range(5, 29)] if len(round_responders) >= num_list_players else [str(i) for i in range(5, 10)]
+    set_b = [str(i) for i in range(5, 34)] if len(round_responders) >= num_list_players else [str(i) for i in range(5, 10)]
     selected_question = random.choice(set_a if random.random() < 0.5 else set_b)
     await safe_send(channel, f"\u200b\n🐢⏳ Too slow. I choose **{selected_question}**.\n\u200b")
     return selected_question
@@ -5701,7 +7463,7 @@ async def send_magic_image(input_text):
         await safe_send(channel, "❌ Failed to generate magic eye image.")
     
 
-async def ask_magic_challenge(winner):
+async def ask_magic_challenge(winner, winner_id, num=5):
     global wf_winner
     wf_winner = True
 
@@ -5713,18 +7475,27 @@ async def ask_magic_challenge(winner):
 
     gif_url = random.choice(gifs)
     await safe_send(channel, content="\u200b\n\u200b\n👁️✨ **Who's got the Magic Eye?**\n\u200b", embed=discord.Embed().set_image(url=gif_url))
-    await asyncio.sleep(3)
-    await safe_send(channel, f"\u200b\n\u200b\n5️⃣🥇 Let's do a **best of 5**...\n\u200b")
-    await asyncio.sleep(3)
+    await asyncio.sleep(5)
 
     user_data = {}
 
-    for round_num in range(1, 6):
+    if num > 1:
+        message = f"\u200b\n5️⃣🥇 Let's do a best of **{num}**...\n\u200b"
+        await safe_send(channel, message)
+        await asyncio.sleep(3)
+
+    round_num = 1
+    while round_num <= num:
         magic_number = random.randint(1000, 9999)
         print(f"Magic number for Round {round_num}: {magic_number}")
 
+        prompt = (
+            f"\u200b\n⚠️🚨 **Everyone's in!**\n"
+            f"\n🔵 **Round {round_num}**: What do you see?\n\u200b"
+        )
+
         await send_magic_image(magic_number)
-        await safe_send(channel, f"🔵 **Round {round_num}**: What do you see?\n\u200b")
+        await safe_send(channel, prompt)
 
         start_time = asyncio.get_event_loop().time()
         magic_number_correct = False
@@ -5753,29 +7524,55 @@ async def ask_magic_challenge(winner):
                 break
 
         if not magic_number_correct:
-            await safe_send(channel, f"\u200b\n😢 No one got it right this round!\n\n👀✨ The Magic Number was **{magic_number}**.\n\u200b")
+            await safe_send(channel, f"\u200b\n❌😢 No one got it right this round!\n\n👀✨ The Magic Number was **{magic_number}**.\n\u200b")
 
+        await asyncio.sleep(1)
+
+        round_num = round_num + 1
+        
+        message = ""
+
+        sorted_users = sorted(user_data.items(), key=lambda x: x[1][1], reverse=True)
+
+        if num == 1:
+            if sorted_users:
+                magic_winner_id, (display_name, final_score) = sorted_users[0]
+                return magic_winner_id
+            else:
+                return None
+            
+        if sorted_users:
+            if round_num > num:
+                message += "\u200b\n🏁🏆 Final Standings\n\u200b"
+            else:   
+                message += "\u200b\n📊🏆 Current Standings\n\u200b"
+
+        for counter, (user_id, (display_name, count)) in enumerate(sorted_users, start=1):
+            message += f"{counter}. **{display_name}**: {count}\n"
+            message += "\u200b"
+            
+        if message:
+            await safe_send(channel, message)
+        
         await asyncio.sleep(3)
 
-    # Final score announcement
-
-    
     await asyncio.sleep(2)
-    sorted_data = sorted(user_data.items(), key=lambda x: x[1][1], reverse=True)
-    if sorted_data:
-        message = "\u200b\n🏆✨ **Commendable Okrans** ✨🏆\n"
-        for rank, (user_id, (display_name, score)) in enumerate(sorted_data, 1):
-            message += f"{rank}. **{display_name}**: {score}\n"
-        message += "\u200b"
-        await safe_send(channel, message)
-        top_user_id, (top_display_name, top_score) = sorted_data[0]
-        message = f"\n🎉🥇 The winner is **{top_display_name}**!\n"
+    
+    if sorted_users:
+        magic_winner_id, (display_name, final_score) = sorted_users[0]
+        message = f"\u200b\n🎉🥇 The winner is **{display_name}**!\n\u200b"
     else:
-        message = f"\n👎😢 No right answers. I'm ashamed to call you Okrans.\n"
-
+        message = f"\u200b\n👎😢 **No right answers**. I'm ashamed to call you Okrans.\n\u200b"
+    
     await safe_send(channel, message)
-
-    await asyncio.sleep(5)
+    
+    wf_winner = True
+    await asyncio.sleep(3)
+    
+    if sorted_users:
+        return magic_winner_id
+    else:
+        return None
 
 
 def generate_jeopardy_image(question_text):
@@ -6015,8 +7812,10 @@ async def process_round_options(round_winner, winner_points, round_winner_id):
 
     winner_coffees = await get_coffees(round_winner_id)
     
-    message = f"\u200b\n🍔🍟 **<@{round_winner_id}>**, what's your order?\n\n" 
-    message += "🥒 Some choices for **Okrans Only**!\n\n"
+    message = f"\u200b\n🍔🍟 **<@{round_winner_id}>**, what's your order?\n" 
+    message += "\n🥒 For **Okrans** Only!"
+    message += f"\n✨: **Okrans** can toggle mid-round"
+    message += f"\n**#[command]** during response time to toggle mid-game\n\n"
 
     message += (
         "⏱️⏳ **<3 - 15>** Time (s) between questions.\n"
@@ -6844,7 +8643,7 @@ async def ask_question(trivia_category, trivia_question, trivia_url, trivia_answ
 
     message_body = ""
     if single_answer:
-        message_body += "\u200b\n🚨 1 GUESS 🚨"
+        message_body += "\u200b\n🚨 **1 GUESS** 🚨"
         
     if is_valid_url(trivia_url): 
         message_body += f"\u200b\n\u200b\n{number_block}📷 **{get_category_title(trivia_category, trivia_url)}**\n\n{trivia_question}\n"
@@ -7391,7 +9190,7 @@ async def check_correct_responses_delete(question_ask_time, trivia_answer_list, 
         
             # Display the formatted message based on yolo_mode
             if time_diff == 0:
-                message += f"\u200b\n⚡ {display_name}"
+                message += f"\u200b\n⚡ **{display_name}**"
                 if not yolo_mode:
                     message += f": {points}"
                 if points == 420:
@@ -7401,7 +9200,7 @@ async def check_correct_responses_delete(question_ask_time, trivia_answer_list, 
                 if current_longest_answer_streak["streak"] > 1:
                     message += f"  🔥{current_longest_answer_streak['streak']}"
             else:
-                message += f"\n\u200b👥 {display_name}"
+                message += f"\n\u200b👥 **{display_name}**"
                 if not yolo_mode:
                     message += f": {points}"
                 if points == 420:
@@ -8713,13 +10512,18 @@ async def start_trivia():
             current_time = time.time()
             
             await load_parameters()
-            await get_survey_results()
+            #await get_survey_results()
             scoreboard.clear()
             fastest_answers_count.clear()
             #await ask_feud_question("TheCreator", "cooperative", 591861826690613248)
             #await ask_jigsaw_challenge("The Creator", 591861826690613248)
             #await ask_border_challenge("The Creator", 591861826690613248)
-            
+            #await ask_ranker_people_challenge("TheOkraG", 1)
+            #await ask_ranker_list_question("TheOkraG", 591861826690613248, 1)
+            #await ask_list_question("TheOkraG", 591861826690613248, 3)
+            #await ask_chaos_challenge("TheOkraG",591861826690613248, 23)
+            #await ask_ranker_people_challenge("TheOkraG",591861826690613248, 7)
+
             round_responders.clear()  # Reset round responders
             round_data["questions"] = []
 
@@ -8736,12 +10540,21 @@ async def start_trivia():
 
             start_message += f"\u200b\n🚩 Type **#flag** to report question\n"
             start_message += f"🗝️ Type **#perks** for a Patreon unlock link\n\u200b"
+
+            if current_longest_round_streak["user"] is not None and await get_coffees(current_longest_round_streak["user"]) > 0:
+                start_message += f"\n🚩 **{current_longest_round_streak["user"]}** can toggle modes mid-game"
+                start_message += f"\n↔️ **#[command]** any time during round\n\u200b"
+                
             await safe_send(channel, start_message)
             await asyncio.sleep(3)
+            
+            start_message = f"\u200b\n✨🧪 New from the Okra Lab!\n"
+            start_message += f"\n👓🕵️‍♂️ **Myopic Mystery** [Mini-Game]"
+            start_message += f"\n🧩🌀 **Jigsawed** [Improvements]"
+            start_message += f"\n🎼🎵 **MusIQ** [Mini-Game]"
+            start_message += f"\n🕹️⚙️ **Mid-Game Toggles** [Game Mechanics]"
+            start_message += "\n\u200b"
 
-            start_message = f"\u200b\n🥒🎁 Beta: **Free Okran perks**\n\u200b"
-            start_message += f"\u200b\n✨🧪 New mini-game from the **Okra Lab**!\n"
-            start_message += f"\n🗺️❓ **Borderline**\n\u200b"
             await safe_send(channel, start_message)
             await asyncio.sleep(5)
 
@@ -8800,7 +10613,7 @@ async def start_trivia():
 
                 await refill_question_slot(selected_questions, selected_question)
 
-                time.sleep(time_between_questions)  # Small delay before the next question
+                await asyncio.sleep(time_between_questions)  # Small delay before the next question
                 
                 question_number = question_number + 1
                 previous_question = {
@@ -8852,6 +10665,85 @@ async def start_trivia():
         await asyncio.sleep(10)  
 
 
+def print_round_settings():
+    global time_between_questions, ghost_mode, god_mode, yolo_mode
+    global image_questions, marx_mode
+    global blind_mode
+
+    print(f"🛠️ Current Round Settings:")
+    print(f"⏱️  Time Between Questions: {time_between_questions}")
+    print(f"👻  Ghost Mode: {ghost_mode}")
+    print(f"🎖️  God Mode: {god_mode}")
+    print(f"🔥  Yolo Mode: {yolo_mode}")
+    print(f"🖼️  Image Questions: {image_questions}")
+    print(f"🔨  Marx Mode: {marx_mode}")
+    print(f"🙈  Blind Mode: {blind_mode}")
+
+async def reset_round_options(reset_command):
+    global time_between_questions, ghost_mode, god_mode, yolo_mode, mirror_mode, echo_mode, image_questions, marx_mode, blind_mode, zen_mode
+
+    reset_success = False
+    
+    if "blind" in reset_command:
+        blind_mode = not blind_mode
+        reset_success = True
+        if blind_mode:
+            await safe_send(channel, content=f"🙈🚫 **{current_longest_round_streak['user']}** is blind to the truth. No answers will be shown.\n")
+        else:
+            await safe_send(channel, content=f"🙈✅ **{current_longest_round_streak['user']}** can see again! Answers will now be shown.\n")                
+
+    if "marx" in reset_command:
+        marx_mode = not marx_mode
+        reset_success = True
+        if marx_mode:
+            await safe_send(channel, content=f"🚩🔨 **{current_longest_round_streak['user']}** is a commie. No celebrating right answers.\n")
+        else:
+            await safe_send(channel, content=f"💼💰 **{current_longest_round_streak['user']}** is a capitalist. Let's celebrate right answers.\n")
+    
+    if "yolo" in reset_command:
+        yolo_mode = not yolo_mode
+        reset_success = True
+        if yolo_mode:
+            await safe_send(channel, content=f"🤘🔥 Yolo. **{current_longest_round_streak['user']}** says 'don't sweat the small stuff'. No scores.\n")
+        else:
+            await safe_send(channel, content=f"🪑📚 Nolo. **{current_longest_round_streak['user']}** wants to play it by the rules. Back to scoring\n.")
+    
+    if "image" in reset_command:
+        image_questions = not image_questions
+        reset_success = True
+        if image_questions:
+            await safe_send(channel, content=f"❌📷 **{current_longest_round_streak['user']}** thinks a word is worth 1000 images.\n")
+        else:
+            await safe_send(channel, content=f"✅📷 **{current_longest_round_streak['user']}** thinks an image is worth 1000 words.\n")
+    
+    if "ghost" in reset_command:
+        ghost_mode = not ghost_mode
+        reset_success = True
+        if ghost_mode:
+            await safe_send(channel, content=f"\n👻🎃 **{current_longest_round_streak['user']}** says Boo! Your responses will disappear.\n")
+        else:
+            await safe_send(channel, content=f"\n☀️📖 **{current_longest_round_streak['user']}** says Hello! Your responses will now remain.\n")
+
+    if "dicktator" in reset_command:
+        god_mode = not god_mode
+        reset_success = True
+        if god_mode:
+            await safe_send(channel, content=f"\n🎖🍆 **{current_longest_round_streak['user']}** is a dick.\n")
+        else:
+            await safe_send(channel, content=f"\n🎖🫡 **{current_longest_round_streak['user']}** is not a dick.\n")
+        
+    if any(str(i) in reset_command for i in range(3, 16)):
+        delay_value = int(''.join(filter(str.isdigit, reset_command)))
+        delay_value = max(3, min(delay_value, 15))
+        time_between_questions = delay_value
+        reset_success = True
+        await safe_send(channel, content=f"⏱️⏳ **{current_longest_round_streak['user']}** has set {time_between_questions}s between questions.\n")
+
+    #print_round_settings()
+    return reset_success
+
+
+
 def handle_sigterm(signum, frame):
     print("💀 Received SIGTERM. Shutting down gracefully...")
     exit(0)
@@ -8880,6 +10772,16 @@ async def on_message(message):
         if emoji_mode == True:
             await message.add_reaction("🚩")
         await update_audit_question(current_question, message.content.strip(), message.author.display_name)
+
+    if message.content.startswith("#") and message.author.id == current_longest_round_streak["user_id"]:
+        if await get_coffees(current_longest_round_streak["user"]) > 0:
+            reset_command = message.content[1:] 
+            if(await reset_round_options(reset_command)) == True:
+                if emoji_mode == True:
+                    await message.add_reaction("🤙")
+        else:
+            await safe_send(channel, content=f"\n🙏😔 Sorry @{message.author.display_name}. Mid-game mode toggles require ☕️.\n")
+            await message.add_reaction("😩")
 
     if question_asked_start is None or question_asked_end is None:
         return
