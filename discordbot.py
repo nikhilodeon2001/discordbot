@@ -10499,18 +10499,24 @@ async def start_trivia():
     global question_asked_start, question_asked_end
     
     try:
+        print("here")
         db =  await connect_to_mongodb()
         await load_parameters()
+        print("now here")
         await load_streak_data()
+        print("now now here")
         await load_previous_question()
+        print("now now now here")
 
         round_winner = None
         selected_questions = await select_trivia_questions(questions_per_round)  #Pick the initial question set
+        print("now now now now here")
         
         while True:  # Endless loop       
             current_time = time.time()
             
             await load_parameters()
+            print("now now now now now here")
             #await get_survey_results()
             scoreboard.clear()
             fastest_answers_count.clear()
@@ -10829,7 +10835,6 @@ async def on_ready():
     global channel
     print(f"✅ Logged in as {bot.user}")
     channel = bot.get_channel(channel_id)
-    print(f"here channel = {channel}")
     await start_trivia()
 
 
