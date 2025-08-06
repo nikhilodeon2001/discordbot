@@ -10829,6 +10829,7 @@ async def on_ready():
     global channel
     print(f"✅ Logged in as {bot.user}")
     channel = bot.get_channel(channel_id)
+    print(f"here channel = {channel}")
     await start_trivia()
 
 
