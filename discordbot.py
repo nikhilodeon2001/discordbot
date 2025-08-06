@@ -98,7 +98,6 @@ googlemaps_api_key = os.getenv("googlemaps_api_key")
 googletranslate_api_key = os.getenv("googletranslate_api_key")
 webster_api_key = os.getenv("webster_api_key")
 webster_thes_api_key = os.getenv("webster_thes_api_key")
-question_time = int(os.getenv("question_time"))
 channel_id = int(os.getenv("channel_id"))
 
 
