@@ -226,6 +226,8 @@ async def safe_send(channel, *args, max_retries=3, delay=2, use_embed=True, imag
         embed = kwargs.pop("embed", Embed())
         if not isinstance(embed, Embed):
             embed = Embed()
+            
+        embed.color = discord.Color.green()  # 💥 Add this line to set the border color
 
         # Set description only if not already set
         if content and not embed.description:
