@@ -3905,7 +3905,7 @@ async def ask_poster_challenge(winner, winner_id, num=7):
             f"\n📅💡 Year: **{posters_year}**\n\u200b"
         )
         
-        await safe_send(channel, embed=discord.Embed(description=f"{posters_category.upper()} ({posters_year})").set_image(url=posters_url))
+        await safe_send(channel, embed=discord.Embed(description=f"**{posters_category.upper()} ({posters_year})**").set_image(url=posters_url))
         await safe_send(channel, prompt)
 
         start_time = asyncio.get_event_loop().time()
@@ -4709,7 +4709,7 @@ async def ask_movie_scenes_challenge(winner, winner_id, num=7):
             f"\n📅💡 Year: **{year}**\n\u200b"
         )
 
-        await safe_send(channel, embed=discord.Embed(description=f"{category.upper()} ({year})").set_image(url=image_url))
+        await safe_send(channel, embed=discord.Embed(description=f"**{category.upper()} ({year})**").set_image(url=image_url))
         await safe_send(channel, prompt)
 
         start_time = asyncio.get_event_loop().time()
