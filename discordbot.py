@@ -62,6 +62,7 @@ import discord
 from discord.ext import commands
 import aiohttp
 import aiofiles
+from discord import Embed, File
 
 # Define global variables to store streaks and scores
 round_count = 0
@@ -98,6 +99,7 @@ googlemaps_api_key = os.getenv("googlemaps_api_key")
 googletranslate_api_key = os.getenv("googletranslate_api_key")
 webster_api_key = os.getenv("webster_api_key")
 webster_thes_api_key = os.getenv("webster_thes_api_key")
+question_time = int(os.getenv("question_time"))
 channel_id = int(os.getenv("channel_id"))
 
 
@@ -188,26 +190,74 @@ warnings.filterwarnings("ignore", message="In the future version we will turn de
 warnings.filterwarnings("ignore", message="This search incorrectly ignores the root element, and will be fixed in a future version.")
 
 
-async def safe_send(channel, *args, max_retries=3, delay=2, **kwargs):
+#async def safe_send(channel, *args, max_retries=3, delay=2, **kwargs):
+#    for attempt in range(1, max_retries + 1):
+#        try:
+#            return await channel.send(*args, **kwargs)
+#        except discord.HTTPException as e:
+#            print(f"⚠️ Attempt {attempt}: Failed to send message - {e}")
+#            if attempt == max_retries:
+#                print("❌ Max retries reached. Giving up.")
+#                break
+#            await asyncio.sleep(delay)
+#        except discord.Forbidden:
+#            print("❌ Bot does not have permission to send messages to this channel.")
+#            break
+#        except discord.NotFound:
+#            print("❌ Channel not found.")
+#            break
+#        except Exception as e:
+#            print(f"❌ Unexpected error in safe_send: {e}")
+#            break
+
+
+def clean_leading_trailing_junk(text: str) -> str:
+    # This regex trims only leading/trailing \n, \r, space, tab, or \u200b
+    return re.sub(r'^[\s\u200b]+|[\s\u200b]+$', '', text)
+
+async def safe_send(channel, *args, max_retries=3, delay=2, use_embed=True, image_url=None, file=None, **kwargs):
+    if use_embed:
+        # Pull out content or first positional arg
+        content = kwargs.pop("content", None)
+        if not content and args:
+            content = str(args[0])
+            args = ()
+
+        # Use existing embed or create one
+        embed = kwargs.pop("embed", Embed())
+        if not isinstance(embed, Embed):
+            embed = Embed()
+
+        # Set description only if not already set
+        if content and not embed.description:
+            embed.description = clean_leading_trailing_junk(str(content))
+
+        # Handle file-based image attachment
+        if file and isinstance(file, File):
+            if not image_url and hasattr(file, "filename"):
+                image_url = f"attachment://{file.filename}"
+            kwargs["file"] = file
+
+        # Attach image to embed
+        if image_url:
+            embed.set_image(url=image_url)
+
+        # If embed would otherwise be empty, make it valid
+        if not embed.description and not embed.image.url:
+            embed.description = "\u200b"
+
+        # Inject the processed embed
+        kwargs["embed"] = embed
+
     for attempt in range(1, max_retries + 1):
         try:
             return await channel.send(*args, **kwargs)
-        except discord.HTTPException as e:
+        except Exception as e:
             print(f"⚠️ Attempt {attempt}: Failed to send message - {e}")
             if attempt == max_retries:
                 print("❌ Max retries reached. Giving up.")
                 break
             await asyncio.sleep(delay)
-        except discord.Forbidden:
-            print("❌ Bot does not have permission to send messages to this channel.")
-            break
-        except discord.NotFound:
-            print("❌ Channel not found.")
-            break
-        except Exception as e:
-            print(f"❌ Unexpected error in safe_send: {e}")
-            break
-
 
 async def get_survey_results():
     survey_collection = db["survey_questions_discord"]
@@ -10499,24 +10549,18 @@ async def start_trivia():
     global question_asked_start, question_asked_end
     
     try:
-        print("here")
         db =  await connect_to_mongodb()
         await load_parameters()
-        print("now here")
         await load_streak_data()
-        print("now now here")
         await load_previous_question()
-        print("now now now here")
 
         round_winner = None
         selected_questions = await select_trivia_questions(questions_per_round)  #Pick the initial question set
-        print("now now now now here")
         
         while True:  # Endless loop       
             current_time = time.time()
             
             await load_parameters()
-            print("now now now now now here")
             #await get_survey_results()
             scoreboard.clear()
             fastest_answers_count.clear()
