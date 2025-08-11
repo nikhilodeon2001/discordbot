@@ -8812,8 +8812,8 @@ async def ask_question(trivia_category, trivia_question, trivia_url, trivia_answ
             message_body += f"\u200b\n\u200b\n{number_block} **{get_category_title(trivia_category, trivia_url)}**\n\n🚨 **T/F - 1 GUESS** 🚨 {trivia_question}\n\n"
         else:
             message_body += f"\u200b\n\u200b\n{number_block} **{get_category_title(trivia_category, trivia_url)}**\n\n🚨 **Letter - 1 GUESS** 🚨 {trivia_question}\n"
-            await safe_send(channel, message_body)
-            message_body = ""
+            #await safe_send(channel, message_body)
+            message_body += "\n"
             for answer in trivia_answer_list[1:]:
                 message_body += f"{answer}\n"
             message_body += "\n"
