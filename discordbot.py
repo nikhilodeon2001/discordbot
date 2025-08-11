@@ -10860,6 +10860,9 @@ async def on_message(message):
 
 @bot.event
 async def on_message_edit(before, after):
+    if after.author == bot.user:
+        return
+        
     if question_asked_start and question_asked_end:
         edited_time = after.edited_at.timestamp() if after.edited_at else time.time()
         if question_asked_start <= edited_time <= question_asked_end:
