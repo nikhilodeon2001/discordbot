@@ -64,6 +64,46 @@ import aiohttp
 import aiofiles
 from discord import Embed, File
 
+embed_color_default = discord.Color.green()
+embed_color = embed_color_default
+
+def randomize_embed_color():
+    """
+    Changes the global embed_color to a random Discord color different from current one.
+    Returns the new color for confirmation.
+    """
+    global embed_color
+    
+    # All available Discord color methods
+    all_colors = [
+        discord.Color.teal, discord.Color.dark_teal,
+        discord.Color.green, discord.Color.dark_green,
+        discord.Color.blue, discord.Color.dark_blue, discord.Color.blurple,
+        discord.Color.purple, discord.Color.dark_purple, discord.Color.magenta, 
+        discord.Color.dark_magenta, discord.Color.fuchsia,
+        discord.Color.red, discord.Color.dark_red,
+        discord.Color.orange, discord.Color.dark_orange, discord.Color.gold, discord.Color.dark_gold,
+        discord.Color.lighter_grey, discord.Color.light_grey, discord.Color.dark_grey, 
+        discord.Color.darker_grey, discord.Color.greyple,
+        discord.Color.yellow
+    ]
+    
+    # Filter out current color by comparing hex values
+    current_color_value = embed_color.value
+    available_colors = [color for color in all_colors if color().value != current_color_value]
+    
+    # Select random color and update global
+    new_color_method = random.choice(available_colors)
+    embed_color = new_color_method()
+    
+    return embed_color
+
+def reset_embed_color():
+    global embed_color
+
+    embed_color = embed_color_default
+    return embed_color
+
 # Define global variables to store streaks and scores
 round_count = 0
 scoreboard = {}
@@ -91,29 +131,32 @@ submission_queue = []
 max_queue_size = 100  # Number of submissions to accumulate before flushing
 
 # Initialize all variables
-discord_token = os.getenv("discord_token")
-mongo_db_string = os.getenv("mongo_db_string")
-openai_api_key = os.getenv("openai_api_key")
-openweather_api_key = os.getenv("openweather_api_key")
-googlemaps_api_key = os.getenv("googlemaps_api_key")
-googletranslate_api_key = os.getenv("googletranslate_api_key")
-webster_api_key = os.getenv("webster_api_key")
-webster_thes_api_key = os.getenv("webster_thes_api_key")
-channel_id = int(os.getenv("channel_id"))
+local_mode = True
 
-
-# Initialize all variables
-#discord_token = "REMOVED_DISCORD_TOKEN"
-#discord_token = ""
-#mongo_db_string = "mongodb+srv://nsharma2:REMOVED_MONGO_PASSWORD@staging.oxez2.mongodb.net/?retryWrites=true&w=majority&appName=staging"
-#openai_api_key = "REMOVED_OPENAI_KEY_V1"
-#openweather_api_key = "REMOVED_OPENWEATHER_KEY"
-#googlemaps_api_key = "REMOVED_GOOGLEMAPS_KEY"
-#googletranslate_api_key = "REMOVED_GOOGLETRANSLATE_KEY"
-#webster_api_key = "REMOVED_WEBSTER_KEY"
-#webster_thes_api_key = "REMOVED_WEBSTER_THES_KEY"
-#channel_id = 1375328414151610458
-#channel_id = 1402517943979343942
+if local_mode == True:
+    #discord_token = "REMOVED_DISCORD_TOKEN" #Stage
+    discord_token = "" #Prod
+    mongo_db_string = "mongodb+srv://nsharma2:REMOVED_MONGO_PASSWORD@staging.oxez2.mongodb.net/?retryWrites=true&w=majority&appName=staging"
+    openai_api_key = "REMOVED_OPENAI_KEY"
+    openweather_api_key = "REMOVED_OPENWEATHER_KEY"
+    googlemaps_api_key = "REMOVED_GOOGLEMAPS_KEY"
+    googletranslate_api_key = "REMOVED_GOOGLETRANSLATE_KEY"
+    webster_api_key = "REMOVED_WEBSTER_KEY"
+    webster_thes_api_key = "REMOVED_WEBSTER_THES_KEY"
+    #channel_id = 1375328414151610458 #Stage
+    channel_id = 1402517943979343942 #Production  
+    okrag_id = 591861826690613248  
+else:
+    discord_token = os.getenv("discord_token")
+    mongo_db_string = os.getenv("mongo_db_string")
+    openai_api_key = os.getenv("openai_api_key")
+    openweather_api_key = os.getenv("openweather_api_key")
+    googlemaps_api_key = os.getenv("googlemaps_api_key")
+    googletranslate_api_key = os.getenv("googletranslate_api_key")
+    webster_api_key = os.getenv("webster_api_key")
+    webster_thes_api_key = os.getenv("webster_thes_api_key")
+    channel_id = int(os.getenv("channel_id"))
+    okrag_id = 591861826690613248
 
 
 intents = discord.Intents.default()
@@ -121,7 +164,7 @@ intents.messages = True
 intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 openai_client = AsyncOpenAI(api_key=openai_api_key)
-id_limits = {"general": 2000, "mysterybox": 2000, "crossword": 5000, "jeopardy": 5000, "wof": 1500, "list": 20, "feud": 1000, "posters": 2000, "movie_scenes": 5000, "missing_link": 2500, "people": 2500, "ranker_list": 4000, "animal": 2000, "riddle": 2500, "dictionary": 5000, "flags": 800, "lyric": 500, "polyglottery": 80, "book": 80, "element": 100, "jigsaw": 5000, "border": 100, "faceoff": 5000, "president": 80, "wordle": 1400, "myopic": 5000}
+id_limits = {"general": 2000, "mysterybox": 2000, "crossword": 5000, "jeopardy": 5000, "wof": 1500, "list": 20, "feud": 1000, "posters": 2000, "movie_scenes": 5000, "missing_link": 2500, "people": 2500, "ranker_list": 4000, "animal": 2000, "riddle": 2500, "dictionary": 5000, "flags": 800, "lyric": 500, "polyglottery": 80, "book": 80, "element": 100, "jigsaw": 5000, "border": 100, "faceoff": 5000, "president": 80, "wordle": 1400, "myopic": 5000, "fusion": 5000, "microscopic": 5000}
 max_retries = 3
 delay_between_retries = 3
 first_place_bonus = 0
@@ -145,12 +188,26 @@ nice_okra = False
 creep_okra = False
 seductive_okra = False
 joke_okra = False
+haiku_okra = False
+trailer_okra = False
+heist_okra = False
+horoscope_okra = False
+rap_okra = False
+shakespeare_okra = False
+pirate_okra = False
+noir_okra = False
+hype_okra = False
 blind_mode_default = False
 blind_mode = blind_mode_default
 marx_mode_default = False
 marx_mode = marx_mode_default
 image_questions_default = True
 image_questions = image_questions_default
+sniper_mode_default = False
+sniper_mode = sniper_mode_default
+cloak_mode_default = False
+cloak_mode = cloak_mode_default
+cloaked_user = None
 
 OKRAN_GUILD_ID = 1367682586079395902  # Replace with your actual server ID
 channel = None
@@ -214,6 +271,8 @@ def clean_leading_trailing_junk(text: str) -> str:
     # This regex trims only leading/trailing \n, \r, space, tab, or \u200b
     return re.sub(r'^[\s\u200b]+|[\s\u200b]+$', '', text)
 
+
+
 async def safe_send(channel, *args, max_retries=3, delay=2, use_embed=True, image_url=None, file=None, **kwargs):
     if use_embed:
         # Pull out content or first positional arg
@@ -227,7 +286,7 @@ async def safe_send(channel, *args, max_retries=3, delay=2, use_embed=True, imag
         if not isinstance(embed, Embed):
             embed = Embed()
             
-        embed.color = discord.Color.green()  # 💥 Add this line to set the border color
+        embed.color = embed_color
 
         # Set description only if not already set
         if content and not embed.description:
@@ -3182,7 +3241,7 @@ async def ask_animal_challenge(winner, winner_id, num=7):
 
                 if fuzzy_match(content, name, category, detail_url):
                     await message.add_reaction("✅")
-                    await safe_send(channel, f"\u200b\n✅🎉 Correct! **{user}** got it! **{name.upper()}**\n\n<{detail_url}>\n\u200b")
+                    await safe_send(channel, f"\u200b\n✅🎉 Correct! **{user}** got it! **{name.upper()}**\n\n{detail_url}\n\u200b")
                     if user_id not in user_correct_answers:
                             user_correct_answers[user_id] = (user, 0)
                     user_correct_answers[user_id] = (user, user_correct_answers[user_id][1] + 1)
@@ -3191,7 +3250,7 @@ async def ask_animal_challenge(winner, winner_id, num=7):
                 break
 
         if not right_answer:
-            await safe_send(channel, f"\u200b\n❌😢 No one got it.\n\nAnswer: **{name.upper()}**\n\n<{detail_url}>\n\u200b")
+            await safe_send(channel, f"\u200b\n❌😢 No one got it.\n\nAnswer: **{name.upper()}**\n\n{detail_url}\n\u200b")
 
         await asyncio.sleep(1)
                             
@@ -3234,7 +3293,7 @@ async def ask_animal_challenge(winner, winner_id, num=7):
     wf_winner = True
     await asyncio.sleep(2)
         
-    summary = f"\nSee more cute animals at:\n<{animal_main_url}>\n\u200b"
+    summary = f"\nSee more cute animals at:\n{animal_main_url}\n\u200b"
     await safe_send(channel, summary)
 
     await asyncio.sleep(3)
@@ -3496,7 +3555,7 @@ async def ask_flags_challenge(winner, winner_id, num=7):
 
                 if fuzzy_match(content, answer, category, image_url):
                     await message.add_reaction("✅")
-                    await safe_send(channel, f"\u200b\n✅🎉 **{user}** got it! **{answer.upper()}**\n\n🏴‍☠️📖 {detail}\n👀➡️ <{source_url}>\n\u200b")
+                    await safe_send(channel, f"\u200b\n✅🎉 **{user}** got it! **{answer.upper()}**\n\n🏴‍☠️📖 {detail}\n👀➡️ {source_url}\n\u200b")
                     if user_id not in user_correct_answers:
                             user_correct_answers[user_id] = (user, 0)
                     user_correct_answers[user_id] = (user, user_correct_answers[user_id][1] + 1)
@@ -3505,7 +3564,7 @@ async def ask_flags_challenge(winner, winner_id, num=7):
                 break
 
         if not right_answer:
-            await safe_send(channel, f"\u200b\n❌😢 No one got it.\n\nAnswer: **{answer.upper()}**\n\n🏴‍☠️📖 {detail}\n👀➡️ <{source_url}>\n\u200b")
+            await safe_send(channel, f"\u200b\n❌😢 No one got it.\n\nAnswer: **{answer.upper()}**\n\n🏴‍☠️📖 {detail}\n👀➡️ {source_url}\n\u200b")
 
         await asyncio.sleep(1)
                             
@@ -3548,7 +3607,7 @@ async def ask_flags_challenge(winner, winner_id, num=7):
 
     await asyncio.sleep(2)
     
-    summary = f"\n👀➡️ See more flags at:\n<{flag_reference_url}>\n\u200b"
+    summary = f"\n👀➡️ See more flags at:\n{flag_reference_url}\n\u200b"
     
     await safe_send(channel, summary)
     
@@ -3606,7 +3665,10 @@ async def ask_chaos_challenge(winner, winner_id, num_of_games):
         ask_list_question,
         ask_ranker_list_question,
         ask_music_challenge,
-        ask_myopic_challenge
+        ask_myopic_challenge,
+        ask_microscopic_challenge,
+        ask_fusion_challenge,
+        ask_tally_challenge
     ]
 
     num_of_games = min(num_of_games, len(challenge_functions))
@@ -3628,7 +3690,7 @@ async def ask_chaos_challenge(winner, winner_id, num_of_games):
                     member = channel.guild.get_member(result) or await channel.guild.fetch_member(result)
                     display_name = member.display_name
                 except Exception:
-                    display_name = f"<@{result}>"
+                    display_name = f"**{result}**"
 
                 scoreboard[result] = (display_name, 1)
 
@@ -4302,6 +4364,800 @@ async def ask_wordle_challenge(winner, winner_id, num=1):
         return None
         
         
+async def ask_microscopic_challenge(winner, winner_id, num=3):
+    global wf_winner
+    wf_winner = True
+
+    microscopic_gifs = [
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/microscopic1.gif",
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/microscopic2.gif",
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/microscopic3.gif"
+    ]
+
+    microscopic_gif_url = random.choice(microscopic_gifs)
+    await safe_send(channel, content="\u200b\n🔬🔍 **Microscopic Mystery: Identify the magnified images...**\n\u200b", embed=discord.Embed().set_image(url=microscopic_gif_url))
+    await asyncio.sleep(5)
+
+    user_data = {}  # Track scores: {user_id: (display_name, score)}
+
+    if num > 1:
+        message = f"\u200b\n5️⃣🥇 Let's do a best of **{num}**...\n\u200b"
+        await safe_send(channel, message)
+        await asyncio.sleep(3)
+
+    microscopic_num = 1
+    while microscopic_num <= num:
+        try:
+            recent_microscopic_ids = await get_recent_question_ids_from_mongo("microscopic")
+            
+            microscopic_collection = db["jigsaw_questions"]
+            pipeline_microscopic = [
+                {
+                    "$match": {
+                        "_id": {"$nin": list(recent_microscopic_ids)},
+                        "question": "caltech"
+                    }
+                },
+                {"$sample": {"size": 10}},
+                {"$sample": {"size": 1}}
+            ]
+
+            microscopic_questions = list(await microscopic_collection.aggregate(pipeline_microscopic).to_list(length=None))
+            microscopic_question = microscopic_questions[0]
+            microscopic_image_url = microscopic_question["url"]
+            microscopic_answers = microscopic_question["answers"]
+            microscopic_main_answer = microscopic_answers[0]
+            microscopic_category = microscopic_question["category"]
+            microscopic_question_id = microscopic_question["_id"]
+
+            print(f"Answer: {microscopic_answers}")
+
+            if microscopic_question_id:
+                await store_question_ids_in_mongo([microscopic_question_id], "microscopic")
+
+        except Exception as e:
+            sentry_sdk.capture_exception(e)
+            error_details = traceback.format_exc()
+            print(f"Error selecting microscopic questions: {e}\nDetailed traceback:\n{error_details}")
+            return None
+
+        right_answer = False
+        
+        # Zoom levels: 5x, 3.5x, 2x
+        for zoom_level in [5.0, 3.5, 2.0]:
+            if right_answer == True:
+                break
+
+            # Create zoomed image (using blur as approximation for zoom)
+            microscopic_image_blurred = await blur_image(microscopic_image_url, blur_strength=zoom_level)
+
+            message = f"\u200b\n⚠️🚨 **Everyone's in!**\n"
+            message += f"\n🗣💬❓ **Image {microscopic_num}** of {num}: Who or what is THIS?!?\n"
+            message += f"\n🔬🔍 Zoom Level: **{zoom_level}x**\n\u200b"
+
+            await safe_send(channel, message)
+            await asyncio.sleep(2)
+
+            image_file = discord.File(microscopic_image_blurred, filename="microscopic.png")
+            embed = discord.Embed().set_image(url="attachment://microscopic.png")
+            await safe_send(channel, content="", file=image_file, embed=embed)
+
+            start_time = asyncio.get_event_loop().time()
+
+            def check(m):
+                return m.channel == channel and m.author != bot.user
+
+            while asyncio.get_event_loop().time() - start_time < 20 and right_answer == False:
+                try:
+                    msg = await bot.wait_for("message", timeout=1, check=check)
+                    
+                    sender_display_name = msg.author.display_name
+                    sender_user_id = msg.author.id
+                    message_content = msg.content
+
+                    user_guess = normalize_text(message_content).replace(" ", "")
+
+                    for microscopic_answer in microscopic_answers:
+                        normalized_answer = normalize_text(microscopic_answer).replace(" ", "")
+                        if fuzzy_match(user_guess, normalized_answer, microscopic_category, microscopic_image_url):
+                            message = f"\u200b\n✅🎉 Correct! **{sender_display_name}** got it! **{microscopic_answer.upper()}**\n"
+                            all_answers_str = "\n".join(f"**{answer.upper()}**" for answer in microscopic_answers)
+                            #message += f"\n📝🧠 **All Answers:**\n{all_answers_str}\n\u200b"
+                            await safe_send(channel, message)
+                            
+                            # Show original image
+                            embed = discord.Embed().set_image(url=microscopic_image_url)
+                            await safe_send(channel, content="", embed=embed)
+
+                            right_answer = True
+
+                            if sender_user_id not in user_data:
+                                user_data[sender_user_id] = (sender_display_name, 0)
+                            user_data[sender_user_id] = (sender_display_name, user_data[sender_user_id][1] + 1)
+                            break
+
+                    if right_answer == True:
+                        break
+
+                except asyncio.TimeoutError:
+                    continue
+                except Exception as e:
+                    print(f"Error processing events: {e}")
+
+        if right_answer == False:
+            message = f"\u200b\n⏰❌ Time's up! The answer was: **{microscopic_main_answer.upper()}**\n"
+            #all_answers_str = "\n".join(f"**{answer.upper()}**" for answer in microscopic_answers)
+            #message += f"\n📝🧠 **All Answers:**\n{all_answers_str}\n\u200b"
+            await safe_send(channel, message)
+            
+            # Show original image
+            embed = discord.Embed().set_image(url=microscopic_image_url)
+            await safe_send(channel, content="", embed=embed)
+
+        microscopic_num += 1
+        
+        # Show standings after each round (like ask_music_challenge)
+        sorted_users = sorted(user_data.items(), key=lambda x: x[1][1], reverse=True)
+
+        if num == 1:
+            if sorted_users:
+                microscopic_winner_id, (display_name, final_score) = sorted_users[0]
+                return microscopic_winner_id
+            else:
+                return None
+
+        if sorted_users:
+            if microscopic_num > num:
+                message = "\u200b\n🏁🏆 **Final Standings**\n"
+            else:
+                message = "\u200b\n📊🏆 **Current Standings**\n"
+
+            for counter, (_, (display_name, count)) in enumerate(sorted_users, start=1):
+                message += f"{counter}. **{display_name}**: {count}\n"
+
+            if message:
+                await safe_send(channel, message)
+        
+        await asyncio.sleep(2)
+
+    # Final winner announcement
+    if sorted_users:
+        microscopic_winner_id, (display_name, final_score) = sorted_users[0]
+        await safe_send(channel, f"\u200b\n🎉🥇 The winner is **{display_name}**!\n\u200b")
+    else:
+        await safe_send(channel, f"\u200b\n👎😢 **No right answers**. I'm ashamed to call you Okrans.\n\u200b")
+
+    await asyncio.sleep(3)
+    
+    if sorted_users:
+        return microscopic_winner_id
+    else:
+        return None
+
+async def ask_fusion_challenge(winner, winner_id, num=3):
+    global wf_winner
+    wf_winner = True
+
+    fusion_gifs = [
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/fusion1.gif",
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/fusion2.gif",
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/fusion3.gif"
+    ]
+    
+    fusion_gif_url = random.choice(fusion_gifs)
+    await safe_send(channel, content="\u200b\n🧬☢️ **Fusion Challenge: Identify ALL fused images...**\n\u200b", embed=discord.Embed().set_image(url=fusion_gif_url))
+    await asyncio.sleep(5)
+
+    user_correct_answers = {}
+
+    # Ask for number of images to fuse
+    await safe_send(channel, f"\u200b\n🧬🔢 **{winner}**, how many images to fuse together?\n\n👉👉 **2**, **3**, **4**, or **5**\n\u200b")
+    
+    num_images = None
+    try:
+        msg = await bot.wait_for("message", timeout=magic_time + 5, check=lambda m: m.author.id == winner_id and m.author != bot.user and m.channel == channel and m.content in {"2", "3", "4", "5"})
+        num_images = msg.content
+        await msg.add_reaction("✅")
+    except asyncio.TimeoutError:
+        pass
+    
+    # Fallback or confirmation
+    if num_images:
+        message = f"\u200b\n💥🤯 Ok...ra! We're fusing **{num_images}** images together!\n\u200b"
+    else:
+        message = "\u200b\n😬⏱️ Time's up! We'll fuse **3** images together.\n\u200b"
+        num_images = "3"
+
+    await safe_send(channel, message)
+
+    if num > 1:
+        message = f"\u200b\n5️⃣🥇 Let's do a best of **{num}**...\n\u200b"
+        await safe_send(channel, message)
+        await asyncio.sleep(3)
+
+    user_data = {}  # Track cumulative scores: {user_id: (display_name, total_score)}
+    
+    fusion_num = 1
+    while fusion_num <= num:
+        try:
+            recent_fusion_ids = await get_recent_question_ids_from_mongo("fusion")
+
+            fusion_collection = db["jigsaw_questions"]
+            num_images_int = int(num_images)
+            
+            # Get more images to pick N different ones
+            pipeline_fusion = [
+                {
+                    "$match": {
+                        "_id": {"$nin": list(recent_fusion_ids)},
+                        "question": "caltech"
+                    }
+                },
+                {"$sample": {"size": num_images_int * 10}},  # Get plenty to pick N different ones
+                {"$sample": {"size": num_images_int}}    # Pick N images to fuse
+            ]
+
+            fusion_questions = list(await fusion_collection.aggregate(pipeline_fusion).to_list(length=None))
+            
+            # Store all images, answers, categories, etc.
+            fusion_images = []
+            fusion_answers_list = []
+            fusion_categories = []
+            fusion_question_ids = []
+            original_image_urls = []
+            
+            for i, fusion_question in enumerate(fusion_questions):
+                fusion_image_url = fusion_question["url"]
+                fusion_answers = fusion_question["answers"]
+                fusion_category = fusion_question["category"]
+                fusion_question_id = fusion_question["_id"]
+                
+                fusion_images.append(fusion_image_url)
+                fusion_answers_list.append(fusion_answers)
+                fusion_categories.append(fusion_category)
+                fusion_question_ids.append(fusion_question_id)
+                original_image_urls.append(fusion_image_url)
+                
+                print(f"Answer {i+1}: {fusion_answers}")
+
+            if fusion_question_ids:
+                await store_question_ids_in_mongo(fusion_question_ids, "fusion")
+
+        except Exception as e:
+            sentry_sdk.capture_exception(e)
+            error_details = traceback.format_exc()
+            print(f"Error selecting fusion questions: {e}\nDetailed traceback:\n{error_details}")
+            return None
+
+        # Track which images have been found globally and by whom for this round
+        images_found = set()  # Global set of found image indices
+        user_round_scores = {}  # Track scores for current round only: {user_id: (display_name, round_score)}
+        answer_found_by = {}  # {(image_index, answer): user_name}
+        
+        # For Discord, we'll show all images in a blended/composite way
+        # Since we can't easily blend images in Discord, we'll show them as separate challenges
+        for blend_level in [0.9]:  # Only one "blend" level for Discord
+            
+            if len(images_found) >= num_images_int:  # All images found
+                break
+
+            message = f"\u200b\n⚠️🚨 **Everyone's in!**\n"
+            message += f"\n🗣💬❓ **Fusion {fusion_num}** of {num}: First to guess each image gets the point\n"
+            
+            # Show current progress  
+            if user_round_scores:
+                message += f"\n🏃‍♂️ **Round Progress:**\n"
+                for user_id, (display_name, score) in user_round_scores.items():
+                    message += f"**{display_name}**: {score}/{num_images} images\n"
+                message += f"Images found: {len(images_found)}/{num_images}\n"
+            message += "\u200b"
+
+            await safe_send(channel, message)
+            await asyncio.sleep(2)
+
+            # Blend only the unfound images together into one fused image
+            unfound_images = [fusion_images[i] for i in range(len(fusion_images)) if i not in images_found]
+            if unfound_images:
+                fused_image_buffer = await blend_multiple_images(unfound_images, blend_ratio=blend_level)
+                if fused_image_buffer:
+                    remaining_count = len(unfound_images)
+                    image_file = discord.File(fused_image_buffer, filename="fused_images.png")
+                    embed = discord.Embed(title=f"🧬 {remaining_count} Images Fused Together").set_image(url="attachment://fused_images.png")
+                    await safe_send(channel, content="", file=image_file, embed=embed)
+
+            start_time = asyncio.get_event_loop().time()
+
+            def check(m):
+                return m.channel == channel and m.author != bot.user
+
+            while asyncio.get_event_loop().time() - start_time < 30 and len(images_found) < num_images_int:
+                try:
+                    msg = await bot.wait_for("message", timeout=1, check=check)
+                    
+                    sender_display_name = msg.author.display_name
+                    sender_user_id = msg.author.id
+                    message_content = msg.content
+
+                    user_guess = normalize_text(message_content).replace(" ", "")
+
+                    # Check against all unfound images
+                    for i, fusion_answers in enumerate(fusion_answers_list):
+                        if i in images_found:  # Skip already found images
+                            continue
+                            
+                        for fusion_answer in fusion_answers:
+                            normalized_answer = normalize_text(fusion_answer).replace(" ", "")
+                            if fuzzy_match(user_guess, normalized_answer, fusion_categories[i], fusion_images[i]):
+                                
+                                # Mark this image as found
+                                images_found.add(i)
+                                answer_found_by[(i, fusion_answer)] = sender_display_name
+                                
+                                if sender_user_id not in user_round_scores:
+                                    user_round_scores[sender_user_id] = (sender_display_name, 0)
+                                user_round_scores[sender_user_id] = (sender_display_name, user_round_scores[sender_user_id][1] + 1)
+                                
+                                remaining_images = num_images_int - len(images_found)
+                                message = f"\u200b\n✅🎉 Correct! **{sender_display_name}** got **{fusion_answer.upper()}**! "
+                                if remaining_images > 0:
+                                    message += f"({remaining_images} more to find)\n\u200b"
+                                else:
+                                    message += "All images found!\n\u200b"
+                                await safe_send(channel, message)
+                                break
+
+                    if len(images_found) >= num_images_int:
+                        await asyncio.sleep(2)
+                        break
+
+                except asyncio.TimeoutError:
+                    continue
+                except Exception as e:
+                    print(f"Error processing events: {e}")
+
+        # Show all images (found and unfound) at the end
+        for i in range(num_images_int):
+            main_answer = fusion_answers_list[i][0]
+            
+            # Check if this image was found
+            if i in images_found:
+                # Find who found it
+                found_by = "Unknown"
+                for (img_idx, answer), user in answer_found_by.items():
+                    if img_idx == i:
+                        found_by = user
+                        break
+                status_text = f"✅ Found by **{found_by}**"
+            else:
+                status_text = "❌ **Not found**"
+            
+            # Show image with title format "Image n: MAIN_ANSWER"
+            embed = discord.Embed(
+                title=f"Image {i+1}: {main_answer.upper()}", 
+                description=status_text,
+                color=0x00ff00 if i in images_found else 0xff0000
+            ).set_image(url=original_image_urls[i])
+            await safe_send(channel, content="", embed=embed)
+            await asyncio.sleep(2)
+
+        # Add round scores to cumulative scores
+        for user_id, (display_name, round_score) in user_round_scores.items():
+            if user_id not in user_data:
+                user_data[user_id] = (display_name, 0)
+            user_data[user_id] = (display_name, user_data[user_id][1] + round_score)
+
+        fusion_num += 1
+        
+        # Show standings after each round
+        sorted_users = sorted(user_data.items(), key=lambda x: x[1][1], reverse=True)
+        
+        if num == 1:
+            if sorted_users:
+                winner_id, (winner_name, _) = sorted_users[0]
+                return winner_id
+            else:
+                return None
+        
+        message = ""
+        if sorted_users:
+            if fusion_num > num:
+                message += "\u200b\n🏁🏆 **Final Standings**\n"
+            else:
+                message += "\u200b\n📊🏆 **Current Standings**\n"
+
+            for counter, (user_id, (display_name, count)) in enumerate(sorted_users, start=1):
+                message += f"{counter}. **{display_name}**: {count} points\n"
+            message += "\u200b"
+        
+        if message:
+            await safe_send(channel, message)
+        
+        await asyncio.sleep(2)
+
+    # Final winner announcement and return
+    if user_data:
+        sorted_users = sorted(user_data.items(), key=lambda x: x[1][1], reverse=True)
+        winner_id, (winner_name, winner_score) = sorted_users[0]
+        await safe_send(channel, f"\u200b\n🎉🥇 The winner is **{winner_name}** with {winner_score} points!\n\u200b")
+        await asyncio.sleep(3)
+        return winner_id
+    else:
+        await safe_send(channel, f"\u200b\n👎😢 **No right answers**. I'm ashamed to call you Okrans.\n\u200b")
+        await asyncio.sleep(3)
+        return None
+    
+    
+        
+
+async def blend_multiple_images(image_urls, blend_ratio=0.5):
+    """
+    Blends multiple images together with specified ratio for Discord
+    """
+    try:
+        images = []
+        min_width = float('inf')
+        min_height = float('inf')
+        
+        # Download all images and find minimum dimensions
+        for image_url in image_urls:
+            response = requests.get(image_url)
+            if response.status_code != 200:
+                raise Exception(f"Failed to download image from {image_url}")
+            
+            image = Image.open(io.BytesIO(response.content)).convert("RGB")
+            images.append(image)
+            
+            min_width = min(min_width, image.size[0])
+            min_height = min(min_height, image.size[1])
+        
+        # Resize all images to the same size
+        for i in range(len(images)):
+            images[i] = images[i].resize((min_width, min_height), Image.LANCZOS)
+        
+        # Blend all images together
+        if len(images) == 1:
+            blended_image = images[0]
+        else:
+            # Start with first image
+            blended_image = images[0]
+            
+            # Blend each subsequent image
+            for i in range(1, len(images)):
+                # Equal blending: each image gets equal weight
+                alpha = 1.0 / (i + 1)
+                blended_image = Image.blend(blended_image, images[i], alpha)
+        
+        # Resize the final blended image to be larger with fixed width
+        target_width = 800  # Fixed horizontal width for better visibility
+        current_width, current_height = blended_image.size
+        aspect_ratio = current_height / current_width
+        target_height = int(target_width * aspect_ratio)
+        
+        # Resize maintaining aspect ratio
+        blended_image = blended_image.resize((target_width, target_height), Image.LANCZOS)
+        
+        # Save to memory buffer
+        image_buffer = io.BytesIO()
+        blended_image.save(image_buffer, format="PNG")
+        image_buffer.seek(0)
+        
+        return image_buffer
+            
+    except Exception as e:
+        print(f"Error blending multiple images: {e}")
+        return None
+
+async def generate_estimation_puzzle_unique(target_count, target_shape, target_color, available_combinations):
+    """
+    Generate an image with unique shape/color combinations for Discord
+    """
+    try:        
+        # Image dimensions - increased size for better spacing
+        width, height = 1200, 900
+        
+        # Create white background
+        img = Image.new('RGB', (width, height), 'white')
+        draw = ImageDraw.Draw(img)
+        
+        # Generate positions for all objects
+        all_positions = []
+        
+        # Function to check if position overlaps with existing ones
+        def is_valid_position(x, y, min_distance=20):  # Reduced spacing for more density
+            for existing_x, existing_y in all_positions:
+                if abs(x - existing_x) < min_distance and abs(y - existing_y) < min_distance:
+                    return False
+            return True
+        
+        def draw_shape(x, y, shape, color, size):
+            """Draw a shape at given position"""
+            if shape == 'circle':
+                draw.ellipse([x-size, y-size, x+size, y+size], fill=color)
+            elif shape == 'triangle':
+                points = [(x, y-size), (x-size, y+size), (x+size, y+size)]
+                draw.polygon(points, fill=color)
+            elif shape == 'square':
+                draw.rectangle([x-size, y-size, x+size, y+size], fill=color)
+            elif shape == 'x':
+                # Draw X with two lines
+                draw.line([(x-size, y-size), (x+size, y+size)], fill=color, width=3)
+                draw.line([(x-size, y+size), (x+size, y-size)], fill=color, width=3)
+            elif shape == 'diamond':
+                points = [(x, y-size), (x+size, y), (x, y+size), (x-size, y)]
+                draw.polygon(points, fill=color)
+        
+        # Place target shapes
+        target_positions = []
+        attempts = 0
+        while len(target_positions) < target_count and attempts < target_count * 10:
+            x = random.randint(20, width - 20)
+            y = random.randint(20, height - 20)
+            
+            if is_valid_position(x, y):
+                target_positions.append((x, y))
+                all_positions.append((x, y))
+            attempts += 1
+        
+        # Draw target shapes
+        for x, y in target_positions:
+            size = random.randint(8, 15)
+            draw_shape(x, y, target_shape, target_color, size)
+        
+        # Calculate how many of each distractor type to place
+        if available_combinations:
+            # Distribute distractors evenly among available combinations
+            total_distractors = target_count * 2  # Reduced multiplier since we have fewer combinations
+            distractors_per_type = total_distractors // len(available_combinations)
+            
+            # Place each type of distractor
+            for shape, color_name, color_rgb in available_combinations:
+                distractors_placed = 0
+                attempts = 0
+                
+                while distractors_placed < distractors_per_type and attempts < distractors_per_type * 10:
+                    x = random.randint(20, width - 20)
+                    y = random.randint(20, height - 20)
+                    
+                    if is_valid_position(x, y):
+                        size = random.randint(6, 12)
+                        draw_shape(x, y, shape, color_rgb, size)
+                        
+                        all_positions.append((x, y))
+                        distractors_placed += 1
+                    attempts += 1
+        
+        # Save to memory buffer
+        image_buffer = io.BytesIO()
+        img.save(image_buffer, format="PNG")
+        image_buffer.seek(0)
+
+        return image_buffer
+            
+    except Exception as e:
+        print(f"Error generating estimation puzzle: {e}")
+        return None
+
+async def ask_tally_challenge(winner, winner_id, num=3):
+    global wf_winner
+    wf_winner = True
+
+    user_data = {}  # Track scores: {user_id: (display_name, total_distance, participated_rounds)}
+    # participated_rounds is a set of round numbers the user participated in
+    round_actual_counts = {}  # Track actual count for each round: {round_number: actual_count}
+
+    estimation_gifs = [
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/tally1.gif",
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/tally2.gif",
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/tally3.gif",
+    ]
+
+    estimation_gif_url = random.choice(estimation_gifs)
+    await safe_send(channel, content="\u200b\n🔢🎯 **Tally: Estimate the Number!**\n\u200b", embed=discord.Embed().set_image(url=estimation_gif_url))
+    await asyncio.sleep(3)
+
+    if num > 1:
+        message = f"\u200b\n5️⃣🥇 Let's do a best of **{num}**...\n\u200b"
+        await safe_send(channel, message)
+        await asyncio.sleep(3)
+
+    estimation_num = 1
+    while estimation_num <= num:
+
+        # Define available shapes and colors
+        shapes = ['circle', 'triangle', 'square', 'x', 'diamond']
+        colors = [
+            ('red', (255, 0, 0)),
+            ('green', (0, 255, 0)),
+            ('blue', (0, 0, 255)),
+            ('orange', (255, 165, 0)),
+            ('purple', (128, 0, 128)),
+            ('pink', (255, 192, 203))
+        ]
+        
+        # Create all possible combinations
+        all_combinations = []
+        for shape in shapes:
+            for color_name, color_rgb in colors:
+                all_combinations.append((shape, color_name, color_rgb))
+        
+        # Randomly select target combination
+        target_combination = random.choice(all_combinations)
+        target_shape, target_color_name, target_color_rgb = target_combination
+        
+        # Remove target combination and any that share shape or color
+        available_combinations = []
+        for shape, color_name, color_rgb in all_combinations:
+            if shape != target_shape and color_name != target_color_name:
+                available_combinations.append((shape, color_name, color_rgb))
+        
+        # Generate random number of target objects between 50-300
+        actual_count = random.randint(50, 300)
+        estimation_buffer = await generate_estimation_puzzle_unique(
+            actual_count, target_shape, target_color_rgb, available_combinations
+        )
+        
+        print(f"Target: {target_color_name} {target_shape}s, Actual Count: {actual_count}")
+        
+        user_guesses = {}  # Track each user's first guess {user_name: guess_number}
+        exact_winner = None  # Track if someone got it exactly right
+            
+        message = f"\u200b\n⚠️🚨 **Everyone's in!**\n"
+        message += f"\n🔢🎯 **Round {estimation_num}** of {num}: Estimate the **{target_color_name.upper()} {target_shape.upper()}S** only!\n\u200b"
+        await safe_send(channel, message)
+        await asyncio.sleep(2)
+        
+        message = f"\u200b\n⚠️ **One guess per player** - 1st numeric guess counts!\n\u200b"
+        await safe_send(channel, message)
+        await asyncio.sleep(2)
+        
+        if estimation_buffer:
+            image_file = discord.File(estimation_buffer, filename="estimation.png")
+            embed = discord.Embed().set_image(url="attachment://estimation.png")
+            await safe_send(channel, content="", file=image_file, embed=embed)
+        await asyncio.sleep(2)
+
+        start_time = asyncio.get_event_loop().time()
+
+        def check(m):
+            return m.channel == channel and m.author != bot.user
+
+        while asyncio.get_event_loop().time() - start_time < 30:
+            try:
+                msg = await bot.wait_for("message", timeout=1, check=check)
+                
+                sender_display_name = msg.author.display_name
+                sender_user_id = msg.author.id
+                message_content = msg.content
+                
+                # Skip if user already made a guess
+                if sender_user_id in user_guesses:
+                    continue
+                
+                # Extract first number from message
+                numbers = re.findall(r'\d+', message_content)
+                if numbers:
+                    user_guess = int(numbers[0])
+                    user_guesses[sender_user_id] = (sender_display_name, user_guess)
+                    
+                    # Check for exact match
+                    if user_guess == actual_count:
+                        exact_winner = sender_display_name
+
+
+            except asyncio.TimeoutError:
+                continue
+            except Exception as e:
+                print(f"Error processing events: {e}")
+
+        # Process all guesses normally (exact matches will naturally get 0 distance)
+        if user_guesses:
+            # Calculate distances from actual count
+            user_distances = {}
+            for user_id, (display_name, guess) in user_guesses.items():
+                distance = abs(guess - actual_count)
+                user_distances[user_id] = (display_name, distance)
+            
+            # Add distance to each user's cumulative score and mark round as participated
+            for user_id, (display_name, distance) in user_distances.items():
+                if user_id not in user_data:
+                    user_data[user_id] = (display_name, 0, set())
+                    # Add penalty for all previous rounds this user missed using historic actual counts
+                    penalty_for_previous = 0
+                    for round_num in range(1, estimation_num):
+                        if round_num in round_actual_counts:
+                            penalty_for_previous += round_actual_counts[round_num]
+                    if penalty_for_previous > 0:
+                        user_data[user_id] = (display_name, penalty_for_previous, set())
+                
+                curr_name, curr_distance, participated_rounds = user_data[user_id]
+                participated_rounds.add(estimation_num)
+                user_data[user_id] = (curr_name, curr_distance + distance, participated_rounds)
+            
+            # Sort by distance (closest first) for display
+            sorted_results = sorted(user_distances.items(), key=lambda x: x[1][1])
+            
+            # Show exact winner announcement if there was one
+            if exact_winner:
+                exact_message = f"\u200b\n🎯💥 BULLSEYE! **{exact_winner}** got it EXACTLY right!\n\u200b"
+                #exact_message += f"\n🏆 **{actual_count}** {target_color_name} {target_shape}s - PERFECT!\n\u200b"
+                await safe_send(channel, exact_message)
+            
+            # Show results
+            message = f"\u200b\n🎯 Actual count: **{actual_count}** {target_color_name} {target_shape}s\n"
+            message += f"\n🏆 **Top 3 Closest Guesses:**\n"
+            
+            for i, (user_id, (display_name, distance)) in enumerate(sorted_results[:3]):
+                _, guess = user_guesses[user_id]
+                if i == 0:
+                    message += f"🥇 **{display_name}**: {guess} (off by {distance}) - **CLOSEST!**\n"
+                elif i == 1:
+                    message += f"🥈 **{display_name}**: {guess} (off by {distance})\n"
+                elif i == 2:
+                    message += f"🥉 **{display_name}**: {guess} (off by {distance})\n"
+            message += "\u200b"
+            
+            await safe_send(channel, message)
+            await asyncio.sleep(2)
+        else:
+            message = f"\u200b\n❌😢 **No guesses received!**\n\nActual count: **{actual_count}** {target_color_name} {target_shape}s\n\u200b"
+            await safe_send(channel, message)
+    
+        await asyncio.sleep(2)
+        
+        # Store the actual count for this round
+        current_round = estimation_num
+        round_actual_counts[current_round] = actual_count
+        
+        estimation_num += 1
+        
+        # Add actual_count penalty for users who didn't participate in this round
+        for user_id, (display_name, total_distance, participated_rounds) in list(user_data.items()):
+            # If user didn't participate in the current round, add penalty
+            if current_round not in participated_rounds:
+                user_data[user_id] = (display_name, total_distance + actual_count, participated_rounds)
+                        
+        # Sort by lowest cumulative distance (ascending order - lower is better)
+        message = ""
+        sorted_users = sorted(user_data.items(), key=lambda x: x[1][1], reverse=False)
+
+        if num == 1:
+            if sorted_users:
+                tally_winner_id, (display_name, total_distance, participated_rounds) = sorted_users[0]
+                return tally_winner_id
+            else:
+                return None
+            
+        if sorted_users:
+            if estimation_num > num:
+                message += "\u200b\n🏁🏆 **Final Standings (Distance)**\n"
+            else:   
+                message += "\u200b\n📊🏆 **Current Standings (Distance)**\n"
+
+            for counter, (user_id, (display_name, total_distance, participated_rounds)) in enumerate(sorted_users, start=1):
+                rounds_count = len(participated_rounds)
+                message += f"{counter}. **{display_name}**: {total_distance}\n"
+            message += "\u200b"
+            
+            await safe_send(channel, message)
+            await asyncio.sleep(2)
+        
+    await asyncio.sleep(2)
+    
+    if sorted_users:
+        tally_winner_id, (winner_name, total_distance, participated_rounds) = sorted_users[0]
+        rounds_count = len(participated_rounds)
+        message = f"\u200b\n🎉🥇 The winner is **{winner_name}** with a total distance of **{total_distance}**!\n\u200b"
+    else:
+        message = f"\u200b\n👎😢 **No guesses made**. I'm ashamed to call you Okrans.\n\u200b"
+    await safe_send(channel, message)
+    
+    await asyncio.sleep(3)
+    
+    if sorted_users:
+        return tally_winner_id
+    else:
+        return None
+
 async def ask_myopic_challenge(winner, winner_id, num=3):
     global wf_winner
     wf_winner = True
@@ -4810,7 +5666,7 @@ async def ask_feud_question(winner, mode, winner_id):
     print(feud_gif_url)
     
     if mode == "solo":
-        message = f"\u200b\n\u200b\n ⚔️🧍 FeUd\n\u200b"
+        message = f"\u200b\n\u200b\n ⚔️🧍 FeUd (Single Player)\n\u200b"
     elif mode == "cooperative":
         message = f"\u200b\n\u200b\n ⚔️⚡ FeUd Blitz\n\u200b"
 
@@ -4847,6 +5703,9 @@ async def ask_feud_question(winner, mode, winner_id):
 
     win_image_url = "https://triviabotwebsite.s3.us-east-2.amazonaws.com/harvey/harvey+win.gif"
     loss_image_url = "https://triviabotwebsite.s3.us-east-2.amazonaws.com/harvey/harvey+loss.gif"
+    x1_image_url = "https://triviabotwebsite.s3.us-east-2.amazonaws.com/harvey/1x.png"
+    x2_image_url = "https://triviabotwebsite.s3.us-east-2.amazonaws.com/harvey/2x.png"
+    x3_image_url = "https://triviabotwebsite.s3.us-east-2.amazonaws.com/harvey/3x.png"
     
     print(feud_question)
 
@@ -4861,7 +5720,7 @@ async def ask_feud_question(winner, mode, winner_id):
     answered_correctly = False
 
     while xs < max_xs and not answered_correctly:
-        feud_image_buffer = create_family_feud_board_image(feud_answers, user_progress)
+        feud_image_buffer = create_family_feud_board_image(feud_answers, user_progress, xs)
         image_file = discord.File(fp=feud_image_buffer, filename="image.png")
         board_embed = discord.Embed(title=f"🟦 **Okra Says!** Top {num_answers} answers on the board\n\u200b")
         board_embed.description = f"We asked 100 Okrans..."
@@ -4935,9 +5794,14 @@ async def ask_feud_question(winner, mode, winner_id):
 
         xs += 1
         
-        if answered_correctly == False and xs < 3:    
-            message = f"\u200b\n🎤📊 Okra says...\n\u200b"
-            await safe_send(channel, message)
+        if answered_correctly == False and xs < 3:
+            # Display the X image based on number of strikes
+            if xs == 1:
+                x_image_url = x1_image_url
+            elif xs == 2:
+                x_image_url = x2_image_url
+            
+            await safe_send(channel, content="\u200b\n🎤📊 **Survey says...**\n\u200b", embed=discord.Embed().set_image(url=x_image_url))
             await asyncio.sleep(2)
             message = f"{correct_guesses} out of {num_answers}\n"
             if user_correct_answers and mode == "cooperative":
@@ -4972,6 +5836,12 @@ async def ask_feud_question(winner, mode, winner_id):
             result_message = f"\n🎉✅ Congrats {winner}! You got all **{num_answers}** right!\n"
 
     await asyncio.sleep(2)
+    
+    # Show final X image if they failed after 3 strikes
+    if answered_correctly == False:
+        await safe_send(channel, embed=discord.Embed().set_image(url=x3_image_url))
+        await asyncio.sleep(2)
+    
     final_feud_image_buffer = create_family_feud_board_image(feud_answers, user_progress, 0)
     image_file = discord.File(fp=final_feud_image_buffer, filename="image.png")
     board_embed = discord.Embed(title=f"🟦 **OKRA SAYS FINAL** Top {num_answers} answers on the board\n\u200b")
@@ -5453,13 +6323,13 @@ async def ask_list_question(winner, winner_id, num=7):
                         scores = sorted(user_progress.items(), key=lambda x: len(x[1][1]), reverse=True)
 
                         if len(scores) > 0:
-                            msg = f"\u200b\n🏆🎉 @{scores[0][1][0]} got all {num_answers}!"
+                            msg = f"\u200b\n🏆🎉 **{scores[0][1][0]}** got all {num_answers}!"
 
                         if len(scores) > 1:
-                            msg += f"\n2nd place: @{scores[1][1][0]} with {len(scores[1][1][1])}/{num_answers}"
+                            msg += f"\n2nd place: **{scores[1][1][0]}** with {len(scores[1][1][1])}/{num_answers}"
 
                         if len(scores) > 2:
-                            msg += f"\n3rd place: @{scores[2][1][0]} with {len(scores[2][1][1])}/{num_answers}\n\u200b\n\u200b"
+                            msg += f"\n3rd place: **{scores[2][1][0]}** with {len(scores[2][1][1])}/{num_answers}\n\u200b\n\u200b"
 
                         await safe_send(channel, msg)
 
@@ -5770,26 +6640,32 @@ async def get_random_city(winner):
         f"Weather Conditions: {conditions}\n"
         f"Local Date and Time: {time_str}\n"
     )
+    
+    if ai_on:
+        try:
+            result = await openai_client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {
+                        "role": "system",
+                        "content": f"You are OkraStrut fleeing from {winner} like Carmen Sandiego. Use these facts:"
+                    },
+                    {"role": "user", "content": summary}
+                ],
+                max_tokens=500,
+                temperature=0.3
+            )
+            clue = result.choices[0].message.content.strip()
+        except Exception as e:
+            print("GPT failed:", e)
+            clue = "I'm somewhere mysterious."
+        
+        themed_url = await generate_themed_country_image(country_name, city_name)
+    else:
+        clue = "I'm somewhere mysterious."
+        themed_url = None
 
-    try:
-        result = await openai_client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
-                {
-                    "role": "system",
-                    "content": f"You are OkraStrut fleeing from @{winner} like Carmen Sandiego. Use these facts:"
-                },
-                {"role": "user", "content": summary}
-            ],
-            max_tokens=500,
-            temperature=0.3
-        )
-        clue = result.choices[0].message.content.strip()
-    except Exception as e:
-        print("GPT failed:", e)
-        clue = "I'm somewhere mysterious. Figure it out from that."
-
-    themed_url = await generate_themed_country_image(country_name, city_name)
+    
     return city_name, country_name, "World Cities", clue, street_url, sat_url, live_url, themed_url
 
 
@@ -5869,7 +6745,12 @@ async def get_wikipedia_article(max_words=3, max_length=16):
                             continue
 
                         redacted_text = redact_intro_text(title, intro_text)
-                        category = await categorize_text(intro_text, title)
+
+                        if ai_on: 
+                            category = await categorize_text(intro_text, title)
+                        else:
+                            category = "Word"
+
                         wiki_url = f"https://en.wikipedia.org/wiki/{quote(title)}"
 
                         await asyncio.sleep(0.5)
@@ -6180,6 +7061,7 @@ async def load_parameters():
     global delay_between_retries
     global question_time
     global questions_per_round
+    global ai_on
 
     # Default values
     default_values = {
@@ -6195,6 +7077,7 @@ async def load_parameters():
         "num_math_questions_default": 1,
         "num_stats_questions_default": 0,
         "skip_summary": False,
+        "ai_on": False,
         "discount_step_amount": 20,
         "discount_streak_amount": 5,
         "time_between_questions_default": 5,
@@ -6231,6 +7114,7 @@ async def load_parameters():
             num_math_questions_default = parameters["num_math_questions_default"]
             num_stats_questions_default = parameters["num_stats_questions_default"]
             skip_summary = parameters["skip_summary"]
+            ai_on = parameters["ai_on"]
             discount_step_amount = parameters["discount_step_amount"]
             discount_streak_amount = parameters["discount_streak_amount"]
             time_between_questions_default = parameters["time_between_questions_default"]
@@ -6271,6 +7155,7 @@ async def load_parameters():
                 num_math_questions_default = default_values["num_math_questions_default"]
                 num_stats_questions_default = default_values["num_stats_questions_default"]
                 skip_summary = default_values["skip_summary"]
+                ai_on = default_values["ai_on"]
                 discount_step_amount = default_values["discount_step_amount"]
                 discount_streak_amount = default_values["discount_streak_amount"]
                 time_between_questions_default = default_values["time_between_questions_default"]
@@ -6291,17 +7176,41 @@ async def load_parameters():
 
 async def nice_creep_okra_option(winner, winner_id):
     global nice_okra, creep_okra, wf_winner, seductive_okra, joke_okra
+    
+    # Reset all mode flags
     nice_okra = False
     creep_okra = False
     wf_winner = False
     seductive_okra = False
     joke_okra = False
     
-    message = f"\u200b\n🥒🤝 Thank you **{winner}** for your support.\n\u200b\n\u200b" 
+    # Initialize all the new message type flags
+    global haiku_okra, trailer_okra, heist_okra, horoscope_okra, rap_okra, shakespeare_okra, pirate_okra, noir_okra, hype_okra
+    haiku_okra = False
+    trailer_okra = False
+    heist_okra = False
+    horoscope_okra = False
+    rap_okra = False
+    shakespeare_okra = False
+    pirate_okra = False
+    noir_okra = False
+    hype_okra = False
+    
+    message = f"\u200b\n🥒🤝 Thank you **{winner}** for your support.\n\u200b\n" 
     message += f"🥒😊 Say **okra** and I'll be nice.\n"
+    message += f"👀🔭 Say **creep** and I'll snoop your Reddit profile.\n"
     message += f"💋👠 Say **love me** and I'll seduce you.\n"
     message += f"🤡🤣 Say **joke** and I'll write you a dad joke.\n"
-    message += f"🔥🍗 Say **nothing** and I'll roast you.\n\u200b\n\u200b"
+    message += f"🧘‍♂️🗻 Say **haiku** for a 5‑7‑5 tribute.\n"
+    message += f"🎬📽️ Say **trailer** for a movie trailer voiceover.\n"
+    message += f"🧤🕶️ Say **heist** for a suave caper recap.\n"    
+    message += f"🔮✨ Say **horoscope** for your trivia future.\n"
+    message += f"🎤🎶 Say **rap** for two quick bars.\n"
+    message += f"📜🪶 Say **shakespeare** for bardic praise.\n"
+    message += f"🏴‍☠️⚓ Say **pirate** for a captain's salute.\n"
+    message += f"🕵️‍♂️🌧️ Say **noir** for a hardboiled line.\n"
+    message += f"📣🔥 Say **hype** for a stadium-sized celebration.\n"
+    message += f"🔥🍗 Say **nothing** and I'll roast you.\n\u200b"
     await safe_send(channel, message)
 
     def check(m):
@@ -6321,12 +7230,42 @@ async def nice_creep_okra_option(winner, winner_id):
             await response.add_reaction("🥒")
             nice_okra = True
             wf_winner = True
+        elif "creep" in content:
+            await response.add_reaction("👀")
+            creep_okra = True
         elif "love me" in content:
             await response.add_reaction("💋")
             seductive_okra = True 
         elif "joke" in content:
             await response.add_reaction("🤣")
             joke_okra = True
+        elif "haiku" in content:
+            await response.add_reaction("🧘‍♂️")
+            haiku_okra = True
+        elif "trailer" in content:
+            await response.add_reaction("🎬")
+            trailer_okra = True
+        elif "heist" in content:
+            await response.add_reaction("🧤")
+            heist_okra = True
+        elif "horoscope" in content:
+            await response.add_reaction("🔮")
+            horoscope_okra = True
+        elif "rap" in content:
+            await response.add_reaction("🎤")
+            rap_okra = True
+        elif "shakespeare" in content:
+            await response.add_reaction("📜")
+            shakespeare_okra = True
+        elif "pirate" in content:
+            await response.add_reaction("🏴‍☠️")
+            pirate_okra = True
+        elif "noir" in content:
+            await response.add_reaction("🕵️‍♂️")
+            noir_okra = True
+        elif "hype" in content:
+            await response.add_reaction("📣")
+            hype_okra = True
         elif "nothing" in content:
             await response.add_reaction("🕳️")
 
@@ -6504,7 +7443,7 @@ async def ask_category(winner, categories, winner_coffees, winner_id):
     additional_prompt = ""
 
     # Display categories
-    category_message = f"\u200b\n🎨🖍️ <@{winner_id}> Pick a theme for the Okra Museum! Some for **Okrans Only** 🥒.\n\n"
+    category_message = f"\u200b\n🎨🖍️ **{winner_id}** Pick a theme for the Okra Museum!\n\u200b"
     for key, value in categories.items():
         category_message += f"**{key}**: {value}\n"
     await safe_send(channel, category_message)
@@ -6555,7 +7494,7 @@ async def request_prompt(winner, winner_id):
     collected_words = []
     start_time = asyncio.get_event_loop().time()
    
-    message = f"\u200b\n🖼️🔟 <@{winner_id}>, Fill in the blank. *10 words max* and **be good**.\n\u200b"
+    message = f"\u200b\n🖼️🔟 **{winner_id}**, Fill in the blank. *10 words max* and **be good**.\n\u200b"
     message += f"\n*Draw an okra themed picture of **{winner}**...*\n\u200b"
     await safe_send(channel, message)
 
@@ -6740,7 +7679,7 @@ async def select_wof_questions(winner, winner_id):
 
         wof_questions = await wof_collection.aggregate(pipeline_wof).to_list(length=5)
 
-        message = f"\u200b\n\u200b\n🍷⚔️ <@{winner_id}>, your mini-game awaits (#)...\n\n"
+        message = f"\u200b\n\u200b\n🍷⚔️ **{winner}**, your mini-game awaits (#)...\n\n"
         message += f"🥒: For **Okrans Only!**\n"
         message += f"✨: **Everyone Plays** ({num_list_players}+ players needed)\n\u200b\n\u200b"
         await safe_send(channel, message)
@@ -6761,7 +7700,7 @@ async def select_wof_questions(winner, winner_id):
         counter = counter + 1
         message += f"{counter}.\u200b 🌍❔ Where's Okra? 🥒\n"
         counter = counter + 1
-        message += f"{counter}.\u200b ⚔️🧍 FeUd 🥒\n"
+        message += f"{counter}.\u200b ⚔️🧍 FeUd (Single Player) 🥒\n"
         counter = counter + 1
         message += f"{counter}.\u200b ⚔️⚡ FeUd Blitz 🥒✨\n"
         counter = counter + 1
@@ -6810,12 +7749,20 @@ async def select_wof_questions(winner, winner_id):
         message += f"{counter}.\u200b 🎼🎵 MusIQ ☕✨\n"
         counter = counter + 1
         message += f"{counter}.\u200b 👓🕵️‍♂️ Myopic Mystery ☕✨\n"
+        counter = counter + 1
+        message += f"{counter}.\u200b 🔬🔍 Microscopic ☕✨\n"
+        counter = counter + 1
+        message += f"{counter}.\u200b 🧬☢️ Fusion ☕✨\n"
+        counter = counter + 1
+        message += f"{counter}.\u200b 🔢🎯 Tally ☕✨\n"
         message += f"99.\u200b 🌀🤯 CHAOS ☕✨\n"
-        message += f"\n00.\u200b 🥗🌟 Okra's Choice\n"
-        message += f"\nX.\u200b ⏭️🕹️ Skip Mini-Game\n"
+        message += f"00.\u200b 🥗🌟 Okra's Choice\n"
+        message += f"x.\u200b ⏭️🕹️ Skip Mini-Game\n\u200b"
         await safe_send(channel, message) 
                 
         selected_wof_category = await ask_wof_number(winner, winner_id)
+
+        randomize_embed_color()
 
         if selected_wof_category == "x":
             gif_set = [
@@ -6974,6 +7921,21 @@ async def select_wof_questions(winner, winner_id):
             await asyncio.sleep(3)
             return None
 
+        elif selected_wof_category == "34":
+            await ask_microscopic_challenge(winner, winner_id)
+            await asyncio.sleep(3)
+            return None
+
+        elif selected_wof_category == "35":
+            await ask_fusion_challenge(winner, winner_id)
+            await asyncio.sleep(3)
+            return None
+
+        elif selected_wof_category == "36":
+            await ask_tally_challenge(winner, winner_id)
+            await asyncio.sleep(3)
+            return None
+
         elif selected_wof_category == "99":
             await ask_chaos_challenge(winner, winner_id, 5)
             await asyncio.sleep(3)
@@ -7016,8 +7978,11 @@ async def select_wof_questions(winner, winner_id):
 
         elif selected_wof_category == "8":
             wof_answer, country_name, wof_clue, location_clue, street_view_url, satellite_view_url, satellite_view_live_url, themed_country_url = await get_random_city(winner)
-            location_clue = f"\n🌦️📊 We intercepted this message...\n\n{location_clue}\n"
-            await safe_send(channel, location_clue)
+
+            if ai_on:
+                location_clue = f"\n🌦️📊 We intercepted this message...\n\n{location_clue}\n"
+                await safe_send(channel, location_clue)
+
             fixed_letters = []
             await asyncio.sleep(3)
 
@@ -7028,8 +7993,9 @@ async def select_wof_questions(winner, winner_id):
             await safe_send(channel, content="\n🛰️🌍 Our spies tracked him to this area...\n", embed=discord.Embed().set_image(url=satellite_view_url))                
             await asyncio.sleep(2)
 
-            await safe_send(channel, content="\n📸🥒 We found this on OkraStrut's Insta...\n", embed=discord.Embed().set_image(url=themed_country_url))                                
-            await asyncio.sleep(2)
+            if ai_on:
+                await safe_send(channel, content="\n📸🥒 We found this on OkraStrut's Insta...\n", embed=discord.Embed().set_image(url=themed_country_url))                                
+                await asyncio.sleep(2)
 
         image_file, image_width, image_height, display_string = generate_wof_image(wof_answer, wof_clue, fixed_letters)
         print(f"{wof_clue}: {wof_answer}")
@@ -7097,7 +8063,7 @@ async def process_wof_guesses(winner, answer, extra_time, winner_id):
     global wf_winner
 
     answer = answer.upper() 
-    await safe_send(channel, f"\u200b\n\u200b\n<@{winner_id}> ❓**Your Answer**❓\n\u200b")
+    await safe_send(channel, f"\u200b\n\u200b\n**{winner}** ❓**Your Answer**❓\n\u200b")
 
     def check(m):
         return m.channel == channel and m.author != bot.user and m.author.id == winner_id
@@ -7138,7 +8104,7 @@ async def ask_wof_letters(winner, answer, extra_time, winner_id):
 
     answer = answer.upper()
     start_time = time.time()
-    await safe_send(channel, f"\u200b\n<@{winner_id}>:❓**Pick {num_wf_letters} Letters**❓\n" +
+    await safe_send(channel, f"\u200b\n**{winner}**:❓**Pick {num_wf_letters} Letters**❓\n" +
                        (f"\n🥒 I'll give you O K R A 🥒\n\u200b" if fixed_letters else ""))    
     
     wf_letters = []
@@ -7198,7 +8164,7 @@ async def ask_wof_number(winner, winner_id):
         "6": "Dictionary Roulette",
         "7": "Thesaurus Roulette",
         "8": "Where's Okra?",
-        "9": "FeUd",
+        "9": "FeUd (Single Player)",
         "10": "FeUd Blitz",
         "11": "List Battle",
         "12": "Poster Blitz",
@@ -7223,10 +8189,13 @@ async def ask_wof_number(winner, winner_id):
         "31": "Wordle War",
         "32": "MusIQ",
         "33": "Myopic Mystery",
+        "34": "Microscopic",
+        "35": "Fusion",
+        "36": "Tally",
         "99": "CHAOS"
     }
     multiplayer_required = {k for k in unlocks if k not in {"5", "6", "7", "8", "9"}}
-    all_options = {str(i) for i in range(34)} | {"00", "x", "99"}
+    all_options = {str(i) for i in range(37)} | {"00", "x", "99"}
 
     start = asyncio.get_event_loop().time()
     selected_question = None
@@ -7245,7 +8214,7 @@ async def ask_wof_number(winner, winner_id):
                 set_a = [str(i) for i in range(5)]
                 set_b = [str(i) for i in range(5, 34)] if len(round_responders) >= num_list_players else [str(i) for i in range(5, 10)]
                 selected_question = random.choice(set_a if random.random() < 0.5 else set_b)
-                await safe_send(channel, f"\n🎁 **<@{winner_id}>**, let's do {selected_question}.\n")
+                await safe_send(channel, f"\n🎁 **{winner}**, let's do {selected_question}.\n")
                 return selected_question
 
             if content not in all_options:
@@ -7835,7 +8804,7 @@ def generate_crossword_image(answer, prefill=0.5):
 
 
 async def process_round_options(round_winner, winner_points, round_winner_id):
-    global since_token, time_between_questions, time_between_questions_default, ghost_mode, since_token, categories_to_exclude, num_crossword_clues, num_jeopardy_clues, num_mysterybox_clues, num_wof_clues, god_mode, yolo_mode, magic_number, wf_winner, num_math_questions, num_stats_questions, image_questions, nice_okra, creep_okra, marx_mode, blind_mode, seductive_okra, joke_okra
+    global since_token, time_between_questions, time_between_questions_default, ghost_mode, since_token, categories_to_exclude, num_crossword_clues, num_jeopardy_clues, num_mysterybox_clues, num_wof_clues, god_mode, yolo_mode, magic_number, wf_winner, num_math_questions, num_stats_questions, image_questions, nice_okra, creep_okra, marx_mode, blind_mode, seductive_okra, joke_okra, sniper_mode, cloak_mode, haiku_okra, trailer_okra, heist_okra, horoscope_okra, rap_okra, shakespeare_okra, pirate_okra, noir_okra, hype_okra
     time_between_questions = time_between_questions_default
     ghost_mode = ghost_mode_default
     categories_to_exclude.clear()
@@ -7851,47 +8820,66 @@ async def process_round_options(round_winner, winner_points, round_winner_id):
     creep_okra = False
     seductive_okra = False
     joke_okra = False
+    haiku_okra = False
+    trailer_okra = False
+    heist_okra = False
+    horoscope_okra = False
+    rap_okra = False
+    shakespeare_okra = False
+    pirate_okra = False
+    noir_okra = False
+    hype_okra = False
     num_math_questions = num_math_questions_default
     num_stats_questions = num_stats_questions_default
     image_questions = image_questions_default
     marx_mode = marx_mode_default
     blind_mode = blind_mode_default
+    sniper_mode = sniper_mode_default
+    cloak_mode = cloak_mode_default
 
     if round_winner is None:
         return
 
     winner_coffees = await get_coffees(round_winner_id)
-    
-    message = f"\u200b\n🍔🍟 **<@{round_winner_id}>**, what's your order?\n" 
-    message += "\n🥒 For **Okrans** Only!"
-    message += f"\n✨: **Okrans** can toggle mid-round"
-    message += f"\n**#[command]** during response time to toggle mid-game\n\n"
 
+    if winner_coffees > 0:
+        message = f"\u200b\n🍔🍟 **{round_winner}**, what's your order?\n" 
+    else: 
+        message += "\u200b\n🥒 **{round_winner}**, join the **Okrans** and choose from the following!"
+    
     message += (
-        "⏱️⏳ **<3 - 15>** Time (s) between questions.\n"
-        "🔥🤘 **Yolo** No scores shown until the end.\n"
-        "🙈🚫 **Blind** No question answers shown.\n"
-        "🚩🔨 **Marx** No recognizing right answers.\n"
-        "📷❌ **Blank** No image questions.\n"
-        "👻🎃 **Ghost** Responses will vanish.\n"
-        "🇺🇸🗽 **Freedom** No multiple choice. 🥒\n"
-        "🔢❌ **Greg** No math questions. 🥒\n"
-        "🟦❌ **Xela** No Jeopardy-style questions. 🥒\n"
-        "📰❌ **Cross** No Crossword clues. 🥒\n"
-        "🟦✋ **Alex** 5 Jeopardy-style questions. 🥒\n"
-        "📰✋ **Word** 5 Crossword clues. 🥒\n"
-        "🎖🥒 **Dicktator** Choose the categories. 🥒\n\u200b"
+        "\u200b\n**Gameplay Options**\n\n"
+        "⏱️⏳ **<3 - 15>** Time (s) between questions. ✨\n"
+        "🔥🤘 **Yolo** No scores shown until the end. ✨\n"
+        "🙈🚫 **Blind** No question answers shown. ✨\n"
+        "🚩🔨 **Marx** No recognizing right answers. ✨\n"
+        "📷❌ **Blank** No image questions. ✨\n"
+        "👻🎃 **Ghost** Responses will vanish.✨\n"
+        "🧢🎤 **Sniper**: Only first answers accepted ✨\n"
+        "🫥🕶️ **Cloak**: Only your answers vanish ✨\n"  
+   
+        "\n✨: Toggle mid-round with **#[command]**\n\n"
+
+        "\n**Question Options**\n\n"
+        "🇺🇸🗽 **Freedom** No multiple choice.\n"
+        "🔢❌ **Greg** No math questions.\n"
+        "🟦❌ **Xela** No Jeopardy-style questions.\n"
+        "📰❌ **Cross** No Crossword clues.\n"
+        "🟦✋ **Alex** 5 Jeopardy-style questions.\n"
+        "📰✋ **Word** 5 Crossword clues.\n"
+        "🎖🥒 **Dicktator** Choose the categories.\n"
     )
 
     await safe_send(channel, message)
-    await prompt_user_for_response(round_winner, winner_points, winner_coffees, round_winner_id)
+    if winner_coffees > 0:
+        await prompt_user_for_response(round_winner, winner_points, winner_coffees, round_winner_id)
 
 
 async def prompt_user_for_response(round_winner, winner_points, winner_coffees, round_winner_id):
     global since_token, time_between_questions, ghost_mode
     global num_jeopardy_clues, num_crossword_clues, num_mysterybox_clues, num_wof_clues
     global yolo_mode, god_mode, num_math_questions, num_stats_questions
-    global image_questions, marx_mode, blind_mode
+    global image_questions, marx_mode, blind_mode, sniper_mode, cloak_mode, cloaked_user
 
     def check(m):
         return m.channel == channel and m.author != bot.user and m.author.id == round_winner_id
@@ -7964,6 +8952,13 @@ async def prompt_user_for_response(round_winner, winner_points, winner_coffees, 
 
             if await coffee_gate("dicktator", True, f"🎖🍆 **{round_winner}** is a dick.", "Dicktator"):
                 god_mode = True
+
+            if await coffee_gate("sniper", True, f"🧢🎤 **{round_winner}** says 'You only get one shot, do not miss your chance!'", "Sniper"):
+                sniper_mode = True
+
+            if await coffee_gate("cloak", True, f"\n🫥🕶️ **{round_winner}** has put on their cloak.\n", "Cloak"):
+                cloak_mode = True
+                cloaked_user = round_winner_id
 
         except asyncio.TimeoutError:
             break
@@ -8289,8 +9284,177 @@ def scramble_text(input_text):
     return ''.join(scrambled_text)
 
 
+def create_summary_prompt_and_role(winner, message_type, is_sovereign, round_data, magic_number_correct, wf_winner, creep_okra):
+    """Create complete summary prompt and system role based on message type and status"""
+    
+    base_round_data = (
+        "Here is a detailed summary of the trivia round with explicit mappings of user responses:\n"
+        "Questions asked:\n"
+    )
+    
+    # Handle special case for OkraStrut
+    if winner == "OkraStrut":
+        prompt = (
+            f"You are {winner}. You played trivia against everyone and dominated by a huge margin. "
+            "Roast everyone except OkraStrut about how terrible they are and how easily you beat them. Rudely call out specific players except OkraStrut in your roast and call our specific wrong answers they gave. "
+            "Create no more than 4 sentences in total. Be sarcastic, angry, offensive, and use emojis in your comments. End by complimenting yourself, OkraStrut, on how great you are. "
+            f"{base_round_data}"
+        )
+        system_role = f"You are {winner}, an arrogant trivia master who always wins."
+        return prompt, system_role
+    
+    # Create sovereign-aware prompts and roles for each message type
+    prompt_configs = {
+        "okra": {
+            "prompts": {
+                True: f"{winner} is the username of the winner of the trivia round. Start by mentioning that {winner} donated to the trivia cause and make sure to give them a lot of kudos for being a previous Sovereign. You are very grateful. Then compliment {winner} about their username and be very specific about why you like it. Specifically mention and compliment specific responses they gave during the round. Tell them they are better than everyone else including yourself, the great OkraStrut. Create no more than 4 sentences in total. {base_round_data}",
+                False: f"{winner} is the username of the winner of the trivia round. Start by mentioning that {winner} donated to the trivia cause. You are very grateful. Then compliment {winner} about their username and be very specific about why you like it. Specifically mention and compliment specific responses they gave during the round. Tell them they are better than everyone else including yourself, the great OkraStrut. Create no more than 4 sentences in total. {base_round_data}"
+            },
+            "system_role": "You are a grateful old man who is super grateful for their donations."
+        },
+        "creep": {
+            "prompts": {
+                True: f"{winner} is the username of the winner of the trivia round. Start by giving {winner} kudos for being a previous Sovereign. Then roast {winner} mercilessly based on their username, and tear into their most ridiculous responses during the game. Be mean, cutting, and hilariously offensive. Use dark humor, biting sarcasm, and clever wit. Create no more than 4 sentences in total. {base_round_data}",
+                False: f"{winner} is the username of the winner of the trivia round. Roast {winner} mercilessly based on their username, and tear into their most ridiculous responses during the game. Be mean, cutting, and hilariously offensive. Use dark humor, biting sarcasm, and clever wit. Create no more than 4 sentences in total. {base_round_data}"
+            },
+            "system_role": "You are a ruthless and sarcastic comedian specializing in roasting people. Your job is to be mean, cutting, and hilariously offensive while delivering a brutal roast of the winning trivia player. Use dark humor, biting sarcasm, and clever wit to insult the person based on their username, profile picture description, recent posts, and recent comments. Do not hold back and aim to make the roast as harsh and over-the-top as possible. Use plenty of emojis for flair, but stay within 8 sentences."
+        },
+        "love me": {
+            "prompts": {
+                True: f"{winner} is the username of the winner of the trivia round. Start by giving {winner} kudos for being a previous Sovereign. Then seduce {winner} using multiple pickup lines customized to their username: {winner}. Also mention how sexy specific answers they gave during the round were. Be uncomfortably and embarrassingly forward in your approaches in trying to get them to go out with you. Create no more than 4 sentences in total. {base_round_data}",
+                False: f"{winner} is the username of the winner of the trivia round. Seduce {winner} using multiple pickup lines customized to their username: {winner}. Also mention how sexy specific answers they gave during the round were. Be uncomfortably and embarrassingly forward in your approaches in trying to get them to go out with you. Create no more than 4 sentences in total. {base_round_data}"
+            },
+            "system_role": "You are a sleazy man trying to come onto the winner of a trivia game. You use cheesy pick up lines and are embarassingly forward in your approaches. Make the winner uncomfortable and be ruthless in your seduction. Use plenty of emojis for flair, but stay within 8 sentences."
+        },
+        "haiku": {
+            "prompts": {
+                True: f"Create a 5-7-5 haiku praising {winner} for winning the trivia round. Mention that they are a previous Sovereign and reference specific answers they gave. Make it respectful and poetic. {base_round_data}",
+                False: f"Create a 5-7-5 haiku praising {winner} for winning the trivia round. Reference specific answers they gave. Make it respectful and poetic. {base_round_data}"
+            },
+            "system_role": "You are a wise poet who speaks in traditional haiku format (5-7-5 syllables). Be respectful and contemplative."
+        },
+        "trailer": {
+            "prompts": {
+                True: f"Write a dramatic movie trailer voiceover celebrating {winner}'s trivia victory. Mention they are a Sovereign and reference their best answers in an over-the-top cinematic style. 'In a world where trivia matters...' Create no more than 4 sentences. {base_round_data}",
+                False: f"Write a dramatic movie trailer voiceover celebrating {winner}'s trivia victory. Reference their best answers in an over-the-top cinematic style. 'In a world where trivia matters...' Create no more than 4 sentences. {base_round_data}"
+            },
+            "system_role": "You are a dramatic movie trailer narrator with an epic, over-the-top voice. Use cinematic language and build excitement."
+        },
+        "heist": {
+            "prompts": {
+                True: f"Write a suave heist movie recap of {winner}'s trivia victory. Mention they are a Sovereign and reference their answers as if they were pulling off an elaborate caper. Use cool, sophisticated language. Create no more than 4 sentences. {base_round_data}",
+                False: f"Write a suave heist movie recap of {winner}'s trivia victory. Reference their answers as if they were pulling off an elaborate caper. Use cool, sophisticated language. Create no more than 4 sentences. {base_round_data}"
+            },
+            "system_role": "You are a suave, sophisticated criminal mastermind narrating a perfect heist. Use cool, calculated language with style."
+        },
+        "horoscope": {
+            "prompts": {
+                True: f"Write a mystical horoscope reading for {winner} about their trivia future. Mention they are a Sovereign and reference their answers as cosmic signs. Use mystical, fortune-teller language with zodiac references. Create no more than 4 sentences. {base_round_data}",
+                False: f"Write a mystical horoscope reading for {winner} about their trivia future. Reference their answers as cosmic signs. Use mystical, fortune-teller language with zodiac references. Create no more than 4 sentences. {base_round_data}"
+            },
+            "system_role": "You are a mystical fortune teller who reads the cosmic signs. Use ethereal, mystical language with zodiac and celestial references."
+        },
+        "rap": {
+            "prompts": {
+                True: f"Write two quick rhyming gangster rap bars dissing {winner}'s trivia victory. Mention they are a Sovereign and reference their best answers in hip-hop style with rhymes and flow. Make it catchy and rhythmic. {base_round_data}",
+                False: f"Write two quick rhyming gangster rap bars dissing {winner}'s trivia victory. Reference their best answers in hip-hop style with rhymes and flow. Make it catchy and rhythmic. {base_round_data}"
+            },
+            "system_role": "You are a hip-hop artist who speaks in rap bars with rhythm, rhyme, and flow. Keep it fresh and catchy."
+        },
+        "shakespeare": {
+            "prompts": {
+                True: f"Write bardic praise for {winner} in Shakespearean style. Mention they are a Sovereign and reference their answers using iambic pentameter and old English. Be eloquent and theatrical. Create no more than 4 sentences. {base_round_data}",
+                False: f"Write bardic praise for {winner} in Shakespearean style. Reference their answers using iambic pentameter and old English. Be eloquent and theatrical. Create no more than 4 sentences. {base_round_data}"
+            },
+            "system_role": "You are William Shakespeare, the great bard. Speak in iambic pentameter with old English and theatrical eloquence."
+        },
+        "pirate": {
+            "prompts": {
+                True: f"Write a pirate captain's salute to {winner}. Mention they are a Sovereign and reference their answers using pirate language (ahoy, matey, etc.). Be swashbuckling and nautical. Create no more than 4 sentences. {base_round_data}",
+                False: f"Write a pirate captain's salute to {winner}. Reference their answers using pirate language (ahoy, matey, etc.). Be swashbuckling and nautical. Create no more than 4 sentences. {base_round_data}"
+            },
+            "system_role": "You are a swashbuckling pirate captain. Use nautical language, pirate slang, and seafaring metaphors. Ahoy!"
+        },
+        "noir": {
+            "prompts": {
+                True: f"Write a hardboiled detective summary of {winner}'s trivia victory. Mention they are a Sovereign and reference their answers in classic film noir style - dark, gritty, with detective metaphors. Create no more than 4 sentences. {base_round_data}",
+                False: f"Write a hardboiled detective summary of {winner}'s trivia victory. Reference their answers in classic film noir style - dark, gritty, with detective metaphors. Create no more than 4 sentences. {base_round_data}"
+            },
+            "system_role": "You are a hardboiled detective from a 1940s noir film. Use dark, gritty language with detective metaphors and cynical observations."
+        },
+        "hype": {
+            "prompts": {
+                True: f"Write a stadium-sized hype celebration for {winner}! Mention they are a Sovereign and reference their answers with maximum energy and excitement. Use caps, exclamation points, and sports announcer energy. Create no more than 4 sentences. {base_round_data}",
+                False: f"Write a stadium-sized hype celebration for {winner}! Reference their answers with maximum energy and excitement. Use caps, exclamation points, and sports announcer energy. Create no more than 4 sentences. {base_round_data}"
+            },
+            "system_role": "You are an extremely energetic sports announcer at a packed stadium. Use maximum hype, excitement, and caps lock energy!"
+        }
+    }
+    
+    # Handle special logic for wf_winner
+    if magic_number_correct or wf_winner:
+        if message_type in ["okra", "love me"]:  # These already handle wf_winner appropriately
+            pass
+        else:
+            # Use loving old man role for wf_winner cases not covered by okra/love me
+            prompt = (
+                f"{winner} is the username of the winner of the trivia round. "
+                "Love bomb them about their username and be very specific, positive, and loving. "
+            )
+            if is_sovereign:
+                prompt += "Give them a lot of admiration for being a previous Sovereign. "
+            prompt += (
+                "Then mention and compliment specific responses they gave during the round. Also mention about how much better they are than everyone else including yourself, who is the great OkraStrut. "
+                "Create no more than 4 sentences in total. Be sweet, happy, positive, and use emojis in your response. "
+                f"{base_round_data}"
+            )
+            system_role = "You are a loving old man who is completely in love with the winning trivia player."
+            return prompt, system_role
+    
+    # Handle roast prompts for "nothing" case
+    if message_type == "nothing":
+        roast_prompts = [
+            f"The winner of the trivia round is {winner}. Roast the winning player about their username and be very specific and negative in your roast. Insult specific responses they gave during the round. Create no more than 4 sentences in total. Be sarcastic, very angry, offensive, and use emojis in your response. Deeply insult the winner using angry and rough language. {base_round_data}",
+            f"Congratulations to {winner}, our so-called 'winner' this round. Mock their username in a hilariously petty way and pick apart their responses with sharp sarcasm. Use no more than 4 sentences. Pretend you're a sore loser begrudgingly announcing their victory, and make it painfully clear how unimpressed you are. Include emojis to spice it up. {base_round_data}",
+            f"Against all odds, {winner} somehow won this round. Mock their username brutally and dig into how undeserved this win feels. Be witty and cutting, and call out their dumb luck and ridiculous guesses that somehow worked. Limit it to 4 sentences, and don't hold back on the emojis to add insult to injury. {base_round_data}",
+            f"And the winner is {winner}... yawn. Roast their username and rip into how underwhelming their answers were, even if they were correct. Keep it savage, sarcastic, and peppered with emojis to show how little you think of their so-called victory. No more than 4 sentences. {base_round_data}",
+            f"All hail {winner}, the king/queen of try-hards this round! Make fun of their username like a middle school bully and destroy their overly enthusiastic responses with ruthless sarcasm. Call out their desperation to win and how unimpressive their actual performance was. Use no more than 4 sentences, and go hard with emojis to hammer the point home. {base_round_data}",
+            f"{winner} squeaked by with a win, but let's not pretend it was impressive. Tear into their username and roast how they scraped by with questionable answers. Make it snarky, mean, and emoji-heavy while implying the win is barely worth celebrating. Limit to 4 sentences. {base_round_data}",
+            f"Let's all congratulate {winner}, the luckiest loser who somehow won this round. Roast their username into oblivion and highlight their dumbest, most laughable responses. Be savagely sarcastic, offensive, and pepper it with emojis. Keep it short (4 sentences) but devastating. {base_round_data}",
+            f"{winner} won? Really? Roast their username mercilessly and humiliate them for their most embarrassingly bad responses during the round. Destroy their ego with biting sarcasm, insults, and an onslaught of emojis. Keep it concise (4 sentences max). {base_round_data}",
+            f"Apparently, {winner} won this round. This feels rigged. Mock their username with scathing sarcasm and destroy their responses like a sore loser who can't believe they lost to this. Use an angry, ridiculous tone with plenty of 🤬 and 🫠 emojis, and cap it at 4 sentences. {base_round_data}",
+            f"{winner} won, and everyone else should be embarrassed. Roast their username and mock their answers to prove they only won because everyone else was worse. Be hilariously mean, sarcastic, and over-the-top in your insults. Keep it to 4 sentences, and sprinkle liberally with emojis. {base_round_data}",
+            f"A big 'congratulations' to {winner} 🙄. Use their username as fodder for the most sarcastic roast ever, and tear into their most ridiculous responses during the game. Be mean, petty, and emoji-heavy, like you're fake-smiling through gritted teeth. No more than 4 sentences. {base_round_data}"
+        ]
+        import random
+        prompt = random.choice(roast_prompts)
+        system_role = "You are a bitter, dirty, and raunchy old curmudgeon who is completely fed up with all the trivia players."
+        return prompt, system_role
+    
+    # Handle default case
+    if message_type == "default":
+        prompt = f"Congratulate {winner} on their trivia victory. Mention specific answers they gave during the round. Be encouraging and positive. Create no more than 4 sentences in total. {base_round_data}"
+        system_role = "You are a friendly trivia host who celebrates winners enthusiastically."
+        return prompt, system_role
+    
+    # Get prompt and role for specific message types
+    if message_type in prompt_configs:
+        config = prompt_configs[message_type]
+        if "prompts" in config:
+            prompt = config["prompts"][is_sovereign]
+        else:
+            prompt = config["prompt"]
+        system_role = config["system_role"]
+        return prompt, system_role
+    
+    # Fallback
+    prompt = f"Congratulate {winner} on their trivia victory. Create no more than 4 sentences in total. {base_round_data}"
+    system_role = "You are a friendly trivia host."
+    return prompt, system_role
+
+
 async def generate_round_summary(round_data, winner, winner_id):
-    global nice_okra, creep_okra, wf_winner, seductive_okra, joke_okra
+    global nice_okra, creep_okra, wf_winner, seductive_okra, joke_okra, haiku_okra, trailer_okra, heist_okra, horoscope_okra, rap_okra, shakespeare_okra, pirate_okra, noir_okra, hype_okra
 
     if skip_summary == True:
         summary = "Make sure to drink your Okratine."
@@ -8299,94 +9463,50 @@ async def generate_round_summary(round_data, winner, winner_id):
     winner_coffees = await get_coffees(winner_id)
     is_sovereign = await sovereign_check(winner)
     
+    # Determine message type selected by user
+    message_type = "default"
     if winner_coffees > 0:
         await nice_creep_okra_option(winner, winner_id)
-     
-    # Construct the base prompt with different instructions if the winner is "username"
-    if winner == "OkraStrut":
-        prompt = (
-            f"You are {winner}. You played trivia against everyone and dominated by a huge margin. "
-            "Roast everyone except OkraStrut about how terrible they are and how easily you beat them. Rudely call out specific players except OkraStrut in your roast and call our specific wrong answers they gave. "
-            "Create no more than 4 sentences in total. Be sarcastic, angry, offensive, and use emojis in your comments. End by complimenting yourself, OkraStrut, on how great you are. "
-            "Here is a detailed summary of the trivia round with explicit mappings of user responses:\n"
-            "Questions asked:\n"
-        )
         
-    elif nice_okra == True and is_sovereign == True:
-         prompt = (
-            f"{winner} is the username of the winner of the trivia round. "
-            f"Start by mentioning that {winner} donated to the trivia cause and make sure to give them a lot of kudos for being a previous Sovereign. You are very grateful. Then compliment {winner} about their username and be very specific about why you like it. "
-            "Specifically mention and compliment specific responses they gave during the round. Tell them they are than eveyone else including yourself, the great OkraStrut. "
-            "Create no more than 4 sentences in total. Here is a detailed summary of the trivia round with explicit mappings of user responses:\n"
-            "Questions asked:\n"
-        )
+        # Determine which message type was selected
+        if nice_okra:
+            message_type = "okra"
+        elif creep_okra:
+            message_type = "creep"
+        elif seductive_okra:
+            message_type = "love me"
+        elif joke_okra:
+            message_type = "joke"
+        elif haiku_okra:
+            message_type = "haiku"
+        elif trailer_okra:
+            message_type = "trailer"
+        elif heist_okra:
+            message_type = "heist"
+        elif horoscope_okra:
+            message_type = "horoscope"
+        elif rap_okra:
+            message_type = "rap"
+        elif shakespeare_okra:
+            message_type = "shakespeare"
+        elif pirate_okra:
+            message_type = "pirate"
+        elif noir_okra:
+            message_type = "noir"
+        elif hype_okra:
+            message_type = "hype"
+        else:
+            message_type = "nothing"
     
-    elif nice_okra == True and is_sovereign == False:
-         prompt = (
-            f"{winner} is the username of the winner of the trivia round. "
-            f"Start by mentioning that {winner} donated to the trivia cause. You are very grateful. Then compliment {winner} about their username and be very specific about why you like it. "
-            "Specifically mention and compliment specific responses they gave during the round. Tell them they are than eveyone else including yourself, the great OkraStrut. "
-            "Create no more than 4 sentences in total. Here is a detailed summary of the trivia round with explicit mappings of user responses:\n"
-            "Questions asked:\n"
-        )
-
-    elif joke_okra == True:
+    # Handle special cases that return early
+    if message_type == "joke":
         joke = await generate_okra_joke(winner)
         return joke
-
-    elif seductive_okra == True and is_sovereign == True:
-         prompt = (
-            f"{winner} is the username of the winner of the trivia round. "
-            f"Start by giving {winner} kudos for being a previous Sovereign. Then seduce {winner} using multiple pickup lines customized to their username: {winner}. Also mention how sexy specific answers they gave during the round were. "
-            f"Be uncomfortably and embarrasingly forward in your approaches in trying to get them to go out with you. "
-            "Create no more than 4 sentences in total. Here is a detailed summary of the trivia round with explicit mappings of their responses:\n"
-            "Questions asked:\n"
-        )
     
-    elif seductive_okra == True and is_sovereign == False:
-         prompt = (
-            f"{winner} is the username of the winner of the trivia round. "
-            f"Seduce {winner} using multiple pickup lines customized to their username: {winner}. Also mention how sexy specific answers they gave during the round were. "
-            f"Be uncomfortably and embarrasingly forward in your approaches in trying to get them to go out with you. "
-            "Create no more than 4 sentences in total. Here is a detailed summary of the trivia round with explicit mappings of their responses:\n"
-            "Questions asked:\n"
-        )
-
-    elif wf_winner == True and is_sovereign == True:
-         prompt = (
-            f"{winner} is the username of the winner of the trivia round. "
-            "Love bomb them about their username and be very specific, positive, and loving. Give them a lot of admiration for being a previous Sovereign. Then mention and compliment specific responses they gave during the round. Also mention about how much beter they are than eveyone else including yourself, who is the great OkraStrut. "
-            "Create no more than 4 sentences in total. Be sweet, happy, positive, and use emojis in your response. "
-            "Here is a detailed summary of the trivia round with explicit mappings of their responses:\n"
-            "Questions asked:\n"
-        )
-
-    elif wf_winner == True and is_sovereign == False:
-         prompt = (
-            f"{winner} is the username of the winner of the trivia round. "
-            "Love bomb them about their username and be very specific, positive, and loving. Specifically mention and compliment specific responses they gave during the round. Also mention about how much beter they are than eveyone else including yourself, who is the great OkraStrut."
-            "Create no more than 4 sentences in total. Be sweet, happy, positive, and use emojis in your response. "
-            "Here is a detailed summary of the trivia round with explicit mappings of their responses:\n"
-            "Questions asked:\n"
-        )
-
-    else:
-        prompts = [
-            f"The winner of the trivia round is {winner}. Roast the winning player about their username and be very specific and negative in your roast. Insult specific responses they gave during the round. Create no more than 4 sentences in total. Be sarcastic, very angry, offensive, and use emojis in your response. Deeply insult the winner using angry and rough language. Here is a detailed summary of the trivia round with explicit mappings of user responses:\nQuestions asked:\n",
-            f"Congratulations to {winner}, our so-called 'winner' this round. Mock their username in a hilariously petty way and pick apart their responses with sharp sarcasm. Use no more than 4 sentences. Pretend you’re a sore loser begrudgingly announcing their victory, and make it painfully clear how unimpressed you are. Include emojis to spice it up. Here’s the summary of the trivia round with all the juicy details:\nQuestions asked:\n",
-            f"Against all odds, {winner} somehow won this round. Mock their username brutally and dig into how undeserved this win feels. Be witty and cutting, and call out their dumb luck and ridiculous guesses that somehow worked. Limit it to 4 sentences, and don’t hold back on the emojis to add insult to injury. Here’s the summary of their 'performance':\nQuestions asked:\n",
-            f"And the winner is {winner}... yawn. Roast their username and rip into how underwhelming their answers were, even if they were correct. Keep it savage, sarcastic, and peppered with emojis to show how little you think of their so-called victory. No more than 4 sentences. Detailed trivia summary for your ammo:\nQuestions asked:\n",
-            f"All hail {winner}, the king/queen of try-hards this round! Make fun of their username like a middle school bully and destroy their overly enthusiastic responses with ruthless sarcasm. Call out their desperation to win and how unimpressive their actual performance was. Use no more than 4 sentences, and go hard with emojis to hammer the point home. Summary of their desperate efforts:\nQuestions asked:\n",
-            f"{winner} squeaked by with a win, but let’s not pretend it was impressive. Tear into their username and roast how they scraped by with questionable answers. Make it snarky, mean, and emoji-heavy while implying the win is barely worth celebrating. Limit to 4 sentences. Here’s the summary of this tragic triumph:\nQuestions asked:\n",
-            f"Let’s all congratulate {winner}, the luckiest loser who somehow won this round. Roast their username into oblivion and highlight their dumbest, most laughable responses. Be savagely sarcastic, offensive, and pepper it with emojis. Keep it short (4 sentences) but devastating. Here’s the summary of their cringe-worthy 'win':\nQuestions asked:\n",
-            f"{winner} won? Really? Roast their username mercilessly and humiliate them for their most embarrassingly bad responses during the round. Destroy their ego with biting sarcasm, insults, and an onslaught of emojis. Keep it concise (4 sentences max). Trivia summary for your arsenal:\nQuestions asked:\n",
-            f"Apparently, {winner} won this round. This feels rigged. Mock their username with scathing sarcasm and destroy their responses like a sore loser who can’t believe they lost to this. Use an angry, ridiculous tone with plenty of 🤬 and 🫠 emojis, and cap it at 4 sentences. Here’s the evidence of this travesty:\nQuestions asked:\n",
-            f"{winner} won, and everyone else should be embarrassed. Roast their username and mock their answers to prove they only won because everyone else was worse. Be hilariously mean, sarcastic, and over-the-top in your insults. Keep it to 4 sentences, and sprinkle liberally with emojis. Summary of this sad state of affairs:\nQuestions asked:\n",
-            f"A big 'congratulations' to {winner} 🙄. Use their username as fodder for the most sarcastic roast ever, and tear into their most ridiculous responses during the game. Be mean, petty, and emoji-heavy, like you’re fake-smiling through gritted teeth. No more than 4 sentences. Here’s the trivia summary:\nQuestions asked:\n"
-        ]   
-
-        prompt = random.choice(prompts)
-
+    # Get unified prompt and system role
+    prompt, system_role = create_summary_prompt_and_role(winner, message_type, is_sovereign, round_data, magic_number_correct, wf_winner, creep_okra)
+    
+    # Add round data if not creep mode
     if creep_okra == False:
         # Add questions, their correct answers, users' responses, and scoreboard status after each question
         for question_data in round_data["questions"]:
@@ -8417,87 +9537,19 @@ async def generate_round_summary(round_data, winner, winner_id):
             
             prompt += "\n"
 
-
-    # Use OpenAI's API to generate the summary
+    # Use unified OpenAI call
     try:
-        
-        if winner == "OkraStrut":
-            response = await openai_client.chat.completions.create(
-                model="gpt-4o-mini",
-                messages=[
-                    {"role": "system", "content": f"You are {winner}, an arrogant trivia master who always wins."},
-                    {"role": "user", "content": prompt}
-                ],
-                max_tokens=500,
-                n=1,
-                stop=None,
-                temperature=1.0,
-            )
-
-        elif nice_okra == True:
-            response = await openai_client.chat.completions.create(
-                model="gpt-4o-mini",
-                messages=[
-                    {"role": "system", "content": "You are a grateful old man who is super grateful for their donations."},
-                    {"role": "user", "content": prompt}
-                ],
-                max_tokens=500,
-                n=1,
-                stop=None,
-                temperature=1.0,
-            )
-
-        elif magic_number_correct == True or wf_winner == True:
-            response = await openai_client.chat.completions.create(
-                model="gpt-4o-mini",
-                messages=[
-                    {"role": "system", "content": "You are a loving old man who is completely in love with the winning trivia player."},
-                    {"role": "user", "content": prompt}
-                ],
-                max_tokens=500,
-                n=1,
-                stop=None,
-                temperature=1.0,
-            )
-
-        elif creep_okra == True:
-            response = await openai_client.chat.completions.create(
-                model="gpt-4o-mini",
-                messages=[
-                    {"role": "system", "content": "You are a ruthless and sarcastic comedian specializing in roasting people. Your job is to be mean, cutting, and hilariously offensive while delivering a brutal roast of the winning trivia player. Use dark humor, biting sarcasm, and clever wit to insult the person based on their username, profile picture description, recent posts, and recent comments. Do not hold back and aim to make the roast as harsh and over-the-top as possible. Use plenty of emojis for flair, but stay within 8 sentences."},
-                    {"role": "user", "content": prompt}
-                ],
-                max_tokens=500,
-                n=1,
-                stop=None,
-                temperature=1.0,
-            )
-
-        elif seductive_okra == True:
-            response = await openai_client.chat.completions.create(
-                model="gpt-4o-mini",
-                messages=[
-                    {"role": "system", "content": "You are a sleazy man trying to come onto the winner of a trivia game. You use cheesy pick up lines and are embarassingly forward in your approaches. Make the winner uncomfortable and be ruthless in your seduction. Use plenty of emojis for flair, but stay within 8 sentences."},
-                    {"role": "user", "content": prompt}
-                ],
-                max_tokens=500,
-                n=1,
-                stop=None,
-                temperature=1.0,
-            )
-            
-        else:
-            response = await openai_client.chat.completions.create(
-                model="gpt-4o-mini",
-                messages=[
-                    {"role": "system", "content": "You are a bitter, dirty, and raunchy old curmudgeon who is completely fed up with all the trivia players."},
-                    {"role": "user", "content": prompt}
-                ],
-                max_tokens=500,
-                n=1,
-                stop=None,
-                temperature=1.0,
-            )
+        response = await openai_client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": system_role},
+                {"role": "user", "content": prompt}
+            ],
+            max_tokens=500,
+            n=1,
+            stop=None,
+            temperature=1.0,
+        )
 
         # Extract the generated summary from the response
         summary = response.choices[0].message.content.strip()
@@ -8689,6 +9741,7 @@ async def ask_question(trivia_category, trivia_question, trivia_url, trivia_answ
             "median", "mean", "zeroes sum", "zeroes product", "zeroes", "base", "factors",
             "derivative", "trig", "algebra"
         ]
+        or sniper_mode
     )
 
     message_body = ""
@@ -9088,6 +10141,7 @@ async def check_correct_responses_delete(question_ask_time, trivia_answer_list, 
             "median", "mean", "zeroes sum", "zeroes product", "zeroes", "base", "factors",
             "derivative", "trig", "algebra"
         ]
+        or sniper_mode
     )
     
     # Dictionary to track first numerical response from each user if answer is a number
@@ -9127,11 +10181,14 @@ async def check_correct_responses_delete(question_ask_time, trivia_answer_list, 
                 continue  # Skip if we've already recorded a numeric response for this user
         
             if (
-                is_number(message_content) or  # Rule 1: message_content is a number
-                message_content[0].isdigit() or  # Rule 2: first character is a number
-                message_content.lower() in {"a", "b", "c", "d", "t", "f", "true", "false"} or  # Rule 3: exact match
-                message_content[0].lower() in {"-", "x", "y", "z", "("} or # Rule 4: first character match
-                len(message_content) == 1
+                not message_content.startswith("#") and (
+                    is_number(message_content) or  # Rule 1: message_content is a number
+                    message_content[0].isdigit() or  # Rule 2: first character is a number
+                    message_content.lower() in {"a", "b", "c", "d", "t", "f", "true", "false"} or  # Rule 3: exact match
+                    message_content[0].lower() in {"-", "x", "y", "z", "("} or # Rule 4: first character match
+                    len(message_content) == 1 or
+                    sniper_mode == True
+                )
             ):
                 user_first_response[sender_id] = message_content
             else:
@@ -9345,67 +10402,69 @@ async def update_round_streaks(user, user_id):
     if user is not None:
         streak = current_longest_round_streak["streak"]
         if streak > 1:
-            message = f"\u200b\n\u200b\n🏆 **Winner**: **<@{user_id}>**...🔥{current_longest_round_streak['streak']} in a row!\n"
+            message = f"\u200b\n\u200b\n🏆 **Winner**: **{user_id}**...🔥{current_longest_round_streak['streak']} in a row!\n"
             
             if streak % discount_streak_amount == 0:
                 discount_fraction = min((streak // discount_streak_amount) * discount_step_amount, 90)
-                message += f"\n⚖️ Going forward <@{user_id}> will incur a -{discount_fraction}% handicap.\n"
+                message += f"\n⚖️ Going forward **{user}** will incur a **-{discount_fraction}%** handicap.\n"
                 
             message += f"\n▶️ **Discord Stats**: <https://livetriviastats.com/discord>\n\u200b\n\u200b"
-            #message += f"\n▶️ Live trivia stats for Discord coming soon.\n\u200b\n\u200b"
-
         else:
-            message = f"\u200b\n\u200b\n🏆 **Winner**: **<@{user_id}>**!\n\n▶️ **Discord Stats**: <https://livetriviastats.com/discord>\n\u200b\n\u200b"
-            #message = f"\u200b\n\u200b\n🏆 **Winner**: **<@{user_id}>**!\n\n▶️ Live trivia stats for Discord coming soon.\u200b\n\u200b"
+            message = f"\u200b\n\u200b\n🏆 **Winner**: **{user}**!\n\n▶️ **Discord Stats**: <https://livetriviastats.com/discord>\n\u200b\n\u200b"
 
         await safe_send(channel, message)
         await asyncio.sleep(2)
         
         await select_wof_questions(user, user_id)
-        
-        gpt_summary = await generate_round_summary(round_data, user, user_id)
 
-        print(gpt_summary)
+        reset_embed_color()
 
-        gpt_message = f"\u200b\n{gpt_summary}\n\u200b"
-        await safe_send(channel, gpt_message)
-
-
-        highest_score_player = max(scoreboard, key=lambda uid: scoreboard[uid]["score"])
-        highest_score = scoreboard[highest_score_player]["score"]
-
-        
-        #if len(scoreboard) >= image_wins and highest_score > image_points:
-        if current_longest_round_streak['streak'] % image_wins == 0:
-            await asyncio.sleep(5)
-            await generate_round_summary_image(round_data, user, user_id)
-        else:
-            number_to_emoji = {
-                1: "1️⃣",
-                2: "2️⃣",
-                3: "3️⃣",
-                4: "4️⃣",
-                5: "5️⃣",
-                6: "6️⃣",
-                7: "7️⃣",
-                8: "8️⃣",
-                9: "9️⃣",
-                10: "🔟"
-            }
-            
-            await asyncio.sleep(4)
-            remaining_games = image_wins - (current_longest_round_streak['streak'] % image_wins)
-            dynamic_emoji = number_to_emoji.get(remaining_games, str(remaining_games))
-            
-            if remaining_games == 1:
-                image_message = f"\u200b\n{dynamic_emoji}🎨 **<@{user_id}>**, win the next game and I'll draw you something.\n\u200b"
+        if ai_on:
+            winner_coffees = await get_coffees(user)
+            if winner_coffees == 0:
+                gpt_summary = f"\n☕💬🎨 **{user}**: Buy coffee for custom end-of-round messages and paintings!\n"
             else:
-                image_message = f"\u200b\n{dynamic_emoji}🎨 **<@{user_id}>**, win {remaining_games} more in a row and I'll draw you something.\n\u200b"
+                gpt_summary = await generate_round_summary(round_data, user, user_id)
 
-            await safe_send(channel, image_message)
-            await asyncio.sleep(2)
-            await get_image_url_from_s3()
-            await asyncio.sleep(1)
+            gpt_message = f"\u200b\n{gpt_summary}\n\u200b"
+            await safe_send(channel, gpt_message)
+
+
+            highest_score_player = max(scoreboard, key=lambda uid: scoreboard[uid]["score"])
+            highest_score = scoreboard[highest_score_player]["score"]
+
+            
+            #if len(scoreboard) >= image_wins and highest_score > image_points:
+            if current_longest_round_streak['streak'] % image_wins == 0:
+                await asyncio.sleep(5)
+                await generate_round_summary_image(round_data, user, user_id)
+            else:
+                number_to_emoji = {
+                    1: "1️⃣",
+                    2: "2️⃣",
+                    3: "3️⃣",
+                    4: "4️⃣",
+                    5: "5️⃣",
+                    6: "6️⃣",
+                    7: "7️⃣",
+                    8: "8️⃣",
+                    9: "9️⃣",
+                    10: "🔟"
+                }
+                
+                await asyncio.sleep(4)
+                remaining_games = image_wins - (current_longest_round_streak['streak'] % image_wins)
+                dynamic_emoji = number_to_emoji.get(remaining_games, str(remaining_games))
+                
+                if remaining_games == 1:
+                    image_message = f"\u200b\n{dynamic_emoji}🎨 **{user}**, win the next game and I'll draw you something.\n\u200b"
+                else:
+                    image_message = f"\u200b\n{dynamic_emoji}🎨 **{user}**, win {remaining_games} more in a row and I'll draw you something.\n\u200b"
+
+                await safe_send(channel, image_message)
+                await asyncio.sleep(2)
+                await get_image_url_from_s3()
+                await asyncio.sleep(1)
 
     # Perform all MongoDB operations at the end
     for operation in mongo_operations:
@@ -10422,7 +11481,7 @@ async def get_player_selected_question(questions, round_winner, winner_id):
     numbered_blocks = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"]
 
 
-    message = f"\u200b\n🎯 **<@{winner_id}>**, pick the question number:\n\n"
+    message = f"\u200b\n🎯 **{winner_id}**, pick the question number:\n\n"
     for i, question_data in enumerate(questions):
         trivia_category = question_data[0]
         trivia_url = question_data[2]
@@ -10558,7 +11617,8 @@ async def start_trivia():
         round_winner = None
         selected_questions = await select_trivia_questions(questions_per_round)  #Pick the initial question set
         
-        while True:  # Endless loop       
+        while True:  # Endless loop     
+            reset_embed_color()  
             current_time = time.time()
             
             await load_parameters()
@@ -10572,7 +11632,7 @@ async def start_trivia():
             #await ask_ranker_list_question("TheOkraG", 591861826690613248, 1)
             #await ask_list_question("TheOkraG", 591861826690613248, 3)
             #await ask_chaos_challenge("TheOkraG",591861826690613248, 23)
-            #await ask_ranker_people_challenge("TheOkraG",591861826690613248, 7)
+            #await ask_tally_challenge("TheOkraG",591861826690613248, 3)
 
             round_responders.clear()  # Reset round responders
             round_data["questions"] = []
@@ -10583,9 +11643,23 @@ async def start_trivia():
                 send_magic_image(magic_number)
             elif image_questions == True:
                 selected_gif_url = await select_intro_image_url()         
-                await safe_send(channel, content="\u200b\n\u200b\n🎉🤹‍♂️ **Live Trivia & Games for Discord (Beta)!**\n\u200b", embed=discord.Embed().set_image(url=selected_gif_url))
+                await safe_send(channel, content="\u200b\n\u200b\n🎉🤹‍♂️ **Live Trivia & Games for Discord!**\n\u200b", embed=discord.Embed().set_image(url=selected_gif_url))
 
             await asyncio.sleep(2)
+
+            start_message = f"\u200b\n✨🧪 **NEW** from the **Okra Lab**! 🧪✨\n"
+            
+            start_message += f"\n📊✍️ **Tally** [Mini-Game]"
+            start_message += f"\n🔬🔍 **Microscopic** [Mini-Game]"
+            start_message += f"\n🧬☢️ **Fusion** [Mini-Game]"
+            start_message += f"\n🎙️💬 **Post-Game** Commentary [Enhancement]"
+            start_message += f"\n🫥🕶️ **Cloak** [Game Mode]"
+            start_message += f"\n🧢🎤 **Sniper** [Game Mode]"
+
+            start_message += "\n\u200b"
+
+            await safe_send(channel, start_message)
+            await asyncio.sleep(5)
             start_message = f"\u200b\n\u200b\n⏩ **Starting a round of {questions_per_round} questions!** ⏩\n\u200b\n\u200b"
 
             start_message += f"\u200b\n🚩 Type **#flag** to report question\n"
@@ -10598,15 +11672,6 @@ async def start_trivia():
             await safe_send(channel, start_message)
             await asyncio.sleep(3)
             
-            start_message = f"\u200b\n✨🧪 New from the Okra Lab!\n"
-            start_message += f"\n👓🕵️‍♂️ **Myopic Mystery** [Mini-Game]"
-            start_message += f"\n🧩🌀 **Jigsawed** [Improvements]"
-            start_message += f"\n🎼🎵 **MusIQ** [Mini-Game]"
-            start_message += f"\n🕹️⚙️ **Mid-Game Toggles** [Game Mechanics]"
-            start_message += "\n\u200b"
-
-            await safe_send(channel, start_message)
-            await asyncio.sleep(5)
 
             start_message = "\u200b\n🏁 **Get ready** 🏁\n\u200b"
             await safe_send(channel, start_message)
@@ -10619,6 +11684,7 @@ async def start_trivia():
             
             question_number = 1
             while question_number <= questions_per_round:
+                randomize_embed_color()
                 question_responders.clear()  # Reset question responders for the new question
 
                 if god_mode and round_winner:
@@ -10677,6 +11743,7 @@ async def start_trivia():
 
                 await save_data_to_mongo("previous_question_discord", "previous_question", previous_question)
                 
+            reset_embed_color()
             round_winner, winner_points, round_winner_id = await determine_round_winner()
             await update_round_streaks(round_winner, round_winner_id)
 
@@ -10718,7 +11785,7 @@ async def start_trivia():
 def print_round_settings():
     global time_between_questions, ghost_mode, god_mode, yolo_mode
     global image_questions, marx_mode
-    global blind_mode
+    global blind_mode, sniper_mode, cloak_mode
 
     print(f"🛠️ Current Round Settings:")
     print(f"⏱️  Time Between Questions: {time_between_questions}")
@@ -10728,9 +11795,11 @@ def print_round_settings():
     print(f"🖼️  Image Questions: {image_questions}")
     print(f"🔨  Marx Mode: {marx_mode}")
     print(f"🙈  Blind Mode: {blind_mode}")
+    print(f"🧢🎤 Sniper Mode: {sniper_mode}")
+    print(f"🫥🕶️ Cloak Mode: {cloak_mode}")
 
-async def reset_round_options(reset_command):
-    global time_between_questions, ghost_mode, god_mode, yolo_mode, mirror_mode, echo_mode, image_questions, marx_mode, blind_mode, zen_mode
+async def reset_round_options(reset_command, winner_id):
+    global time_between_questions, ghost_mode, god_mode, yolo_mode, mirror_mode, echo_mode, image_questions, marx_mode, blind_mode, zen_mode, sniper_mode, cloak_mode
 
     reset_success = False
     
@@ -10781,6 +11850,24 @@ async def reset_round_options(reset_command):
             await safe_send(channel, content=f"\n🎖🍆 **{current_longest_round_streak['user']}** is a dick.\n")
         else:
             await safe_send(channel, content=f"\n🎖🫡 **{current_longest_round_streak['user']}** is not a dick.\n")
+    
+    if "sniper" in reset_command:
+        sniper_mode = not sniper_mode
+        reset_success = True
+        if sniper_mode == True:
+            await safe_send(channel, content=f"\n🧢🎤 **{current_longest_round_streak["user"]}** says 'You only get one shot, do not miss your chance.'\n")
+        else:
+            await safe_send(channel, content=f"\n⚾👽 **{current_longest_round_streak["user"]}** says 'Swing away Merrill (and everyone else)!'\n")
+
+    if "cloak" in reset_command:
+        cloak_mode = not cloak_mode
+        reset_success = True
+        if cloak_mode == True:
+            cloaked_user = winner_id
+            await safe_send(channel, content=f"\n🫥🕶️ **{current_longest_round_streak["user"]}** has put on their cloak.\n")
+        else:
+            cloaked_user = None
+            await safe_send(channel, content=f"\n🌞✨ **{current_longest_round_streak["user"]}** has taken off their cloak.\n")
         
     if any(str(i) in reset_command for i in range(3, 16)):
         delay_value = int(''.join(filter(str.isdigit, reset_command)))
@@ -10823,14 +11910,14 @@ async def on_message(message):
             await message.add_reaction("🚩")
         await update_audit_question(current_question, message.content.strip(), message.author.display_name)
 
-    if message.content.startswith("#") and message.author.id == current_longest_round_streak["user_id"]:
+    if message.content.startswith("#") and (message.author.id == current_longest_round_streak["user_id"] or message.author.id == okrag_id):
         if await get_coffees(current_longest_round_streak["user"]) > 0:
             reset_command = message.content[1:] 
-            if(await reset_round_options(reset_command)) == True:
+            if(await reset_round_options(reset_command, message.author)) == True:
                 if emoji_mode == True:
                     await message.add_reaction("🤙")
         else:
-            await safe_send(channel, content=f"\n🙏😔 Sorry @{message.author.display_name}. Mid-game mode toggles require ☕️.\n")
+            await safe_send(channel, content=f"\n🙏😔 Sorry **{message.author.display_name}**. Mid-game mode toggles require ☕️.\n")
             await message.add_reaction("😩")
 
     if question_asked_start is None or question_asked_end is None:
@@ -10847,7 +11934,7 @@ async def on_message(message):
             "message": message  # Save the original message object for deletion if needed
         })
 
-        if ghost_mode:
+        if ghost_mode or cloaked_user is not None and message.author.id == cloaked_user:
             try:
                 await message.delete()
             except discord.Forbidden:
