@@ -7532,7 +7532,6 @@ async def request_prompt(winner, winner_id):
 
 
 async def get_coffees(user_id):
-    return 5
     guild = bot.get_guild(OKRAN_GUILD_ID)
     if not guild:
         print(f"⚠️ Bot is not in guild with ID {OKRAN_GUILD_ID}")
