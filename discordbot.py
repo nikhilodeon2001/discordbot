@@ -11910,7 +11910,7 @@ async def on_message(message):
         await update_audit_question(current_question, message.content.strip(), message.author.display_name)
 
     if message.content.startswith("#") and (message.author.id == current_longest_round_streak["user_id"] or message.author.id == okrag_id):
-        if await get_coffees(current_longest_round_streak["user"]) > 0:
+        if await get_coffees(current_longest_round_streak["user_id"]) > 0:
             reset_command = message.content[1:] 
             if(await reset_round_options(reset_command, message.author)) == True:
                 if emoji_mode == True:
