@@ -131,7 +131,7 @@ submission_queue = []
 max_queue_size = 100  # Number of submissions to accumulate before flushing
 
 # Initialize all variables
-local_mode = True
+local_mode = False
 
 if local_mode == True:
     #discord_token = "REMOVED_DISCORD_TOKEN" #Stage
@@ -640,7 +640,7 @@ async def ask_jigsaw_challenge(winner, winner_id, num=7):
     ]
     gif_url = random.choice(gifs)
 
-    await safe_send(channel, content="\u200b\n🧩🌀 **Jigsawed: Let's play a game...**\n\u200b", embed=discord.Embed().set_image(url=gif_url))
+    await safe_send(channel, content="\u200b\n🧩🌀 **Jigsawed**: Identify the Puzzle\n\u200b", embed=discord.Embed().set_image(url=gif_url))
     await asyncio.sleep(3)
 
     await safe_send(channel, f"\u200b\n🪚🔢 **{winner}**, how many jigsaw pieces?\n\n👉 **4**, **9**, **16**, **25**, **36**, **49**, **64**, **81**, or **100**\n\u200b")
@@ -710,7 +710,7 @@ async def ask_jigsaw_challenge(winner, winner_id, num=7):
                 tint_strength=0.2
             )
 
-            message = f"\u200b\n🗣💬❓ **({round_num}/5)** Who or what is **THIS**?!?\n\u200b"
+            message = f"\u200b\n🗣💬❓ **({round_num}/{num})** Who or what is **THIS**?!?\n\u200b"
             file = discord.File(fp=jigsaw_buffer, filename="jigsaw.png")
             embed = discord.Embed()
             embed.set_image(url="attachment://jigsaw.png")
@@ -833,7 +833,7 @@ async def ask_faceoff_challenge(winner, winner_id, num=7):
     ]
     gif_url = random.choice(faceoff_gifs)
 
-    await safe_send(channel, content="\u200b\n🙃🙂 Face/Off: 'I want to take his Face..Off'.\n\u200b", embed=discord.Embed().set_image(url=gif_url))
+    await safe_send(channel, content="\u200b\n🙃🙂 **Face/Off**: 'I want to take his Face..Off'.\n\u200b", embed=discord.Embed().set_image(url=gif_url))
     await asyncio.sleep(3)
 
     await safe_send(channel, f"\u200b\n🪚🔢 **{winner}**, how many face pieces?\n👉 **4, 9, 16, 25, 36, 49, 64, 81, or 100**\n\u200b")
@@ -907,12 +907,7 @@ async def ask_faceoff_challenge(winner, winner_id, num=7):
                     for a in answers:
                         if fuzzy_match(content, normalize_text(a).replace(" ", ""), category, image_url):
                             await msg.add_reaction("✅")
-                            await safe_send(
-                                channel,
-                                f"\u200b\n✅🎉 Correct! {msg.author.display_name} got it! {a.upper()}\n\n📝🧠 All Answers:\n" +
-                                "\n".join(x.upper() for x in answers) +
-                                "\n\u200b"
-                            )
+                            await safe_send(channel, f"\u200b\n✅🎉 Correct! **{msg.author.display_name}** got it! **{a.upper()}**\n\u200b")
                             embed = discord.Embed()
                             embed.set_image(url=image_url)
                             await safe_send(channel, embed=embed)
@@ -924,7 +919,7 @@ async def ask_faceoff_challenge(winner, winner_id, num=7):
                     break
 
             if not answered:
-                await safe_send(channel, f"\u200b\n❌😢 No one got it.\n\n📝🧠 Answers:\n" + "\n\u200b".join(x.upper() for x in answers))
+                await safe_send(channel, f"\u200b\n❌😢 No one got it.\n\n📝🧠 **{answers[0].upper()}**\n\u200b")
                 embed = discord.Embed()
                 embed.set_image(url=image_url)
                 await safe_send(channel, embed=embed)
@@ -1119,7 +1114,7 @@ async def ask_element_challenge(winner, winner_id, num=7):
 
     gif_url = random.choice(element_gifs)
 
-    await safe_send(channel, content="\u200b\n\u200b\n💧🔥 **Elementary: Guess the Element Name**\n\u200b", embed=discord.Embed().set_image(url=gif_url))
+    await safe_send(channel, content="\u200b\n\u200b\n💧🔥 **Elementary**: Guess Element Name or Group\n\u200b", embed=discord.Embed().set_image(url=gif_url))
     await asyncio.sleep(3)
 
     await safe_send(channel, f"\u200b\n🕹️🚀 **{winner}**, select the mode:\n\n🧸 **Normal** or 🧨 **Okrap**.\n\u200b")
@@ -1244,11 +1239,11 @@ async def ask_element_challenge(winner, winner_id, num=7):
 
         message = "\u200b\n⚠️🚨 **Everyone's in!**\n"
         if element_question_type == "single":
-            message += f"\n🗣💬❓ **({round_num}/5)** Name this **element**.\n"
+            message += f"\n🗣💬❓ **({round_num}/{num})** Name this **element**.\n"
         elif element_question_type == "multiple-single-answer":
-            message += f"\n🗣💬❓ **({round_num}/5)** What is this **group of elements** called?\n"
+            message += f"\n🗣💬❓ **({round_num}/{num})** What is this **group of elements** called?\n"
         elif element_question_type == "multiple":
-            message += f"\n🗣💬❓ **({round_num}/5)** Name **one element** in this group: **{element_group.upper()}**\n"
+            message += f"\n🗣💬❓ **({round_num}/{num})** Name **one element** in this group: **{element_group.upper()}**\n"
         message += "\n\u200b"
             
         file = discord.File(fp=element_image_buffer, filename="element.png")
@@ -1431,7 +1426,7 @@ async def ask_polyglottery_challenge(winner, winner_id, num=7):
     ]
     gif_url = random.choice(gifs)
 
-    await safe_send(channel, content="\u200b\n\u200b\n🎰🗣️ **PolygLottery: Guess the Language**\n\u200b", embed=discord.Embed().set_image(url=gif_url))
+    await safe_send(channel, content="\u200b\n\u200b\n🎰🗣️ **PolygLottery**: Guess the Language\n\u200b", embed=discord.Embed().set_image(url=gif_url))
     await asyncio.sleep(5)
 
     # Collect phrase
@@ -1608,7 +1603,7 @@ async def ask_dictionary_challenge(winner, winner_id, num=7):
     ]
     gif_url = random.choice(gifs)
 
-    await safe_send(channel, content="\u200b\n\u200b\n🤓📚 **Word Nerd**\n\u200b", embed=discord.Embed().set_image(url=gif_url))
+    await safe_send(channel, content="\u200b\n\u200b\n🤓📚 **Word Nerd**: What Does It Mean?\n\u200b", embed=discord.Embed().set_image(url=gif_url))
     await asyncio.sleep(5)
 
     user_data = {}
@@ -1651,7 +1646,7 @@ async def ask_dictionary_challenge(winner, winner_id, num=7):
             print(f"Error selecting dictionary question:\n{traceback.format_exc()}")
             return
 
-        await safe_send(channel, f"\u200b\n🧠❓ **Word {round_num}**/5\n")
+        await safe_send(channel, f"\u200b\n🧠❓ **Word {round_num}**/{num}\n")
         await safe_send(channel, f"\u200b\n🔤 **{first_char}** is the first letter\n🔢 **{word_len}** characters\n\n📘📝 **Definition:** {redacted_def}\n\n🟢💨 **GO!**\n\u200b")
 
         start_time = asyncio.get_event_loop().time()
@@ -2075,7 +2070,7 @@ async def ask_math_challenge(winner, winner_id, num=7):
     ]
 
     gif_url = random.choice(gifs)
-    await safe_send(channel, content="\u200b\n\u200b\n➕➖ **Sign Language: Fill in the Missing Signs**\n\u200b", embed=discord.Embed().set_image(url=gif_url))
+    await safe_send(channel, content="\u200b\n\u200b\n➕➖ **Sign Language**: Fill in the Missing Signs\n\u200b", embed=discord.Embed().set_image(url=gif_url))
     await asyncio.sleep(3)
 
     await safe_send(channel, f"\u200b\n🔢❓ **{winner}**, how many missing signs? **[2 or 3]**\n\u200b")
@@ -2127,7 +2122,7 @@ async def ask_math_challenge(winner, winner_id, num=7):
 
         prompt = (
             f"\u200b\n⚠️🚨 Everyone's in!\n"
-            f"\u200b\n✖️🧠 Equation {round_num}/5: Use **[+ - /\\ * x]**\n\u200b"
+            f"\u200b\n✖️🧠 Equation {round_num}/{num}: Use **[+ - /\\ * x]**\n\u200b"
         )
 
         await safe_send(channel, content=prompt, file=file, embed=embed)
@@ -2224,7 +2219,7 @@ async def ask_music_challenge(winner, winner_id, num=7):
     ]
 
     gif_url = random.choice(music_gifs)
-    await safe_send(channel, content="\u200b\n🎼🎵 **MusIQ: Name the Notes**\n\u200b", embed=discord.Embed().set_image(url=gif_url))
+    await safe_send(channel, content="\u200b\n🎼🎵 **MusIQ**: Name the Notes\n\u200b", embed=discord.Embed().set_image(url=gif_url))
     await asyncio.sleep(3)
 
     await safe_send(channel, f"\u200b\n✍️🌍 **{winner}**, how many **music notes**? [**2** to **7**]\n\u200b")
@@ -2461,7 +2456,7 @@ async def ask_lyric_challenge(winner, winner_id, num=7):
     ]
     gif_url = random.choice(gifs)
 
-    await safe_send(channel, content="\u200b\n\u200b\n🎧🎤 **LyrIQ: Name the Song OR Artist**\n\u200b", embed=discord.Embed().set_image(url=gif_url))
+    await safe_send(channel, content="\u200b\n\u200b\n🎧🎤 **LyrIQ**: Name the Song OR Artist\n\u200b", embed=discord.Embed().set_image(url=gif_url))
     await asyncio.sleep(3)
 
     user_data = {}
@@ -2516,7 +2511,7 @@ async def ask_lyric_challenge(winner, winner_id, num=7):
             print(f"Error fetching lyric:\n{traceback.format_exc()}")
             continue
 
-        await safe_send(channel, f"\u200b\n🎵 **Song {round_num}/5**\n📂 Category: {', '.join(pretty_categories)}\n\u200b")
+        await safe_send(channel, f"\u200b\n🎵 **Song {round_num}/{num}**\n📂 Category: {', '.join(pretty_categories)}\n\u200b")
         file_1 = discord.File(fp=image_buffer_1, filename="lyric1.png")
         embed_1 = discord.Embed().set_image(url="attachment://lyric1.png")
         file_2 = discord.File(fp=image_buffer_2, filename="lyric2.png")
@@ -2696,7 +2691,7 @@ async def ask_book_challenge(winner, winner_id, num=7):
     ]
     gif_url = random.choice(gifs)
 
-    await safe_send(channel, content="\u200b\n\u200b\n📖🕵️‍♂️ **Prose & Cons: Name the Book OR Author**\n\u200b", embed=discord.Embed().set_image(url=gif_url))
+    await safe_send(channel, content="\u200b\n\u200b\n📖🕵️‍♂️ **Prose & Cons**: Name the Book OR Author\n\u200b", embed=discord.Embed().set_image(url=gif_url))
     await asyncio.sleep(3)
 
     user_data = {}
@@ -2751,7 +2746,7 @@ async def ask_book_challenge(winner, winner_id, num=7):
             print(f"Error fetching book:\n{traceback.format_exc()}")
             continue
 
-        await safe_send(channel, f"\u200b\n📘 **Book {round_num}/5**\n\u200b")
+        await safe_send(channel, f"\u200b\n📘 **Book {round_num}**/{num}\n\u200b")
         await safe_send(channel, category_msg)
         await asyncio.sleep(2)
         await safe_send(channel, file=file_1, embed=embed_1)
@@ -2850,7 +2845,7 @@ async def ask_riddle_challenge(winner, winner_id, num=7):
     ]
     gif_url = random.choice(gifs)
 
-    await safe_send(channel, content="\u200b\n\u200b\n🟢🎩 **The Riddler**\n\u200b", embed=discord.Embed().set_image(url=gif_url))
+    await safe_send(channel, content="\u200b\n\u200b\n🟢🎩 **The Riddler**: Riddle Me This, Riddle Me That\n\u200b", embed=discord.Embed().set_image(url=gif_url))
     await asyncio.sleep(5)
 
     user_data = {}
@@ -2894,7 +2889,7 @@ async def ask_riddle_challenge(winner, winner_id, num=7):
 
         prompt = (
             f"\u200b\n⚠️🚨 **Everyone's in!**\n"
-            f"\u200b\n🧠❓ **Riddle {round_num}/5**: {riddle_text}\n\u200b"
+            f"\u200b\n🧠❓ **Riddle {round_num}/{num}**: {riddle_text}\n\u200b"
         )
 
         await safe_send(channel, prompt)
@@ -2996,7 +2991,7 @@ async def ask_border_challenge(winner, winner_id, num=7):
 
     gif_url = random.choice(border_gifs)
 
-    await safe_send(channel, content="\u200b\n\u200b\n🗺️❓ **Borderline: Guess the Country**\n\u200b", embed=discord.Embed().set_image(url=gif_url))
+    await safe_send(channel, content="\u200b\n\u200b\n🗺️❓ **Borderline**: Identify the Country\n\u200b", embed=discord.Embed().set_image(url=gif_url))
     await asyncio.sleep(3)
 
     await safe_send(channel, f"\u200b\n🕹️🚀 **{winner}**, select the mode:\n\n🧸 **Normal** or 🧨 **Okrap**.\n\u200b")
@@ -3161,7 +3156,7 @@ async def ask_animal_challenge(winner, winner_id, num=7):
     ]
 
     gif_url = random.choice(gifs)
-    await safe_send(channel, content="\u200b\n\u200b\n❓🦓 **Name That OkrAnimal!**\n\u200b", embed=discord.Embed().set_image(url=gif_url))
+    await safe_send(channel, content="\u200b\n\u200b\n❓🦓 **OkrAnimal**: Name That Animal!\n\u200b", embed=discord.Embed().set_image(url=gif_url))
     await asyncio.sleep(3)
 
     user_correct_answers = {}
@@ -3315,7 +3310,7 @@ async def ask_ranker_people_challenge(winner, winner_id, num=7):
     ]
 
     gif_url = random.choice(gifs)
-    await safe_send(channel, content="\u200b\n\u200b\n 👤🌟 Famous Peeps\n\u200b", embed=discord.Embed().set_image(url=gif_url))
+    await safe_send(channel, content="\u200b\n\u200b\n 👤🌟 **Famous Peeps**: Identify the Greats\n\u200b", embed=discord.Embed().set_image(url=gif_url))
     await asyncio.sleep(2)
 
     await safe_send(channel, f"\u200b\n👤🌟 ID Ranker.com's All Time Greats\n\u200b")
@@ -3482,7 +3477,7 @@ async def ask_flags_challenge(winner, winner_id, num=7):
         "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/flags_friends.gif"
     ]
     gif_url = random.choice(gifs)
-    await safe_send(channel, content="\u200b\n\u200b\n🎏🎉 **Flag Fest!**\n\u200b", embed=discord.Embed().set_image(url=gif_url))
+    await safe_send(channel, content="\u200b\n\u200b\n🎏🎉 **Flag Fest**: Identify the Banner\n\u200b", embed=discord.Embed().set_image(url=gif_url))
     await asyncio.sleep(3)
 
     user_correct_answers = {}
@@ -3738,7 +3733,7 @@ async def ask_president_challenge(winner, winner_id, num=7):
     ]
     gif_url = random.choice(gifs)
 
-    await safe_send(channel, content="\u200b\n🦅🇺🇸 **Rushmore**\n\u200b", embed=discord.Embed().set_image(url=gif_url))
+    await safe_send(channel, content="\u200b\n🦅🇺🇸 **Rushmore**: Do You Know the US Presidents?\n\u200b", embed=discord.Embed().set_image(url=gif_url))
     await asyncio.sleep(3)
 
     if num > 1:
@@ -4168,7 +4163,7 @@ async def ask_wordle_challenge(winner, winner_id, num=1):
     ]
 
     gif_url = random.choice(gifs)
-    await safe_send(channel, content="\u200b\n🟩🟨 **Wordle War**\n\u200b", embed=discord.Embed().set_image(url=gif_url))
+    await safe_send(channel, content="\u200b\n🟩🟨 **Wordle War**: Our Favorite Word Game\n\u200b", embed=discord.Embed().set_image(url=gif_url))
     await asyncio.sleep(5)
 
     user_correct_answers = {}
@@ -4375,7 +4370,7 @@ async def ask_microscopic_challenge(winner, winner_id, num=3):
     ]
 
     microscopic_gif_url = random.choice(microscopic_gifs)
-    await safe_send(channel, content="\u200b\n🔬🔍 **Microscopic Mystery: Identify the magnified images...**\n\u200b", embed=discord.Embed().set_image(url=microscopic_gif_url))
+    await safe_send(channel, content="\u200b\n🔬🔍 **Microscopic Mystery**: Identify the Magnified Images\n\u200b", embed=discord.Embed().set_image(url=microscopic_gif_url))
     await asyncio.sleep(5)
 
     user_data = {}  # Track scores: {user_id: (display_name, score)}
@@ -4545,7 +4540,7 @@ async def ask_fusion_challenge(winner, winner_id, num=3):
     ]
     
     fusion_gif_url = random.choice(fusion_gifs)
-    await safe_send(channel, content="\u200b\n🧬☢️ **Fusion Challenge: Identify ALL fused images...**\n\u200b", embed=discord.Embed().set_image(url=fusion_gif_url))
+    await safe_send(channel, content="\u200b\n🧬☢️ **Fusion Challenge**: Identify the Fused Images\n\u200b", embed=discord.Embed().set_image(url=fusion_gif_url))
     await asyncio.sleep(5)
 
     user_correct_answers = {}
@@ -4952,7 +4947,7 @@ async def ask_tally_challenge(winner, winner_id, num=3):
     ]
 
     estimation_gif_url = random.choice(estimation_gifs)
-    await safe_send(channel, content="\u200b\n🔢🎯 **Tally: Estimate the Number!**\n\u200b", embed=discord.Embed().set_image(url=estimation_gif_url))
+    await safe_send(channel, content="\u200b\n🔢🎯 **Tally**: Estimate the Shapes!**\n\u200b", embed=discord.Embed().set_image(url=estimation_gif_url))
     await asyncio.sleep(3)
 
     if num > 1:
@@ -5171,7 +5166,7 @@ async def ask_myopic_challenge(winner, winner_id, num=3):
 
     gif_url = random.choice(gifs)
     embed = discord.Embed().set_image(url=gif_url)
-    await safe_send(channel, content="\u200b\n👓🕵️‍♂️ **Myopic Mystery: Identify the images**\n\u200b", embed=embed)
+    await safe_send(channel, content="\u200b\n👓🕵️‍♂️ **Myopic Mystery**: Identify the images\n\u200b", embed=embed)
     await asyncio.sleep(5)
 
     user_correct_answers = {}
@@ -5361,7 +5356,7 @@ async def ask_missing_link(winner, winner_id, num=7):
 
     gif_url = random.choice(gifs)
    
-    await safe_send(channel, content="\u200b\n\u200b\n 🧩🔗 Missing Link\n\u200b", embed=discord.Embed().set_image(url=gif_url))
+    await safe_send(channel, content="\u200b\n\u200b\n 🧩🔗 **Missing Link**: Guess the Show / Movie / Person\n\u200b", embed=discord.Embed().set_image(url=gif_url))
     await asyncio.sleep(3)
 
     user_correct_answers = {}
@@ -5519,7 +5514,7 @@ async def ask_movie_scenes_challenge(winner, winner_id, num=7):
     ]
 
     gif_url = random.choice(gifs)
-    await safe_send(channel, content="\u200b\n\u200b\n 🎬💥 Movie Mayhem\n\u200b", embed=discord.Embed().set_image(url=gif_url))
+    await safe_send(channel, content="\u200b\n\u200b\n 🎬💥 **Movie Mayhem**: Guess the Flick\n\u200b", embed=discord.Embed().set_image(url=gif_url))
     await asyncio.sleep(3)
 
     user_correct_answers = {}
@@ -5666,9 +5661,9 @@ async def ask_feud_question(winner, mode, winner_id):
     print(feud_gif_url)
     
     if mode == "solo":
-        message = f"\u200b\n\u200b\n ⚔️🧍 FeUd (Single Player)\n\u200b"
+        message = f"\u200b\n\u200b\n ⚔️🧍 **FeUd (Single Player)**\n\u200b"
     elif mode == "cooperative":
-        message = f"\u200b\n\u200b\n ⚔️⚡ FeUd Blitz\n\u200b"
+        message = f"\u200b\n\u200b\n ⚔️⚡ **FeUd Blitz**\n\u200b"
 
     await safe_send(channel, content=message, embed=discord.Embed().set_image(url=feud_gif_url))
     await asyncio.sleep(3)
@@ -6123,7 +6118,7 @@ async def ask_ranker_list_question(winner, winner_id, num=7):
     ]
 
     gif_url = random.choice(gifs)
-    await safe_send(channel, content="\u200b\n\u200b\n**🔢📜 Ranker Lists**\n\u200b", embed=discord.Embed().set_image(url=gif_url))
+    await safe_send(channel, content="\u200b\n\u200b\n**🔢📜 Ranker Lists**: Guess the Items\n\u200b", embed=discord.Embed().set_image(url=gif_url))
     await asyncio.sleep(3)
 
     try:
@@ -7539,7 +7534,7 @@ async def get_coffees(user_id):
     try:
         member = await guild.fetch_member(user_id)
         if any(role.name == "Okran" for role in member.roles):
-            print(f"✅ User {member.display_name} is an Okran!")
+            #print(f"✅ User {member.display_name} is an Okran!")
             return 5
         else:
             print(f"❌ User {member.display_name} is NOT an Okran.")
@@ -7896,27 +7891,27 @@ async def select_wof_questions(winner, winner_id):
             return None
         
         elif selected_wof_category == "29":
-            ask_faceoff_challenge(winner, winner_id)
+            await ask_faceoff_challenge(winner, winner_id)
             await asyncio.sleep(3)
             return None
 
         elif selected_wof_category == "30":
-            ask_president_challenge(winner, winner_id)
+            await ask_president_challenge(winner, winner_id)
             await asyncio.sleep(3)
             return None
         
         elif selected_wof_category == "31":
-            ask_wordle_challenge(winner, winner_id)
+            await ask_wordle_challenge(winner, winner_id)
             await asyncio.sleep(3)
             return None
         
         elif selected_wof_category == "32":
-            ask_music_challenge(winner, winner_id)
+            await ask_music_challenge(winner, winner_id)
             await asyncio.sleep(3)
             return None
         
         elif selected_wof_category == "33":
-            ask_myopic_challenge(winner, winner_id)
+            await ask_myopic_challenge(winner, winner_id)
             await asyncio.sleep(3)
             return None
 
@@ -8492,7 +8487,7 @@ async def ask_magic_challenge(winner, winner_id, num=5):
     ]
 
     gif_url = random.choice(gifs)
-    await safe_send(channel, content="\u200b\n\u200b\n👁️✨ **Who's got the Magic Eye?**\n\u200b", embed=discord.Embed().set_image(url=gif_url))
+    await safe_send(channel, content="\u200b\n\u200b\n👁️✨ **Magic Eye**: What Do You See?\n\u200b", embed=discord.Embed().set_image(url=gif_url))
     await asyncio.sleep(5)
 
     user_data = {}
@@ -10419,7 +10414,7 @@ async def update_round_streaks(user, user_id):
         reset_embed_color()
 
         if ai_on:
-            winner_coffees = await get_coffees(user)
+            winner_coffees = await get_coffees(user_id)
             if winner_coffees == 0:
                 gpt_summary = f"\n☕💬🎨 **{user}**: Buy coffee for custom end-of-round messages and paintings!\n"
             else:
@@ -11662,9 +11657,9 @@ async def start_trivia():
             start_message = f"\u200b\n\u200b\n⏩ **Starting a round of {questions_per_round} questions!** ⏩\n\u200b\n\u200b"
 
             start_message += f"\u200b\n🚩 Type **#flag** to report question\n"
-            start_message += f"🗝️ Type **#perks** for a Patreon unlock link\n\u200b"
+            start_message += f"🗝️ Type **#perks** to unlock perks\n\u200b"
 
-            if current_longest_round_streak["user"] is not None and await get_coffees(current_longest_round_streak["user"]) > 0:
+            if current_longest_round_streak["user"] is not None and await get_coffees(current_longest_round_streak["user_id"]) > 0:
                 start_message += f"\n🚩 **{current_longest_round_streak["user"]}** can toggle modes mid-game"
                 start_message += f"\n↔️ **#[command]** any time during round\n\u200b"
                 
@@ -11752,15 +11747,14 @@ async def start_trivia():
             await process_round_options(round_winner, winner_points, round_winner_id)
             
             if round_count % 5 == 0:
-                await safe_send(channel, message)
                 await safe_send(channel, f"\u200b\n🧘‍♂️ A short breather. Relax, stretch, meditate.\n🎨 Live Trivia is a pure hobby effort.\n\n🙋 Help make it better!\n💡 https://forms.gle/iWvmN24pfGEGSy7n7\n\u200b")
-                await asyncio.sleep(30)
                 selected_questions = await select_trivia_questions(questions_per_round)  #Pick the next question set
+                await asyncio.sleep(30)
                 await round_preview(selected_questions)
                 await asyncio.sleep(10)
             else:
-                message = f"\u200b\n\u200b\n🥒 **Unlock perks? Become an Okran!**\n💚 <https://patreon.com/OkraStrut>\n"
-                message += f"\n🛒 **Score Live Trivia merch featuring Okra!**\n👕 <https://livetriviamerch.com>\n\u200b"
+                message = f"\u200b\n\u200b\n🥒 **Unlock perks? Become an Okran!**\n💚 https://discord.com/channels/1367682586079395902/role-subscriptions\n"
+                message += f"\n🛒 **Score Live Trivia merch featuring Okra!**\n👕 https://livetriviamerch.com\n\u200b"
                 
                 await safe_send(channel, message)
                 selected_questions = await select_trivia_questions(questions_per_round)  #Pick the next question set
@@ -11768,8 +11762,8 @@ async def start_trivia():
                 await round_preview(selected_questions)
                 await asyncio.sleep(10)  # Adjust this time to whatever delay you need between rounds
             
-            if len(scoreboard) >= 10:
-                await ask_survey_question()
+            #if len(scoreboard) >= 1000:
+            #    await ask_survey_question()
                 
             await asyncio.sleep(5)
 
@@ -11895,7 +11889,12 @@ async def on_message(message):
     if "#perks" in message.content.strip().lower() and message.author.id != bot.user.id:
         try:
             dm_channel = await message.author.create_dm()
-            await dm_channel.send("\u200b\n🔓✨ Here's the link to become an Okran and **unlock perks**!\n<https://patreon.com/OkraStrut>\n\u200b")
+    
+            embed = discord.Embed(
+                title="🔓✨ Unlock ALL Live Trivia Perks",
+                url="https://discord.com/channels/1367682586079395902/role-subscriptions",
+            )
+            await dm_channel.send(embed=embed)
         except Exception as e:
             await message.channel.send(f"\u200b\n{message.author.mention} ⚠️ I couldn't message you. Make sure your DMs are open.\n\u200b")
             print(f"Error sending DM: {e}")
@@ -11909,7 +11908,7 @@ async def on_message(message):
             await message.add_reaction("🚩")
         await update_audit_question(current_question, message.content.strip(), message.author.display_name)
 
-    if message.content.startswith("#") and (message.author.id == current_longest_round_streak["user_id"] or message.author.id == okrag_id):
+    if message.content.startswith("#") and message.author.id == current_longest_round_streak["user_id"]:
         if await get_coffees(current_longest_round_streak["user_id"]) > 0:
             reset_command = message.content[1:] 
             if(await reset_round_options(reset_command, message.author)) == True:
@@ -11918,6 +11917,12 @@ async def on_message(message):
         else:
             await safe_send(channel, content=f"\n🙏😔 Sorry **{message.author.display_name}**. Mid-game mode toggles require ☕️.\n")
             await message.add_reaction("😩")
+
+    if message.content.startswith("#") and message.author.id == okrag_id:
+        reset_command = message.content[1:] 
+        if(await reset_round_options(reset_command, message.author)) == True:
+            if emoji_mode == True:
+                await message.add_reaction("🤙")
 
     if question_asked_start is None or question_asked_end is None:
         return
