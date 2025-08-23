@@ -10423,42 +10423,42 @@ async def update_round_streaks(user, user_id):
             gpt_message = f"\u200b\n{gpt_summary}\n\u200b"
             await safe_send(channel, gpt_message)
 
-
-            highest_score_player = max(scoreboard, key=lambda uid: scoreboard[uid]["score"])
-            highest_score = scoreboard[highest_score_player]["score"]
-
-            
-            #if len(scoreboard) >= image_wins and highest_score > image_points:
-            if current_longest_round_streak['streak'] % image_wins == 0:
-                await asyncio.sleep(5)
-                await generate_round_summary_image(round_data, user, user_id)
-            else:
-                number_to_emoji = {
-                    1: "1️⃣",
-                    2: "2️⃣",
-                    3: "3️⃣",
-                    4: "4️⃣",
-                    5: "5️⃣",
-                    6: "6️⃣",
-                    7: "7️⃣",
-                    8: "8️⃣",
-                    9: "9️⃣",
-                    10: "🔟"
-                }
+            if winner_coffees > 0:
+                highest_score_player = max(scoreboard, key=lambda uid: scoreboard[uid]["score"])
+                highest_score = scoreboard[highest_score_player]["score"]
+    
                 
-                await asyncio.sleep(4)
-                remaining_games = image_wins - (current_longest_round_streak['streak'] % image_wins)
-                dynamic_emoji = number_to_emoji.get(remaining_games, str(remaining_games))
-                
-                if remaining_games == 1:
-                    image_message = f"\u200b\n{dynamic_emoji}🎨 **{user}**, win the next game and I'll draw you something.\n\u200b"
+                #if len(scoreboard) >= image_wins and highest_score > image_points:
+                if current_longest_round_streak['streak'] % image_wins == 0:
+                    await asyncio.sleep(5)
+                    await generate_round_summary_image(round_data, user, user_id)
                 else:
-                    image_message = f"\u200b\n{dynamic_emoji}🎨 **{user}**, win {remaining_games} more in a row and I'll draw you something.\n\u200b"
-
-                await safe_send(channel, image_message)
-                await asyncio.sleep(2)
-                await get_image_url_from_s3()
-                await asyncio.sleep(1)
+                    number_to_emoji = {
+                        1: "1️⃣",
+                        2: "2️⃣",
+                        3: "3️⃣",
+                        4: "4️⃣",
+                        5: "5️⃣",
+                        6: "6️⃣",
+                        7: "7️⃣",
+                        8: "8️⃣",
+                        9: "9️⃣",
+                        10: "🔟"
+                    }
+                    
+                    await asyncio.sleep(4)
+                    remaining_games = image_wins - (current_longest_round_streak['streak'] % image_wins)
+                    dynamic_emoji = number_to_emoji.get(remaining_games, str(remaining_games))
+                    
+                    if remaining_games == 1:
+                        image_message = f"\u200b\n{dynamic_emoji}🎨 **{user}**, win the next game and I'll draw you something.\n\u200b"
+                    else:
+                        image_message = f"\u200b\n{dynamic_emoji}🎨 **{user}**, win {remaining_games} more in a row and I'll draw you something.\n\u200b"
+    
+                    await safe_send(channel, image_message)
+                    await asyncio.sleep(2)
+                    await get_image_url_from_s3()
+                    await asyncio.sleep(1)
 
     # Perform all MongoDB operations at the end
     for operation in mongo_operations:
