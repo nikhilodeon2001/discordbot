@@ -10396,7 +10396,7 @@ async def update_round_streaks(user, user_id):
     if user is not None:
         streak = current_longest_round_streak["streak"]
         if streak > 1:
-            message = f"\u200b\n\u200b\n🏆 **Winner**: **{user_id}**...🔥{current_longest_round_streak['streak']} in a row!\n"
+            message = f"\u200b\n\u200b\n🏆 **Winner**: **{user}**...🔥{current_longest_round_streak['streak']} in a row!\n"
             
             if streak % discount_streak_amount == 0:
                 discount_fraction = min((streak // discount_streak_amount) * discount_step_amount, 90)
