@@ -10416,7 +10416,7 @@ async def update_round_streaks(user, user_id):
         if ai_on:
             winner_coffees = await get_coffees(user_id)
             if winner_coffees == 0:
-                gpt_summary = f"\n☕💬🎨 **{user}**: Buy coffee for custom end-of-round messages and paintings!\n"
+                gpt_summary = f"\n☕💬🎨 **{user}**: Okrans get custom end-of-round messages and paintings!\n"
             else:
                 gpt_summary = await generate_round_summary(round_data, user, user_id)
 
