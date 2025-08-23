@@ -3705,13 +3705,13 @@ async def ask_chaos_challenge(winner, winner_id, num_of_games):
 
         await asyncio.sleep(2)
         if len(top_winners) == 1:
-            winner_id = top_winners[0]
-            winner_name = scoreboard[winner_id][0]
-            message = f"\u200b\n👑 **Overall Winner:** **{winner_name}** with **{top_score}** point{'s' if top_score != 1 else ''}!\n\u200b"
+            overall_winner_id = top_winners[0]
+            overall_winner_name = scoreboard[overall_winner_id][0]
+            message = f"\u200b\n👑 **Overall Winner:** **{overall_winner_name}** with **{top_score}** point{'s' if top_score != 1 else ''}!\n\u200b"
         else:
             message = f"\u200b\n🤝 It's a tie! **Winners:**\n\u200b"
-            for winner_id in top_winners:
-                winner_name = scoreboard[winner_id][0]
+            for tied_winner_id in top_winners:
+                winner_name = scoreboard[tied_winner_id][0]
                 message += f"• **{winner_name}** ({top_score} pts)\n"
             message += "\u200b"
     else:
