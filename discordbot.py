@@ -3690,7 +3690,7 @@ async def ask_chaos_challenge(winner, winner_id, num_of_games):
                 scoreboard[result] = (display_name, 1)
 
         if scoreboard:
-            sorted_scores = sorted(scoreboard.items(), key=lambda x: x[1], reverse=True)
+            sorted_scores = sorted(scoreboard.items(), key=lambda x: x[1][1], reverse=True)
             scoreboard_msg = "\u200b\n📊 **Scoreboard**\n\u200b"
             for user_id, (display_name, score) in sorted_scores:
                 scoreboard_msg += f"• **{display_name}**: {score} point{'s' if score != 1 else ''}\n"
@@ -3699,7 +3699,7 @@ async def ask_chaos_challenge(winner, winner_id, num_of_games):
 
     # Final results
     if scoreboard:
-        sorted_scores = sorted(scoreboard.items(), key=lambda x: x[1], reverse=True)
+        sorted_scores = sorted(scoreboard.items(), key=lambda x: x[1][1], reverse=True)
         top_score = sorted_scores[0][1][1]
         top_winners = [uid for uid, (_, score) in sorted_scores if score == top_score]
 
