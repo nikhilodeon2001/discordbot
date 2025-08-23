@@ -8839,7 +8839,7 @@ async def process_round_options(round_winner, winner_points, round_winner_id):
     if winner_coffees > 0:
         message = f"\u200b\n🍔🍟 **{round_winner}**, what's your order?\n" 
     else: 
-        message = "\u200b\n🥒 **{round_winner}**, join the **Okrans** and choose from the following!"
+        message = f"\u200b\n🥒 **{round_winner}**, join the **Okrans** and choose from the following!"
     
     message += (
         "\u200b\n**Gameplay Options**\n\n"
@@ -8867,6 +8867,8 @@ async def process_round_options(round_winner, winner_points, round_winner_id):
     await safe_send(channel, message)
     if winner_coffees > 0:
         await prompt_user_for_response(round_winner, winner_points, winner_coffees, round_winner_id)
+    else:
+        await asyncio.sleep(3)
 
 
 async def prompt_user_for_response(round_winner, winner_points, winner_coffees, round_winner_id):
