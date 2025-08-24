@@ -8798,7 +8798,7 @@ def generate_crossword_image(answer, prefill=0.5):
 
 
 async def process_round_options(round_winner, winner_points, round_winner_id):
-    global since_token, time_between_questions, time_between_questions_default, ghost_mode, since_token, categories_to_exclude, num_crossword_clues, num_jeopardy_clues, num_mysterybox_clues, num_wof_clues, god_mode, yolo_mode, magic_number, wf_winner, num_math_questions, num_stats_questions, image_questions, nice_okra, creep_okra, marx_mode, blind_mode, seductive_okra, joke_okra, sniper_mode, cloak_mode, haiku_okra, trailer_okra, heist_okra, horoscope_okra, rap_okra, shakespeare_okra, pirate_okra, noir_okra, hype_okra
+    global since_token, time_between_questions, time_between_questions_default, ghost_mode, since_token, categories_to_exclude, num_crossword_clues, num_jeopardy_clues, num_mysterybox_clues, num_wof_clues, god_mode, yolo_mode, magic_number, wf_winner, num_math_questions, num_stats_questions, image_questions, nice_okra, creep_okra, marx_mode, blind_mode, seductive_okra, joke_okra, sniper_mode, cloak_mode, cloaked_user, haiku_okra, trailer_okra, heist_okra, horoscope_okra, rap_okra, shakespeare_okra, pirate_okra, noir_okra, hype_okra
     time_between_questions = time_between_questions_default
     ghost_mode = ghost_mode_default
     categories_to_exclude.clear()
@@ -8830,6 +8830,7 @@ async def process_round_options(round_winner, winner_points, round_winner_id):
     blind_mode = blind_mode_default
     sniper_mode = sniper_mode_default
     cloak_mode = cloak_mode_default
+    cloaked_user = None
 
     if round_winner is None:
         return
@@ -11794,7 +11795,7 @@ def print_round_settings():
     print(f"🫥🕶️ Cloak Mode: {cloak_mode}")
 
 async def reset_round_options(reset_command, winner_id):
-    global time_between_questions, ghost_mode, god_mode, yolo_mode, mirror_mode, echo_mode, image_questions, marx_mode, blind_mode, zen_mode, sniper_mode, cloak_mode
+    global time_between_questions, ghost_mode, god_mode, yolo_mode, mirror_mode, echo_mode, image_questions, marx_mode, blind_mode, zen_mode, sniper_mode, cloak_mode, cloaked_user
 
     reset_success = False
     
