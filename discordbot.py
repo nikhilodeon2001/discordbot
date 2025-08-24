@@ -7734,22 +7734,22 @@ async def select_wof_questions(winner, winner_id):
         counter = counter + 1
         message += f"{counter}.\u200b 🗺️❓ Borderline 🥒✨\n"
         counter = counter + 1
-        message += f"{counter}.\u200b 🙃🙂 Face/Off ☕✨\n"
+        message += f"{counter}.\u200b 🙃🙂 Face/Off 🥒✨\n"
         counter = counter + 1
-        message += f"{counter}.\u200b 🦅🇺🇸 Rushmore ☕✨\n"
+        message += f"{counter}.\u200b 🦅🇺🇸 Rushmore 🥒✨\n"
         counter = counter + 1
-        message += f"{counter}.\u200b 🟩🟨 Wordle War ☕✨\n"
+        message += f"{counter}.\u200b 🟩🟨 Wordle War 🥒✨\n"
         counter = counter + 1
-        message += f"{counter}.\u200b 🎼🎵 MusIQ ☕✨\n"
+        message += f"{counter}.\u200b 🎼🎵 MusIQ 🥒✨\n"
         counter = counter + 1
-        message += f"{counter}.\u200b 👓🕵️‍♂️ Myopic Mystery ☕✨\n"
+        message += f"{counter}.\u200b 👓🕵️‍♂️ Myopic Mystery 🥒✨\n"
         counter = counter + 1
-        message += f"{counter}.\u200b 🔬🔍 Microscopic ☕✨\n"
+        message += f"{counter}.\u200b 🔬🔍 Microscopic 🥒✨\n"
         counter = counter + 1
-        message += f"{counter}.\u200b 🧬☢️ Fusion ☕✨\n"
+        message += f"{counter}.\u200b 🧬☢️ Fusion 🥒✨\n"
         counter = counter + 1
-        message += f"{counter}.\u200b 🔢🎯 Tally ☕✨\n"
-        message += f"99.\u200b 🌀🤯 CHAOS ☕✨\n"
+        message += f"{counter}.\u200b 🔢🎯 Tally 🥒✨\n"
+        message += f"99.\u200b 🌀🤯 CHAOS 🥒✨\n"
         message += f"00.\u200b 🥗🌟 Okra's Choice\n"
         message += f"x.\u200b ⏭️🕹️ Skip Mini-Game\n\u200b"
         await safe_send(channel, message) 
@@ -10419,7 +10419,7 @@ async def update_round_streaks(user, user_id):
         if ai_on:
             winner_coffees = await get_coffees(user_id)
             if winner_coffees == 0:
-                gpt_summary = f"\n☕💬🎨 **{user}**: Okrans get custom end-of-round messages and paintings!\n"
+                gpt_summary = f"\n🥒💬🎨 **{user}**: Okrans get custom end-of-round messages and paintings!\n"
             else:
                 gpt_summary = await generate_round_summary(round_data, user, user_id)
 
@@ -11918,7 +11918,7 @@ async def on_message(message):
                 if emoji_mode == True:
                     await message.add_reaction("🤙")
         else:
-            await safe_send(channel, content=f"\n🙏😔 Sorry **{message.author.display_name}**. Mid-game mode toggles require ☕️.\n")
+            await safe_send(channel, content=f"\n🙏😔 Sorry **{message.author.display_name}**. Only Okrans can toggle mid-game options 🥒️.\n")
             await message.add_reaction("😩")
 
     if message.content.startswith("#") and message.author.id == okrag_id:
