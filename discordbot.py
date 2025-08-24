@@ -7438,7 +7438,7 @@ async def ask_category(winner, categories, winner_coffees, winner_id):
     additional_prompt = ""
 
     # Display categories
-    category_message = f"\u200b\n🎨🖍️ **{winner_id}** Pick a theme for the Okra Museum!\n\u200b"
+    category_message = f"\u200b\n🎨🖍️ **{winner}** Pick a theme for the Okra Museum!\n\u200b"
     for key, value in categories.items():
         category_message += f"**{key}**: {value}\n"
     await safe_send(channel, category_message)
@@ -7489,7 +7489,7 @@ async def request_prompt(winner, winner_id):
     collected_words = []
     start_time = asyncio.get_event_loop().time()
    
-    message = f"\u200b\n🖼️🔟 **{winner_id}**, Fill in the blank. *10 words max* and **be good**.\n\u200b"
+    message = f"\u200b\n🖼️🔟 **{winner}**, Fill in the blank. *10 words max* and **be good**.\n\u200b"
     message += f"\n*Draw an okra themed picture of **{winner}**...*\n\u200b"
     await safe_send(channel, message)
 
