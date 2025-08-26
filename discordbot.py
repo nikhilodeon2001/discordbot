@@ -131,7 +131,7 @@ submission_queue = []
 max_queue_size = 100  # Number of submissions to accumulate before flushing
 
 # Initialize all variables
-local_mode = True
+local_mode = False
 
 if local_mode == True:
     discord_token = "REMOVED_DISCORD_TOKEN" #Stage
@@ -4775,12 +4775,13 @@ async def ask_chess_challenge(winner, winner_id, num=3):
                 try:
                     timeout = 20 - (asyncio.get_event_loop().time() - start_time)
                     msg = await bot.wait_for("message", timeout=timeout, check=check)
-                    guess = msg.content.strip().lower()
+                    guess = msg.content.strip().lower().replace(" ", "")
                     user = msg.author.display_name
                     uid = msg.author.id
                     key = (uid, guess)
 
                     if guess == best_move.lower():
+                        await msg.add_reaction("✅")
                         prev_display, prev_score = user_correct_answers.get(uid, (user, 0))
                         user_correct_answers[uid] = (prev_display, prev_score + 1)
                         img_buf, hint = generate_chess_board(starting_board, best_move, show_color=False)
@@ -8032,6 +8033,8 @@ async def request_prompt(winner, winner_id):
 
 
 async def get_coffees(user_id):
+    if local_mode == True:
+        return 5
     guild = bot.get_guild(OKRAN_GUILD_ID)
     if not guild:
         print(f"⚠️ Bot is not in guild with ID {OKRAN_GUILD_ID}")
@@ -8179,84 +8182,85 @@ async def select_wof_questions(winner, winner_id):
         wof_questions = await wof_collection.aggregate(pipeline_wof).to_list(length=5)
 
         message = f"\u200b\n\u200b\n🍷⚔️ **{winner}**, your mini-game awaits (#)...\n\n"
-        message += f"🥒: For **Okrans Only!**\n"
-        message += f"✨: **Everyone Plays** ({num_list_players}+ players needed)\n\u200b\n\u200b"
-        await safe_send(channel, message)
-        await asyncio.sleep(0.1)
-        # Assuming wof_questions contains the sampled questions, with each document as a list/tuple
+        
+        message += f"😎 **Everyone's Welcome**"
         counter = 0
-        message = ""
         for doc in wof_questions:
             category = doc["question"]  # Use the key name to access category
             message += f"\n{counter}.\u200b 🎡💰 WoF: {category}"
             counter = counter + 1        
         premium_counts = counter
-        message += f"\n{counter}.\u200b 🌐🎲 Wikipedia Roulette 🥒\n"
+        message += f"🥒 **Okrans Only**"
+        message += f"\n{counter}.\u200b 🌐🎲 Wikipedia Roulette\n"
         counter = counter + 1
-        message += f"{counter}.\u200b 📚🎲 Dictionary Roulette 🥒\n"
+        message += f"{counter}.\u200b 📚🎲 Dictionary Roulette\n"
         counter = counter + 1
-        message += f"{counter}.\u200b 📖🎲 Thesaurus Roulette 🥒\n"
+        message += f"{counter}.\u200b 📖🎲 Thesaurus Roulette\n"
         counter = counter + 1
-        message += f"{counter}.\u200b 🌍❔ Where's Okra? 🥒\n"
+        message += f"{counter}.\u200b 🌍❔ Where's Okra?\n"
         counter = counter + 1
-        message += f"{counter}.\u200b ⚔️🧍 FeUd (Single Player) 🥒\n"
+        message += f"{counter}.\u200b ⚔️🧍 FeUd (Single Player)\n"
         counter = counter + 1
-        message += f"{counter}.\u200b ⚔️⚡ FeUd Blitz 🥒✨\n"
+        message += f"\n\n🥒✨: **Okrans Only** ({num_list_players}+ players)\n"
+        message += f"{counter}.\u200b ⚔️⚡ FeUd Blitz\n"
         counter = counter + 1
-        message += f"{counter}.\u200b 📝🥊 List Battle 🥒✨\n"
+        message += f"{counter}.\u200b 📝🥊 List Battle\n"
         counter = counter + 1
-        message += f"{counter}.\u200b 🎥⚡ Poster Blitz 🥒✨\n"
+        message += f"{counter}.\u200b 🎥⚡ Poster Blitz\n"
         counter = counter + 1
-        message += f"{counter}.\u200b 🎬💥 Movie Mayhem 🥒✨\n"
+        message += f"{counter}.\u200b 🎬💥 Movie Mayhem\n"
         counter = counter + 1
-        message += f"{counter}.\u200b 🧩🔗 Missing Link 🥒✨\n"
+        message += f"{counter}.\u200b 🧩🔗 Missing Link\n"
         counter = counter + 1
-        message += f"{counter}.\u200b 👤🌟 Famous Peeps 🥒✨\n"
+        message += f"{counter}.\u200b 👤🌟 Famous Peeps\n"
         counter = counter + 1
-        message += f"{counter}.\u200b 🔢📜 Ranker Lists 🥒✨\n"
+        message += f"{counter}.\u200b 🔢📜 Ranker Lists\n"
         counter = counter + 1
-        message += f"{counter}.\u200b 👁️✨ Magic EyeD 🥒✨\n"
+        message += f"{counter}.\u200b 👁️✨ Magic EyeD\n"
         counter = counter + 1
-        message += f"{counter}.\u200b ❓🦓 OkrAnimal 🥒✨\n"
+        message += f"{counter}.\u200b ❓🦓 OkrAnimal\n"
         counter = counter + 1
-        message += f"{counter}.\u200b 🟢🎩 The Riddler 🥒✨\n"
+        message += f"{counter}.\u200b 🟢🎩 The Riddler\n"
         counter = counter + 1
-        message += f"{counter}.\u200b 🤓📚 Word Nerd 🥒✨\n"
+        message += f"{counter}.\u200b 🤓📚 Word Nerd\n"
         counter = counter + 1
-        message += f"{counter}.\u200b 🎏🎉 Flag Fest 🥒✨\n"
+        message += f"{counter}.\u200b 🎏🎉 Flag Fest\n"
         counter = counter + 1
-        message += f"{counter}.\u200b 🎧🎤 LyrIQ 🥒✨\n"
+        message += f"{counter}.\u200b 🎧🎤 LyrIQ\n"
         counter = counter + 1
-        message += f"{counter}.\u200b 🎰🗣️ PolygLottery 🥒✨\n"
+        message += f"{counter}.\u200b 🎰🗣️ PolygLottery\n"
         counter = counter + 1
-        message += f"{counter}.\u200b 📖🕵️‍♂️ Prose & Cons 🥒✨\n"
+        message += f"{counter}.\u200b 📖🕵️‍♂️ Prose & Cons\n"
         counter = counter + 1
-        message += f"{counter}.\u200b ➕➖ Sign Language 🥒✨\n"
+        message += f"{counter}.\u200b ➕➖ Sign Language\n"
         counter = counter + 1
-        message += f"{counter}.\u200b 💧🔥 Elementary 🥒✨\n"
+        message += f"{counter}.\u200b 💧🔥 Elementary\n"
         counter = counter + 1
-        message += f"{counter}.\u200b 🧩🌀 Jigsawed 🥒✨\n"
+        message += f"{counter}.\u200b 🧩🌀 Jigsawed\n"
         counter = counter + 1
-        message += f"{counter}.\u200b 🗺️❓ Borderline 🥒✨\n"
+        message += f"{counter}.\u200b 🗺️❓ Borderline\n"
         counter = counter + 1
-        message += f"{counter}.\u200b 🙃🙂 Face/Off 🥒✨\n"
+        message += f"{counter}.\u200b 🙃🙂 Face/Off\n"
         counter = counter + 1
-        message += f"{counter}.\u200b 🦅🇺🇸 Rushmore 🥒✨\n"
+        message += f"{counter}.\u200b 🦅🇺🇸 Rushmore\n"
         counter = counter + 1
-        message += f"{counter}.\u200b 🟩🟨 Wordle War 🥒✨\n"
+        message += f"{counter}.\u200b 🟩🟨 Wordle War\n"
         counter = counter + 1
-        message += f"{counter}.\u200b 🎼🎵 MusIQ 🥒✨\n"
+        message += f"{counter}.\u200b 🎼🎵 MusIQ\n"
         counter = counter + 1
-        message += f"{counter}.\u200b 👓🕵️‍♂️ Myopic Mystery 🥒✨\n"
+        message += f"{counter}.\u200b 👓🕵️‍♂️ Myopic Mystery\n"
         counter = counter + 1
-        message += f"{counter}.\u200b 🔬🔍 Microscopic 🥒✨\n"
+        message += f"{counter}.\u200b 🔬🔍 Microscopic\n"
         counter = counter + 1
-        message += f"{counter}.\u200b 🧬☢️ Fusion 🥒✨\n"
+        message += f"{counter}.\u200b 🧬☢️ Fusion\n"
         counter = counter + 1
-        message += f"{counter}.\u200b 🔢🎯 Tally 🥒✨\n"
+        message += f"{counter}.\u200b 🔢🎯 Tally\n"
         counter = counter + 1
-        message += f"{counter}.\u200b ♟️👑 Checkmate 🥒✨\n"
-        message += f"99.\u200b 🌀🤯 CHAOS 🥒✨\n"
+        message += f"{counter}.\u200b ♟️👑 Checkmate\n"
+        message += f"99.\u200b 🌀🤯 CHAOS\n"
+
+        message += f"\n⚙️ **Other Options**\n"
+  
         message += f"00.\u200b 🥗🌟 Okra's Choice\n"
         message += f"x.\u200b ⏭️🕹️ Skip Mini-Game\n\u200b"
         await safe_send(channel, message) 
@@ -9356,19 +9360,19 @@ async def process_round_options(round_winner, winner_points, round_winner_id):
         message = f"\u200b\n🥒 **{round_winner}**, join the **Okrans** and choose from the following!"
     
     message += (
-        "\u200b\n**Gameplay Options**\n\n"
-        "⏱️⏳ **<3 - 15>** Time (s) between questions. ✨\n"
-        "🔥🤘 **Yolo** No scores shown until the end. ✨\n"
-        "🙈🚫 **Blind** No question answers shown. ✨\n"
-        "🚩🔨 **Marx** No recognizing right answers. ✨\n"
-        "📷❌ **Blank** No image questions. ✨\n"
-        "👻🎃 **Ghost** Responses will vanish.✨\n"
-        "🧢🎤 **Sniper**: Only first answers accepted ✨\n"
-        "🫥🕶️ **Cloak**: Only your answers vanish ✨\n"  
+        "\u200b\n🎮⚙️ **Gameplay Options**\n"
+        "⏱️⏳ **<3 - 15>** Time (s) between questions.\n"
+        "🔥🤘 **Yolo** No scores shown until the end.\n"
+        "🙈🚫 **Blind** No question answers shown.\n"
+        "🚩🔨 **Marx** No recognizing right answers.\n"
+        "📷❌ **Blank** No image questions.\n"
+        "👻🎃 **Ghost** Responses will vanish.\n"
+        "🧢🎤 **Sniper**: Only first answers accepted\n"
+        "🫥🕶️ **Cloak**: Only your answers vanish\n"  
    
         "\n✨: Toggle mid-round with **#[command]**\n\n"
 
-        "\n**Question Options**\n\n"
+        "\n📝🔀 **Question Options**\n"
         "🇺🇸🗽 **Freedom** No multiple choice.\n"
         "🔢❌ **Greg** No math questions.\n"
         "🟦❌ **Xela** No Jeopardy-style questions.\n"
@@ -12143,7 +12147,7 @@ async def start_trivia():
             #await ask_list_question("TheOkraG", 591861826690613248, 3)
             #await ask_chaos_challenge("TheOkraG",591861826690613248, 23)
             #await ask_tally_challenge("TheOkraG",591861826690613248, 3)
-            await ask_chess_challenge("TheOkraG",591861826690613248, 3)
+            #await ask_chess_challenge("TheOkraG",591861826690613248, 3)
 
             round_responders.clear()  # Reset round responders
             round_data["questions"] = []
