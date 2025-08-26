@@ -12499,6 +12499,10 @@ async def on_message(message):
 async def on_message_edit(before, after):
     if after.author == bot.user:
         return
+
+    # Only react to edits in this specific channel
+    if after.channel.id != 1402517943979343942:
+        return
         
     if question_asked_start and question_asked_end:
         edited_time = after.edited_at.timestamp() if after.edited_at else time.time()
