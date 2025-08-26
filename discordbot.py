@@ -17,14 +17,12 @@ import datetime
 from datetime import timezone
 import time
 import pytz
-import os
 from motor.motor_asyncio import AsyncIOMotorClient
 import difflib
 import string
 from urllib.parse import urlparse 
 from urllib.parse import quote
-from urllib.parse import urlencode
-import io            
+from urllib.parse import urlencode         
 from PIL import Image, ImageDraw, ImageFont, ImageColor
 import openai
 from openai import AsyncOpenAI
@@ -63,6 +61,8 @@ from discord.ext import commands
 import aiohttp
 import aiofiles
 from discord import Embed, File
+from typing import Optional, Tuple
+import chess
 
 embed_color_default = discord.Color.green()
 embed_color = embed_color_default
@@ -131,11 +131,11 @@ submission_queue = []
 max_queue_size = 100  # Number of submissions to accumulate before flushing
 
 # Initialize all variables
-local_mode = False
+local_mode = True
 
 if local_mode == True:
-    #discord_token = "REMOVED_DISCORD_TOKEN" #Stage
-    discord_token = "" #Prod
+    discord_token = "REMOVED_DISCORD_TOKEN" #Stage
+    #discord_token = "" #Prod
     mongo_db_string = "mongodb+srv://nsharma2:REMOVED_MONGO_PASSWORD@staging.oxez2.mongodb.net/?retryWrites=true&w=majority&appName=staging"
     openai_api_key = "REMOVED_OPENAI_KEY"
     openweather_api_key = "REMOVED_OPENWEATHER_KEY"
@@ -143,8 +143,8 @@ if local_mode == True:
     googletranslate_api_key = "REMOVED_GOOGLETRANSLATE_KEY"
     webster_api_key = "REMOVED_WEBSTER_KEY"
     webster_thes_api_key = "REMOVED_WEBSTER_THES_KEY"
-    #channel_id = 1375328414151610458 #Stage
-    channel_id = 1402517943979343942 #Production  
+    channel_id = 1375328414151610458 #Stage
+    #channel_id = 1402517943979343942 #Production  
     okrag_id = 591861826690613248  
 else:
     discord_token = os.getenv("discord_token")
@@ -164,7 +164,7 @@ intents.messages = True
 intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 openai_client = AsyncOpenAI(api_key=openai_api_key)
-id_limits = {"general": 2000, "mysterybox": 2000, "crossword": 5000, "jeopardy": 5000, "wof": 1500, "list": 20, "feud": 1000, "posters": 2000, "movie_scenes": 5000, "missing_link": 2500, "people": 2500, "ranker_list": 4000, "animal": 2000, "riddle": 2500, "dictionary": 5000, "flags": 800, "lyric": 500, "polyglottery": 80, "book": 80, "element": 100, "jigsaw": 5000, "border": 100, "faceoff": 5000, "president": 80, "wordle": 1400, "myopic": 5000, "fusion": 5000, "microscopic": 5000}
+id_limits = {"general": 2000, "mysterybox": 2000, "crossword": 5000, "jeopardy": 5000, "wof": 1500, "list": 20, "feud": 1000, "posters": 2000, "movie_scenes": 5000, "missing_link": 2500, "people": 2500, "ranker_list": 4000, "animal": 2000, "riddle": 2500, "dictionary": 5000, "flags": 800, "lyric": 500, "polyglottery": 80, "book": 80, "element": 100, "jigsaw": 5000, "border": 100, "faceoff": 5000, "president": 80, "wordle": 1400, "myopic": 5000, "fusion": 5000, "microscopic": 5000, "chess": 5000}
 max_retries = 3
 delay_between_retries = 3
 first_place_bonus = 0
@@ -3663,7 +3663,8 @@ async def ask_chaos_challenge(winner, winner_id, num_of_games):
         ask_myopic_challenge,
         ask_microscopic_challenge,
         ask_fusion_challenge,
-        ask_tally_challenge
+        ask_tally_challenge,
+        ask_chess_challenge
     ]
 
     num_of_games = min(num_of_games, len(challenge_functions))
@@ -4151,6 +4152,8 @@ def wordle_score(wordle_word, guess):
 
     return score
 
+
+
 async def ask_wordle_challenge(winner, winner_id, num=1):
     global wf_winner
     wf_winner = True
@@ -4357,6 +4360,502 @@ async def ask_wordle_challenge(winner, winner_id, num=1):
         return wordle_winner_id
     else:
         return None
+    
+
+
+
+
+LIGHT_COLOR = (240, 217, 181)  # light squares
+DARK_COLOR  = (181, 136,  99)  # dark squares
+
+# Unicode chess pieces (fallback to letters if font lacks glyphs)
+PIECE_UNICODE = {
+    chess.PAWN:   ("♟", "♟"),     # Use solid black symbol for both, differentiate by color
+    chess.KNIGHT: ("♞", "♞"),
+    chess.BISHOP: ("♝", "♝"),
+    chess.ROOK:   ("♜", "♜"),
+    chess.QUEEN:  ("♛", "♛"),
+    chess.KING:   ("♚", "♚"),
+}
+
+def _load_font(square_px: int, font_path: Optional[str]) -> Tuple[ImageFont.FreeTypeFont, bool]:
+    """Try to load a TTF that supports chess glyphs. Return (font, supports_unicode_glyphs)."""
+    size = int(square_px * 0.72)
+    candidates = []
+    if font_path:
+        candidates.append(font_path)
+    candidates.extend([
+        "DejaVuSans.ttf",
+        "NotoSansSymbols-Regular.ttf",
+        "NotoSans-Regular.ttf",
+        "/Library/Fonts/Arial Unicode.ttf",  # macOS common
+        "ArialUnicode.ttf",
+        "Symbola.ttf",
+    ])
+    for path in candidates:
+        try:
+            return ImageFont.truetype(path, size=size), True
+        except Exception:
+            continue
+    # Fallback bitmap font (no proper chess glyphs)
+    return ImageFont.load_default(), False
+
+def _text_size(draw: ImageDraw.ImageDraw, text: str, font: ImageFont.ImageFont, stroke_width: int = 0):
+    """Robust text size (works for bitmap or TrueType fonts)."""
+    try:
+        bbox = draw.textbbox((0, 0), text, font=font, stroke_width=stroke_width)
+        return bbox[2] - bbox[0], bbox[3] - bbox[1]
+    except Exception:
+        return font.getsize(text)
+    
+
+
+def generate_chess_board(
+    fen: str,
+    move_uci: Optional[str] = None,
+    square_px: int = 80,
+    margin_px: int = 48,
+    draw_coords: bool = True,
+    font_path: Optional[str] = None,
+    show_color: bool = True,
+    hint: bool = False,
+) -> tuple[io.BytesIO, Optional[str]]:
+    """
+    Render a chessboard PNG from FEN, optionally after applying a UCI move.
+    Orientation: side-to-move in the FEN is shown at the bottom (w=White bottom, b=Black bottom).
+    
+    Args:
+        show_color: If True, shows "White to Move" or "Black to Move" indicator (default True)
+        hint: If True, highlights the origin square green regardless of show_color (default False)
+    
+    Returns a tuple of (BytesIO pointing at a PNG image, piece hint string or None).
+    """
+    # Build board and (optionally) apply first move
+    board = chess.Board(fen)
+    
+    # Track move squares for highlighting and generate hint
+    move_from_square = None
+    move_to_square = None
+    hint_square = None
+    piece_hint = None
+
+    if move_uci:
+        try:
+            mv = chess.Move.from_uci(move_uci.strip().lower())
+            # Get piece hint before applying the move (regardless of legality)
+            piece = board.piece_at(mv.from_square)
+            if piece:
+                piece_names = {
+                    chess.PAWN: "Pawn",
+                    chess.KNIGHT: "Knight", 
+                    chess.BISHOP: "Bishop",
+                    chess.ROOK: "Rook",
+                    chess.QUEEN: "Queen",
+                    chess.KING: "King"
+                }
+                piece_name = piece_names.get(piece.piece_type, "Piece")
+                color = "White" if piece.color else "Black"
+                piece_hint = f"Move the {color} {piece_name}"
+            
+            # Set hint square if hint mode is enabled
+            if hint:
+                hint_square = mv.from_square
+            
+            # Apply move and highlight squares only if show_color is False (solution mode)
+            if not show_color:
+                if mv in board.legal_moves:
+                    move_from_square = mv.from_square
+                    move_to_square = mv.to_square
+                    board.push(mv)
+                else:
+                    # Still track squares for highlighting even if illegal
+                    move_from_square = mv.from_square
+                    move_to_square = mv.to_square
+        except Exception as e:
+            # For debugging - could be removed later
+            piece_hint = f"Error parsing move: {str(e)}"
+
+    # Always show from White's perspective (standard chess notation)
+    bottom_is_white = True
+
+    # Image geometry - add extra space at bottom for move indicator
+    inner = square_px * 8
+    coord_margin = (2 * margin_px if draw_coords else 0)
+    move_text_height = int(square_px * 0.8)  # Extra space for larger move indicator
+    total_width = inner + coord_margin
+    total_height = inner + coord_margin + move_text_height
+    origin = margin_px if draw_coords else 0
+
+    img = Image.new("RGBA", (total_width, total_height), (255, 255, 255, 0))
+    draw = ImageDraw.Draw(img)
+
+    # Coordinates for labels (from the viewing side)
+    files_white = "abcdefgh"
+    ranks_white = "12345678"
+    if bottom_is_white:
+        files_row = list(files_white)              # left→right: a..h
+        ranks_col = list(reversed(ranks_white))   # top→bottom: 8..1
+        file_iter = range(8)                      # files 0..7
+        rank_iter = reversed(range(8))            # ranks 7..0 (8..1 at top)
+    else:
+        # From Black’s perspective, files are h..a left→right, ranks are 1..8 top→bottom
+        files_row = list(reversed(files_white))   # left→right: h..a
+        ranks_col = list(ranks_white)             # top→bottom: 1..8
+        file_iter = reversed(range(8))            # files 7..0
+        rank_iter = range(8)                      # ranks 0..7 (1..8 at top)
+
+    # Draw squares
+    # We'll map display (x,y) to an actual board square using file/rank mapping above.
+    display_rank_indices = list(rank_iter)   # y-axis iteration for drawing
+    display_file_indices = list(file_iter)   # x-axis iteration for drawing
+
+    for y, r in enumerate(display_rank_indices):
+        for x, f in enumerate(display_file_indices):
+            sq = chess.square(f, r)  # Current square being drawn
+            
+            # Default square color
+            color = LIGHT_COLOR if (x + y) % 2 == 0 else DARK_COLOR
+            
+            # Highlight squares
+            if hint_square is not None and sq == hint_square:
+                # Hint square - green highlight (takes priority)
+                color = (100, 255, 100) if (x + y) % 2 == 0 else (80, 200, 80)
+            elif move_from_square is not None and sq == move_from_square:
+                # Origin square - red highlight
+                color = (255, 100, 100) if (x + y) % 2 == 0 else (200, 80, 80)
+            elif move_to_square is not None and sq == move_to_square:
+                # Destination square - green highlight
+                color = (100, 255, 100) if (x + y) % 2 == 0 else (80, 200, 80)
+            
+            x0 = origin + x * square_px
+            y0 = origin + y * square_px
+            x1 = x0 + square_px
+            y1 = y0 + square_px
+            draw.rectangle([x0, y0, x1, y1], fill=color)
+
+    # Labels (files on bottom/top, ranks on left/right)
+    if draw_coords:
+        # Create a larger font for coordinates - about 1/3 of square size
+        coord_size = max(12, int(square_px * 0.33))
+        try:
+            coord_font = ImageFont.truetype(os.path.join("fonts", "DejaVuSans.ttf"), size=coord_size)
+        except:
+            coord_font = ImageFont.load_default()
+
+        # Files (bottom)
+        for i, ch in enumerate(files_row):
+            tx = origin + i * square_px + square_px // 2
+            ty = origin + 8 * square_px + int(margin_px * 0.25)
+            w, h = _text_size(draw, ch, coord_font)
+            # Draw black background box
+            padding = 2
+            box_x1 = tx - w // 2 - padding
+            box_y1 = ty - padding
+            box_x2 = tx + w // 2 + padding
+            box_y2 = ty + h + padding
+            draw.rectangle([box_x1, box_y1, box_x2, box_y2], fill=(0, 0, 0))
+            draw.text((tx - w // 2, ty), ch, font=coord_font, fill=(255, 255, 255))
+
+        # Files (top)
+        for i, ch in enumerate(files_row):
+            tx = origin + i * square_px + square_px // 2
+            ty = int(margin_px * 0.15)
+            w, h = _text_size(draw, ch, coord_font)
+            # Draw black background box
+            padding = 2
+            box_x1 = tx - w // 2 - padding
+            box_y1 = ty - padding
+            box_x2 = tx + w // 2 + padding
+            box_y2 = ty + h + padding
+            draw.rectangle([box_x1, box_y1, box_x2, box_y2], fill=(0, 0, 0))
+            draw.text((tx - w // 2, ty), ch, font=coord_font, fill=(255, 255, 255))
+
+        # Ranks (left)
+        for i, ch in enumerate(ranks_col):
+            tx = int(margin_px * 0.20)
+            ty = origin + i * square_px + square_px // 2
+            w, h = _text_size(draw, ch, coord_font)
+            # Draw black background box
+            padding = 2
+            box_x1 = tx - padding
+            box_y1 = ty - h // 2 - padding
+            box_x2 = tx + w + padding
+            box_y2 = ty + h // 2 + padding
+            draw.rectangle([box_x1, box_y1, box_x2, box_y2], fill=(0, 0, 0))
+            draw.text((tx, ty - h // 2), ch, font=coord_font, fill=(255, 255, 255))
+
+        # Ranks (right)
+        for i, ch in enumerate(ranks_col):
+            tx = origin + 8 * square_px + int(margin_px * 0.60)
+            ty = origin + i * square_px + square_px // 2
+            w, h = _text_size(draw, ch, coord_font)
+            # Draw black background box
+            padding = 2
+            box_x1 = tx - w - padding
+            box_y1 = ty - h // 2 - padding
+            box_x2 = tx + padding
+            box_y2 = ty + h // 2 + padding
+            draw.rectangle([box_x1, box_y1, box_x2, box_y2], fill=(0, 0, 0))
+            draw.text((tx - w, ty - h // 2), ch, font=coord_font, fill=(255, 255, 255))
+
+    # Piece font
+    piece_font, can_use_unicode = _load_font(square_px, font_path)
+    stroke_w = max(1, int(square_px * 0.06))
+
+    # Draw pieces according to viewing orientation
+    for y, r in enumerate(display_rank_indices):
+        for x, f in enumerate(display_file_indices):
+            sq = chess.square(f, r)  # file, rank (0-based)
+            piece = board.piece_at(sq)
+            if not piece:
+                continue
+
+            if can_use_unicode:
+                glyph = PIECE_UNICODE[piece.piece_type][0]  # Use same symbol for both colors
+                # White pieces: white fill with black stroke; black pieces: black fill with white stroke
+                is_white = piece.color
+                fill = (255, 255, 255) if is_white else (0, 0, 0)
+                stroke = (0, 0, 0) if is_white else (255, 255, 255)
+            else:
+                # Fallback letter
+                glyph = piece.symbol().upper() if piece.color else piece.symbol().lower()
+                fill = (0, 0, 0)
+                stroke = None
+
+            gx = origin + x * square_px + square_px // 2
+            gy = origin + y * square_px + square_px // 2
+            tw, th = _text_size(draw, glyph, piece_font, stroke_width=stroke_w if can_use_unicode else 0)
+            pos = (gx - tw // 2, gy - th // 2)
+
+            draw.text(
+                pos,
+                glyph,
+                font=piece_font,
+                fill=fill,
+                stroke_width=(stroke_w if can_use_unicode else 0),
+                stroke_fill=stroke if can_use_unicode else None,
+                anchor=None,
+            )
+
+    # Add move indicator text at the bottom (only if show_color is True)
+    if show_color:
+        move_text = "White to Move" if board.turn else "Black to Move"
+        
+        # Use much larger font for move indicator - about half the square size
+        move_text_size = max(24, int(square_px * 0.5))
+        try:
+            move_font = ImageFont.truetype(os.path.join("fonts", "DejaVuSans.ttf"), size=move_text_size)
+        except:
+            move_font = ImageFont.load_default()
+        
+        # Position text at bottom center
+        text_w, text_h = _text_size(draw, move_text, move_font)
+        text_x = (total_width - text_w) // 2
+        text_y = total_height - move_text_height + (move_text_height - text_h) // 2
+        
+        # Draw background box with color matching the side to move
+        padding = 12
+        box_x1 = text_x - padding
+        box_y1 = text_y - padding
+        box_x2 = text_x + text_w + padding
+        box_y2 = text_y + text_h + padding
+        
+        if board.turn:  # White's turn
+            bg_color = (255, 255, 255)  # White background
+            text_color = (0, 0, 0)      # Black text
+        else:  # Black's turn
+            bg_color = (0, 0, 0)        # Black background
+            text_color = (255, 255, 255) # White text
+            
+        draw.rectangle([box_x1, box_y1, box_x2, box_y2], fill=bg_color)
+        draw.text((text_x, text_y), move_text, font=move_font, fill=text_color)
+
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    buf.seek(0)
+    return buf, piece_hint
+
+
+
+
+async def ask_chess_challenge(winner, winner_id, num=3):
+    global wf_winner
+    wf_winner = True
+
+    gifs = [
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/chess1.gif",
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/chess2.gif",
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/chess3.gif",
+    ]
+
+    gif_url = random.choice(gifs)
+    await safe_send(channel, content="\u200b\n♟️👑 **Checkmate**: What's Your Move?\n\u200b", embed=discord.Embed().set_image(url=gif_url))
+    await asyncio.sleep(5)
+
+    user_correct_answers = {}
+
+    # Ask for number of images to fuse
+    await safe_send(channel, f"\u200b\n🕹️🚀 **{winner}**, select the mode:\n\n🧸 **Normal** or 🧨 **Okrap**.\n\u200b")
+    
+    chess_mode = None
+    try:
+        msg = await bot.wait_for("message", timeout=magic_time + 5, check=lambda m: m.author.id == winner_id and m.author != bot.user and m.channel == channel and m.content.lower() in {"normal", "okrap"})
+        game_mode = msg.content.lower()
+        await msg.add_reaction("✅")
+    except asyncio.TimeoutError:
+        game_mode = "normal"
+
+    if game_mode == "okrap":
+        hint_mode = False
+    else:
+        hint_mode = True
+    
+    await safe_send(channel, f"\u200b\n💥🤯 Ok...ra! We're going with **{game_mode.upper()}** baby!\n\u200b")
+
+    if num > 1:
+        await safe_send(channel, f"\u200b\n5️⃣🥇 Let's do a best of **{num}**...\n\u200b")
+        await asyncio.sleep(3)
+
+    chess_num = 1
+    while chess_num <= num:
+        try:
+            recent_chess_ids = await get_recent_question_ids_from_mongo("chess")
+            chess_collection = db["chess_questions"]
+            pipeline = [
+                {"$match": {"_id": {"$nin": list(recent_chess_ids)}}},
+                {"$sample": {"size": 10}},
+                {"$group": {"_id": "$question", "question_doc": {"$first": "$$ROOT"}}},
+                {"$replaceRoot": {"newRoot": "$question_doc"}},
+                {"$sample": {"size": 1}}
+            ]
+            questions = [doc async for doc in chess_collection.aggregate(pipeline)]
+            q = questions[0]
+            starting_board = q["FEN"]
+            best_move = q["Moves"]
+            chess_url = q["GameUrl"]
+
+            chess_guesses = []
+
+            if q["_id"]:
+                await store_question_ids_in_mongo([q["_id"]], "chess")
+
+            print(f"Best Move: {best_move}")
+
+        except Exception as e:
+            sentry_sdk.capture_exception(e)
+            print(f"Error selecting chess questions:\n{traceback.format_exc()}")
+            return
+
+        num_of_guesses = 1
+        guess_num = 1
+        right_answer = False
+        sorted_users = []
+
+        while guess_num <= num_of_guesses and not right_answer:
+            await safe_send(channel, "\u200b\n⚠️🚨 Everyone's in!\n\u200b")
+            await asyncio.sleep(1)
+            await safe_send(channel, f"\u200b\n♟️👑 **Puzzle {chess_num}**: What's the **best** move?\n\u200b")
+            await asyncio.sleep(1)
+
+            img_buf, hint = generate_chess_board(starting_board, best_move, show_color=True, hint=hint_mode)
+            embed = discord.Embed()
+            file = discord.File(fp=img_buf, filename="chess.png")
+            embed.set_image(url="attachment://chess.png")
+            await safe_send(channel, embed=embed, file=file)
+            if game_mode == "normal":
+                await safe_send(channel, f"\u200b\n **Hint**: {hint}\u200b\n")
+                await asyncio.sleep(2)
+
+            start_time = asyncio.get_event_loop().time()
+
+            def check(m):
+                return m.channel == channel and m.author != bot.user
+
+            while asyncio.get_event_loop().time() - start_time < 30 and not right_answer:
+                try:
+                    timeout = 20 - (asyncio.get_event_loop().time() - start_time)
+                    msg = await bot.wait_for("message", timeout=timeout, check=check)
+                    guess = msg.content.strip().lower()
+                    user = msg.author.display_name
+                    uid = msg.author.id
+                    key = (uid, guess)
+
+                    if guess == best_move.lower():
+                        prev_display, prev_score = user_correct_answers.get(uid, (user, 0))
+                        user_correct_answers[uid] = (prev_display, prev_score + 1)
+                        img_buf, hint = generate_chess_board(starting_board, best_move, show_color=False)
+                        embed = discord.Embed()
+                        file = discord.File(fp=img_buf, filename="chess.png")
+                        embed.set_image(url="attachment://chess.png")
+                        await safe_send(channel, file=file, embed=embed)
+                        await safe_send(channel, f"\u200b\n✅🎉 Correct! **{user}** got it! **{best_move.upper()}**\n\u200b")
+                        right_answer = True
+                        break
+                except asyncio.TimeoutError:
+                    break
+
+            if not right_answer:
+                img_buf, hint = generate_chess_board(starting_board, best_move, show_color=False)
+                embed = discord.Embed()
+                file = discord.File(fp=img_buf, filename="chess.png")
+                embed.set_image(url="attachment://chess.png")
+                await safe_send(channel, file=file, embed=embed)
+                await safe_send(channel, f"\u200b\n❌😢 No one got the answer!\n\nAnswer: **{best_move.upper()}**\n\u200b")
+
+            await asyncio.sleep(2)
+
+            summary = f"\u200b\nExplore this puzzle:\nhttps://www.lichess.org/{chess_url}\n\u200b"
+            await safe_send(channel, summary)
+
+            await asyncio.sleep(2)
+
+            sorted_users = sorted(user_correct_answers.items(), key=lambda x: x[1][1], reverse=True)
+
+            if sorted_users:
+                standings = "\n".join(
+                    f"{i+1}. **{display_name}**: {score}" 
+                    for i, (user_id, (display_name, score)) in enumerate(sorted_users)
+                )
+                await safe_send(channel, f"\u200b\n📊🏆 Standings\n{standings}\n\u200b")
+
+            guess_num += 1
+        
+        await asyncio.sleep(1)
+
+        chess_num = chess_num + 1
+        
+        message = ""
+
+        sorted_users = sorted(user_correct_answers.items(), key=lambda x: x[1][1], reverse=True)
+
+        if num == 1:
+            if sorted_users:
+                chess_winner_id, (winner_name, winner_score) = sorted_users[0]
+                return chess_winner_id
+            else:
+                return None
+        
+        await asyncio.sleep(3)
+
+    #await asyncio.sleep(2)
+    if sorted_users:
+        chess_winner_id, (winner_name, winner_score) = sorted_users[0]
+        message = f"\u200b\n🎉🥇 The winner is **{winner_name}**!\n\u200b"
+    else:
+        message = f"\u200b\n👎😢 **No points**. I'm ashamed to call you Okrans.\n\u200b"
+    
+    await safe_send(channel, message)
+    
+    wf_winner = True
+    await asyncio.sleep(3)
+    
+    if sorted_users:
+        return chess_winner_id
+    else:
+        return None
+
+
+
         
         
 async def ask_microscopic_challenge(winner, winner_id, num=3):
@@ -5152,6 +5651,12 @@ async def ask_tally_challenge(winner, winner_id, num=3):
         return tally_winner_id
     else:
         return None
+    
+
+
+
+
+
 
 async def ask_myopic_challenge(winner, winner_id, num=3):
     global wf_winner
@@ -7749,6 +8254,8 @@ async def select_wof_questions(winner, winner_id):
         message += f"{counter}.\u200b 🧬☢️ Fusion 🥒✨\n"
         counter = counter + 1
         message += f"{counter}.\u200b 🔢🎯 Tally 🥒✨\n"
+        counter = counter + 1
+        message += f"{counter}.\u200b ♟️👑 Checkmate 🥒✨\n"
         message += f"99.\u200b 🌀🤯 CHAOS 🥒✨\n"
         message += f"00.\u200b 🥗🌟 Okra's Choice\n"
         message += f"x.\u200b ⏭️🕹️ Skip Mini-Game\n\u200b"
@@ -7927,6 +8434,11 @@ async def select_wof_questions(winner, winner_id):
 
         elif selected_wof_category == "36":
             await ask_tally_challenge(winner, winner_id)
+            await asyncio.sleep(3)
+            return None
+        
+        elif selected_wof_category == "37":
+            await ask_chess_challenge(winner, winner_id)
             await asyncio.sleep(3)
             return None
 
@@ -8186,10 +8698,11 @@ async def ask_wof_number(winner, winner_id):
         "34": "Microscopic",
         "35": "Fusion",
         "36": "Tally",
+        "37": "Checkmate",
         "99": "CHAOS"
     }
     multiplayer_required = {k for k in unlocks if k not in {"5", "6", "7", "8", "9"}}
-    all_options = {str(i) for i in range(37)} | {"00", "x", "99"}
+    all_options = {str(i) for i in range(38)} | {"00", "x", "99"}
 
     start = asyncio.get_event_loop().time()
     selected_question = None
@@ -8206,7 +8719,7 @@ async def ask_wof_number(winner, winner_id):
             if content == "00":
                 await message.add_reaction("👍")
                 set_a = [str(i) for i in range(5)]
-                set_b = [str(i) for i in range(5, 34)] if len(round_responders) >= num_list_players else [str(i) for i in range(5, 10)]
+                set_b = [str(i) for i in range(5, 38)] if len(round_responders) >= num_list_players else [str(i) for i in range(5, 10)]
                 selected_question = random.choice(set_a if random.random() < 0.5 else set_b)
                 await safe_send(channel, f"\n🎁 **{winner}**, let's do {selected_question}.\n")
                 return selected_question
@@ -8238,7 +8751,7 @@ async def ask_wof_number(winner, winner_id):
 
     # Fallback random selection
     set_a = [str(i) for i in range(5)]
-    set_b = [str(i) for i in range(5, 34)] if len(round_responders) >= num_list_players else [str(i) for i in range(5, 10)]
+    set_b = [str(i) for i in range(5, 38)] if len(round_responders) >= num_list_players else [str(i) for i in range(5, 10)]
     selected_question = random.choice(set_a if random.random() < 0.5 else set_b)
     await safe_send(channel, f"\u200b\n🐢⏳ Too slow. I choose **{selected_question}**.\n\u200b")
     return selected_question
@@ -11630,6 +12143,7 @@ async def start_trivia():
             #await ask_list_question("TheOkraG", 591861826690613248, 3)
             #await ask_chaos_challenge("TheOkraG",591861826690613248, 23)
             #await ask_tally_challenge("TheOkraG",591861826690613248, 3)
+            await ask_chess_challenge("TheOkraG",591861826690613248, 3)
 
             round_responders.clear()  # Reset round responders
             round_data["questions"] = []
@@ -11646,12 +12160,7 @@ async def start_trivia():
 
             start_message = f"\u200b\n✨🧪 **NEW** from the **Okra Lab**! 🧪✨\n"
             
-            start_message += f"\n📊✍️ **Tally** [Mini-Game]"
-            start_message += f"\n🔬🔍 **Microscopic** [Mini-Game]"
-            start_message += f"\n🧬☢️ **Fusion** [Mini-Game]"
-            start_message += f"\n🎙️💬 **Post-Game** Commentary [Enhancement]"
-            start_message += f"\n🫥🕶️ **Cloak** [Game Mode]"
-            start_message += f"\n🧢🎤 **Sniper** [Game Mode]"
+            start_message += f"\n♟️👑 **Checkmate** [Mini-Game]"
 
             start_message += "\n\u200b"
 
