@@ -9370,7 +9370,7 @@ async def process_round_options(round_winner, winner_points, round_winner_id):
     if winner_coffees > 0:
         message = f"\u200b\n🍔🍟 **{round_winner}**, what's your order?\n" 
     else: 
-        message = f"\u200b\n🥒 **{round_winner}**, join the **Okrans** and choose from the following!"
+        message = f"\u200b\n🥒 **{round_winner}**, join the **Okrans** and choose from the following!\n"
     
     message += (
         "\u200b\n🎮⚙️ **Gameplay Options**\n"
