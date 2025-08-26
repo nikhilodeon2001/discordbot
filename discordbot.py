@@ -197,6 +197,7 @@ shakespeare_okra = False
 pirate_okra = False
 noir_okra = False
 hype_okra = False
+roast_okra = False
 blind_mode_default = False
 blind_mode = blind_mode_default
 marx_mode_default = False
@@ -7686,7 +7687,7 @@ async def nice_creep_okra_option(winner, winner_id):
     joke_okra = False
     
     # Initialize all the new message type flags
-    global haiku_okra, trailer_okra, heist_okra, horoscope_okra, rap_okra, shakespeare_okra, pirate_okra, noir_okra, hype_okra
+    global haiku_okra, trailer_okra, heist_okra, horoscope_okra, rap_okra, shakespeare_okra, pirate_okra, noir_okra, hype_okra, roast_okra
     haiku_okra = False
     trailer_okra = False
     heist_okra = False
@@ -7696,6 +7697,7 @@ async def nice_creep_okra_option(winner, winner_id):
     pirate_okra = False
     noir_okra = False
     hype_okra = False
+    roast_okra = False
     
     message = f"\u200b\n🥒🤝 Thank you **{winner}** for your support.\n\u200b\n" 
     message += f"🥒😊 Say **okra** and I'll be nice.\n"
@@ -7711,13 +7713,22 @@ async def nice_creep_okra_option(winner, winner_id):
     message += f"🏴‍☠️⚓ Say **pirate** for a captain's salute.\n"
     message += f"🕵️‍♂️🌧️ Say **noir** for a hardboiled line.\n"
     message += f"📣🔥 Say **hype** for a stadium-sized celebration.\n"
-    message += f"🔥🍗 Say **nothing** and I'll roast you.\n\u200b"
+    message += f"🔥🍗 Say **roast** and I'll roast you.\n\u200b"
     await safe_send(channel, message)
 
+    TRIGGERS = [
+        "okra", "creep", "love me", "joke", "haiku", "trailer",
+        "heist", "horoscope", "rap", "shakespeare", "pirate",
+        "noir", "hype", "roast"
+    ]
+    
     def check(m):
-        return (
-            m.channel == channel and m.author.id == winner_id
-        )
+        if m.channel != channel or m.author.id != winner_id:
+            return False
+        # check if any trigger is in the message content (case-insensitive)
+        content = m.content.lower()
+        return any(trigger in content for trigger in TRIGGERS)
+
     
     try:
         response = await asyncio.wait_for(
@@ -7767,8 +7778,9 @@ async def nice_creep_okra_option(winner, winner_id):
         elif "hype" in content:
             await response.add_reaction("📣")
             hype_okra = True
-        elif "nothing" in content:
-            await response.add_reaction("🕳️")
+        elif "roast" in content:
+            await response.add_reaction("🍗")
+            roast_okra = True
 
     except asyncio.TimeoutError:
         pass
@@ -9315,7 +9327,7 @@ def generate_crossword_image(answer, prefill=0.5):
 
 
 async def process_round_options(round_winner, winner_points, round_winner_id):
-    global since_token, time_between_questions, time_between_questions_default, ghost_mode, since_token, categories_to_exclude, num_crossword_clues, num_jeopardy_clues, num_mysterybox_clues, num_wof_clues, god_mode, yolo_mode, magic_number, wf_winner, num_math_questions, num_stats_questions, image_questions, nice_okra, creep_okra, marx_mode, blind_mode, seductive_okra, joke_okra, sniper_mode, cloak_mode, cloaked_user, haiku_okra, trailer_okra, heist_okra, horoscope_okra, rap_okra, shakespeare_okra, pirate_okra, noir_okra, hype_okra
+    global since_token, time_between_questions, time_between_questions_default, ghost_mode, since_token, categories_to_exclude, num_crossword_clues, num_jeopardy_clues, num_mysterybox_clues, num_wof_clues, god_mode, yolo_mode, magic_number, wf_winner, num_math_questions, num_stats_questions, image_questions, nice_okra, creep_okra, marx_mode, blind_mode, seductive_okra, joke_okra, sniper_mode, cloak_mode, cloaked_user, haiku_okra, trailer_okra, heist_okra, horoscope_okra, rap_okra, shakespeare_okra, pirate_okra, noir_okra, hype_okra, roast_okra
     time_between_questions = time_between_questions_default
     ghost_mode = ghost_mode_default
     categories_to_exclude.clear()
@@ -9340,6 +9352,7 @@ async def process_round_options(round_winner, winner_points, round_winner_id):
     pirate_okra = False
     noir_okra = False
     hype_okra = False
+    roast_okra = False
     num_math_questions = num_math_questions_default
     num_stats_questions = num_stats_questions_default
     image_questions = image_questions_default
@@ -9370,7 +9383,7 @@ async def process_round_options(round_winner, winner_points, round_winner_id):
         "🧢🎤 **Sniper**: Only first answers accepted\n"
         "🫥🕶️ **Cloak**: Only your answers vanish\n"  
    
-        "\n✨: Toggle mid-round with **#[command]**\n\n"
+        "\n🕹️: Toggle mid-round with **#[command]**\n\n"
 
         "\n📝🔀 **Question Options**\n"
         "🇺🇸🗽 **Freedom** No multiple choice.\n"
@@ -9415,35 +9428,46 @@ async def prompt_user_for_response(round_winner, winner_points, winner_coffees, 
             message_content = message.content.strip().lower()
 
             # Time delay setting
-            delay_digits = ''.join(filter(str.isdigit, message_content))
-            if delay_digits:
+            #delay_digits = ''.join(filter(str.isdigit, message_content))
+            #if delay_digits:
+            #    try:
+            #        delay_value = max(3, min(int(delay_digits), 15))
+            #        time_between_questions = delay_value
+            #        await safe_send(channel, f"⏱️⏳ **{round_winner}** has set {delay_value}s between questions.")
+            #    except ValueError:
+            #        pass
+            
+            # match standalone digits, but not if immediately after a #
+            matches = re.findall(r'(?<!#)\d+', message_content)
+
+            if matches:
                 try:
-                    delay_value = max(3, min(int(delay_digits), 15))
+                    delay_value = max(3, min(int(matches[0]), 15))
                     time_between_questions = delay_value
                     await safe_send(channel, f"⏱️⏳ **{round_winner}** has set {delay_value}s between questions.")
                 except ValueError:
                     pass
 
             # Keyword flags
-            if "blind" in message_content:
+            if "blind" in message_content and "#blind" not in message_content:
                 blind_mode = True
                 await safe_send(channel, f"🙈🚫 **{round_winner}** is blind to the truth. No answers will be shown.")
 
-            if "marx" in message_content:
+            if "marx" in message_content and "#marx" not in message_content:
                 marx_mode = True
                 await safe_send(channel, f"🚩🔨 **{round_winner}** is a commie. No celebrating right answers.")
 
-            if "yolo" in message_content:
+            if "yolo" in message_content and "#yolo" not in message_content:
                 yolo_mode = True
                 await safe_send(channel, f"🤘🔥 Yolo. **{round_winner}** says 'don't sweat the small stuff'. No scores till the end.")
 
-            if "blank" in message_content:
+            if "blank" in message_content and "#blank" not in message_content:
                 image_questions = False
                 await safe_send(channel, f"❌📷 **{round_winner}** thinks a word is worth 1000 images.")
 
-            if "ghost" in message_content:
+            if "ghost" in message_content and "#ghost" not in message_content:
                 ghost_mode = 1
-                await safe_send(channel, f"👻🎃 **{round_winner}** says Boo! Your responses will disappear.")
+                await safe_send(channel, f"👻🎃 **{round_winner}** says Boo! Your responses will disappear.\n✍️⚫ Start messages with **.** to avoid deletion.")
 
             # Coffee-gated
             if await coffee_gate("freedom", True, f"🇺🇸🗽 **{round_winner}** has broken the chains. No multiple choice.", "Freedom"):
@@ -9464,13 +9488,13 @@ async def prompt_user_for_response(round_winner, winner_points, winner_coffees, 
             if await coffee_gate("word", True, f"📰✏️ Word. **{round_winner}** wants 5 Crossword questions.", "Word"):
                 num_crossword_clues = 5
 
-            if await coffee_gate("dicktator", True, f"🎖🍆 **{round_winner}** is a dick.", "Dicktator"):
+            if "#dicktator" not in message_content and await coffee_gate("dicktator", True, f"🎖🍆 **{round_winner}** is a dick.", "Dicktator"):
                 god_mode = True
 
-            if await coffee_gate("sniper", True, f"🧢🎤 **{round_winner}** says 'You only get one shot, do not miss your chance!'", "Sniper"):
+            if  "#sniper" not in message_content and await coffee_gate("sniper", True, f"🧢🎤 **{round_winner}** says 'You only get one shot, do not miss your chance!'", "Sniper"):
                 sniper_mode = True
 
-            if await coffee_gate("cloak", True, f"\n🫥🕶️ **{round_winner}** has put on their cloak.\n", "Cloak"):
+            if  "#cloak" not in message_content and await coffee_gate("cloak", True, f"\n🫥🕶️ **{round_winner}** has put on their cloak.\n✍️⚫ Start messages with **.** to avoid deletion.", "Cloak"):
                 cloak_mode = True
                 cloaked_user = round_winner_id
 
@@ -9926,7 +9950,7 @@ def create_summary_prompt_and_role(winner, message_type, is_sovereign, round_dat
             return prompt, system_role
     
     # Handle roast prompts for "nothing" case
-    if message_type == "nothing":
+    if message_type == "roast":
         roast_prompts = [
             f"The winner of the trivia round is {winner}. Roast the winning player about their username and be very specific and negative in your roast. Insult specific responses they gave during the round. Create no more than 4 sentences in total. Be sarcastic, very angry, offensive, and use emojis in your response. Deeply insult the winner using angry and rough language. {base_round_data}",
             f"Congratulations to {winner}, our so-called 'winner' this round. Mock their username in a hilariously petty way and pick apart their responses with sharp sarcasm. Use no more than 4 sentences. Pretend you're a sore loser begrudgingly announcing their victory, and make it painfully clear how unimpressed you are. Include emojis to spice it up. {base_round_data}",
@@ -9968,7 +9992,7 @@ def create_summary_prompt_and_role(winner, message_type, is_sovereign, round_dat
 
 
 async def generate_round_summary(round_data, winner, winner_id):
-    global nice_okra, creep_okra, wf_winner, seductive_okra, joke_okra, haiku_okra, trailer_okra, heist_okra, horoscope_okra, rap_okra, shakespeare_okra, pirate_okra, noir_okra, hype_okra
+    global nice_okra, creep_okra, wf_winner, seductive_okra, joke_okra, haiku_okra, trailer_okra, heist_okra, horoscope_okra, rap_okra, shakespeare_okra, pirate_okra, noir_okra, hype_okra, roast_okra
 
     if skip_summary == True:
         summary = "Make sure to drink your Okratine."
@@ -10009,6 +10033,8 @@ async def generate_round_summary(round_data, winner, winner_id):
             message_type = "noir"
         elif hype_okra:
             message_type = "hype"
+        elif roast_okra:
+            message_type = "roast"
         else:
             message_type = "nothing"
     
@@ -10016,6 +10042,9 @@ async def generate_round_summary(round_data, winner, winner_id):
     if message_type == "joke":
         joke = await generate_okra_joke(winner)
         return joke
+    
+    if message_type == "nothing":
+        return "\u200b\n🥒🌱🥒🌱🥒\n\u200b"
     
     # Get unified prompt and system role
     prompt, system_role = create_summary_prompt_and_role(winner, message_type, is_sovereign, round_data, magic_number_correct, wf_winner, creep_okra)
@@ -12176,7 +12205,7 @@ async def start_trivia():
             start_message += f"🗝️ Type **#perks** to unlock perks\n\u200b"
 
             if current_longest_round_streak["user"] is not None and await get_coffees(current_longest_round_streak["user_id"]) > 0:
-                start_message += f"\n🚩 **{current_longest_round_streak["user"]}** can toggle modes mid-game"
+                start_message += f"\n🕹️ **{current_longest_round_streak["user"]}** can toggle modes mid-game"
                 start_message += f"\n↔️ **#[command]** any time during round\n\u200b"
                 
             await safe_send(channel, start_message)
@@ -12348,7 +12377,7 @@ async def reset_round_options(reset_command, winner_id):
         ghost_mode = not ghost_mode
         reset_success = True
         if ghost_mode:
-            await safe_send(channel, content=f"\n👻🎃 **{current_longest_round_streak['user']}** says Boo! Your responses will disappear.\n")
+            await safe_send(channel, content=f"\n👻🎃 **{current_longest_round_streak['user']}** says Boo! Your responses will disappear.\n✍️⚫ Start messages with **.** to avoid deletion.\n")
         else:
             await safe_send(channel, content=f"\n☀️📖 **{current_longest_round_streak['user']}** says Hello! Your responses will now remain.\n")
 
@@ -12373,7 +12402,7 @@ async def reset_round_options(reset_command, winner_id):
         reset_success = True
         if cloak_mode == True:
             cloaked_user = winner_id
-            await safe_send(channel, content=f"\n🫥🕶️ **{current_longest_round_streak["user"]}** has put on their cloak.\n")
+            await safe_send(channel, content=f"\n🫥🕶️ **{current_longest_round_streak["user"]}** has put on their cloak.\n✍️⚫ Start messages with **.** to avoid deletion.\n")
         else:
             cloaked_user = None
             await safe_send(channel, content=f"\n🌞✨ **{current_longest_round_streak["user"]}** has taken off their cloak.\n")
@@ -12424,21 +12453,19 @@ async def on_message(message):
             await message.add_reaction("🚩")
         await update_audit_question(current_question, message.content.strip(), message.author.display_name)
 
-    if message.content.startswith("#") and message.author.id == current_longest_round_streak["user_id"]:
+    if message.content.startswith("#") and (message.author.id == current_longest_round_streak["user_id"] or message.author.id == okrag_id):
         if await get_coffees(current_longest_round_streak["user_id"]) > 0:
             reset_command = message.content[1:] 
             if(await reset_round_options(reset_command, message.author)) == True:
                 if emoji_mode == True:
-                    await message.add_reaction("🤙")
+                    if message.author.id == okrag_id:
+                        await message.add_reaction("🙇")
+                    else:
+                        await message.add_reaction("🤙")
         else:
             await safe_send(channel, content=f"\n🙏😔 Sorry **{message.author.display_name}**. Only Okrans can toggle mid-game options 🥒️.\n")
             await message.add_reaction("😩")
 
-    if message.content.startswith("#") and message.author.id == okrag_id:
-        reset_command = message.content[1:] 
-        if(await reset_round_options(reset_command, message.author)) == True:
-            if emoji_mode == True:
-                await message.add_reaction("🤙")
 
     if question_asked_start is None or question_asked_end is None:
         return
@@ -12453,8 +12480,11 @@ async def on_message(message):
             "response_time": now,
             "message": message  # Save the original message object for deletion if needed
         })
+        
 
-        if ghost_mode or cloaked_user is not None and message.author.id == cloaked_user:
+        ESCAPE_PREFIXES = (".", ",", "~")
+
+        if (ghost_mode or (cloaked_user is not None and message.author.id == cloaked_user)) and not message.content.lstrip().startswith(ESCAPE_PREFIXES):
             try:
                 await message.delete()
             except discord.Forbidden:
