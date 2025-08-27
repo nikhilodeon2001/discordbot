@@ -8924,6 +8924,10 @@ async def ask_wof_number(winner, winner_id):
                 set_a = [str(i) for i in range(5)]
                 set_b = [str(i) for i in range(5, 39)] if len(round_responders) >= num_list_players else [str(i) for i in range(5, 10)]
                 selected_question = random.choice(set_a if random.random() < 0.5 else set_b)
+                
+                # Store frequency data for random selection
+                await store_minigame_frequency(selected_question, "random", "discord")
+                
                 await safe_send(channel, f"\n🎁 **{winner}**, let's do {selected_question}.\n")
                 return selected_question
 
@@ -8944,6 +8948,10 @@ async def ask_wof_number(winner, winner_id):
                 continue
 
             selected_question = content
+            
+            # Store frequency data for user selection
+            await store_minigame_frequency(selected_question, "user", "discord")
+            
             await message.add_reaction("✅")
             await safe_send(channel, f"\n💪🛡️ I got you **{winner}**. **{selected_question}** it is.\n\u200b")
             await asyncio.sleep(2)
@@ -8956,6 +8964,10 @@ async def ask_wof_number(winner, winner_id):
     set_a = [str(i) for i in range(5)]
     set_b = [str(i) for i in range(5, 39)] if len(round_responders) >= num_list_players else [str(i) for i in range(5, 10)]
     selected_question = random.choice(set_a if random.random() < 0.5 else set_b)
+    
+    # Store frequency data for random selection
+    await store_minigame_frequency(selected_question, "random", "discord")
+    
     await safe_send(channel, f"\u200b\n🐢⏳ Too slow. I choose **{selected_question}**.\n\u200b")
     return selected_question
 
@@ -12705,6 +12717,130 @@ async def on_message_edit(before, after):
                 print("Bot lacks permission to reply to the edited message.")
             except Exception as e:
                 print(f"Failed to reply to edited message: {e}")
+
+
+def get_minigame_name(number):
+    """Map mini game number to name"""
+    game_map = {
+        "0": "Wheel of Fortune",
+        "1": "Wheel of Fortune",
+        "2": "Wheel of Fortune",
+        "3": "Wheel of Fortune",
+        "4": "Wheel of Fortune",
+        "5": "Wikipedia Roulette",
+        "6": "Dictionary Roulette",
+        "7": "Thesaurus Roulette",
+        "8": "Where's Okra?",
+        "9": "FeUd (Single Player)",
+        "10": "FeUd Blitz",
+        "11": "List Battle",
+        "12": "Poster Blitz",
+        "13": "Movie Mayhem",
+        "14": "Missing Link",
+        "15": "Famous Peeps",
+        "16": "Ranker Lists",
+        "17": "Magic EyeD",
+        "18": "OkrAnimal",
+        "19": "The Riddler",
+        "20": "Word Nerd",
+        "21": "Flag Fest",
+        "22": "LyrIQ",
+        "23": "PolygLottery",
+        "24": "Prose & Cons",
+        "25": "Sign Language",
+        "26": "Elementary",
+        "27": "Jigsawed",
+        "28": "Borderline",
+        "29": "Face/Off",
+        "30": "Rushmore",
+        "31": "Wordle War",
+        "32": "MusIQ",
+        "33": "Myopic Mystery",
+        "34": "Microscopic",
+        "35": "Fusion",
+        "36": "Tally",
+        "37": "Checkmate",
+        "38": "Wall Street",
+        "99": "CHAOS",
+        "x": "Skip Mini Game"
+    }
+    return game_map.get(str(number), "Unknown")
+
+async def store_minigame_frequency(number, selection_type, bot_source="discord", minigame_name=None):
+    """Store minigame selection frequency in MongoDB using counter-based documents"""
+    try:
+        db = await connect_to_mongodb()
+        collection = db["mini-game-frequency"]
+        
+        if minigame_name is None:
+            minigame_name = get_minigame_name(number)
+        
+        # For Wheel of Fortune games (0-4), use a single document
+        if str(number) in ["0", "1", "2", "3", "4"]:
+            document_key = "wheel-of-fortune"
+            display_name = "Wheel of Fortune"
+        else:
+            # For other games, use the number as the key
+            document_key = str(number)
+            display_name = minigame_name
+        
+        # Create the filter to find the document (one per game, not per bot_source)
+        filter_query = {
+            "game_key": document_key
+        }
+        
+        # Prepare the update operation with nested bot_source fields and global counters
+        if selection_type == "user":
+            update_operation = {
+                "$inc": {
+                    f"{bot_source}.user": 1,
+                    f"{bot_source}.total": 1,
+                    "total": 1,
+                    "total_user": 1
+                },
+                "$set": {"minigame_name": display_name, "last_updated": datetime.datetime.now()},
+                "$setOnInsert": {
+                    f"{bot_source}.random": 0,
+                    # Initialize other bot source if it doesn't exist
+                    f"{'discord' if bot_source == 'reddit' else 'reddit'}.user": 0,
+                    f"{'discord' if bot_source == 'reddit' else 'reddit'}.random": 0,
+                    f"{'discord' if bot_source == 'reddit' else 'reddit'}.total": 0,
+                    # Initialize global counters
+                    "total_random": 0
+                }
+            }
+        elif selection_type == "random":
+            update_operation = {
+                "$inc": {
+                    f"{bot_source}.random": 1,
+                    f"{bot_source}.total": 1,
+                    "total": 1,
+                    "total_random": 1
+                },
+                "$set": {"minigame_name": display_name, "last_updated": datetime.datetime.now()},
+                "$setOnInsert": {
+                    f"{bot_source}.user": 0,
+                    # Initialize other bot source if it doesn't exist
+                    f"{'discord' if bot_source == 'reddit' else 'reddit'}.user": 0,
+                    f"{'discord' if bot_source == 'reddit' else 'reddit'}.random": 0,
+                    f"{'discord' if bot_source == 'reddit' else 'reddit'}.total": 0,
+                    # Initialize global counters
+                    "total_user": 0
+                }
+            }
+        else:
+            raise ValueError(f"Invalid selection_type: {selection_type}")
+        
+        # Upsert the document (create if doesn't exist, update if it does)
+        result = await collection.update_one(filter_query, update_operation, upsert=True)
+        
+        if result.upserted_id:
+            print(f"Created new frequency document for {display_name}")
+        else:
+            print(f"Updated frequency for {display_name} - {bot_source}/{selection_type}")
+        
+    except Exception as e:
+        print(f"Error storing minigame frequency: {e}")
 
 
 @bot.event
