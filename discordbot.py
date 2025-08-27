@@ -131,7 +131,7 @@ submission_queue = []
 max_queue_size = 100  # Number of submissions to accumulate before flushing
 
 # Initialize all variables
-local_mode = False
+local_mode = True
 
 if local_mode == True:
     discord_token = "REMOVED_DISCORD_TOKEN" #Stage
@@ -164,7 +164,7 @@ intents.messages = True
 intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 openai_client = AsyncOpenAI(api_key=openai_api_key)
-id_limits = {"general": 2000, "mysterybox": 2000, "crossword": 5000, "jeopardy": 5000, "wof": 1500, "list": 20, "feud": 1000, "posters": 2000, "movie_scenes": 5000, "missing_link": 2500, "people": 2500, "ranker_list": 4000, "animal": 2000, "riddle": 2500, "dictionary": 5000, "flags": 800, "lyric": 500, "polyglottery": 80, "book": 80, "element": 100, "jigsaw": 5000, "border": 100, "faceoff": 5000, "president": 80, "wordle": 1400, "myopic": 5000, "fusion": 5000, "microscopic": 5000, "chess": 5000}
+id_limits = {"general": 2000, "mysterybox": 2000, "crossword": 5000, "jeopardy": 5000, "wof": 1500, "list": 20, "feud": 1000, "posters": 2000, "movie_scenes": 5000, "missing_link": 2500, "people": 2500, "ranker_list": 4000, "animal": 2000, "riddle": 2500, "dictionary": 5000, "flags": 800, "lyric": 500, "polyglottery": 80, "book": 80, "element": 100, "jigsaw": 5000, "border": 100, "faceoff": 5000, "president": 80, "wordle": 1400, "myopic": 5000, "fusion": 5000, "microscopic": 5000, "chess": 5000, "stock": 800}
 max_retries = 3
 delay_between_retries = 3
 first_place_bonus = 0
@@ -2975,6 +2975,160 @@ async def ask_riddle_challenge(winner, winner_id, num=7):
         return riddle_winner_id
     else:
         return None
+    
+
+
+
+async def ask_stock_challenge(winner, winner_id, num=7):
+    global wf_winner
+    wf_winner = True
+
+    gifs = [
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/stocks1.gif",
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/stocks2.gif",
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/stocks3.gif"
+    ]
+    gif_url = random.choice(gifs)
+
+    await safe_send(channel, content="\u200b\n\u200b\n🏙️💹 **Wall Street**: Name the Company or Symbol\n\u200b", embed=discord.Embed().set_image(url=gif_url))
+    await asyncio.sleep(5)
+
+    user_data = {}
+    
+    if num > 1:
+        message = f"\u200b\n5️⃣🥇 Let's do a best of **{num}**...\n\u200b"
+        await safe_send(channel, message)
+        await asyncio.sleep(3)
+
+    round_num = 1
+    while round_num <= num:
+        try:
+            recent_ids = await get_recent_question_ids_from_mongo("stock")
+            collection = db["stock_questions"]
+            pipeline = [
+                {"$match": {"_id": {"$nin": list(recent_ids)}}},
+                {"$sample": {"size": 10}},
+                {"$group": {"_id": "$question", "question_doc": {"$first": "$$ROOT"}}},
+                {"$replaceRoot": {"newRoot": "$question_doc"}},
+                {"$sample": {"size": 1}}
+            ]
+            questions = [doc async for doc in collection.aggregate(pipeline)]
+            q = questions[0]
+
+            stock_symbol = q["symbol"]
+            company_name = q["security"]
+            industry = q["industry"]
+            sub_industry = q["sub_industry"]
+            headquarters = q["headquarters"]
+            founded_year = q["founded"]
+            qid = q["_id"]
+            category = "Stocks"
+            url = None
+
+            if qid:
+                await store_question_ids_in_mongo([qid], "stock")
+
+            print(f"{round_num} Stock Symbol: {stock_symbol}")
+            print(f"{round_num} Company {company_name})")
+
+        except Exception as e:
+            sentry_sdk.capture_exception(e)
+            print(f"Error selecting stock question:\n{traceback.format_exc()}")
+            return
+
+        prompt = f"\u200b\n⚠️🚨 **Everyone's in!**\n"
+        prompt += f"\u200b\n🧠❓ **Question {round_num}/{num}**: "
+        
+        
+        if random.random() < 0.5:
+            stock_answers = stock_symbol
+            prompt += f"What is the **symbol** for **{company_name}**?\n\u200b"
+        else:
+            stock_answers = company_name
+            prompt += f"What **company** has the symbol **{stock_symbol}**?\n\u200b"
+
+        await safe_send(channel, prompt)
+
+        start_time = asyncio.get_event_loop().time()
+        answered = False
+        processed_users = set()
+
+        def check(m):
+            return m.channel == channel and m.author != bot.user
+
+        while asyncio.get_event_loop().time() - start_time < 20 and not answered:
+            try:
+                timeout = 20 - (asyncio.get_event_loop().time() - start_time)
+                message = await bot.wait_for("message", timeout=timeout, check=check)
+                content = message.content.strip()
+                user = message.author.display_name
+                user_id = message.author.id
+                key = (user_id, content.lower())
+
+                if key in processed_users:
+                    continue
+                processed_users.add(key)
+
+                if fuzzy_match(content, stock_answers, category, url):
+                    await message.add_reaction("✅")
+                    await safe_send(channel, f"\u200b\n✅🎉 **{user}** got it! **{stock_answers.upper()}**\n\u200b")
+                    if user_id not in user_data:
+                        user_data[user_id] = (user, 0)
+                    user_data[user_id] = (user, user_data[user_id][1] + 1)
+                    answered = True
+                    break
+            except asyncio.TimeoutError:
+                break
+
+        if not answered:
+            await safe_send(channel, f"\u200b\n❌😢 No one got it.\n\nAnswer: **{stock_answers.upper()}**\n\u200b")
+
+        await asyncio.sleep(1)
+                            
+        round_num = round_num + 1
+        
+        message = ""
+
+        sorted_users = sorted(user_data.items(), key=lambda x: x[1][1], reverse=True)
+
+        if num == 1:
+            if sorted_users:
+                stock_winner_id, (winner_name, winner_score) = sorted_users[0]
+                return stock_winner_id if winner_name is not None else None
+            else:
+                return None
+            
+        if sorted_users:
+            if round_num > num:
+                message += "\u200b\n🏁🏆 Final Standings\n\u200b"
+            else:   
+                message += "\u200b\n📊🏆 Current Standings\n\u200b"
+
+        for counter, (user_id, (display_name, count)) in enumerate(sorted_users, start=1):
+            message += f"{counter}. **{display_name}**: {count}\n"
+            message += "\u200b"
+            
+        if message:
+            await safe_send(channel, message)
+        
+        await asyncio.sleep(3)
+
+    await asyncio.sleep(2)
+    if sorted_users:
+        stock_winner_id, (winner_name, winner_score) = sorted_users[0]
+        message = f"\u200b\n🎉🥇 The winner is **{winner_name}**!\n\u200b"
+    else:
+        message = f"\u200b\n👎😢 **No right answers**. I'm ashamed to call you Okrans.\n\u200b"
+    await safe_send(channel, message)
+    
+    wf_winner = True
+    await asyncio.sleep(3)
+    
+    if sorted_users:
+        return stock_winner_id
+    else:
+        return None
+
 
 
 
@@ -3665,7 +3819,8 @@ async def ask_chaos_challenge(winner, winner_id, num_of_games):
         ask_microscopic_challenge,
         ask_fusion_challenge,
         ask_tally_challenge,
-        ask_chess_challenge
+        ask_chess_challenge,
+        ask_stock_challenge
     ]
 
     num_of_games = min(num_of_games, len(challenge_functions))
@@ -8269,6 +8424,8 @@ async def select_wof_questions(winner, winner_id):
         message += f"{counter}.\u200b 🔢🎯 Tally\n"
         counter = counter + 1
         message += f"{counter}.\u200b ♟️👑 Checkmate\n"
+        counter = counter + 1
+        message += f"{counter}.\u200b 🏙️💹 Wall Street\n"
         message += f"99.\u200b 🌀🤯 CHAOS\n"
 
         message += f"\n⚙️ **Other Options**\n"
@@ -8455,6 +8612,11 @@ async def select_wof_questions(winner, winner_id):
         
         elif selected_wof_category == "37":
             await ask_chess_challenge(winner, winner_id)
+            await asyncio.sleep(3)
+            return None
+        
+        elif selected_wof_category == "38":
+            await ask_stock_challenge(winner, winner_id)
             await asyncio.sleep(3)
             return None
 
@@ -8715,10 +8877,11 @@ async def ask_wof_number(winner, winner_id):
         "35": "Fusion",
         "36": "Tally",
         "37": "Checkmate",
+        "38": "Wall Street",
         "99": "CHAOS"
     }
     multiplayer_required = {k for k in unlocks if k not in {"5", "6", "7", "8", "9"}}
-    all_options = {str(i) for i in range(38)} | {"00", "x", "99"}
+    all_options = {str(i) for i in range(39)} | {"00", "x", "99"}
 
     start = asyncio.get_event_loop().time()
     selected_question = None
@@ -8735,7 +8898,7 @@ async def ask_wof_number(winner, winner_id):
             if content == "00":
                 await message.add_reaction("👍")
                 set_a = [str(i) for i in range(5)]
-                set_b = [str(i) for i in range(5, 38)] if len(round_responders) >= num_list_players else [str(i) for i in range(5, 10)]
+                set_b = [str(i) for i in range(5, 39)] if len(round_responders) >= num_list_players else [str(i) for i in range(5, 10)]
                 selected_question = random.choice(set_a if random.random() < 0.5 else set_b)
                 await safe_send(channel, f"\n🎁 **{winner}**, let's do {selected_question}.\n")
                 return selected_question
@@ -8767,7 +8930,7 @@ async def ask_wof_number(winner, winner_id):
 
     # Fallback random selection
     set_a = [str(i) for i in range(5)]
-    set_b = [str(i) for i in range(5, 38)] if len(round_responders) >= num_list_players else [str(i) for i in range(5, 10)]
+    set_b = [str(i) for i in range(5, 39)] if len(round_responders) >= num_list_players else [str(i) for i in range(5, 10)]
     selected_question = random.choice(set_a if random.random() < 0.5 else set_b)
     await safe_send(channel, f"\u200b\n🐢⏳ Too slow. I choose **{selected_question}**.\n\u200b")
     return selected_question
@@ -12176,7 +12339,7 @@ async def start_trivia():
             #await ask_list_question("TheOkraG", 591861826690613248, 3)
             #await ask_chaos_challenge("TheOkraG",591861826690613248, 23)
             #await ask_tally_challenge("TheOkraG",591861826690613248, 3)
-            #await ask_chess_challenge("TheOkraG",591861826690613248, 3)
+            #await ask_stock_challenge("TheOkraG",591861826690613248, 3)
 
             round_responders.clear()  # Reset round responders
             round_data["questions"] = []
@@ -12193,6 +12356,7 @@ async def start_trivia():
 
             start_message = f"\u200b\n✨🧪 **NEW** from the **Okra Lab**! 🧪✨\n"
             
+            start_message += f"\n🏙️💹 **Wall Street** [Mini-Game]"
             start_message += f"\n♟️👑 **Checkmate** [Mini-Game]"
 
             start_message += "\n\u200b"
