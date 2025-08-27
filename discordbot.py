@@ -131,7 +131,7 @@ submission_queue = []
 max_queue_size = 100  # Number of submissions to accumulate before flushing
 
 # Initialize all variables
-local_mode = False
+local_mode = True
 
 if local_mode == True:
     discord_token = "REMOVED_DISCORD_TOKEN" #Stage
@@ -3039,14 +3039,22 @@ async def ask_stock_challenge(winner, winner_id, num=7):
         prompt = f"\u200b\n⚠️🚨 **Everyone's in!**\n"
         prompt += f"\u200b\n🧠❓ **Question {round_num}/{num}**: "
         
-        
+        game_mode = None
         if random.random() < 0.5:
-            stock_answers = stock_symbol
             prompt += f"What is the **symbol** for **{company_name}**?\n\u200b"
+            game_mode = "name_to_symbol"
+            accepted_symbols = (
+                {norm_symbol(stock_symbol)}
+                if isinstance(stock_symbol, str)
+                else {norm_symbol(sym) for sym in stock_symbol}  # list/tuple case
+            )
+            main_trivia_answer = sorted(accepted_symbols)[0]
         else:
-            stock_answers = company_name
             prompt += f"What **company** has the symbol **{stock_symbol}**?\n\u200b"
-
+            game_mode = "symbol_to_name"
+            accepted_company_name = norm_name(company_name)
+            main_trivia_answer = accepted_company_name
+        
         await safe_send(channel, prompt)
 
         start_time = asyncio.get_event_loop().time()
@@ -3069,9 +3077,15 @@ async def ask_stock_challenge(winner, winner_id, num=7):
                     continue
                 processed_users.add(key)
 
-                if fuzzy_match(content, stock_answers, category, url):
+                if game_mode == "name_to_symbol":
+                    user_ans = norm_symbol(content)    
+                    is_correct = user_ans in accepted_symbols
+                else:
+                    is_correct = fuzzy_match(norm_name(content), accepted_company_name, category, url)
+                    
+                if is_correct:   
                     await message.add_reaction("✅")
-                    await safe_send(channel, f"\u200b\n✅🎉 **{user}** got it! **{stock_answers.upper()}**\n\u200b")
+                    await safe_send(channel, f"\u200b\n✅🎉 **{user}** got it! **{main_trivia_answer.upper()}**\n\u200b")
                     if user_id not in user_data:
                         user_data[user_id] = (user, 0)
                     user_data[user_id] = (user, user_data[user_id][1] + 1)
@@ -3081,7 +3095,7 @@ async def ask_stock_challenge(winner, winner_id, num=7):
                 break
 
         if not answered:
-            await safe_send(channel, f"\u200b\n❌😢 No one got it.\n\nAnswer: **{stock_answers.upper()}**\n\u200b")
+            await safe_send(channel, f"\u200b\n❌😢 No one got it.\n\nAnswer: **{main_trivia_answer.upper()}**\n\u200b")
 
         await asyncio.sleep(1)
                             
@@ -3129,6 +3143,16 @@ async def ask_stock_challenge(winner, winner_id, num=7):
     else:
         return None
 
+# Normalize helpers
+def norm_symbol(s: str) -> str:
+    # strip spaces + common prefixes/suffixes and lowercase
+    s = s.strip().lower()
+    if s.startswith("$"):
+        s = s[1:]
+    return "".join(ch for ch in s if ch.isalnum())  # keep letters/digits only
+
+def norm_name(s: str) -> str:
+    return " ".join(s.lower().split())  # collapse whitespace
 
 
 
@@ -12339,7 +12363,7 @@ async def start_trivia():
             #await ask_list_question("TheOkraG", 591861826690613248, 3)
             #await ask_chaos_challenge("TheOkraG",591861826690613248, 23)
             #await ask_tally_challenge("TheOkraG",591861826690613248, 3)
-            #await ask_stock_challenge("TheOkraG",591861826690613248, 3)
+            await ask_stock_challenge("TheOkraG",591861826690613248, 3)
 
             round_responders.clear()  # Reset round responders
             round_data["questions"] = []
