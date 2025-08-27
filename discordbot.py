@@ -6623,7 +6623,7 @@ def fetch_random_word(min_length=5, max_length=12, max_retries=5):
         print(f"[Attempt {attempt}/{max_retries}] Fetching a random word...")
         try:
             # Fetch a random word
-            word = get_random_word()
+            word = await get_random_word()
 
             if not word:
                 print("No word returned from local list.")
