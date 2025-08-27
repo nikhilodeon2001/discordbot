@@ -131,7 +131,7 @@ submission_queue = []
 max_queue_size = 100  # Number of submissions to accumulate before flushing
 
 # Initialize all variables
-local_mode = True
+local_mode = False
 
 if local_mode == True:
     discord_token = "REMOVED_DISCORD_TOKEN" #Stage
