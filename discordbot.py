@@ -1,3 +1,6 @@
+# Initialize all variables
+local_mode = False
+
 import sentry_sdk
 from sentry_sdk.integrations.logging import LoggingIntegration
 
@@ -130,8 +133,7 @@ round_responders = []
 submission_queue = []
 max_queue_size = 100  # Number of submissions to accumulate before flushing
 
-# Initialize all variables
-local_mode = False
+
 
 if local_mode == True:
     discord_token = "REMOVED_DISCORD_TOKEN" #Stage
@@ -143,6 +145,7 @@ if local_mode == True:
     googletranslate_api_key = "REMOVED_GOOGLETRANSLATE_KEY"
     webster_api_key = "REMOVED_WEBSTER_KEY"
     webster_thes_api_key = "REMOVED_WEBSTER_THES_KEY"
+    currency_api_key = "REMOVED_CURRENCY_KEY"  # Replace with actual API key
     channel_id = 1375328414151610458 #Stage
     #channel_id = 1402517943979343942 #Production  
     okrag_id = 591861826690613248  
@@ -155,6 +158,7 @@ else:
     googletranslate_api_key = os.getenv("googletranslate_api_key")
     webster_api_key = os.getenv("webster_api_key")
     webster_thes_api_key = os.getenv("webster_thes_api_key")
+    currency_api_key = os.getenv("currency_api_key")
     channel_id = int(os.getenv("channel_id"))
     okrag_id = 591861826690613248
 
@@ -164,7 +168,7 @@ intents.messages = True
 intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 openai_client = AsyncOpenAI(api_key=openai_api_key)
-id_limits = {"general": 2000, "mysterybox": 2000, "crossword": 5000, "jeopardy": 5000, "wof": 1500, "list": 20, "feud": 1000, "posters": 2000, "movie_scenes": 5000, "missing_link": 2500, "people": 2500, "ranker_list": 4000, "animal": 2000, "riddle": 2500, "dictionary": 5000, "flags": 800, "lyric": 500, "polyglottery": 80, "book": 80, "element": 100, "jigsaw": 5000, "border": 100, "faceoff": 5000, "president": 80, "wordle": 1400, "myopic": 5000, "fusion": 5000, "microscopic": 5000, "chess": 5000, "stock": 800}
+id_limits = {"general": 2000, "mysterybox": 2000, "crossword": 5000, "jeopardy": 5000, "wof": 1500, "list": 20, "feud": 1000, "posters": 2000, "movie_scenes": 5000, "missing_link": 2500, "people": 2500, "ranker_list": 4000, "animal": 2000, "riddle": 2500, "dictionary": 5000, "flags": 800, "lyric": 500, "polyglottery": 80, "book": 80, "element": 100, "jigsaw": 5000, "border": 100, "faceoff": 5000, "president": 80, "wordle": 1400, "myopic": 5000, "fusion": 5000, "microscopic": 5000, "chess": 5000, "stock": 800, "currency": 100}
 max_retries = 3
 delay_between_retries = 3
 first_place_bonus = 0
@@ -3843,6 +3847,7 @@ async def ask_chaos_challenge(winner, winner_id, num_of_games):
         ask_microscopic_challenge,
         ask_fusion_challenge,
         ask_tally_challenge,
+        ask_currency_challenge,
         ask_chess_challenge,
         ask_stock_challenge
     ]
@@ -5832,8 +5837,326 @@ async def ask_tally_challenge(winner, winner_id, num=3):
         return tally_winner_id
     else:
         return None
-    
 
+async def ask_currency_challenge(winner, winner_id, num=7):
+    global wf_winner
+    wf_winner = True
+    currency_gifs = [
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/currency1.gif",
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/currency2.gif",
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/currency3.gif",
+    ]
+    currency_gif_url = random.choice(currency_gifs)
+    await safe_send(channel, content="\u200b\n🌍💵 **XXXX**: Four X, Forex, Foriegn Exchange\n\u200b", embed=discord.Embed().set_image(url=currency_gif_url))
+    await asyncio.sleep(5)
+    
+    # Get cached currency data FIRST before asking for user input
+    #await safe_send(channel, "\u200b\n🔄 Loading currency data...\n\u200b")
+    currency_data = await get_cached_currency_data()
+    if not currency_data:
+        await safe_send(channel, "\u200b\n❌ Unable to get currency data. Falling back to stock challenge.\n\u200b")
+        return await ask_stock_challenge(winner, winner_id, num)
+    
+    exchange_rates = currency_data.get('exchange_rates', {})
+    currency_names = currency_data.get('currency_names', {})
+    valid_currencies = list(exchange_rates.keys())
+    
+    # Show some example currencies
+    example_currencies = ['USD', 'EUR', 'GBP', 'JPY', 'CAD', 'AUD']
+    available_examples = [curr for curr in example_currencies if curr in valid_currencies][:5]
+    examples_text = ', '.join(available_examples)
+    
+    # Get base currency from user with validation (multiple attempts within 15 seconds)
+    await safe_send(channel, f"\u200b\n💵🌍 **{winner}**, give me a 3-letter currency code.\n\n💡 **Examples**: {examples_text}\n\u200b")
+    
+    base_currency = None
+    start_time = asyncio.get_event_loop().time()
+    processed_messages = set()  # Track processed messages to avoid duplicates
+    
+    while base_currency is None and (asyncio.get_event_loop().time() - start_time) < 15:
+        try:
+            remaining_time = 15 - (asyncio.get_event_loop().time() - start_time)
+            if remaining_time <= 0:
+                break
+                
+            msg = await bot.wait_for("message", 
+                                   timeout=remaining_time, 
+                                   check=lambda m: (m.author.id == winner_id and 
+                                                  m.channel == channel and 
+                                                  m.id not in processed_messages))
+            
+            processed_messages.add(msg.id)
+            user_input = msg.content.strip()
+            
+            # Check if it's a 3-letter alphabetic code
+            if len(user_input) == 3 and user_input.isalpha():
+                candidate_currency = user_input.upper()
+                
+                # Validate against real currency list
+                if candidate_currency in valid_currencies:
+                    base_currency = candidate_currency
+                    currency_display_name = get_currency_name(base_currency, currency_data)
+                    await msg.add_reaction("✅")
+                    await safe_send(channel, f"\u200b\n✅ **{base_currency}** ({currency_display_name}) - Valid currency!\n\u200b")
+                else:
+                    await msg.add_reaction("❌")
+                    await safe_send(channel, f"\u200b\n❌ **{candidate_currency}** is not valid. Try again!\n\u200b")
+                    
+        except asyncio.TimeoutError:
+            break
+    
+    # If no valid currency was received, use USD
+    if base_currency is None:
+        base_currency = "USD"
+        await safe_send(channel, "\u200b\n😬⏱️ Time's up! We'll use **USD**.\n\u200b")
+    
+    # Get amount from user (multiple attempts within 15 seconds)
+    await safe_send(channel, f"\u200b\n🔢💵 **{winner}**, now give me an integer between 1 and 1000...\n\u200b")
+    
+    base_amount = None
+    start_time = asyncio.get_event_loop().time()
+    processed_messages = set()  # Track processed messages to avoid duplicates
+    
+    while base_amount is None and (asyncio.get_event_loop().time() - start_time) < 15:
+        try:
+            remaining_time = 15 - (asyncio.get_event_loop().time() - start_time)
+            if remaining_time <= 0:
+                break
+                
+            msg = await bot.wait_for("message", 
+                                   timeout=remaining_time, 
+                                   check=lambda m: (m.author.id == winner_id and 
+                                                  m.channel == channel and 
+                                                  m.id not in processed_messages))
+            
+            processed_messages.add(msg.id)
+            user_input = msg.content.strip()
+            
+            # Check if it's a valid integer between 1 and 1000
+            try:
+                candidate_amount = int(user_input)
+                if 1 <= candidate_amount <= 1000:
+                    base_amount = candidate_amount
+                    await msg.add_reaction("✅")
+                else:
+                    await msg.add_reaction("❌")
+                    await safe_send(channel, f"\u200b\n❌ **{candidate_amount}** must be an integer between 1 and 1000. Try again!\n\u200b")
+            except ValueError:
+                await msg.add_reaction("❌")
+        
+                    
+        except asyncio.TimeoutError:
+            break
+    
+    # If no valid amount was received, use 1
+    if base_amount is None:
+        base_amount = 1
+        await safe_send(channel, f"\u200b\n😬⏱️ Time's up! We'll use **{base_amount}**.\n\u200b")
+    
+    # Show final setup
+    base_currency_display_name = get_currency_name(base_currency, currency_data)
+    message = f"\u200b\n💥🤯 Ok...ra! We're converting **{base_amount} {base_currency}** ({base_currency_display_name})!\n"
+    message += f"\n⏰ FX rates refresh hourly!\n\u200b"
+    await safe_send(channel, message)
+    
+    
+    await asyncio.sleep(2)
+    
+    # Calculate rates relative to base currency
+    if base_currency == 'USD':
+        rates = exchange_rates
+    else:
+        # Convert from USD rates to base currency rates
+        base_rate = exchange_rates.get(base_currency, 1)
+        if base_rate == 0:
+            await safe_send(channel, "\u200b\n❌ Invalid base currency rate. Falling back to stock challenge.\n\u200b")
+            return await ask_stock_challenge(winner, winner_id, num)
+        rates = {curr: rate / base_rate for curr, rate in exchange_rates.items()}
+    
+    # Filter out the base currency and get available currencies
+    available_currencies = [curr for curr in rates.keys() if curr != base_currency]
+    if len(available_currencies) < num:
+        num = len(available_currencies)
+    
+    user_data = {}  # Track scores: {user_id: (display_name, total_distance, participated_rounds)}
+    round_actual_amounts = {}  # Track actual converted amount for each round: {round_number: actual_amount}
+    
+    if num > 1:
+        message = f"\u200b\n5️⃣🥇 Let's do a best of **{num}**...\n\u200b"
+        await safe_send(channel, message)
+        await asyncio.sleep(3)
+    
+    currency_round = 1
+    while currency_round <= num:
+        # Get recent currency codes to avoid
+        recent_currency_codes = await get_recent_question_ids_from_mongo("currency")
+        
+        # Filter out recently used currencies
+        filtered_currencies = [curr for curr in available_currencies if curr not in recent_currency_codes]
+        
+        # If we filtered out too many, fall back to full list
+        if len(filtered_currencies) < 3:
+            filtered_currencies = available_currencies
+            
+        # Select random target currency
+        target_currency = random.choice(filtered_currencies)
+        conversion_rate = rates[target_currency]
+        actual_converted_amount = round(base_amount * conversion_rate, 2)
+        
+        # Store this currency code in recent list
+        await store_question_ids_in_mongo([target_currency], "currency")
+        
+        # Store the actual amount for this round
+        round_actual_amounts[currency_round] = actual_converted_amount
+        
+        # Get currency names for display
+        base_currency_name = get_currency_name(base_currency, currency_data)
+        target_currency_name = get_currency_name(target_currency, currency_data)
+        
+        
+        message = f"\u200b\n⚠️🚨 **Everyone's in!...One guess per player**\n"
+        message += f"\n🗣💬❓ **Round {currency_round}**/{num}\n"
+        message += f"\nConvert **{base_amount} {base_currency}** ({base_currency_name}) to **{target_currency}** ({target_currency_name})?\n\u200b"
+        
+        print(f"{base_amount} {base_currency} ({base_currency_name}) to {target_currency} ({target_currency_name})")
+        print(actual_converted_amount)
+
+        await safe_send(channel, message)
+        await asyncio.sleep(2)
+                
+        start_time = asyncio.get_event_loop().time()
+        user_guesses = {}  # {user_id: (display_name, guess)}
+        processed_users = set()
+        
+        def check(m):
+            return (m.channel == channel and 
+                    m.author != bot.user and 
+                    m.author.id not in processed_users)
+        
+        while asyncio.get_event_loop().time() - start_time < 20:
+            try:
+                timeout = 20 - (asyncio.get_event_loop().time() - start_time)
+                if timeout <= 0:
+                    break
+                msg = await bot.wait_for("message", timeout=timeout, check=check)
+                try:
+                    guess = float(msg.content.strip().replace(',', ''))
+                    if guess < 0:
+                        continue
+                    user_guesses[msg.author.id] = (msg.author.display_name, guess)
+                    processed_users.add(msg.author.id)
+                except ValueError:
+                    continue
+            except asyncio.TimeoutError:
+                break
+        
+        # Process guesses if any were received
+        if user_guesses:
+            # Calculate distances and find exact winner
+            user_distances = {}
+            exact_winner = None
+            
+            for user_id, (display_name, guess) in user_guesses.items():
+                distance = abs(guess - actual_converted_amount)
+                if distance == 0:
+                    exact_winner = display_name
+                user_distances[user_id] = (display_name, distance)
+                
+                # Get user data or create new entry
+                curr_name, curr_distance, participated_rounds = user_data.get(user_id, (display_name, 0, set()))
+                
+                # Add penalty for previous rounds if user didn't participate
+                penalty_for_previous = 0
+                for round_num in range(1, currency_round):
+                    if round_num not in participated_rounds:
+                        if round_num in round_actual_amounts:
+                            penalty_for_previous += round_actual_amounts[round_num]
+                
+                # Add the penalties and current round distance
+                participated_rounds.add(currency_round)
+                user_data[user_id] = (display_name, curr_distance + penalty_for_previous + distance, participated_rounds)
+            
+            # Sort by distance (closest first) for display
+            sorted_results = sorted(user_distances.items(), key=lambda x: x[1][1])
+            
+            # Show exact winner announcement if there was one
+            if exact_winner:
+                exact_message = f"\u200b\n🎯💥 BULLSEYE! **{exact_winner}** got it EXACTLY right!\n\u200b"
+                await safe_send(channel, exact_message)
+            
+            # Show results
+            message = f"\u200b\n🎯 **{base_amount} {base_currency}** ({base_currency_name}) = **{actual_converted_amount} {target_currency}** ({target_currency_name})\n"
+            message += f"\n🏆 **Top 3 Closest Guesses:**\n"
+            
+            for i, (user_id, (display_name, distance)) in enumerate(sorted_results[:3]):
+                guess = user_guesses[user_id][1]
+                message += f"{i+1}. **{display_name}**: {guess} (off by {distance:.2f})\n"
+            message += "\u200b"
+            
+            await safe_send(channel, message)
+        else:
+            # No guesses received
+            await safe_send(channel, f"\u200b\n😢 No guesses! The answer was **{actual_converted_amount} {target_currency}** ({target_currency_name})\n\u200b")
+        
+        # Display conversion rate for 1 unit
+        await asyncio.sleep(2)
+        rate_message = f"\u200b\n💱 **Exchange Rate**: 1 {base_currency} = {conversion_rate:.4f} {target_currency}\n\u200b"
+        await safe_send(channel, rate_message)
+        
+        await asyncio.sleep(3)
+        currency_round += 1
+        
+        # Add actual_amount penalty for users who didn't participate in this round
+        current_round = currency_round - 1
+        for user_id, (display_name, total_distance, participated_rounds) in list(user_data.items()):
+            # If user didn't participate in the current round, add penalty
+            if current_round not in participated_rounds:
+                user_data[user_id] = (display_name, total_distance + actual_converted_amount, participated_rounds)
+        
+        # Show current standings if we have user data and this isn't the last round
+        if user_data:
+            sorted_users = sorted(user_data.items(), key=lambda x: x[1][1], reverse=False)
+            if num == 1:
+                if sorted_users:
+                    currency_winner_id, (display_name, total_distance, participated_rounds) = sorted_users[0]
+                    return currency_winner_id
+                else:
+                    return None
+            
+            message = ""
+            if currency_round > num:
+                message += "\u200b\n🏁🏆 **Final Standings (Distance)**\n"
+            else:   
+                message += "\u200b\n📊🏆 **Current Standings (Distance)**\n"
+            for counter, (user_id, (display_name, total_distance, participated_rounds)) in enumerate(sorted_users, start=1):
+                message += f"{counter}. **{display_name}**: {total_distance:.2f}\n"
+            message += "\u200b"
+            
+            await safe_send(channel, message)
+            await asyncio.sleep(2)
+    
+    await asyncio.sleep(2)
+    
+    # Final results
+    if user_data:
+        sorted_users = sorted(user_data.items(), key=lambda x: x[1][1], reverse=False)
+    else:
+        sorted_users = []
+    
+    if sorted_users:
+        currency_winner_id, (winner_name, total_distance, participated_rounds) = sorted_users[0]
+        rounds_count = len(participated_rounds)
+        message = f"\u200b\n🎉🥇 The winner is **{winner_name}** with a total distance of **{total_distance:.2f}**!\n\u200b"
+    else:
+        message = f"\u200b\n👎😢 **No guesses made**. I'm ashamed to call you Okrans.\n\u200b"
+    await safe_send(channel, message)
+    
+    await asyncio.sleep(3)
+    
+    if sorted_users:
+        return currency_winner_id
+    else:
+        return None
 
 
 
@@ -6618,7 +6941,7 @@ async def get_random_word(min_length=5, max_length=12):
     return random.choice(valid_words)
 
 
-def fetch_random_word(min_length=5, max_length=12, max_retries=5):
+async def fetch_random_word(min_length=5, max_length=12, max_retries=5):
     for attempt in range(1, max_retries + 1):
         print(f"[Attempt {attempt}/{max_retries}] Fetching a random word...")
         try:
@@ -8450,6 +8773,8 @@ async def select_wof_questions(winner, winner_id):
         message += f"{counter}.\u200b ♟️👑 Checkmate\n"
         counter = counter + 1
         message += f"{counter}.\u200b 🏙️💹 Wall Street\n"
+        counter = counter + 1
+        message += f"{counter}.\u200b 🌍💵 XXXX\n"
         message += f"99.\u200b 🌀🤯 CHAOS\n"
 
         message += f"\n⚙️ **Other Options**\n"
@@ -8644,6 +8969,11 @@ async def select_wof_questions(winner, winner_id):
             await asyncio.sleep(3)
             return None
 
+        elif selected_wof_category == "39":
+            await ask_currency_challenge(winner, winner_id)
+            await asyncio.sleep(3)
+            return None
+        
         elif selected_wof_category == "99":
             await ask_chaos_challenge(winner, winner_id, 5)
             await asyncio.sleep(3)
@@ -8662,7 +8992,7 @@ async def select_wof_questions(winner, winner_id):
             await asyncio.sleep(3)
 
         elif selected_wof_category == "6":
-            wof_answer, wof_clue, word_definition, word_url = fetch_random_word()
+            wof_answer, wof_clue, word_definition, word_url = await fetch_random_word()
             dictionary_message = f"\n📖🔍 Definition:\n"
             for i, definition in enumerate(word_definition, start=1):
                 dictionary_message += f"\n {i}. {definition}"
@@ -8902,10 +9232,11 @@ async def ask_wof_number(winner, winner_id):
         "36": "Tally",
         "37": "Checkmate",
         "38": "Wall Street",
+        "39": "XXXX",
         "99": "CHAOS"
     }
     multiplayer_required = {k for k in unlocks if k not in {"5", "6", "7", "8", "9"}}
-    all_options = {str(i) for i in range(39)} | {"00", "x", "99"}
+    all_options = {str(i) for i in range(40)} | {"00", "x", "99"}
 
     start = asyncio.get_event_loop().time()
     selected_question = None
@@ -8922,7 +9253,7 @@ async def ask_wof_number(winner, winner_id):
             if content == "00":
                 await message.add_reaction("👍")
                 set_a = [str(i) for i in range(5)]
-                set_b = [str(i) for i in range(5, 39)] if len(round_responders) >= num_list_players else [str(i) for i in range(5, 10)]
+                set_b = [str(i) for i in range(5, 40)] if len(round_responders) >= num_list_players else [str(i) for i in range(5, 10)]
                 selected_question = random.choice(set_a if random.random() < 0.5 else set_b)
                 
                 # Store frequency data for random selection
@@ -8962,7 +9293,7 @@ async def ask_wof_number(winner, winner_id):
 
     # Fallback random selection
     set_a = [str(i) for i in range(5)]
-    set_b = [str(i) for i in range(5, 39)] if len(round_responders) >= num_list_players else [str(i) for i in range(5, 10)]
+    set_b = [str(i) for i in range(5, 40)] if len(round_responders) >= num_list_players else [str(i) for i in range(5, 10)]
     selected_question = random.choice(set_a if random.random() < 0.5 else set_b)
     
     # Store frequency data for random selection
@@ -11558,6 +11889,132 @@ async def load_streak_data():
                 current_longest_answer_streak = {"user": None, "user_id": None, "streak": 0}
                 current_longest_round_streak = {"user": None, "user_id": None, "streak": 0}
 
+async def fetch_and_cache_currency_data():
+    """
+    Fetch currency names and exchange rates from API and cache in MongoDB.
+    Only fetches if data is older than 1 hour or doesn't exist.
+    """
+    try:
+        db = await connect_to_mongodb()
+        foreign_exchange_collection = db["foreign_exchange"]
+        
+        # Check if we have recent data (within 1 hour)
+        now = datetime.datetime.now(datetime.UTC)
+        recent_data = await foreign_exchange_collection.find_one(
+            {"_id": "currency_data"},
+            sort=[("last_updated", -1)]
+        )
+        
+        if recent_data and recent_data.get("last_updated"):
+            last_updated = recent_data["last_updated"]
+            if isinstance(last_updated, datetime.datetime):
+                if last_updated.tzinfo is None:
+                    last_updated = last_updated.replace(tzinfo=datetime.UTC)
+                time_diff = now - last_updated
+                if time_diff.total_seconds() < 3600:  # 1 hour in seconds
+                    print("Currency data is recent, skipping API fetch")
+                    return recent_data
+        
+        print("Fetching fresh currency data from API...")
+        
+        # Fetch currency data
+        async with aiohttp.ClientSession() as session:
+            # Get currency names (API key required)
+            currencies_url = f"https://currencyapi.net/api/v1/currencies?key={currency_api_key}&output=JSON"
+            async with session.get(currencies_url) as response:
+                if response.status == 200:
+                    currencies_data = await response.json()
+                    if currencies_data.get('valid'):
+                        currency_names = currencies_data.get('currencies', {})
+                    else:
+                        print("Invalid API response for currency names")
+                        return None
+                else:
+                    print(f"Failed to fetch currency names: {response.status}")
+                    return None
+            
+            # Get exchange rates (API key required)
+            rates_url = f"https://currencyapi.net/api/v1/rates?key={currency_api_key}&base=USD&output=JSON"
+            async with session.get(rates_url) as response:
+                if response.status == 200:
+                    rates_data = await response.json()
+                    if rates_data.get('valid'):
+                        exchange_rates = rates_data.get('rates', {})
+                    else:
+                        print("Invalid API response for exchange rates")
+                        return None
+                else:
+                    print(f"Failed to fetch exchange rates: {response.status}")
+                    return None
+        
+        # Combine data
+        currency_data = {
+            "_id": "currency_data",
+            "currency_names": currency_names,
+            "exchange_rates": exchange_rates,
+            "base_currency": "USD",
+            "last_updated": now
+        }
+        
+        # Cache in MongoDB
+        await foreign_exchange_collection.replace_one(
+            {"_id": "currency_data"},
+            currency_data,
+            upsert=True
+        )
+        
+        print(f"Successfully cached {len(currency_names)} currencies and {len(exchange_rates)} exchange rates")
+        return currency_data
+        
+    except Exception as e:
+        sentry_sdk.capture_exception(e)
+        print(f"Error fetching currency data: {e}")
+        return None
+
+async def get_cached_currency_data():
+    """
+    Get currency data from cache, fetch fresh if needed.
+    """
+    try:
+        db = await connect_to_mongodb()
+        foreign_exchange_collection = db["foreign_exchange"]
+        
+        # Try to get cached data first
+        cached_data = await foreign_exchange_collection.find_one({"_id": "currency_data"})
+        
+        if not cached_data:
+            print("No cached currency data found, fetching fresh data...")
+            return await fetch_and_cache_currency_data()
+        
+        # Check if data is stale (older than 1 hour)
+        now = datetime.datetime.now(datetime.UTC)
+        last_updated = cached_data.get("last_updated")
+        
+        if last_updated:
+            if isinstance(last_updated, datetime.datetime):
+                if last_updated.tzinfo is None:
+                    last_updated = last_updated.replace(tzinfo=datetime.UTC)
+                time_diff = now - last_updated
+                if time_diff.total_seconds() >= 3600:  # 1 hour
+                    print("Currency data is stale, fetching fresh data...")
+                    return await fetch_and_cache_currency_data()
+        
+        return cached_data
+        
+    except Exception as e:
+        sentry_sdk.capture_exception(e)
+        print(f"Error getting cached currency data: {e}")
+        return None
+
+def get_currency_name(currency_code, currency_data):
+    """
+    Get the full name of a currency from its 3-letter code.
+    """
+    if not currency_data or not currency_data.get("currency_names"):
+        return currency_code
+    
+    currency_names = currency_data["currency_names"]
+    return currency_names.get(currency_code, currency_code)
 
 def print_selected_questions(selected_questions):
     """Prints the selected questions in a cleaner format."""
@@ -12376,6 +12833,7 @@ async def start_trivia():
             #await ask_chaos_challenge("TheOkraG",591861826690613248, 23)
             #await ask_tally_challenge("TheOkraG",591861826690613248, 3)
             #await ask_stock_challenge("TheOkraG",591861826690613248, 3)
+            #await ask_currency_challenge("TheOkraG",591861826690613248, 3)
 
             round_responders.clear()  # Reset round responders
             round_data["questions"] = []
@@ -12392,6 +12850,7 @@ async def start_trivia():
 
             start_message = f"\u200b\n✨🧪 **NEW** from the **Okra Lab**! 🧪✨\n"
             
+            start_message += f"\n🌍💵 **XXXX** [Mini-Game]"
             start_message += f"\n🏙️💹 **Wall Street** [Mini-Game]"
             start_message += f"\n♟️👑 **Checkmate** [Mini-Game]"
 
@@ -12761,6 +13220,7 @@ def get_minigame_name(number):
         "36": "Tally",
         "37": "Checkmate",
         "38": "Wall Street",
+        "39": "XXXX",
         "99": "CHAOS",
         "x": "Skip Mini Game"
     }
