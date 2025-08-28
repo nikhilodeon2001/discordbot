@@ -8704,7 +8704,7 @@ async def select_wof_questions(winner, winner_id):
             message += f"\n{counter}.\u200b 🎡💰 WoF: {category}"
             counter = counter + 1        
         premium_counts = counter
-        message += f"🥒 **Okrans Only**"
+        message += f"\n\n🥒 **Okrans Only**"
         message += f"\n{counter}.\u200b 🌐🎲 Wikipedia Roulette\n"
         counter = counter + 1
         message += f"{counter}.\u200b 📚🎲 Dictionary Roulette\n"
