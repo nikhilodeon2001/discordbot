@@ -8715,7 +8715,7 @@ async def select_wof_questions(winner, winner_id):
         counter = counter + 1
         message += f"{counter}.\u200b ⚔️🧍 FeUd (Single Player)\n"
         counter = counter + 1
-        message += f"\n\n🥒✨: **Okrans Only** ({num_list_players}+ players)\n"
+        message += f"\n🥒✨: **Okrans Only** ({num_list_players}+ players)\n"
         message += f"{counter}.\u200b ⚔️⚡ FeUd Blitz\n"
         counter = counter + 1
         message += f"{counter}.\u200b 📝🥊 List Battle\n"
