@@ -12834,7 +12834,7 @@ async def start_trivia():
             #await ask_chaos_challenge("TheOkraG",591861826690613248, 23)
             #await ask_tally_challenge("TheOkraG",591861826690613248, 3)
             #await ask_stock_challenge("TheOkraG",591861826690613248, 3)
-            await ask_chess_challenge("TheOkraG",591861826690613248, 3)
+            #await ask_chess_challenge("TheOkraG",591861826690613248, 3)
 
             round_responders.clear()  # Reset round responders
             round_data["questions"] = []
