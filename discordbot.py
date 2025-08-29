@@ -4640,7 +4640,8 @@ def generate_chess_board(
                 }
                 piece_name = piece_names.get(piece.piece_type, "Piece")
                 color = "White" if piece.color else "Black"
-                piece_hint = f"Move the {color} {piece_name}"
+                square_name = chess.square_name(mv.from_square)
+                piece_hint = f"Move the {color} {piece_name} ({square_name})"
             
             # Set hint square if hint mode is enabled
             if hint:
@@ -4863,7 +4864,7 @@ def generate_chess_board(
 
 
 
-async def ask_chess_challenge(winner, winner_id, num=3):
+async def ask_chess_challenge(winner, winner_id, num=5):
     global wf_winner
     wf_winner = True
 
@@ -12833,7 +12834,7 @@ async def start_trivia():
             #await ask_chaos_challenge("TheOkraG",591861826690613248, 23)
             #await ask_tally_challenge("TheOkraG",591861826690613248, 3)
             #await ask_stock_challenge("TheOkraG",591861826690613248, 3)
-            #await ask_currency_challenge("TheOkraG",591861826690613248, 3)
+            await ask_chess_challenge("TheOkraG",591861826690613248, 3)
 
             round_responders.clear()  # Reset round responders
             round_data["questions"] = []
