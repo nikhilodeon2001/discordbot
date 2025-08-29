@@ -12953,9 +12953,16 @@ async def start_trivia():
             if round_count % 5 == 0:
                 await safe_send(channel, f"\u200b\n🧘‍♂️ A short breather. Relax, stretch, meditate.\n🎨 Live Trivia is a pure hobby effort.\n\n🙋 Help make it better!\n💡 https://forms.gle/iWvmN24pfGEGSy7n7\n\u200b")
                 selected_questions = await select_trivia_questions(questions_per_round)  #Pick the next question set
-                await asyncio.sleep(30)
+                await asyncio.sleep(10)
                 await round_preview(selected_questions)
                 await asyncio.sleep(10)
+                await safe_send(
+                    channel,
+                    f"\u200b\n🚀⚡ Help grow our community! ⚡🚀\n\n"
+                    f"Type 👉 **/bump** 👈 now (or at any time) to boost our trivia server and bring in more players! 🥒🏆\n\u200b"
+                )
+                await asyncio.sleep(10)
+                
             else:
                 message = f"\u200b\n\u200b\n🥒 **Unlock perks? Become an Okran!**\n💚 https://discord.com/channels/1367682586079395902/role-subscriptions\n"
                 message += f"\n🛒 **Score Live Trivia merch featuring Okra!**\n👕 https://livetriviamerch.com\n\u200b"
