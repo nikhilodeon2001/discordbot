@@ -251,6 +251,33 @@ warnings.filterwarnings("ignore", message="In the future version we will turn de
 warnings.filterwarnings("ignore", message="This search incorrectly ignores the root element, and will be fixed in a future version.")
 
 
+async def inspect_hardcoded_bump():
+    channel_id = 1402517943979343942
+    message_id = 1411034914849030194
+
+    try:
+        channel = await bot.fetch_channel(channel_id)  # fetch directly using global bot
+        msg = await channel.fetch_message(message_id)
+
+        print("=== Hardcoded Bump Message Details ===")
+        print("Author:", msg.author, f"(ID: {msg.author.id})")
+        print("Content:", repr(msg.content))
+        print("Mentions:", [m.display_name for m in msg.mentions])
+        print("Interaction:", getattr(msg, "interaction", None))
+
+        for i, emb in enumerate(msg.embeds):
+            print(f"Embed {i}:")
+            print("  Title:", emb.title)
+            print("  Description:", emb.description)
+            print("  Footer:", emb.footer.text if emb.footer else None)
+
+        print("=== End of Inspection ===")
+
+    except Exception as e:
+        print(f"❌ Error fetching bump message: {e}")
+
+
+
 #async def safe_send(channel, *args, max_retries=3, delay=2, **kwargs):
 #    for attempt in range(1, max_retries + 1):
 #        try:
@@ -13057,6 +13084,7 @@ async def start_trivia():
         await load_parameters()
         await load_streak_data()
         await load_previous_question()
+        await inspect_hardcoded_bump()
 
         round_winner = None
         selected_questions = await select_trivia_questions(questions_per_round)  #Pick the initial question set
