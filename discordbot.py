@@ -12953,16 +12953,9 @@ async def start_trivia():
             if round_count % 5 == 0:
                 await safe_send(channel, f"\u200b\n🧘‍♂️ A short breather. Relax, stretch, meditate.\n🎨 Live Trivia is a pure hobby effort.\n\n🙋 Help make it better!\n💡 https://forms.gle/iWvmN24pfGEGSy7n7\n\u200b")
                 selected_questions = await select_trivia_questions(questions_per_round)  #Pick the next question set
-                await asyncio.sleep(10)
+                await asyncio.sleep(20)
                 await round_preview(selected_questions)
                 await asyncio.sleep(10)
-                await safe_send(
-                    channel,
-                    f"\u200b\n🚀⚡ Help grow our community! ⚡🚀\n\n"
-                    f"Type 👉 **/bump** 👈 now (or at any time) to boost our trivia server and bring in more players! 🥒🏆\n\u200b"
-                )
-                await asyncio.sleep(10)
-                
             else:
                 message = f"\u200b\n\u200b\n🥒 **Unlock perks? Become an Okran!**\n💚 https://discord.com/channels/1367682586079395902/role-subscriptions\n"
                 message += f"\n🛒 **Score Live Trivia merch featuring Okra!**\n👕 https://livetriviamerch.com\n\u200b"
@@ -12972,7 +12965,10 @@ async def start_trivia():
                 await asyncio.sleep(10)
                 await round_preview(selected_questions)
                 await asyncio.sleep(10)  # Adjust this time to whatever delay you need between rounds
-            
+
+            if round_count % 3 == 0:
+                await get_bump_url_from_s3()
+                await asyncio.sleep(10)
             #if len(scoreboard) >= 1000:
             #    await ask_survey_question()
                 
@@ -12984,6 +12980,31 @@ async def start_trivia():
         traceback.print_exc()  # Print the stack trace of the error
         print("Restarting the trivia bot in 10 seconds...")
         await asyncio.sleep(10)  
+
+
+async def get_bump_url_from_s3():
+    bucket_name = "triviabotwebsite"
+    prefix = "bump/"
+    
+    session = aioboto3.Session()
+    async with session.client("s3") as s3:
+        response = await s3.list_objects_v2(Bucket=bucket_name, Prefix=prefix)
+    
+    # Extract file keys
+    files = [item['Key'] for item in response.get('Contents', []) if item['Key'].lower().endswith(('.png', '.jpg', '.jpeg', '.gif'))]
+    random_file = random.choice(files)
+    encoded_filename = quote(random_file)
+
+    public_url = f"https://{bucket_name}.s3.amazonaws.com/{encoded_filename}"
+    
+    message = (
+        f"\u200b\n🚀⚡ Help grow our community! ⚡🚀\n\n"
+        f"Type 👉 **/bump** 👈 now (or at any time) to boost our trivia server and bring in more players! 🥒🏆\n\u200b"
+    )
+
+    await safe_send(channel, content=message, embed=discord.Embed().set_image(url=public_url))
+
+
 
 
 def print_round_settings():
