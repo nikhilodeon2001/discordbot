@@ -13493,6 +13493,7 @@ def get_minigame_name(number):
         "37": "Checkmate",
         "38": "Wall Street",
         "39": "XXXX",
+        "40": "OkRACE",
         "99": "CHAOS",
         "x": "Skip Mini Game"
     }
