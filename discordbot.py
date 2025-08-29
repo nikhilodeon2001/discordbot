@@ -982,6 +982,242 @@ async def ask_faceoff_challenge(winner, winner_id, num=7):
         return None
 
 
+async def ask_okrace_challenge(winner, winner_id, num=1):
+    global wf_winner
+    wf_winner = True
+    
+    # Configuration
+    MAX_RACERS = 10
+    JOIN_TIMEOUT = 20
+    TRACK_LEN = 10
+    TARGET_RANGE = (1, 4)
+    
+    # Competitive step awards: 1st=3, 2nd=2, 3rd=1, rest=0
+    
+    gifs = [
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/okrace1.gif",
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/okrace2.gif",
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/okrace3.gif",
+    ]
+    gif_url = random.choice(gifs)
+    
+    await safe_send(channel, content="\u200b\n🏁🥒 **OkRACE**: **O**kra's **K**razy **R**ace **A**dventure!!\n\u200b", embed=discord.Embed().set_image(url=gif_url))
+    await asyncio.sleep(3)
+    
+    # Join Phase
+    join_message = await safe_send(channel, f"\u200b\n🚦 **Join the OkRACE!**\n\n**React** with a **unique emoji** to claim your racer!\n\nUp to **{MAX_RACERS}** players get in!\n\u200b")
+    
+    # Wait for reactions during join phase
+    emoji_to_user = {}
+    user_to_emoji = {}
+    user_names = {}  # Store display names
+    
+    start_time = asyncio.get_event_loop().time()
+    
+    def reaction_check(reaction, user):
+        return (reaction.message.id == join_message.id and 
+                user != bot.user and 
+                len(emoji_to_user) < MAX_RACERS)
+    
+    # Monitor reactions for join period
+    while (asyncio.get_event_loop().time() - start_time < JOIN_TIMEOUT and 
+           len(emoji_to_user) < MAX_RACERS):
+        try:
+            timeout_remaining = JOIN_TIMEOUT - (asyncio.get_event_loop().time() - start_time)
+            reaction, user = await bot.wait_for('reaction_add', timeout=timeout_remaining, check=reaction_check)
+            
+            emoji_str = str(reaction.emoji)
+            
+            # Check if emoji is already taken or user already joined
+            if emoji_str not in emoji_to_user and user.id not in user_to_emoji:
+                emoji_to_user[emoji_str] = user.id
+                user_to_emoji[user.id] = emoji_str
+                user_names[user.id] = user.display_name  # Store display name
+                
+                if len(emoji_to_user) >= MAX_RACERS:
+                    break
+        except asyncio.TimeoutError:
+            break
+    
+    if len(emoji_to_user) == 0:
+        await safe_send(channel, "\u200b\n😢 No one joined the race! Maybe next time.\n\u200b")
+        wf_winner = True
+        return None
+    
+    if len(emoji_to_user) == 10:
+        user_id = list(emoji_to_user.values())[0]
+        user_name = user_names[user_id]
+        await safe_send(channel, f"\u200b\n🏃‍♂️ Only **{user_name}** joined! They win by default!\n\u200b")
+        wf_winner = True
+        return user_id
+    
+    # Announce final roster
+    roster_text = f"\u200b\n🏁 **Final Roster ({len(emoji_to_user)} racers)**\n\n"
+    for emoji, user_id in emoji_to_user.items():
+        user_name = user_names[user_id]
+        roster_text += f"{emoji} **{user_name}**\n"
+    roster_text += "\u200b"
+    await safe_send(channel, roster_text)
+    await asyncio.sleep(2)
+    
+    # Initialize race state
+    positions = {user_id: 0 for user_id in emoji_to_user.values()}
+    first_msg_time = {}
+    
+    round_count = 0
+    winners = []
+    MAX_ROUNDS = 10
+    
+    # Race loop
+    while not winners and round_count < MAX_ROUNDS:
+        round_count += 1
+        # Generate random decimal time between 1.0 and 5.0 to the tenth place
+        target_time = round(random.uniform(TARGET_RANGE[0], TARGET_RANGE[1]), 1)
+        first_msg_time.clear()
+        
+        await safe_send(channel, f"\u200b\n⏱️ **Round {round_count}**\n\nSend **x**, then **x** again after...\n\n**{target_time}** seconds\n\u200b")
+        
+        start_round_time = asyncio.get_event_loop().time()
+        processed_users = set()
+        round_results = {}  # user_id: {"delta": float, "error": float, "name": str}
+        
+        def message_check(m):
+            return (m.channel == channel and 
+                    m.author != bot.user and 
+                    m.content.strip().lower() == 'x' and 
+                    m.author.id in user_to_emoji)
+        
+        # Wait for messages for 15 seconds
+        while asyncio.get_event_loop().time() - start_round_time < 20:
+            try:
+                timeout_remaining = 15 - (asyncio.get_event_loop().time() - start_round_time)
+                msg = await bot.wait_for('message', timeout=timeout_remaining, check=message_check)
+                
+                user_id = msg.author.id
+                current_time = msg.created_at.timestamp()
+                
+                if user_id not in first_msg_time:
+                    # First 'x' message
+                    first_msg_time[user_id] = current_time
+                elif user_id not in processed_users:
+                    # Second 'x' message
+                    delta = current_time - first_msg_time[user_id]
+                    error = abs(delta - target_time)
+                    
+                    round_results[user_id] = {
+                        "delta": delta,
+                        "error": error,
+                        "name": msg.author.display_name
+                    }
+                    processed_users.add(user_id)
+                    
+            except asyncio.TimeoutError:
+                break
+        
+        # Now rank by accuracy and award steps
+        if round_results:
+            # Sort by error (lowest error = most accurate)
+            sorted_results = sorted(round_results.items(), key=lambda x: x[1]["error"])
+            
+            for rank, (user_id, result) in enumerate(sorted_results):
+                # Award steps based on rank: 1st=3, 2nd=2, 3rd=1, rest=0
+                if rank == 0:
+                    steps = 3
+                elif rank == 1:
+                    steps = 2
+                elif rank == 2:
+                    steps = 1
+                else:
+                    steps = 0
+                
+                positions[user_id] = min(positions[user_id] + steps, TRACK_LEN)
+                
+                emoji = user_to_emoji[user_id]
+                rank_text = ["🥇 1st", "🥈 2nd", "🥉 3rd"][rank] if rank < 3 else f"{rank + 1}th"
+                await safe_send(channel, f"{emoji} **{result['name']}**: {result['delta']:.2f}s (off by {result['error']:.2f}) → {rank_text} → {steps} steps")
+        
+        await asyncio.sleep(2)
+        
+        # Update and display track
+        track_display = f"\u200b\n🏁 **OkRACE Track**\n\n"
+        for user_id, position in sorted(positions.items(), key=lambda x: x[1], reverse=True):
+            emoji = user_to_emoji[user_id]
+            user_name = user_names[user_id]
+            
+            track_line = ""
+            for pos in range(TRACK_LEN + 1):
+                if pos == position:
+                    track_line += emoji
+                elif pos == TRACK_LEN:
+                    track_line += "🏆"
+                else:
+                    track_line += "·"
+            track_display += f"{track_line} **{user_name}** ({position}/{TRACK_LEN})\n"
+        
+        track_display += "\u200b"
+        await safe_send(channel, track_display)
+        
+        # Check for winners
+        for user_id, position in positions.items():
+            if position >= TRACK_LEN:
+                winners.append(user_id)
+        
+        if winners:
+            break
+            
+        await asyncio.sleep(3)
+    
+    # Announce results
+    if winners:
+        # Someone reached the finish line
+        if len(winners) == 1:
+            winner_name = user_names[winners[0]]
+            winner_emoji = user_to_emoji[winners[0]]
+            await safe_send(channel, f"\u200b\n🎉🏆 **WINNER!**\n\n{winner_emoji} **{winner_name}** wins OkRACE!\n\u200b")
+        else:
+            winners_text = "\u200b\n🎉🏆 **TIE! Winners:**\n"
+            for winner_id in winners:
+                winner_name = user_names[winner_id]
+                winner_emoji = user_to_emoji[winner_id]
+                winners_text += f"{winner_emoji} **{winner_name}**\n"
+            winners_text += "\u200b"
+            await safe_send(channel, winners_text)
+        
+        wf_winner = True
+        await asyncio.sleep(3)
+        return winners[0]  # Return first winner for consistency
+    elif round_count >= MAX_ROUNDS:
+        # Reached max rounds without a winner - declare closest to finish as winner
+        await safe_send(channel, f"\u200b\n⏰ **{MAX_ROUNDS} rounds completed!** Time to crown a winner based on position!\n\u200b")
+        
+        # Find the player(s) with the highest position
+        max_position = max(positions.values())
+        leaders = [user_id for user_id, pos in positions.items() if pos == max_position]
+        
+        if len(leaders) == 1:
+            leader_name = user_names[leaders[0]]
+            leader_emoji = user_to_emoji[leaders[0]]
+            await safe_send(channel, f"\u200b\n🥇🏆 **CLOSEST TO VICTORY!**\n\n{leader_emoji} **{leader_name}** wins with {max_position}/{TRACK_LEN} steps!\n\u200b")
+            wf_winner = True
+            await asyncio.sleep(3)
+            return leaders[0]
+        else:
+            leaders_text = f"\u200b\n🤝🏆 **TIE FOR THE LEAD!** (All at {max_position}/{TRACK_LEN} steps)\n"
+            for leader_id in leaders:
+                leader_name = user_names[leader_id]
+                leader_emoji = user_to_emoji[leader_id]
+                leaders_text += f"{leader_emoji} **{leader_name}**\n"
+            leaders_text += "\u200b"
+            await safe_send(channel, leaders_text)
+            wf_winner = True
+            await asyncio.sleep(3)
+            return leaders[0]  # Return first leader for consistency
+    else:
+        # This shouldn't happen, but just in case
+        await safe_send(channel, "\u200b\n👎😢 **No winners**. Better luck next time!\n\u200b")
+        wf_winner = True
+        return None
+
 
 def get_largest_fitting_font(draw, text, box_width, box_height, font_path, padding=6):
     max_width = box_width - padding
@@ -8776,6 +9012,8 @@ async def select_wof_questions(winner, winner_id):
         message += f"{counter}.\u200b 🏙️💹 Wall Street\n"
         counter = counter + 1
         message += f"{counter}.\u200b 🌍💵 XXXX\n"
+        counter = counter + 1
+        message += f"{counter}.\u200b 🥒🏁 OkRACE\n"
         message += f"99.\u200b 🌀🤯 CHAOS\n"
 
         message += f"\n⚙️ **Other Options**\n"
@@ -8972,6 +9210,11 @@ async def select_wof_questions(winner, winner_id):
 
         elif selected_wof_category == "39":
             await ask_currency_challenge(winner, winner_id)
+            await asyncio.sleep(3)
+            return None
+        
+        elif selected_wof_category == "40":
+            await ask_okrace_challenge(winner, winner_id)
             await asyncio.sleep(3)
             return None
         
@@ -9234,10 +9477,11 @@ async def ask_wof_number(winner, winner_id):
         "37": "Checkmate",
         "38": "Wall Street",
         "39": "XXXX",
+        "40": "OkRACE",
         "99": "CHAOS"
     }
     multiplayer_required = {k for k in unlocks if k not in {"5", "6", "7", "8", "9"}}
-    all_options = {str(i) for i in range(40)} | {"00", "x", "99"}
+    all_options = {str(i) for i in range(41)} | {"00", "x", "99"}
 
     start = asyncio.get_event_loop().time()
     selected_question = None
@@ -9254,7 +9498,7 @@ async def ask_wof_number(winner, winner_id):
             if content == "00":
                 await message.add_reaction("👍")
                 set_a = [str(i) for i in range(5)]
-                set_b = [str(i) for i in range(5, 40)] if len(round_responders) >= num_list_players else [str(i) for i in range(5, 10)]
+                set_b = [str(i) for i in range(5, 41)] if len(round_responders) >= num_list_players else [str(i) for i in range(5, 10)]
                 selected_question = random.choice(set_a if random.random() < 0.5 else set_b)
                 
                 # Store frequency data for random selection
@@ -9294,7 +9538,7 @@ async def ask_wof_number(winner, winner_id):
 
     # Fallback random selection
     set_a = [str(i) for i in range(5)]
-    set_b = [str(i) for i in range(5, 40)] if len(round_responders) >= num_list_players else [str(i) for i in range(5, 10)]
+    set_b = [str(i) for i in range(5, 41)] if len(round_responders) >= num_list_players else [str(i) for i in range(5, 10)]
     selected_question = random.choice(set_a if random.random() < 0.5 else set_b)
     
     # Store frequency data for random selection
@@ -12835,6 +13079,7 @@ async def start_trivia():
             #await ask_tally_challenge("TheOkraG",591861826690613248, 3)
             #await ask_stock_challenge("TheOkraG",591861826690613248, 3)
             #await ask_chess_challenge("TheOkraG",591861826690613248, 3)
+            #await ask_okrace_challenge("TheOkraG",591861826690613248, 3)
 
             round_responders.clear()  # Reset round responders
             round_data["questions"] = []
@@ -12851,9 +13096,7 @@ async def start_trivia():
 
             start_message = f"\u200b\n✨🧪 **NEW** from the **Okra Lab**! 🧪✨\n"
             
-            start_message += f"\n🌍💵 **XXXX** [Mini-Game]"
-            start_message += f"\n🏙️💹 **Wall Street** [Mini-Game]"
-            start_message += f"\n♟️👑 **Checkmate** [Mini-Game]"
+            start_message += f"\n🏁🥒 **OkRACE** [Mini-Game]"
 
             start_message += "\n\u200b"
 
