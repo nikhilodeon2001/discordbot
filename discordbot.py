@@ -13324,7 +13324,7 @@ async def get_player_selected_question(questions, round_winner, winner_id):
     numbered_blocks = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"]
 
 
-    message = f"\u200b\n🎯 **<@{round_winner_id}>**, pick the question number:\n\n"
+    message = f"\u200b\n🎯 **<@{winner_id}>**, pick the question number:\n\n"
     for i, question_data in enumerate(questions):
         trivia_category = question_data[0]
         trivia_url = question_data[2]
@@ -13459,6 +13459,7 @@ async def start_trivia():
         await load_previous_question()
 
         round_winner = None
+        round_winner_id = None
         selected_questions = await select_trivia_questions(questions_per_round)  #Pick the initial question set
         
         while True:  # Endless loop     
