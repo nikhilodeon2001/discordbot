@@ -8250,7 +8250,7 @@ async def upload_image_to_s3(buffer, winner, description):
         pst = pytz.timezone('America/Los_Angeles')
         now = datetime.datetime.now(pst)
         formatted_time = now.strftime('%B %d, %Y %H%M')
-        object_name = f"{folder_name}/{description} & <@{winner_id}> ({formatted_time}).png"
+        object_name = f"{folder_name}/{description} & {winner} ({formatted_time}).png"
 
         # Async S3 client
         
