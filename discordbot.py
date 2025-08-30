@@ -13458,8 +13458,14 @@ async def start_trivia():
         await load_streak_data()
         await load_previous_question()
 
-        round_winner = None
-        round_winner_id = None
+        
+
+        round_winner = current_longest_round_streak.get("user")
+        round_winner_id = current_longest_round_streak.get("user_id")
+        print(round_winner)
+        print(round_winner_id)
+
+            
         selected_questions = await select_trivia_questions(questions_per_round)  #Pick the initial question set
         
         while True:  # Endless loop     
