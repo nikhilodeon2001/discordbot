@@ -13454,7 +13454,7 @@ async def start_trivia():
     try:
         db =  await connect_to_mongodb()
         await load_parameters()
-        await sync_bumper_king_with_role()  # Only sync at startup
+        #await sync_bumper_king_with_role()  # Only sync at startup
         await load_streak_data()
         await load_previous_question()
 
@@ -13466,6 +13466,7 @@ async def start_trivia():
             current_time = time.time()
             
             await load_parameters()
+            await sync_bumper_king_with_role() 
             #await get_survey_results()
             scoreboard.clear()
             fastest_answers_count.clear()
