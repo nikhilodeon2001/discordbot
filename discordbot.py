@@ -13238,9 +13238,9 @@ async def start_trivia():
                 await round_preview(selected_questions)
                 await asyncio.sleep(10)  # Adjust this time to whatever delay you need between rounds
 
-            if round_count % 3 == 0:
-                await get_bump_url_from_s3()
-                await asyncio.sleep(10)
+            #if round_count % 3 == 0:
+            #    await get_bump_url_from_s3()
+            #    await asyncio.sleep(10)
             #if len(scoreboard) >= 1000:
             #    await ask_survey_question()
                 
