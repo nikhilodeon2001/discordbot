@@ -133,6 +133,12 @@ round_responders = []
 submission_queue = []
 max_queue_size = 100  # Number of submissions to accumulate before flushing
 
+# Global variables for bump data
+bumped_status = False
+bumper_king_id = ""
+bumper_king_name = ""
+last_bump_time = None
+
 
 
 if local_mode == True:
@@ -149,6 +155,11 @@ if local_mode == True:
     channel_id = 1375328414151610458 #Stage
     #channel_id = 1402517943979343942 #Production  
     okrag_id = 591861826690613248  
+    OKRAN_GUILD_ID = 1375328358573015050  # Stage
+    DISBOARD_BOT_ID = 591861826690613248  # TheOkraG
+    BUMPER_KING_ROLE_ID = 1411103298907275346 # Stage
+    OKRAN_ROLE_ID = 1409785437979148329 #Stage
+    OKRAN_ROLE_ID_2 = ""
 else:
     discord_token = os.getenv("discord_token")
     mongo_db_string = os.getenv("mongo_db_string")
@@ -161,11 +172,19 @@ else:
     currency_api_key = os.getenv("currency_api_key")
     channel_id = int(os.getenv("channel_id"))
     okrag_id = 591861826690613248
+    OKRAN_GUILD_ID = 1367682586079395902  # Production
+    DISBOARD_BOT_ID = 302050872383242240  # Disboard
+    BUMPER_KING_ROLE_ID = 1411057279209570374 # Production
+    OKRAN_ROLE_ID = 1408305516131782736 #Prouction
+    OKRAN_ROLE_ID_2 = 1409611716731605024
+
+
 
 
 intents = discord.Intents.default()
 intents.messages = True
 intents.message_content = True
+intents.members = True  # Required to see guild members and their roles
 bot = commands.Bot(command_prefix="!", intents=intents)
 openai_client = AsyncOpenAI(api_key=openai_api_key)
 id_limits = {"general": 2000, "mysterybox": 2000, "crossword": 5000, "jeopardy": 5000, "wof": 1500, "list": 20, "feud": 1000, "posters": 2000, "movie_scenes": 5000, "missing_link": 2500, "people": 2500, "ranker_list": 4000, "animal": 2000, "riddle": 2500, "dictionary": 5000, "flags": 800, "lyric": 500, "polyglottery": 80, "book": 80, "element": 100, "jigsaw": 5000, "border": 100, "faceoff": 5000, "president": 80, "wordle": 1400, "myopic": 5000, "fusion": 5000, "microscopic": 5000, "chess": 5000, "stock": 800, "currency": 100}
@@ -214,7 +233,7 @@ cloak_mode_default = False
 cloak_mode = cloak_mode_default
 cloaked_user = None
 
-OKRAN_GUILD_ID = 1367682586079395902  # Replace with your actual server ID
+
 channel = None
 
 
@@ -249,33 +268,6 @@ reverse_superscript_map = {v: k for k, v in superscript_map.items()}
 
 warnings.filterwarnings("ignore", message="In the future version we will turn default option ignore_ncx to True.")
 warnings.filterwarnings("ignore", message="This search incorrectly ignores the root element, and will be fixed in a future version.")
-
-
-async def inspect_hardcoded_bump():
-    channel_id = 1402517943979343942
-    message_id = 1411034914849030194
-
-    try:
-        channel = await bot.fetch_channel(channel_id)  # fetch directly using global bot
-        msg = await channel.fetch_message(message_id)
-
-        print("=== Hardcoded Bump Message Details ===")
-        print("Author:", msg.author, f"(ID: {msg.author.id})")
-        print("Content:", repr(msg.content))
-        print("Mentions:", [m.display_name for m in msg.mentions])
-        print("Interaction:", getattr(msg, "interaction", None))
-
-        for i, emb in enumerate(msg.embeds):
-            print(f"Embed {i}:")
-            print("  Title:", emb.title)
-            print("  Description:", emb.description)
-            print("  Footer:", emb.footer.text if emb.footer else None)
-
-        print("=== End of Inspection ===")
-
-    except Exception as e:
-        print(f"❌ Error fetching bump message: {e}")
-
 
 
 #async def safe_send(channel, *args, max_retries=3, delay=2, **kwargs):
@@ -675,7 +667,7 @@ async def ask_jigsaw_challenge(winner, winner_id, num=7):
     await safe_send(channel, content="\u200b\n🧩🌀 **Jigsawed**: Identify the Puzzle\n\u200b", embed=discord.Embed().set_image(url=gif_url))
     await asyncio.sleep(3)
 
-    await safe_send(channel, f"\u200b\n🪚🔢 **{winner}**, how many jigsaw pieces?\n\n👉 **4**, **9**, **16**, **25**, **36**, **49**, **64**, **81**, or **100**\n\u200b")
+    await safe_send(channel, f"\u200b\n🪚🔢 **<@{winner_id}>**, how many jigsaw pieces?\n\n👉 **4**, **9**, **16**, **25**, **36**, **49**, **64**, **81**, or **100**\n\u200b")
     try:
         msg = await bot.wait_for("message", timeout=magic_time + 5, check=lambda m: m.author.id == winner_id and m.author != bot.user and m.channel == channel and m.content in {"4", "9", "16", "25", "36", "49", "64", "81", "100"})
         num_pieces = int(msg.content)
@@ -772,7 +764,7 @@ async def ask_jigsaw_challenge(winner, winner_id, num=7):
                         correct_clean = normalize_text(correct).replace(" ", "")
                         if fuzzy_match(guess, correct_clean, category, image_url):
                             await msg.add_reaction("✅")
-                            await safe_send(channel, f"\u200b\n✅🎉 **{user}** got it! **{correct.upper()}**\n\u200b")
+                            await safe_send(channel, f"\u200b\n✅🎉 **<@{uid}>** got it! **{correct.upper()}**\n\u200b")
                             user_data[uid] = (user, user_data.get(uid, (user, 0))[1] + 1)
                             all_answers = "\n".join(f"{a.upper()}" for a in answers)
                             await safe_send(channel, f"\u200b\n📝🧠 **All Answers**\n{all_answers}\n\u200b\n\u200b")
@@ -868,7 +860,7 @@ async def ask_faceoff_challenge(winner, winner_id, num=7):
     await safe_send(channel, content="\u200b\n🙃🙂 **Face/Off**: 'I want to take his Face..Off'.\n\u200b", embed=discord.Embed().set_image(url=gif_url))
     await asyncio.sleep(3)
 
-    await safe_send(channel, f"\u200b\n🪚🔢 **{winner}**, how many face pieces?\n👉 **4, 9, 16, 25, 36, 49, 64, 81, or 100**\n\u200b")
+    await safe_send(channel, f"\u200b\n🪚🔢 **<@{winner_id}>**, how many face pieces?\n👉 **4, 9, 16, 25, 36, 49, 64, 81, or 100**\n\u200b")
     try:
         msg = await bot.wait_for("message", timeout=magic_time + 5, check=lambda m: m.author.id == winner_id and m.channel == channel and m.content in {"4", "9", "16", "25", "36", "49", "64", "81", "100"})
         num_pieces = int(msg.content)
@@ -1385,7 +1377,7 @@ async def ask_element_challenge(winner, winner_id, num=7):
     await safe_send(channel, content="\u200b\n\u200b\n💧🔥 **Elementary**: Guess Element Name or Group\n\u200b", embed=discord.Embed().set_image(url=gif_url))
     await asyncio.sleep(3)
 
-    await safe_send(channel, f"\u200b\n🕹️🚀 **{winner}**, select the mode:\n\n🧸 **Normal** or 🧨 **Okrap**.\n\u200b")
+    await safe_send(channel, f"\u200b\n🕹️🚀 **<@{winner_id}>**, select the mode:\n\n🧸 **Normal** or 🧨 **Okrap**.\n\u200b")
     try:
         msg = await bot.wait_for("message", timeout=magic_time + 5, check=lambda m: m.author.id == winner_id and m.author != bot.user and m.channel == channel and m.content.lower() in {"normal", "okrap"})
         game_mode = msg.content.lower()
@@ -1548,7 +1540,7 @@ async def ask_element_challenge(winner, winner_id, num=7):
                     normalized_answer = normalize_text(correct).replace(" ", "")
                     if (((guess == normalized_answer or guess[:-1] == normalized_answer) and game_mode == "okrap") or (fuzzy_match(guess, normalized_answer, element_category, element_url) and game_mode == "normal")):
                         await msg.add_reaction("✅")
-                        await safe_send(channel, f"\u200b\n✅🎉 **{user}** got it! **{correct.upper()}**\n\u200b")
+                        await safe_send(channel, f"\u200b\n✅🎉 **<@{uid}>** got it! **{correct.upper()}**\n\u200b")
                         user_data[uid] = (user, user_data.get(uid, (user, 0))[1] + 1)
                         message = ""
                         if element_answers:
@@ -1698,7 +1690,7 @@ async def ask_polyglottery_challenge(winner, winner_id, num=7):
     await asyncio.sleep(5)
 
     # Collect phrase
-    await safe_send(channel, f"\u200b\n✍️🌍 **{winner}**, give me **3–5 words** to translate...\n\u200b")
+    await safe_send(channel, f"\u200b\n✍️🌍 **<@{winner_id}>**, give me **3–5 words** to translate...\n\u200b")
     collected_words = await collect_words_from_user(winner, winner_id)
 
     if len(collected_words.split()) < 3:
@@ -1801,7 +1793,7 @@ async def ask_polyglottery_challenge(winner, winner_id, num=7):
 
                 if fuzzy_match(content, lang_name, "Polyglottery", ""):
                     await message.add_reaction("✅")
-                    await safe_send(channel, f"\u200b\n✅🎉 **{user}** got it! **{lang_name.upper()}**\n\u200b")
+                    await safe_send(channel, f"\u200b\n✅🎉 **<@{user_id}>** got it! **{lang_name.upper()}**\n\u200b")
                     if user_id not in user_data:
                         user_data[user_id] = (user, 0)
                     user_data[user_id] = (user, user_data[user_id][1] + 1)
@@ -1939,7 +1931,7 @@ async def ask_dictionary_challenge(winner, winner_id, num=7):
 
                 if similarity == 1:
                     await message.add_reaction("✅")
-                    await safe_send(channel, f"\u200b\n✅🎉 **{user}** got it! **{word.upper()}**\n\u200b")
+                    await safe_send(channel, f"\u200b\n✅🎉 **<@{user_id}>** got it! **{word.upper()}**\n\u200b")
                     user_data[user_id] = (user, user_data.get(user_id, (user, 0))[1] + 1)
                     answered = True
                     break
@@ -2341,7 +2333,7 @@ async def ask_math_challenge(winner, winner_id, num=7):
     await safe_send(channel, content="\u200b\n\u200b\n➕➖ **Sign Language**: Fill in the Missing Signs\n\u200b", embed=discord.Embed().set_image(url=gif_url))
     await asyncio.sleep(3)
 
-    await safe_send(channel, f"\u200b\n🔢❓ **{winner}**, how many missing signs? **[2 or 3]**\n\u200b")
+    await safe_send(channel, f"\u200b\n🔢❓ **<@{winner_id}>**, how many missing signs? **[2 or 3]**\n\u200b")
 
     user_number = None
     start_time = asyncio.get_event_loop().time()
@@ -2417,7 +2409,7 @@ async def ask_math_challenge(winner, winner_id, num=7):
 
                 if content == answer_string:
                     await msg.add_reaction("✅")
-                    await safe_send(channel, f"\u200b\n✅🎉 **{user}** got it! {pretty_answer_string}\n\u200b")
+                    await safe_send(channel, f"\u200b\n✅🎉 **<@{user_id}>** got it! {pretty_answer_string}\n\u200b")
                     if user_id not in user_data:
                         user_data[user_id] = (user, 0)
                     user_data[user_id] = (user, user_data[user_id][1] + 1)
@@ -2490,7 +2482,7 @@ async def ask_music_challenge(winner, winner_id, num=7):
     await safe_send(channel, content="\u200b\n🎼🎵 **MusIQ**: Name the Notes\n\u200b", embed=discord.Embed().set_image(url=gif_url))
     await asyncio.sleep(3)
 
-    await safe_send(channel, f"\u200b\n✍️🌍 **{winner}**, how many **music notes**? [**2** to **7**]\n\u200b")
+    await safe_send(channel, f"\u200b\n✍️🌍 **<@{winner_id}>**, how many **music notes**? [**2** to **7**]\n\u200b")
 
     user_number = None
     start_time = asyncio.get_event_loop().time()
@@ -2557,7 +2549,7 @@ async def ask_music_challenge(winner, winner_id, num=7):
 
                 if guess == correct:
                     await msg.add_reaction("✅")
-                    await safe_send(channel, f"\u200b\n✅🎉 Correct! **{user}** got it! **{music_answer[1]}**\n\u200b")
+                    await safe_send(channel, f"\u200b\n✅🎉 Correct! **<@{user_id}>** got it! **{music_answer[1]}**\n\u200b")
                     if user_id not in user_data:
                         user_data[user_id] = (user, 0)
                     user_data[user_id] = (user, user_data[user_id][1] + 1)
@@ -2811,7 +2803,7 @@ async def ask_lyric_challenge(winner, winner_id, num=7):
                 for answer in [artist, title]:
                     if fuzzy_match(content, answer, category, url):
                         await message.add_reaction("✅")
-                        await safe_send(channel, f"\u200b\n✅🎉 **{user}** got it! **{artist.upper()} - {title.upper()}**\n\u200b")
+                        await safe_send(channel, f"\u200b\n✅🎉 **<@{user_id}>** got it! **{artist.upper()} - {title.upper()}**\n\u200b")
                         if user_id not in user_data:
                             user_data[user_id] = (user, 0)
                         user_data[user_id] = (user, user_data[user_id][1] + 1)
@@ -3043,7 +3035,7 @@ async def ask_book_challenge(winner, winner_id, num=7):
                 for answer in [title, author]:
                     if fuzzy_match(content, answer, "Book", epub_url):
                         await message.add_reaction("✅")
-                        await safe_send(channel, f"\u200b\n✅🎉 **{user}** got it!\n\n📚 **{title.upper()}** by **{author.upper()}**\n\u200b")
+                        await safe_send(channel, f"\u200b\n✅🎉 **<@{user_id}>** got it!\n\n📚 **{title.upper()}** by **{author.upper()}**\n\u200b")
                         if user_id not in user_data:
                             user_data[user_id] = (user, 0)
                         user_data[user_id] = (user, user_data[user_id][1] + 1)
@@ -3185,7 +3177,7 @@ async def ask_riddle_challenge(winner, winner_id, num=7):
                 for answer in riddle_answers:
                     if fuzzy_match(content, answer, category, url):
                         await message.add_reaction("✅")
-                        await safe_send(channel, f"\u200b\n✅🎉 **{user}** got it! **{answer.upper()}**\n\u200b")
+                        await safe_send(channel, f"\u200b\n✅🎉 **<@{user_id}>** got it! **{answer.upper()}**\n\u200b")
                         if user_id not in user_data:
                             user_data[user_id] = (user, 0)
                         user_data[user_id] = (user, user_data[user_id][1] + 1)
@@ -3352,7 +3344,7 @@ async def ask_stock_challenge(winner, winner_id, num=7):
                     
                 if is_correct:   
                     await message.add_reaction("✅")
-                    await safe_send(channel, f"\u200b\n✅🎉 **{user}** got it! **{main_trivia_answer.upper()}**\n\u200b")
+                    await safe_send(channel, f"\u200b\n✅🎉 **<@{user_id}>** got it! **{main_trivia_answer.upper()}**\n\u200b")
                     if user_id not in user_data:
                         user_data[user_id] = (user, 0)
                     user_data[user_id] = (user, user_data[user_id][1] + 1)
@@ -3440,7 +3432,7 @@ async def ask_border_challenge(winner, winner_id, num=7):
     await safe_send(channel, content="\u200b\n\u200b\n🗺️❓ **Borderline**: Identify the Country\n\u200b", embed=discord.Embed().set_image(url=gif_url))
     await asyncio.sleep(3)
 
-    await safe_send(channel, f"\u200b\n🕹️🚀 **{winner}**, select the mode:\n\n🧸 **Normal** or 🧨 **Okrap**.\n\u200b")
+    await safe_send(channel, f"\u200b\n🕹️🚀 **<@{winner_id}>**, select the mode:\n\n🧸 **Normal** or 🧨 **Okrap**.\n\u200b")
     try:
         msg = await bot.wait_for("message", timeout=magic_time + 5, check=lambda m: m.author.id == winner_id and m.author != bot.user and m.channel == channel and m.content.lower() in {"normal", "okrap"})
         game_mode = msg.content.lower()
@@ -3525,7 +3517,7 @@ async def ask_border_challenge(winner, winner_id, num=7):
                                                 
                     if fuzzy_match(guess, border_country, border_category, border_url):
                         await msg.add_reaction("✅")
-                        await safe_send(channel, f"\u200b\n✅🎉 **{user}** got it! **{border_country.upper()}**\n\u200b")
+                        await safe_send(channel, f"\u200b\n✅🎉 **<@{uid}>** got it! **{border_country.upper()}**\n\u200b")
                         user_data[uid] = (user, user_data.get(uid, (user, 0))[1] + 1)
                         answered = True
                         break
@@ -3682,7 +3674,7 @@ async def ask_animal_challenge(winner, winner_id, num=7):
 
                 if fuzzy_match(content, name, category, detail_url):
                     await message.add_reaction("✅")
-                    await safe_send(channel, f"\u200b\n✅🎉 Correct! **{user}** got it! **{name.upper()}**\n\n{detail_url}\n\u200b")
+                    await safe_send(channel, f"\u200b\n✅🎉 Correct! **<@{user_id}>** got it! **{name.upper()}**\n\n{detail_url}\n\u200b")
                     if user_id not in user_correct_answers:
                             user_correct_answers[user_id] = (user, 0)
                     user_correct_answers[user_id] = (user, user_correct_answers[user_id][1] + 1)
@@ -3842,7 +3834,7 @@ async def ask_ranker_people_challenge(winner, winner_id, num=7):
                 for answer in answers:
                     if fuzzy_match(content, answer, "Ranker People", image_url):
                         await message.add_reaction("✅")
-                        await safe_send(channel, f"\u200b\n✅🎉 Correct! **{user}** got it! **{answer.upper()}**")
+                        await safe_send(channel, f"\u200b\n✅🎉 Correct! **<@{user_id}>** got it! **{answer.upper()}**")
                         if user_id not in user_correct_answers:
                             user_correct_answers[user_id] = (user, 0)
                         user_correct_answers[user_id] = (user, user_correct_answers[user_id][1] + 1)
@@ -3996,7 +3988,7 @@ async def ask_flags_challenge(winner, winner_id, num=7):
 
                 if fuzzy_match(content, answer, category, image_url):
                     await message.add_reaction("✅")
-                    await safe_send(channel, f"\u200b\n✅🎉 **{user}** got it! **{answer.upper()}**\n\n🏴‍☠️📖 {detail}\n👀➡️ {source_url}\n\u200b")
+                    await safe_send(channel, f"\u200b\n✅🎉 **<@{user_id}>** got it! **{answer.upper()}**\n\n🏴‍☠️📖 {detail}\n👀➡️ {source_url}\n\u200b")
                     if user_id not in user_correct_answers:
                             user_correct_answers[user_id] = (user, 0)
                     user_correct_answers[user_id] = (user, user_correct_answers[user_id][1] + 1)
@@ -4438,7 +4430,7 @@ async def ask_poster_challenge(winner, winner_id, num=7):
                 for answer in posters_answers:
                     if fuzzy_match(content, answer, posters_category, posters_url):
                         await message.add_reaction("✅")
-                        await safe_send(channel, f"\u200b\n✅🎉 Correct! **{user}** got it! **{answer.upper()}**\n\u200b")
+                        await safe_send(channel, f"\u200b\n✅🎉 Correct! **<@{user_id}>** got it! **{answer.upper()}**\n\u200b")
                         if user_id not in user_correct_answers:
                             user_correct_answers[user_id] = (user, 0)
                         user_correct_answers[user_id] = (user, user_correct_answers[user_id][1] + 1)
@@ -4722,7 +4714,7 @@ async def ask_wordle_challenge(winner, winner_id, num=1):
                         file = discord.File(fp=img_buf, filename="wordle.png")
                         embed.set_image(url="attachment://wordle.png")
                         await safe_send(channel, file=file, embed=embed)
-                        await safe_send(channel, f"\u200b\n✅🎉 Correct! **{user}** got it! **{word.upper()}** ({score})\n\u200b")
+                        await safe_send(channel, f"\u200b\n✅🎉 Correct! **<@{uid}>** got it! **{word.upper()}** ({score})\n\u200b")
                         right_answer = True
                         break
                     else:
@@ -5144,7 +5136,7 @@ async def ask_chess_challenge(winner, winner_id, num=5):
     user_correct_answers = {}
 
     # Ask for number of images to fuse
-    await safe_send(channel, f"\u200b\n🕹️🚀 **{winner}**, select the mode:\n\n🧸 **Normal** or 🧨 **Okrap**.\n\u200b")
+    await safe_send(channel, f"\u200b\n🕹️🚀 **<@{winner_id}>**, select the mode:\n\n🧸 **Normal** or 🧨 **Okrap**.\n\u200b")
     
     chess_mode = None
     try:
@@ -5238,7 +5230,7 @@ async def ask_chess_challenge(winner, winner_id, num=5):
                         file = discord.File(fp=img_buf, filename="chess.png")
                         embed.set_image(url="attachment://chess.png")
                         await safe_send(channel, file=file, embed=embed)
-                        await safe_send(channel, f"\u200b\n✅🎉 Correct! **{user}** got it! **{best_move.upper()}**\n\u200b")
+                        await safe_send(channel, f"\u200b\n✅🎉 Correct! **<@{uid}>** got it! **{best_move.upper()}**\n\u200b")
                         right_answer = True
                         break
                 except asyncio.TimeoutError:
@@ -5495,7 +5487,7 @@ async def ask_fusion_challenge(winner, winner_id, num=3):
     user_correct_answers = {}
 
     # Ask for number of images to fuse
-    await safe_send(channel, f"\u200b\n🧬🔢 **{winner}**, how many images to fuse together?\n\n👉👉 **2**, **3**, **4**, or **5**\n\u200b")
+    await safe_send(channel, f"\u200b\n🧬🔢 **<@{winner_id}>**, how many images to fuse together?\n\n👉👉 **2**, **3**, **4**, or **5**\n\u200b")
     
     num_images = None
     try:
@@ -6131,7 +6123,7 @@ async def ask_currency_challenge(winner, winner_id, num=7):
     examples_text = ', '.join(available_examples)
     
     # Get base currency from user with validation (multiple attempts within 15 seconds)
-    await safe_send(channel, f"\u200b\n💵🌍 **{winner}**, give me a 3-letter currency code.\n\n💡 **Examples**: {examples_text}\n\u200b")
+    await safe_send(channel, f"\u200b\n💵🌍 **<@{winner_id}>**, give me a 3-letter currency code.\n\n💡 **Examples**: {examples_text}\n\u200b")
     
     base_currency = None
     start_time = asyncio.get_event_loop().time()
@@ -6175,7 +6167,7 @@ async def ask_currency_challenge(winner, winner_id, num=7):
         await safe_send(channel, "\u200b\n😬⏱️ Time's up! We'll use **USD**.\n\u200b")
     
     # Get amount from user (multiple attempts within 15 seconds)
-    await safe_send(channel, f"\u200b\n🔢💵 **{winner}**, now give me an integer between 1 and 1000...\n\u200b")
+    await safe_send(channel, f"\u200b\n🔢💵 **<@{winner_id}>**, now give me an integer between 1 and 1000...\n\u200b")
     
     base_amount = None
     start_time = asyncio.get_event_loop().time()
@@ -6522,7 +6514,7 @@ async def ask_myopic_challenge(winner, winner_id, num=3):
                             final_embed = discord.Embed().set_image(url=url)
 
                             await msg.add_reaction("✅")
-                            message = f"\u200b\n✅🎉 Correct! **{user}** got it! {ans.upper()}\n"
+                            message = f"\u200b\n✅🎉 Correct! **<@{uid}>** got it! {ans.upper()}\n"
                             message += f"\n📝🧠 All Answers:**\n" + "\n".join(a.upper() for a in answers) + "**\n\u200b"
                             await safe_send(channel, content=message, embed=final_embed)
 
@@ -6717,7 +6709,7 @@ async def ask_missing_link(winner, winner_id, num=7):
                 for answer in answers:
                     if fuzzy_match(content, answer, category, clue):
                         await message.add_reaction("✅")
-                        await safe_send(channel, f"\u200b\n✅🎉 Correct! **{user}** got it! **{answer.upper()}**")
+                        await safe_send(channel, f"\u200b\n✅🎉 Correct! **<@{user_id}>** got it! **{answer.upper()}**")
                         if user_id not in user_correct_answers:
                             user_correct_answers[user_id] = (user, 0)
                         user_correct_answers[user_id] = (user, user_correct_answers[user_id][1] + 1)
@@ -6860,7 +6852,7 @@ async def ask_movie_scenes_challenge(winner, winner_id, num=7):
                 for answer in answers:
                     if fuzzy_match(content, answer, category, image_url):
                         await message.add_reaction("✅")
-                        await safe_send(channel, f"\u200b\n✅🎉 Correct! **{user}** got it! **{answer.upper()}**")
+                        await safe_send(channel, f"\u200b\n✅🎉 Correct! **<@{user_id}>** got it! **{answer.upper()}**")
                         if user_id not in user_correct_answers:
                             user_correct_answers[user_id] = (user, 0)
                         user_correct_answers[user_id] = (user, user_correct_answers[user_id][1] + 1)
@@ -7008,11 +7000,11 @@ async def ask_feud_question(winner, mode, winner_id):
 
         elif mode == "solo":
             if xs == 0:
-                start_message += f"\u200b\n⚠️🚨 **{winner} ONLY!** Round 1/3! 🟩\n\u200b"
+                start_message += f"\u200b\n⚠️🚨 **<@{winner_id}> ONLY!** Round 1/3! 🟩\n\u200b"
             elif xs == 1:
-                start_message += f"\u200b\n⚠️🚨 **{winner} ONLY!** Round 2/3! 🟨\n\u200b"
+                start_message += f"\u200b\n⚠️🚨 **<@{winner_id}> ONLY!** Round 2/3! 🟨\n\u200b"
             elif xs == 2:
-                start_message += f"\u200b\n⚠️🚨 **{winner} ONLY!** Last round! 🟥\n\u200b"
+                start_message += f"\u200b\n⚠️🚨 **<@{winner_id}> ONLY!** Last round! 🟥\n\u200b"
 
         
         await safe_send(channel, embed=board_embed, file=image_file)
@@ -7097,11 +7089,11 @@ async def ask_feud_question(winner, mode, winner_id):
                 result_message += f"{i}. **{user}**: {count}\n"
     elif mode == "solo":
         if not user_progress:
-            result_message = f"\n👎😢 **No right answers** out of {num_answers}. **{winner}, you're no Okran**.\n"
+            result_message = f"\n👎😢 **No right answers** out of {num_answers}. **<@{winner_id}>, you're no Okran**.\n"
         elif len(user_progress) < num_answers:
-            result_message = f"\n🙄😒 Wow {winner}...you got **{len(user_progress)}/{num_answers}**.\n"
+            result_message = f"\n🙄😒 Wow <@{winner_id}>...you got **{len(user_progress)}/{num_answers}**.\n"
         else:
-            result_message = f"\n🎉✅ Congrats {winner}! You got all **{num_answers}** right!\n"
+            result_message = f"\n🎉✅ Congrats <@{winner_id}>! You got all **{num_answers}** right!\n"
 
     await asyncio.sleep(2)
     
@@ -7373,7 +7365,7 @@ async def ask_ranker_list_number(winner, winner_id, num=7):
     try:
         message = await bot.wait_for("message", timeout=20, check=check)
         await message.add_reaction("💪")  # Acknowledge with a muscle emoji
-        await safe_send(channel, f"\u200b\n💪🛡️ I got you **{winner}**. **{message.content}** it is.\n\u200b")
+        await safe_send(channel, f"\u200b\n💪🛡️ I got you **<@{winner_id}>**. **{message.content}** it is.\n\u200b")
         return int(message.content)
     except asyncio.TimeoutError:
         selected_question = random.choice(["1", "2", "3", "4", "5"])
@@ -7413,7 +7405,7 @@ async def ask_ranker_list_question(winner, winner_id, num=7):
 
     # Present list options to the user
     options = "\n".join([f"{i+1}️⃣. {q['question']}" for i, q in enumerate(questions)])
-    await safe_send(channel, f"\u200b\n📝🔢 **{winner}**, choose the list:\n\n{options}")
+    await safe_send(channel, f"\u200b\n📝🔢 **<@{winner_id}>**, choose the list:\n\n{options}")
     
     selected = int(await ask_ranker_list_number(winner, winner_id)) - 1
     list_q = questions[selected]
@@ -7631,7 +7623,7 @@ async def ask_list_question(winner, winner_id, num=7):
                 mark = "✅" if ans in winner_answers else "❌"
                 result_lines.append(f"{mark} {ans}")
             result_text = "\n".join(result_lines)
-            await safe_send(channel, f"\u200b\n📋 **{winner}'s Answers:**\n\n{result_text}\n\u200b")
+            await safe_send(channel, f"\u200b\n📋 **<@{winner_id}>'s Answers:**\n\n{result_text}\n\u200b")
             
 
     await asyncio.sleep(5)
@@ -7916,7 +7908,7 @@ async def get_random_city(winner):
                 messages=[
                     {
                         "role": "system",
-                        "content": f"You are OkraStrut fleeing from {winner} like Carmen Sandiego. Use these facts:"
+                        "content": f"You are OkraStrut fleeing from <@{winner_id}> like Carmen Sandiego. Use these facts:"
                     },
                     {"role": "user", "content": summary}
                 ],
@@ -8258,7 +8250,7 @@ async def upload_image_to_s3(buffer, winner, description):
         pst = pytz.timezone('America/Los_Angeles')
         now = datetime.datetime.now(pst)
         formatted_time = now.strftime('%B %d, %Y %H%M')
-        object_name = f"{folder_name}/{description} & {winner} ({formatted_time}).png"
+        object_name = f"{folder_name}/{description} & <@{winner_id}> ({formatted_time}).png"
 
         # Async S3 client
         
@@ -8330,6 +8322,8 @@ async def load_parameters():
     global question_time
     global questions_per_round
     global ai_on
+
+    await get_bump_data()
 
     # Default values
     default_values = {
@@ -8465,7 +8459,7 @@ async def nice_creep_okra_option(winner, winner_id):
     hype_okra = False
     roast_okra = False
     
-    message = f"\u200b\n🥒🤝 Thank you **{winner}** for your support.\n\u200b\n" 
+    message = f"\u200b\n🥒🤝 Thank you **<@{winner_id}>** for your support.\n\u200b\n" 
     message += f"🥒😊 Say **okra** and I'll be nice.\n"
     message += f"👀🔭 Say **creep** and I'll snoop your Reddit profile.\n"
     message += f"💋👠 Say **love me** and I'll seduce you.\n"
@@ -8633,7 +8627,7 @@ async def generate_round_summary_image(round_data, winner, winner_id):
         else:
             image_description = await describe_image_with_vision(image_url, "title", prompt)
             
-        message = f"🔥💖 **{winner}**, you've done well. I drew this **for you**.\n"
+        message = f"🔥💖 **<@{winner_id}>**, you've done well. I drew this **for you**.\n"
         await safe_send(channel, content=message, embed=discord.Embed().set_image(url=image_url))
         
         message = f"\n**I call it**...*{image_description}*\n"
@@ -8683,7 +8677,7 @@ async def generate_round_summary_image(round_data, winner, winner_id):
                 image_description = await describe_image_with_vision(image_url, "title", prompt)
                 
     
-                message = f"😈😉 {winner} Naughty naughty, I'll have to pick another.\n\n"
+                message = f"😈😉 <@{winner_id}> Naughty naughty, I'll have to pick another.\n\n"
                 await safe_send(channel, content=message, embed=discord.Embed().set_image(url=image_url))
                 message = f"\nI call it: '{image_description}'\n"
                 message += f"\n🏛️👋 Welcome to the Okra Museum"
@@ -8722,7 +8716,7 @@ async def ask_category(winner, categories, winner_coffees, winner_id):
     additional_prompt = ""
 
     # Display categories
-    category_message = f"\u200b\n🎨🖍️ **{winner}** Pick a theme for the Okra Museum!\n\u200b"
+    category_message = f"\u200b\n🎨🖍️ **<@{winner_id}>** Pick a theme for the Okra Museum!\n\u200b"
     for key, value in categories.items():
         category_message += f"**{key}**: {value}\n"
     await safe_send(channel, category_message)
@@ -8750,12 +8744,12 @@ async def ask_category(winner, categories, winner_coffees, winner_id):
             # Case 2: Coffee-locked option, no coffee
             if message_content == '4' and winner_coffees <= 0:
                 await response.add_reaction("🥒")
-                await safe_send(channel, f"🙏😔 Sorry **{winner}**, choice **{message_content}** is for **Okrans Only** 🥒.")
+                await safe_send(channel, f"🙏😔 Sorry **<@{winner_id}>**, choice **{message_content}** is for **Okrans Only** 🥒.")
                 continue
 
             # Case 3: Valid choice
             await response.add_reaction("✅")
-            await safe_send(channel, f"💪🛡️ I got you **{winner}**! Choice {message_content} it is.")
+            await safe_send(channel, f"💪🛡️ I got you **<@{winner_id}>**! Choice {message_content} it is.")
 
             if message_content == '4' and winner_coffees > 0:
                 additional_prompt = await request_prompt(winner, winner_id)
@@ -8773,8 +8767,8 @@ async def request_prompt(winner, winner_id):
     collected_words = []
     start_time = asyncio.get_event_loop().time()
    
-    message = f"\u200b\n🖼️🔟 **{winner}**, Fill in the blank. *10 words max* and **be good**.\n\u200b"
-    message += f"\n*Draw an okra themed picture of **{winner}**...*\n\u200b"
+    message = f"\u200b\n🖼️🔟 **<@{winner_id}>**, Fill in the blank. *10 words max* and **be good**.\n\u200b"
+    message += f"\n*Draw an okra themed picture of **<@{winner_id}>**...*\n\u200b"
     await safe_send(channel, message)
 
     def check(m):
@@ -8804,26 +8798,28 @@ async def request_prompt(winner, winner_id):
     if not collected_words:
         await safe_send(channel, "Nothing. Okra time.")
     else:
-        final_msg = f"\u200b\n💥🤯 **Ok...ra I got**: 'Draw an okra-themed picture of **{winner}** {' '.join(collected_words)}'\n\u200b"
+        final_msg = f"\u200b\n💥🤯 **Ok...ra I got**: 'Draw an okra-themed picture of **<@{winner_id}>** {' '.join(collected_words)}'\n\u200b"
         await safe_send(channel, final_msg)
 
     return ' '.join(collected_words)
 
 
 async def get_coffees(user_id):
-    if local_mode == True:
-        return 5
+    #if local_mode == True:
+    #    return 5
     guild = bot.get_guild(OKRAN_GUILD_ID)
     if not guild:
         print(f"⚠️ Bot is not in guild with ID {OKRAN_GUILD_ID}")
         return 0
     try:
         member = await guild.fetch_member(user_id)
-        if any(role.name == "Okran" for role in member.roles):
-            #print(f"✅ User {member.display_name} is an Okran!")
+        # Check if user has any of the allowed roles
+        allowed_role_ids = {BUMPER_KING_ROLE_ID, OKRAN_ROLE_ID, OKRAN_ROLE_ID_2}
+        if any(role.id in allowed_role_ids for role in member.roles):
+            print(f"✅ User {member.display_name} is an Okran.")
             return 5
         else:
-            print(f"❌ User {member.display_name} is NOT an Okran.")
+            print(f"❌ User {member.display_name} is not an Okran.")
             return 0
     except discord.NotFound:
         print(f"❌ User ID {user_id} not found in guild")
@@ -8959,7 +8955,7 @@ async def select_wof_questions(winner, winner_id):
 
         wof_questions = await wof_collection.aggregate(pipeline_wof).to_list(length=5)
 
-        message = f"\u200b\n\u200b\n🍷⚔️ **{winner}**, your mini-game awaits (#)...\n\n"
+        message = f"\u200b\n\u200b\n🍷⚔️ **<@{winner_id}>**, your mini-game awaits (#)...\n\n"
         
         message += f"😎 **Everyone's Welcome**"
         counter = 0
@@ -9071,7 +9067,7 @@ async def select_wof_questions(winner, winner_id):
             ]
 
             gif_url = random.choice(gif_set)
-            message = f"\n⏭️🕹️ {winner}: '**Less** Games. **More** Trivia.'\n"
+            message = f"\n⏭️🕹️ <@{winner_id}>: '**Less** Games. **More** Trivia.'\n"
             await safe_send(channel, content=message, embed=discord.Embed().set_image(url=gif_url))
             await asyncio.sleep(3)
             return None
@@ -9372,7 +9368,7 @@ async def process_wof_guesses(winner, answer, extra_time, winner_id):
     global wf_winner
 
     answer = answer.upper() 
-    await safe_send(channel, f"\u200b\n\u200b\n**{winner}** ❓**Your Answer**❓\n\u200b")
+    await safe_send(channel, f"\u200b\n\u200b\n**<@{winner_id}>** ❓**Your Answer**❓\n\u200b")
 
     def check(m):
         return m.channel == channel and m.author != bot.user and m.author.id == winner_id
@@ -9413,7 +9409,7 @@ async def ask_wof_letters(winner, answer, extra_time, winner_id):
 
     answer = answer.upper()
     start_time = time.time()
-    await safe_send(channel, f"\u200b\n**{winner}**:❓**Pick {num_wf_letters} Letters**❓\n" +
+    await safe_send(channel, f"\u200b\n**<@{winner_id}>**:❓**Pick {num_wf_letters} Letters**❓\n" +
                        (f"\n🥒 I'll give you O K R A 🥒\n\u200b" if fixed_letters else ""))    
     
     wf_letters = []
@@ -9433,7 +9429,7 @@ async def ask_wof_letters(winner, answer, extra_time, winner_id):
 
             if message_content == answer:
                 await message.add_reaction("🎉")
-                await safe_send(channel, f"\n✅🎉 Correct **{winner}**! {answer}\n\u200b")
+                await safe_send(channel, f"\n✅🎉 Correct **<@{winner_id}>**! {answer}\n\u200b")
                 wf_winner = True
                 return True
 
@@ -9531,7 +9527,7 @@ async def ask_wof_number(winner, winner_id):
                 # Store frequency data for random selection
                 await store_minigame_frequency(selected_question, "random", "discord")
                 
-                await safe_send(channel, f"\n🎁 **{winner}**, let's do {selected_question}.\n")
+                await safe_send(channel, f"\n🎁 **<@{winner_id}>**, let's do {selected_question}.\n")
                 return selected_question
 
             if content not in all_options:
@@ -9541,13 +9537,13 @@ async def ask_wof_number(winner, winner_id):
             # Check coffee lock
             if content in unlocks and winner_coffees <= 0:
                 await message.add_reaction("🥒")
-                await safe_send(channel, f"\n🙏😔 Sorry **{winner}**. '**{unlocks[content]}**' is for **Okrans Only** 🥒.\n")
+                await safe_send(channel, f"\n🙏😔 Sorry **<@{winner_id}>**. '**{unlocks[content]}**' is for **Okrans Only** 🥒.\n")
                 continue
 
             # Check multiplayer lock
             if content in multiplayer_required and len(round_responders) < num_list_players:
                 await message.add_reaction("😢")
-                await safe_send(channel, f"\n🙏😔 Sorry **{winner}**. '**{unlocks[content]}**' requires **{num_list_players}+ players**.\n")
+                await safe_send(channel, f"\n🙏😔 Sorry **<@{winner_id}>**. '**{unlocks[content]}**' requires **{num_list_players}+ players**.\n")
                 continue
 
             selected_question = content
@@ -9556,7 +9552,7 @@ async def ask_wof_number(winner, winner_id):
             await store_minigame_frequency(selected_question, "user", "discord")
             
             await message.add_reaction("✅")
-            await safe_send(channel, f"\n💪🛡️ I got you **{winner}**. **{selected_question}** it is.\n\u200b")
+            await safe_send(channel, f"\n💪🛡️ I got you **<@{winner_id}>**. **{selected_question}** it is.\n\u200b")
             await asyncio.sleep(2)
             return selected_question
 
@@ -9863,7 +9859,7 @@ async def ask_magic_challenge(winner, winner_id, num=5):
 
                     display_name, score = user_data[user_id]
                     user_data[user_id] = (display_name, score + 1)
-                    await safe_send(channel, f"\u200b\n🎉🥳 **{user}** got it right!\n\n👀✨ The Magic Number was **{magic_number}**.\n\u200b")
+                    await safe_send(channel, f"\u200b\n🎉🥳 **<@{user_id}>** got it right!\n\n👀✨ The Magic Number was **{magic_number}**.\n\u200b")
             except asyncio.TimeoutError:
                 break
 
@@ -10170,9 +10166,9 @@ async def process_round_options(round_winner, winner_points, round_winner_id):
     winner_coffees = await get_coffees(round_winner_id)
 
     if winner_coffees > 0:
-        message = f"\u200b\n🍔🍟 **{round_winner}**, what's your order?\n" 
+        message = f"\u200b\n🍔🍟 **<@{round_winner_id}>**, what's your order?\n" 
     else: 
-        message = f"\u200b\n🥒 **{round_winner}**, join the **Okrans** and choose from the following!\n"
+        message = f"\u200b\n🥒 **<@{round_winner_id}>**, join the **Okrans** and choose from the following!\n"
     
     message += (
         "\u200b\n🎮⚙️ **Gameplay Options**\n"
@@ -10221,7 +10217,7 @@ async def prompt_user_for_response(round_winner, winner_points, winner_coffees, 
                 await safe_send(channel, success_msg)
                 return True
             else:
-                await safe_send(channel, f"🙏😔 Sorry **{round_winner}**. **'{fail_msg}'** is for **Okrans Only** 🥒.")
+                await safe_send(channel, f"🙏😔 Sorry **<@{round_winner_id}>**. **'{fail_msg}'** is for **Okrans Only** 🥒.")
         return False
 
     while time.time() - start_time < magic_time:
@@ -10235,7 +10231,7 @@ async def prompt_user_for_response(round_winner, winner_points, winner_coffees, 
             #    try:
             #        delay_value = max(3, min(int(delay_digits), 15))
             #        time_between_questions = delay_value
-            #        await safe_send(channel, f"⏱️⏳ **{round_winner}** has set {delay_value}s between questions.")
+            #        await safe_send(channel, f"⏱️⏳ **<@{round_winner_id}>** has set {delay_value}s between questions.")
             #    except ValueError:
             #        pass
             
@@ -10246,57 +10242,57 @@ async def prompt_user_for_response(round_winner, winner_points, winner_coffees, 
                 try:
                     delay_value = max(3, min(int(matches[0]), 15))
                     time_between_questions = delay_value
-                    await safe_send(channel, f"⏱️⏳ **{round_winner}** has set {delay_value}s between questions.")
+                    await safe_send(channel, f"⏱️⏳ **<@{round_winner_id}>** has set {delay_value}s between questions.")
                 except ValueError:
                     pass
 
             # Keyword flags
             if "blind" in message_content and "#blind" not in message_content:
                 blind_mode = True
-                await safe_send(channel, f"🙈🚫 **{round_winner}** is blind to the truth. No answers will be shown.")
+                await safe_send(channel, f"🙈🚫 **<@{round_winner_id}>** is blind to the truth. No answers will be shown.")
 
             if "marx" in message_content and "#marx" not in message_content:
                 marx_mode = True
-                await safe_send(channel, f"🚩🔨 **{round_winner}** is a commie. No celebrating right answers.")
+                await safe_send(channel, f"🚩🔨 **<@{round_winner_id}>** is a commie. No celebrating right answers.")
 
             if "yolo" in message_content and "#yolo" not in message_content:
                 yolo_mode = True
-                await safe_send(channel, f"🤘🔥 Yolo. **{round_winner}** says 'don't sweat the small stuff'. No scores till the end.")
+                await safe_send(channel, f"🤘🔥 Yolo. **<@{round_winner_id}>** says 'don't sweat the small stuff'. No scores till the end.")
 
             if "blank" in message_content and "#blank" not in message_content:
                 image_questions = False
-                await safe_send(channel, f"❌📷 **{round_winner}** thinks a word is worth 1000 images.")
+                await safe_send(channel, f"❌📷 **<@{round_winner_id}>** thinks a word is worth 1000 images.")
 
             if "ghost" in message_content and "#ghost" not in message_content:
                 ghost_mode = 1
-                await safe_send(channel, f"👻🎃 **{round_winner}** says Boo! Your responses will disappear.\n✍️⚫ Start messages with **.** to avoid deletion.")
+                await safe_send(channel, f"👻🎃 **<@{round_winner_id}>** says Boo! Your responses will disappear.\n✍️⚫ Start messages with **.** to avoid deletion.")
 
             # Coffee-gated
-            if await coffee_gate("freedom", True, f"🇺🇸🗽 **{round_winner}** has broken the chains. No multiple choice.", "Freedom"):
+            if await coffee_gate("freedom", True, f"🇺🇸🗽 **<@{round_winner_id}>** has broken the chains. No multiple choice.", "Freedom"):
                 num_mysterybox_clues = 0
 
-            if await coffee_gate("alex", True, f"🟦✋ **{round_winner}** wants 5 Jeopardy-style questions.", "Alex"):
+            if await coffee_gate("alex", True, f"🟦✋ **<@{round_winner_id}>** wants 5 Jeopardy-style questions.", "Alex"):
                 num_jeopardy_clues = 5
 
-            if await coffee_gate("xela", True, f"🟦❌ **{round_winner}** doesn't like Jeopardy-style. Sorry Alex.", "Xela"):
+            if await coffee_gate("xela", True, f"🟦❌ **<@{round_winner_id}>** doesn't like Jeopardy-style. Sorry Alex.", "Xela"):
                 num_jeopardy_clues = 0
 
-            if await coffee_gate("greg", True, f"📰✏️ **{round_winner}** hates math. What a 'Greg'.", "Greg"):
+            if await coffee_gate("greg", True, f"📰✏️ **<@{round_winner_id}>** hates math. What a 'Greg'.", "Greg"):
                 num_math_questions = 0
 
-            if await coffee_gate("cross", True, f"📰❌ **{round_winner}** has crossed off all Crossword questions.", "Cross"):
+            if await coffee_gate("cross", True, f"📰❌ **<@{round_winner_id}>** has crossed off all Crossword questions.", "Cross"):
                 num_crossword_clues = 0
 
-            if await coffee_gate("word", True, f"📰✏️ Word. **{round_winner}** wants 5 Crossword questions.", "Word"):
+            if await coffee_gate("word", True, f"📰✏️ Word. **<@{round_winner_id}>** wants 5 Crossword questions.", "Word"):
                 num_crossword_clues = 5
 
-            if "#dicktator" not in message_content and await coffee_gate("dicktator", True, f"🎖🍆 **{round_winner}** is a dick.", "Dicktator"):
+            if "#dicktator" not in message_content and await coffee_gate("dicktator", True, f"🎖🍆 **<@{round_winner_id}>** is a dick.", "Dicktator"):
                 god_mode = True
 
-            if  "#sniper" not in message_content and await coffee_gate("sniper", True, f"🧢🎤 **{round_winner}** says 'You only get one shot, do not miss your chance!'", "Sniper"):
+            if  "#sniper" not in message_content and await coffee_gate("sniper", True, f"🧢🎤 **<@{round_winner_id}>** says 'You only get one shot, do not miss your chance!'", "Sniper"):
                 sniper_mode = True
 
-            if  "#cloak" not in message_content and await coffee_gate("cloak", True, f"\n🫥🕶️ **{round_winner}** has put on their cloak.\n✍️⚫ Start messages with **.** to avoid deletion.", "Cloak"):
+            if  "#cloak" not in message_content and await coffee_gate("cloak", True, f"\n🫥🕶️ **<@{round_winner_id}>** has put on their cloak.\n✍️⚫ Start messages with **.** to avoid deletion.", "Cloak"):
                 cloak_mode = True
                 cloaked_user = round_winner_id
 
@@ -10994,6 +10990,382 @@ async def connect_to_mongodb(max_retries=3, delay_between_retries=5):
             await asyncio.sleep(delay_between_retries)
     return db
  
+
+async def get_bump_data():
+    global bumped_status, bumper_king_id, bumper_king_name, last_bump_time
+    
+    try:
+        db = await connect_to_mongodb()
+        bump_collection = db["bump_data"]
+        
+        # Find the bump data document
+        bump_doc = await bump_collection.find_one({})
+        
+        if bump_doc:
+            bumped_status = bump_doc.get("bumped_status", False)
+            bumper_king_id = bump_doc.get("bumper_king_id", "")
+            bumper_king_name = bump_doc.get("bumper_king_name", "")
+            last_bump_time = bump_doc.get("last_bump_time", None)
+        else:
+            # If no document exists, set default values
+            bumped_status = False
+            bumper_king_id = ""
+            bumper_king_name = ""
+            last_bump_time = None
+            
+    except Exception as e:
+        print(f"Error fetching bump data: {e}")
+        # Set default values on error
+        bumped_status = False
+        bumper_king_id = ""
+        bumper_king_name = ""
+        last_bump_time = None
+
+
+async def update_bump_data():
+    global bumped_status, bumper_king_id, bumper_king_name, last_bump_time
+    
+    try:
+        db = await connect_to_mongodb()
+        bump_collection = db["bump_data"]
+        
+        # Set current timestamp when updating
+        last_bump_time = time.time()
+        
+        # Prepare the update document using global variables
+        update_doc = {
+            "bumped_status": bumped_status,
+            "bumper_king_id": bumper_king_id,
+            "bumper_king_name": bumper_king_name,
+            "last_bump_time": last_bump_time
+        }
+        
+        # Use upsert to update existing document or create new one if it doesn't exist
+        result = await bump_collection.update_one(
+            {},  # Empty filter to match any document (assuming single document collection)
+            {"$set": update_doc},
+            upsert=True
+        )
+        
+        return result
+        
+    except Exception as e:
+        print(f"Error updating bump data: {e}")
+        return None
+
+
+async def check_bump_status():
+    global bumped_status, bumper_king_id, bumper_king_name, last_bump_time
+    
+    try:
+        # Check if more than 2 hours (7200 seconds) have passed since last bump
+        if last_bump_time and (time.time() - last_bump_time) > 7200:
+            # Auto-clear the bump status
+            bumped_status = False
+            bumper_king_id = ""
+            bumper_king_name = ""
+            last_bump_time = None
+            
+            # Update the database with cleared values
+            await update_bump_data()
+            
+            print("Bump status auto-cleared after 2 hours")
+            
+    except Exception as e:
+        print(f"Error checking bump status: {e}")
+
+
+async def sync_bumper_king_with_role():
+    """Sync the global bump data with who actually has the Bumper King role in Discord"""
+    global bumped_status, bumper_king_id, bumper_king_name, last_bump_time
+    
+    try:
+        # Get the guild
+        guild = bot.get_guild(OKRAN_GUILD_ID)
+        if not guild:
+            print("Could not find guild for bumper king sync")
+            return
+        
+        # Get the Bumper King role
+        bumper_king_role = guild.get_role(BUMPER_KING_ROLE_ID)  # Role ID for 👑🍔 Bumper King 🍔👑
+        if not bumper_king_role:
+            print("Could not find Bumper King role")
+            return
+        
+        # Get members with the role
+        role_members = bumper_king_role.members
+                
+        if role_members:
+            member_info = [f"{m.display_name}({m.id})" for m in role_members]
+        
+        # MongoDB is the source of truth - make Discord match the database
+        if not bumped_status or not bumper_king_id:
+            # Database says no one should be bumper king - remove role from everyone
+            if len(role_members) > 0:
+                print(f"Database shows no bumper king, removing role from {len(role_members)} people")
+                for member in role_members:
+                    try:
+                        await member.remove_roles(bumper_king_role)
+                        print(f"Removed Bumper King role from {member.display_name}")
+                    except discord.Forbidden:
+                        print(f"No permission to remove Bumper King role from {member.display_name}")
+                    except Exception as e:
+                        print(f"Error removing role from {member.display_name}: {e}")
+            else:
+                print("Database shows no bumper king and no one has the role - already synced")
+                
+        else:
+            # Database says someone should be bumper king - ensure only they have the role
+            target_member = guild.get_member(int(bumper_king_id))
+            if not target_member:
+                print(f"Bumper king {bumper_king_name} ({bumper_king_id}) not found in server - clearing database")
+                bumped_status = False
+                bumper_king_id = ""
+                bumper_king_name = ""
+                last_bump_time = None
+                await update_bump_data()
+                # Remove role from anyone who has it
+                for member in role_members:
+                    try:
+                        await member.remove_roles(bumper_king_role)
+                        print(f"Removed Bumper King role from {member.display_name}")
+                    except Exception as e:
+                        print(f"Error removing role from {member.display_name}: {e}")
+            else:
+                # Remove role from everyone who shouldn't have it
+                for member in role_members:
+                    if member.id != int(bumper_king_id):
+                        try:
+                            await member.remove_roles(bumper_king_role)
+                            print(f"Removed Bumper King role from {member.display_name} (not the database bumper king)")
+                        except Exception as e:
+                            print(f"Error removing role from {member.display_name}: {e}")
+                
+                # Add role to the correct person if they don't have it
+                if target_member not in role_members:
+                    try:
+                        await target_member.add_roles(bumper_king_role)
+                        print(f"Added Bumper King role to {target_member.display_name}")
+                    except discord.Forbidden:
+                        print(f"No permission to add Bumper King role to {target_member.display_name}")
+                    except Exception as e:
+                        print(f"Error adding role to {target_member.display_name}: {e}")
+                else:
+                    print(f"Bumper King role already correctly assigned to {target_member.display_name}")
+            
+    except Exception as e:
+        print(f"Error syncing bumper king with role: {e}")
+
+
+async def change_bumper_king_role_color(color_input):
+    global bumper_king_id
+    
+    # Color name to hex mapping
+    color_names = {
+        # Basic colors
+        'red': '#FF0000',
+        'green': '#00FF00',
+        'blue': '#0000FF',
+        'yellow': '#FFFF00',
+        'orange': '#FFA500',
+        'purple': '#800080',
+        'pink': '#FFC0CB',
+        'cyan': '#00FFFF',
+        'magenta': '#FF00FF',
+        'lime': '#00FF00',
+        'brown': '#A52A2A',
+        'black': '#000000',
+        'white': '#FFFFFF',
+        'gray': '#808080',
+        'grey': '#808080',
+        
+        # Extended colors
+        'crimson': '#DC143C',
+        'darkred': '#8B0000',
+        'lightcoral': '#F08080',
+        'salmon': '#FA8072',
+        'darksalmon': '#E9967A',
+        'lightsalmon': '#FFA07A',
+        'orangered': '#FF4500',
+        'tomato': '#FF6347',
+        'darkorange': '#FF8C00',
+        'gold': '#FFD700',
+        'lightyellow': '#FFFFE0',
+        'lemonchiffon': '#FFFACD',
+        'lightgoldenrodyellow': '#FAFAD2',
+        'papayawhip': '#FFEFD5',
+        'moccasin': '#FFE4B5',
+        'peachpuff': '#FFDAB9',
+        'palegreen': '#98FB98',
+        'lightgreen': '#90EE90',
+        'darkgreen': '#006400',
+        'forestgreen': '#228B22',
+        'limegreen': '#32CD32',
+        'aqua': '#00FFFF',
+        'lightcyan': '#E0FFFF',
+        'darkturquoise': '#00CED1',
+        'turquoise': '#40E0D0',
+        'mediumturquoise': '#48D1CC',
+        'darkblue': '#00008B',
+        'navy': '#000080',
+        'darkslateblue': '#483D8B',
+        'slateblue': '#6A5ACD',
+        'mediumslateblue': '#7B68EE',
+        'mediumpurple': '#9370DB',
+        'darkmagenta': '#8B008B',
+        'darkviolet': '#9400D3',
+        'darkorchid': '#9932CC',
+        'mediumorchid': '#BA55D3',
+        'thistle': '#D8BFD8',
+        'plum': '#DDA0DD',
+        'violet': '#EE82EE',
+        'hotpink': '#FF69B4',
+        'deeppink': '#FF1493',
+        'mediumvioletred': '#C71585',
+        'palevioletred': '#DB7093',
+        'lavender': '#E6E6FA',
+        'lavenderblush': '#FFF0F5',
+        'teal': '#008080',
+        'darkteal': '#008B8B',
+        'mint': '#98FB98',
+        'mintcream': '#F5FFFA',
+        'aquamarine': '#7FFFD4',
+        'mediumaquamarine': '#66CDAA',
+        'coral': '#FF7F50',
+        'lightcoral': '#F08080',
+        'indigo': '#4B0082',
+        'maroon': '#800000',
+        'olive': '#808000',
+        'darkolivegreen': '#556B2F',
+        'chartreuse': '#7FFF00',
+        'greenyellow': '#ADFF2F',
+        'springgreen': '#00FF7F',
+        'mediumspringgreen': '#00FA9A',
+        'seagreen': '#2E8B57',
+        'mediumseagreen': '#3CB371',
+        'lightseagreen': '#20B2AA',
+        'darkseagreen': '#8FBC8F',
+        'honeydew': '#F0FFF0',
+        'beige': '#F5F5DC',
+        'wheat': '#F5DEB3',
+        'sandybrown': '#F4A460',
+        'tan': '#D2B48C',
+        'chocolate': '#D2691E',
+        'firebrick': '#B22222',
+        'rosybrown': '#BC8F8F',
+        'goldenrod': '#DAA520',
+        'darkgoldenrod': '#B8860B',
+        'lightgoldenrod': '#EEDD82',
+        'palegoldenrod': '#EEE8AA',
+        'khaki': '#F0E68C',
+        'darkkhaki': '#BDB76B',
+        
+        # Neutral colors
+        'darkgray': '#A9A9A9',
+        'darkgrey': '#A9A9A9',
+        'silver': '#C0C0C0',
+        'lightgray': '#D3D3D3',
+        'lightgrey': '#D3D3D3',
+        'gainsboro': '#DCDCDC',
+        'whitesmoke': '#F5F5F5',
+        'dimgray': '#696969',
+        'dimgrey': '#696969',
+        'lightslategray': '#778899',
+        'lightslategrey': '#778899',
+        'slategray': '#708090',
+        'slategrey': '#708090',
+        'darkslategray': '#2F4F4F',
+        'darkslategrey': '#2F4F4F',
+        
+        # Fun/Discord colors
+        'blurple': '#5865F2',  # Discord's brand color
+        'discord': '#5865F2',
+        'nitro': '#FF73FA',
+        'boost': '#F47FFF',
+        'invisible': '#747F8D',
+    }
+    
+    try:
+        # Check if input is a color name
+        if color_input.lower() in color_names:
+            hex_code = color_names[color_input.lower()]
+        else:
+            # Assume it's a hex code
+            hex_code = color_input
+            # Validate hex code format
+            if not hex_code.startswith('#'):
+                hex_code = '#' + hex_code
+        
+        # Convert hex to integer for Discord
+        color_int = int(hex_code.replace('#', ''), 16)
+        color = discord.Color(color_int)
+        
+        # Check if there's a bumper king
+        if not bumper_king_id:
+            return "No bumper king currently set."
+        
+        # Get the guild (server)
+        guild = bot.get_guild(OKRAN_GUILD_ID)
+        if not guild:
+            return "Server not found."
+        
+        # Get the bumper king member
+        #member = guild.get_member(int(bumper_king_id))
+        #if not member:
+        #    return "Bumper king member not found."
+        
+        # Get the specific Bumper King role by ID
+        bumper_role = guild.get_role(BUMPER_KING_ROLE_ID)
+        
+        if not bumper_role:
+            return "Bumper King role not found in server."
+        
+        # Change the role color
+        await bumper_role.edit(color=color, reason=f"Bumper king color change to {hex_code}")
+        
+        return f"Your username color is now {color_input}, your highness."
+        
+    except ValueError:
+        return "Invalid hex color code format. Use format like #FF0000 or FF0000"
+    except discord.Forbidden:
+        return "Bot doesn't have permission to modify roles."
+    except discord.HTTPException as e:
+        return f"Discord API error: {e}"
+    except Exception as e:
+        return f"Error changing role color: {e}"
+
+
+@bot.tree.command(name="okrafx", description="Change your username color (only for the current 👑🍔 Bumper King 🍔👑)")
+@discord.app_commands.describe(color="Color name or hex code")
+async def change_color_command(interaction: discord.Interaction, color: str):
+    global bumper_king_id
+    
+    # Check if the user is the current bumper king
+    print(interaction.user.id)
+    print(bumper_king_id)
+    if not bumper_king_id or str(interaction.user.id) != bumper_king_id:
+        await interaction.response.send_message(
+            "❌ You are NOT the current 👑🍔 **Bumper King** 🍔👑! Only their highness can change their name color.",
+            ephemeral=True
+        )
+        return
+    
+    # Defer the response since role editing might take a moment
+    await interaction.response.defer(ephemeral=True)
+    
+    try:
+        # Call the color change function
+        result = await change_bumper_king_role_color(color)
+        
+        # Send success or error message
+        if "your highness" in result:
+            await interaction.followup.send(f"✅ {result}", ephemeral=True)
+        else:
+            await interaction.followup.send(f"❌ {result}", ephemeral=True)
+            
+    except Exception as e:
+        await interaction.followup.send(f"❌ An error occurred: {e}", ephemeral=True)
+
 
 async def save_data_to_mongo(collection_name, document_id, data):
     if data is None:
@@ -11747,15 +12119,15 @@ async def update_round_streaks(user, user_id):
     if user is not None:
         streak = current_longest_round_streak["streak"]
         if streak > 1:
-            message = f"\u200b\n\u200b\n🏆 **Winner**: **{user}**...🔥{current_longest_round_streak['streak']} in a row!\n"
+            message = f"\u200b\n\u200b\n🏆 **Winner**: **<@{user_id}>**...🔥{current_longest_round_streak['streak']} in a row!\n"
             
             if streak % discount_streak_amount == 0:
                 discount_fraction = min((streak // discount_streak_amount) * discount_step_amount, 90)
-                message += f"\n⚖️ Going forward **{user}** will incur a **-{discount_fraction}%** handicap.\n"
+                message += f"\n⚖️ Going forward **<@{user_id}>** will incur a **-{discount_fraction}%** handicap.\n"
                 
             message += f"\n▶️ **Discord Stats**: <https://livetriviastats.com/discord>\n\u200b\n\u200b"
         else:
-            message = f"\u200b\n\u200b\n🏆 **Winner**: **{user}**!\n\n▶️ **Discord Stats**: <https://livetriviastats.com/discord>\n\u200b\n\u200b"
+            message = f"\u200b\n\u200b\n🏆 **Winner**: **<@{user_id}>**!\n\n▶️ **Discord Stats**: <https://livetriviastats.com/discord>\n\u200b\n\u200b"
 
         await safe_send(channel, message)
         await asyncio.sleep(2)
@@ -11767,7 +12139,7 @@ async def update_round_streaks(user, user_id):
         if ai_on:
             winner_coffees = await get_coffees(user_id)
             if winner_coffees == 0:
-                gpt_summary = f"\n🥒💬🎨 **{user}**: Okrans get custom end-of-round messages and paintings!\n"
+                gpt_summary = f"\n🥒💬🎨 **<@{user_id}>**: Okrans get custom end-of-round messages and paintings!\n"
             else:
                 gpt_summary = await generate_round_summary(round_data, user, user_id)
 
@@ -11802,9 +12174,9 @@ async def update_round_streaks(user, user_id):
                     dynamic_emoji = number_to_emoji.get(remaining_games, str(remaining_games))
                     
                     if remaining_games == 1:
-                        image_message = f"\u200b\n{dynamic_emoji}🎨 **{user}**, win the next game and I'll draw you something.\n\u200b"
+                        image_message = f"\u200b\n{dynamic_emoji}🎨 **<@{user_id}>**, win the next game and I'll draw you something.\n\u200b"
                     else:
-                        image_message = f"\u200b\n{dynamic_emoji}🎨 **{user}**, win {remaining_games} more in a row and I'll draw you something.\n\u200b"
+                        image_message = f"\u200b\n{dynamic_emoji}🎨 **<@{user_id}>**, win {remaining_games} more in a row and I'll draw you something.\n\u200b"
     
                     await safe_send(channel, image_message)
                     await asyncio.sleep(2)
@@ -12952,7 +13324,7 @@ async def get_player_selected_question(questions, round_winner, winner_id):
     numbered_blocks = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"]
 
 
-    message = f"\u200b\n🎯 **{round_winner}**, pick the question number:\n\n"
+    message = f"\u200b\n🎯 **<@{round_winner_id}>**, pick the question number:\n\n"
     for i, question_data in enumerate(questions):
         trivia_category = question_data[0]
         trivia_url = question_data[2]
@@ -13082,9 +13454,9 @@ async def start_trivia():
     try:
         db =  await connect_to_mongodb()
         await load_parameters()
+        await sync_bumper_king_with_role()  # Only sync at startup
         await load_streak_data()
         await load_previous_question()
-        await inspect_hardcoded_bump()
 
         round_winner = None
         selected_questions = await select_trivia_questions(questions_per_round)  #Pick the initial question set
@@ -13108,6 +13480,7 @@ async def start_trivia():
             #await ask_stock_challenge("TheOkraG",591861826690613248, 3)
             #await ask_chess_challenge("TheOkraG",591861826690613248, 3)
             #await ask_okrace_challenge("TheOkraG",591861826690613248, 3)
+            
 
             round_responders.clear()  # Reset round responders
             round_data["questions"] = []
@@ -13124,6 +13497,7 @@ async def start_trivia():
 
             start_message = f"\u200b\n✨🧪 **NEW** from the **Okra Lab**! 🧪✨\n"
             
+            start_message += f"\n🍔👑 **Bumper King** [Okranities]"
             start_message += f"\n🏁🥒 **OkRACE** [Mini-Game]"
 
             start_message += "\n\u200b"
@@ -13238,9 +13612,11 @@ async def start_trivia():
                 await round_preview(selected_questions)
                 await asyncio.sleep(10)  # Adjust this time to whatever delay you need between rounds
 
-            #if round_count % 3 == 0:
-            #    await get_bump_url_from_s3()
-            #    await asyncio.sleep(10)
+            await check_bump_status()
+            if bumped_status == False:
+                await get_bump_url_from_s3()
+                await asyncio.sleep(10)
+
             #if len(scoreboard) >= 1000:
             #    await ask_survey_question()
                 
@@ -13270,8 +13646,8 @@ async def get_bump_url_from_s3():
     public_url = f"https://{bucket_name}.s3.amazonaws.com/{encoded_filename}"
     
     message = (
-        f"\u200b\n🚀⚡ Help grow our community! ⚡🚀\n\n"
-        f"Type 👉 **/bump** 👈 now (or at any time) to boost our trivia server and bring in more players! 🥒🏆\n\u200b"
+        f"\u200b\n🚨⏫ BUMP ALERT ⏫🚨\n\n"
+        f"Type 👉 **/bump** 👈 now to boost our trivia server and gain the title of...\n\n👑🍔 **Bumper King** 🍔👑!\n\u200b"
     )
 
     await safe_send(channel, content=message, embed=discord.Embed().set_image(url=public_url))
@@ -13382,13 +13758,132 @@ def handle_sigterm(signum, frame):
     print("💀 Received SIGTERM. Shutting down gracefully...")
     exit(0)
 
+BUMPER_ROLE_NAME = "👑🍔 Bumper King 🍔👑"
+
+async def ensure_bumper_role(guild: discord.Guild) -> discord.Role:
+    role = discord.utils.get(guild.roles, name=BUMPER_ROLE_NAME)
+    if role is None:
+        role = await guild.create_role(name=BUMPER_ROLE_NAME, reason="Create Bumper King role")
+    return role
+
+async def assign_bumper_king(guild: discord.Guild, new_user_id: int | None):
+    role = await ensure_bumper_role(guild)
+
+    # remove from any current holder(s)
+    for m in guild.members:
+        if role in m.roles:
+            try:
+                await m.remove_roles(role, reason="Bumper crown transferred/cleared")
+            except Exception as e:
+                print(f"⚠️ remove role failed for {m.id}: {e}")
+
+    if not new_user_id:
+        return
+
+    member = guild.get_member(new_user_id) or await guild.fetch_member(new_user_id)
+    if not member:
+        print("⚠️ New bumper not in guild (cannot assign role).")
+        return
+
+    try:
+        await member.add_roles(role, reason="Bumper crown granted")
+    except Exception as e:
+        print(f"⚠️ add role failed: {e}")
+
+
+
+def extract_bumper_from_message(message: discord.Message) -> tuple[int | None, str]:
+    """
+    Returns (user_id, display_name_in_this_guild) if found, else (None, "").
+    Prefers interaction_metadata.user, falls back to interaction.user, then mentions.
+    """
+    user = None
+
+    # Preferred (per deprecation warning)
+    meta = getattr(message, "interaction_metadata", None)
+    if meta and getattr(meta, "user", None):
+        user = meta.user
+
+    # Fallback (older field still present on your dump)
+    if user is None:
+        inter = getattr(message, "interaction", None)
+        if inter and getattr(inter, "user", None):
+            user = inter.user
+
+    # Last resort: mentions
+    if user is None and message.mentions:
+        user = message.mentions[0]
+
+    if not user:
+        return None, ""
+
+    # Resolve guild display name (nickname) if possible
+    member = message.guild.get_member(user.id) if message.guild else None
+    display = member.display_name if member else (getattr(user, "global_name", None) or user.name)
+    return user.id, display
+
 
 @bot.event
 async def on_message(message):
-    global collected_responses, question_asked_start, question_asked_end
+    global collected_responses, question_asked_start, question_asked_end, bumped_status, bumper_king_id, bumper_king_name
 
     if message.author == bot.user:
         return
+
+    if message.author.id == DISBOARD_BOT_ID:
+        # Detect “Bump done!” (Disboard uses embeds; content is usually empty)
+        bump_hit = False
+
+        if "bump done" in (message.content or "").lower():
+            bump_hit = True
+
+        if not bump_hit and message.embeds:
+            for emb in message.embeds:
+                desc  = (emb.description or "").lower()
+                title = (emb.title or "").lower()
+                if "bump done" in desc or "bump done" in title:
+                    bump_hit = True
+                    break
+
+        if bump_hit:
+            user_id, display_name = extract_bumper_from_message(message)
+
+            # update globals
+            bumped_status = True
+            bumper_king_id = str(user_id) if user_id else ""
+            bumper_king_name = display_name or ""
+
+            if bumper_king_name:
+                gif_url = "https://triviabotwebsite.s3.us-east-2.amazonaws.com/okra/okra-burger-king.png"
+                #await safe_send(channel, content =f"\u200b\n👑🍔 All hail **{bumper_king_name}**! They’ve claimed the **Bumper King** crown until the next bump!\n\u200b", embed=discord.Embed().set_image(url=gif_url))
+                crown_embed = discord.Embed(
+                    title="👑🍔 A New Bumper King! 🍔👑",
+                    description=(
+                        f"All hail **<@{bumper_king_id}>**! They’ve claimed the **Bumper King** crown until the next bump!\n\n"
+                        f"💎 As **Bumper King**, you now unlock:\n\n"
+                        f"• Access to all exclusive perks 🎁\n"
+                        f"• Change your username color with `/okrafx` 🎨\n"
+                    ),
+                    color=discord.Color.gold()
+                )
+                crown_embed.set_image(url=gif_url)
+
+                # Send as a separate message object you can manage
+                crown_message = await channel.send(embed=crown_embed)
+                await asyncio.sleep(3)
+
+            # assign the crown role in this guild
+            if message.guild and user_id:
+                await assign_bumper_king(message.guild, user_id)
+
+            # persist/log as you wish
+            try:
+                await update_bump_data()
+            except TypeError:
+                # if your update_bump_data() takes no args:
+                await update_bump_data()
+
+
 
     if "#perks" in message.content.strip().lower() and message.author.id != bot.user.id:
         try:
@@ -13460,7 +13955,7 @@ async def on_message_edit(before, after):
         return
 
     # Only react to edits in this specific channel
-    if after.channel.id != 1402517943979343942:
+    if after.channel.id != channel_id:
         return
         
     if question_asked_start and question_asked_end:
@@ -13476,6 +13971,8 @@ async def on_message_edit(before, after):
                 print("Bot lacks permission to reply to the edited message.")
             except Exception as e:
                 print(f"Failed to reply to edited message: {e}")
+
+
 
 
 def get_minigame_name(number):
@@ -13609,6 +14106,43 @@ async def on_ready():
     global channel
     print(f"✅ Logged in as {bot.user}")
     channel = bot.get_channel(channel_id)
+    
+    # Debug: Check what commands are in the tree
+    try:
+        commands = []
+        for guild_id, guild_commands in bot.tree._guild_commands.items():
+            commands.extend([cmd.name for cmd in guild_commands.values()])
+        commands.extend([cmd.name for cmd in bot.tree._global_commands.values()])
+        print(f"🔍 Commands in tree: {commands}")
+    except Exception as debug_error:
+        print(f"🔍 Debug error: {debug_error}")
+        print(f"🔍 Tree attributes: {[attr for attr in dir(bot.tree) if 'command' in attr.lower()]}")
+    
+    # Uncomment these lines ONLY when you need to update slash commands
+    # Don't sync on every restart to avoid rate limits
+    
+    # Try global sync first, then guild sync as fallback
+    try:
+        # Global sync
+        synced = await bot.tree.sync()
+        print(f"✅ Synced {len(synced)} slash command(s) globally")
+        if synced:
+            print(f"🔍 Globally synced commands: {[cmd.name for cmd in synced]}")
+    except Exception as e:
+        print(f"❌ Failed to sync slash commands globally: {e}")
+        # Try guild sync as fallback
+        try:
+            guild = discord.Object(id=OKRAN_GUILD_ID)
+            synced = await bot.tree.sync(guild=guild)
+            print(f"✅ Synced {len(synced)} slash command(s) to guild {OKRAN_GUILD_ID}")
+            if synced:
+                print(f"🔍 Guild synced commands: {[cmd.name for cmd in synced]}")
+        except Exception as guild_e:
+            print(f"❌ Guild sync also failed: {guild_e}")
+            import traceback
+            traceback.print_exc()
+    
+    
     await start_trivia()
 
 
