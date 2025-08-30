@@ -14118,9 +14118,6 @@ async def on_ready():
         print(f"🔍 Debug error: {debug_error}")
         print(f"🔍 Tree attributes: {[attr for attr in dir(bot.tree) if 'command' in attr.lower()]}")
     
-    # Uncomment these lines ONLY when you need to update slash commands
-    # Don't sync on every restart to avoid rate limits
-    
     # Try global sync first, then guild sync as fallback
     try:
         # Global sync
@@ -14141,7 +14138,6 @@ async def on_ready():
             print(f"❌ Guild sync also failed: {guild_e}")
             import traceback
             traceback.print_exc()
-    
     
     await start_trivia()
 
