@@ -540,10 +540,7 @@ def create_family_feud_board_image(total_answers, user_answers, num_of_xs=0):
 
     # 4) Overlay red X's if num_of_xs > 0
     if num_of_xs > 0:
-        try:
-            x_font = ImageFont.truetype("DejaVuSans-Bold.ttf", 800)
-        except:
-            x_font = ImageFont.load_default()
+        x_font = load_font("DejaVuSans.ttf", 800)
 
         x_text = "X"
         try:
@@ -6923,7 +6920,6 @@ async def ask_feud_question(winner, mode, winner_id):
     ]
 
     feud_gif_url = random.choice(feud_gifs)
-    print(feud_gif_url)
     
     if mode == "solo":
         message = f"\u200b\n\u200b\n ⚔️🧍 **FeUd (Single Player)**\n\u200b"
@@ -6963,9 +6959,7 @@ async def ask_feud_question(winner, mode, winner_id):
 
     win_image_url = "https://triviabotwebsite.s3.us-east-2.amazonaws.com/harvey/harvey+win.gif"
     loss_image_url = "https://triviabotwebsite.s3.us-east-2.amazonaws.com/harvey/harvey+loss.gif"
-    x1_image_url = "https://triviabotwebsite.s3.us-east-2.amazonaws.com/harvey/1x.png"
-    x2_image_url = "https://triviabotwebsite.s3.us-east-2.amazonaws.com/harvey/2x.png"
-    x3_image_url = "https://triviabotwebsite.s3.us-east-2.amazonaws.com/harvey/3x.png"
+
     
     print(feud_question)
 
@@ -6980,7 +6974,7 @@ async def ask_feud_question(winner, mode, winner_id):
     answered_correctly = False
 
     while xs < max_xs and not answered_correctly:
-        feud_image_buffer = create_family_feud_board_image(feud_answers, user_progress, xs)
+        feud_image_buffer = create_family_feud_board_image(feud_answers, user_progress, 0)
         image_file = discord.File(fp=feud_image_buffer, filename="image.png")
         board_embed = discord.Embed(title=f"🟦 **Okra Says!** Top {num_answers} answers on the board\n\u200b")
         board_embed.description = f"We asked 100 Okrans..."
@@ -7010,7 +7004,7 @@ async def ask_feud_question(winner, mode, winner_id):
         await safe_send(channel, embed=board_embed, file=image_file)
         await asyncio.sleep(3)
         await safe_send(channel, start_message)
-        await asyncio.sleep(5)
+        await asyncio.sleep(1)
 
         prompt_message = f"\u200b\n\u200b\n👉👉 **{feud_prompt.upper()}**\n"
         prompt_message += f"\n📜🔢 List as many as you can. **GO!** 🏁🚀\n\u200b"
@@ -7054,15 +7048,16 @@ async def ask_feud_question(winner, mode, winner_id):
 
         xs += 1
         
-        if answered_correctly == False and xs < 3:
-            # Display the X image based on number of strikes
-            if xs == 1:
-                x_image_url = x1_image_url
-            elif xs == 2:
-                x_image_url = x2_image_url
+        await safe_send(channel, content="\u200b\n🎤📊 **Survey says...**\n\u200b")
+        if answered_correctly == False and xs < 3:    
+            feud_image_buffer = create_family_feud_board_image(feud_answers, user_progress, xs)
+            image_file = discord.File(fp=feud_image_buffer, filename="image.png")
+            embed = discord.Embed(title=f"🟦 **OKRA SAYS** Top {num_answers} answers on the board\n\u200b")
+            embed.set_image(url="attachment://image.png")
             
-            await safe_send(channel, content="\u200b\n🎤📊 **Survey says...**\n\u200b", embed=discord.Embed().set_image(url=x_image_url))
+            await safe_send(channel, embed=embed, files=[image_file])
             await asyncio.sleep(2)
+            
             message = f"{correct_guesses} out of {num_answers}\n"
             if user_correct_answers and mode == "cooperative":
                 message += "\n**🏆 Commendable Okrans**\n"
@@ -7099,25 +7094,12 @@ async def ask_feud_question(winner, mode, winner_id):
     
     # Show final X image if they failed after 3 strikes
     if answered_correctly == False:
-        await safe_send(channel, embed=discord.Embed().set_image(url=x3_image_url))
+        feud_image_buffer = create_family_feud_board_image(feud_answers, user_progress, xs)
+        image_file = discord.File(fp=feud_image_buffer, filename="image.png")
+        embed = discord.Embed(title=f"🟦 **OKRA SAYS FINAL** Top {num_answers} answers on the board\n\u200b")
+        embed.set_image(url="attachment://image.png")
+        await safe_send(channel, embed=embed, files=[image_file])
         await asyncio.sleep(2)
-    
-    final_feud_image_buffer = create_family_feud_board_image(feud_answers, user_progress, 0)
-    image_file = discord.File(fp=final_feud_image_buffer, filename="image.png")
-    board_embed = discord.Embed(title=f"🟦 **OKRA SAYS FINAL** Top {num_answers} answers on the board\n\u200b")
-    board_embed.description = f"We asked 100 Okrans..."
-    board_embed.set_image(url="attachment://image.png")
-    await safe_send(channel, embed=board_embed, file=image_file)
-
-    if len(user_progress) < num_answers:
-        answer_feud_image_buffer = create_family_feud_board_image(feud_answers, feud_answers, 0)
-        image_file = discord.File(fp=answer_feud_image_buffer, filename="image.png")
-        board_embed = discord.Embed(title=f"🔑❓ **OKRA SAYS ANSWERS**\n\u200b")
-        board_embed.description = f"We asked 100 Okrans..."
-        board_embed.set_image(url="attachment://image.png")
-        await safe_send(channel, embed=board_embed, file=image_file)
-    
-    await asyncio.sleep(2)
 
     if len(user_progress) < num_answers:
         await safe_send(channel, embed=discord.Embed().set_image(url=loss_image_url))
@@ -7125,6 +7107,16 @@ async def ask_feud_question(winner, mode, winner_id):
         await safe_send(channel, embed=discord.Embed().set_image(url=win_image_url))
 
     await safe_send(channel, result_message)
+
+    await asyncio.sleep(3)
+
+
+    answer_feud_image_buffer = create_family_feud_board_image(feud_answers, feud_answers, 0)
+    image_file = discord.File(fp=answer_feud_image_buffer, filename="image.png")
+    board_embed = discord.Embed(title=f"🔑❓ **OKRA SAYS ANSWERS**\n\u200b")
+    board_embed.description = f"We asked 100 Okrans..."
+    board_embed.set_image(url="attachment://image.png")
+    await safe_send(channel, embed=board_embed, file=image_file)
     await asyncio.sleep(5)
     return
 
@@ -13481,7 +13473,7 @@ async def start_trivia():
             #await get_survey_results()
             scoreboard.clear()
             fastest_answers_count.clear()
-            #await ask_feud_question("TheCreator", "cooperative", 591861826690613248)
+            await ask_feud_question("TheOkraG", "cooperative", 591861826690613248)
             #await ask_jigsaw_challenge("The Creator", 591861826690613248)
             #await ask_border_challenge("The Creator", 591861826690613248)
             #await ask_ranker_people_challenge("TheOkraG", 1)
