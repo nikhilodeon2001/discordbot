@@ -8231,7 +8231,7 @@ async def get_image_url_from_s3():
         # Remove the time from the date string
         date_only = ' '.join(full_date.split()[:-1])
         message = "\u200b\n🖼️✨ A memory from the **Okra Museum**"
-        message += "\n🥒🏛️ https://livetriviastats.com/okra-museum\n\u200b"
+        message += "\n🥒🏛️ [Visit the Okra Museum](https://livetriviastats.com/okra-museum)\n\u200b"
         await safe_send(channel, content=message, embed=discord.Embed().set_image(url=public_url))
 
         #message = f"\u200b\n**Masterpiece:** '{title}'\n"
@@ -8636,7 +8636,7 @@ async def generate_round_summary_image(round_data, winner, winner_id):
         
         message = f"\n**I call it**...*{image_description}*\n"
         message += f"\n🏛️👋 **Welcome to the Okra Museum**"
-        message += "\n🌐➡️ https://livetriviastats.com/okra-museum\n"
+        message += "\n🌐➡️ [Visit the Museum](https://livetriviastats.com/okra-museum)\n"
         await safe_send(channel, message)
 
         async with aiohttp.ClientSession() as session:
@@ -8685,7 +8685,7 @@ async def generate_round_summary_image(round_data, winner, winner_id):
                 await safe_send(channel, content=message, embed=discord.Embed().set_image(url=image_url))
                 message = f"\nI call it: '{image_description}'\n"
                 message += f"\n🏛️👋 Welcome to the Okra Museum"
-                message += "\n🌐➡️ https://livetriviastats.com/okra-museum\n"
+                message += "\n🌐➡️ [Visit the Museum](https://livetriviastats.com/okra-museum)\n"
                 await safe_send(channel, message)
         
                 async with aiohttp.ClientSession() as session:
@@ -12129,9 +12129,9 @@ async def update_round_streaks(user, user_id):
                 discount_fraction = min((streak // discount_streak_amount) * discount_step_amount, 90)
                 message += f"\n⚖️ Going forward **<@{user_id}>** will incur a **-{discount_fraction}%** handicap.\n"
                 
-            message += f"\n▶️ **Discord Stats**: <https://livetriviastats.com/discord>\n\u200b\n\u200b"
+            message += f"\n▶️ **[Discord Stats](https://livetriviastats.com/discord)**\n\u200b\n\u200b"
         else:
-            message = f"\u200b\n\u200b\n🏆 **Winner**: **<@{user_id}>**!\n\n▶️ **Discord Stats**: <https://livetriviastats.com/discord>\n\u200b\n\u200b"
+            message = f"\u200b\n\u200b\n🏆 **Winner**: **<@{user_id}>**!\n\n▶️ **[Discord Stats](https://livetriviastats.com/discord)**\n\u200b\n\u200b"
 
         await safe_send(channel, message)
         await asyncio.sleep(2)
@@ -12687,15 +12687,15 @@ async def round_start_messages():
         # If the user is in the Hall of Sovereigns, only show the message if top_count == 6
         if username in sovereigns:
             if top_count == 6:
-                await safe_send(channel, f"👑  {username} is #1 across the board. We bow to you.\n\n▶️ Live trivia stats available: https://livetriviastats.com\n")
+                await safe_send(channel, f"👑  {username} is #1 across the board. We bow to you.\n\n▶️ [Live trivia stats available](https://livetriviastats.com)\n")
         else:
             # For users not in the Hall of Sovereigns, show all applicable messages
             if top_count == 6:
-                await safe_send(channel, f"👑  {username} is #1 across the board. We bow to you.\n\n▶️ Live trivia stats available: https://livetriviastats.com\n")
+                await safe_send(channel, f"👑  {username} is #1 across the board. We bow to you.\n\n▶️ [Live trivia stats available](https://livetriviastats.com)\n")
             elif top_count == 5:
-                await safe_send(channel, f"🔥​  {username} is on fire! Only 1 leaderboard left.\n\n▶️ Live trivia stats available: https://livetriviastats.com\n")
+                await safe_send(channel, f"🔥​  {username} is on fire! Only 1 leaderboard left.\n\n▶️ [Live trivia stats available](https://livetriviastats.com)\n")
             elif top_count == 4:
-                await safe_send(channel, f"🌡️  {username} is heating up! Only 2 leaderboards left.\n\n▶️ Live trivia stats available: https://livetriviastats.com\n")
+                await safe_send(channel, f"🌡️  {username} is heating up! Only 2 leaderboards left.\n\n▶️ [Live trivia stats available](https://livetriviastats.com)\n")
     return None
 
 
@@ -13476,6 +13476,12 @@ async def start_trivia():
             current_time = time.time()
             
             await load_parameters()
+            message = f"\u200b\n🧘‍♂️ A short breather. Relax, stretch, meditate.\n🎨 Live Trivia is a pure hobby effort.\n\n🙋 Help make it better!\n💡 [Submit Feedback](https://forms.gle/iWvmN24pfGEGSy7n7)\n\nLike it? Consider leaving a review!\n⭐ [Leave a Review](https://disboard.org/review/create/1367682586079395902)\u200b\n\n"
+            await safe_send(channel, message)
+            message = f"\u200b\n\u200b\n🥒 **Unlock perks? Become an Okran!**\n💚 [Join Role Subscriptions](https://discord.com/channels/1367682586079395902/role-subscriptions)\n"
+            message += f"\n🛒 **Score Live Trivia merch featuring Okra!**\n👕 [Shop Merch](https://livetriviamerch.com)\n\u200b"
+            await safe_send(channel, message)
+
             await sync_bumper_king_with_role() 
             #await get_survey_results()
             scoreboard.clear()
@@ -13513,8 +13519,10 @@ async def start_trivia():
 
             start_message += "\n\u200b"
 
-            await safe_send(channel, start_message)
-            await asyncio.sleep(5)
+            #await safe_send(channel, start_message)
+            #await asyncio.sleep(5)
+            
+            
             start_message = f"\u200b\n\u200b\n⏩ **Starting a round of {questions_per_round} questions!** ⏩\n\u200b\n\u200b"
 
             start_message += f"\u200b\n🚩 Type **#flag** to report question\n"
@@ -13608,26 +13616,26 @@ async def start_trivia():
             await process_round_options(round_winner, winner_points, round_winner_id)
             
             if round_count % 5 == 0:
-                await safe_send(channel, f"\u200b\n🧘‍♂️ A short breather. Relax, stretch, meditate.\n🎨 Live Trivia is a pure hobby effort.\n\n🙋 Help make it better!\n💡 https://forms.gle/iWvmN24pfGEGSy7n7\n\u200b")
+                message = f"\u200b\n🧘‍♂️ A short breather. Relax, stretch, meditate.\n🎨 Live Trivia is a pure hobby effort.\n\n🙋 Help make it better!\n💡 [Submit Feedback](https://forms.gle/iWvmN24pfGEGSy7n7)\n\nLike it? Consider leaving a review!\n⭐ [Leave a Review](https://disboard.org/review/create/1367682586079395902)\u200b\n\n"
+                await safe_send(channel, message)
                 selected_questions = await select_trivia_questions(questions_per_round)  #Pick the next question set
                 await asyncio.sleep(20)
                 await round_preview(selected_questions)
                 await asyncio.sleep(10)
-            else:
-                message = f"\u200b\n\u200b\n🥒 **Unlock perks? Become an Okran!**\n💚 https://discord.com/channels/1367682586079395902/role-subscriptions\n"
-                message += f"\n🛒 **Score Live Trivia merch featuring Okra!**\n👕 https://livetriviamerch.com\n\u200b"
-                
-                await safe_send(channel, message)
-                selected_questions = await select_trivia_questions(questions_per_round)  #Pick the next question set
-                await asyncio.sleep(10)
-                await round_preview(selected_questions)
-                await asyncio.sleep(10)  # Adjust this time to whatever delay you need between rounds
+
+            message = f"\u200b\n\u200b\n🥒 **Unlock perks? Become an Okran!**\n💚 [Join Role Subscriptions](https://discord.com/channels/1367682586079395902/role-subscriptions)\n"
+            message += f"\n🛒 **Score Live Trivia merch featuring Okra!**\n👕 [Shop Merch](https://livetriviamerch.com)\n\u200b"
+            await safe_send(channel, message)
+            selected_questions = await select_trivia_questions(questions_per_round)  #Pick the next question set
+            await asyncio.sleep(10)
+            await round_preview(selected_questions)
+            await asyncio.sleep(10)  # Adjust this time to whatever delay you need between rounds
 
             await check_bump_status()
             if bumped_status == False:
                 await get_bump_url_from_s3()
                 await asyncio.sleep(10)
-
+            
             #if len(scoreboard) >= 1000:
             #    await ask_survey_question()
                 
