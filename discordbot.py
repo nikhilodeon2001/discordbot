@@ -8322,6 +8322,7 @@ async def load_parameters():
     global question_time
     global questions_per_round
     global ai_on
+    global sync_commands
 
     await get_bump_data()
 
@@ -8340,6 +8341,7 @@ async def load_parameters():
         "num_stats_questions_default": 0,
         "skip_summary": False,
         "ai_on": False,
+        "sync_commands": True,
         "discount_step_amount": 20,
         "discount_streak_amount": 5,
         "time_between_questions_default": 5,
@@ -8377,6 +8379,7 @@ async def load_parameters():
             num_stats_questions_default = parameters["num_stats_questions_default"]
             skip_summary = parameters["skip_summary"]
             ai_on = parameters["ai_on"]
+            sync_commands = parameters["sync_commands"]
             discount_step_amount = parameters["discount_step_amount"]
             discount_streak_amount = parameters["discount_streak_amount"]
             time_between_questions_default = parameters["time_between_questions_default"]
@@ -8418,6 +8421,7 @@ async def load_parameters():
                 num_stats_questions_default = default_values["num_stats_questions_default"]
                 skip_summary = default_values["skip_summary"]
                 ai_on = default_values["ai_on"]
+                sync_commands = default_values["sync_commands"]
                 discount_step_amount = default_values["discount_step_amount"]
                 discount_streak_amount = default_values["discount_streak_amount"]
                 time_between_questions_default = default_values["time_between_questions_default"]
@@ -13452,8 +13456,7 @@ async def start_trivia():
     global question_asked_start, question_asked_end
     
     try:
-        db =  await connect_to_mongodb()
-        await load_parameters()
+
         #await sync_bumper_king_with_role()  # Only sync at startup
         await load_streak_data()
         await load_previous_question()
@@ -14111,8 +14114,10 @@ async def store_minigame_frequency(number, selection_type, bot_source="discord",
 
 @bot.event
 async def on_ready():
-    global channel
+    global channel, db
     print(f"✅ Logged in as {bot.user}")
+    db =  await connect_to_mongodb()
+    await load_parameters()
     channel = bot.get_channel(channel_id)
     
     # Debug: Check what commands are in the tree
@@ -14126,26 +14131,28 @@ async def on_ready():
         print(f"🔍 Debug error: {debug_error}")
         print(f"🔍 Tree attributes: {[attr for attr in dir(bot.tree) if 'command' in attr.lower()]}")
     
+    
+    if sync_commands:
     # Try global sync first, then guild sync as fallback
-    try:
-        # Global sync
-        synced = await bot.tree.sync()
-        print(f"✅ Synced {len(synced)} slash command(s) globally")
-        if synced:
-            print(f"🔍 Globally synced commands: {[cmd.name for cmd in synced]}")
-    except Exception as e:
-        print(f"❌ Failed to sync slash commands globally: {e}")
-        # Try guild sync as fallback
         try:
-            guild = discord.Object(id=OKRAN_GUILD_ID)
-            synced = await bot.tree.sync(guild=guild)
-            print(f"✅ Synced {len(synced)} slash command(s) to guild {OKRAN_GUILD_ID}")
+            # Global sync
+            synced = await bot.tree.sync()
+            print(f"✅ Synced {len(synced)} slash command(s) globally")
             if synced:
-                print(f"🔍 Guild synced commands: {[cmd.name for cmd in synced]}")
-        except Exception as guild_e:
-            print(f"❌ Guild sync also failed: {guild_e}")
-            import traceback
-            traceback.print_exc()
+                print(f"🔍 Globally synced commands: {[cmd.name for cmd in synced]}")
+        except Exception as e:
+            print(f"❌ Failed to sync slash commands globally: {e}")
+            # Try guild sync as fallback
+            try:
+                guild = discord.Object(id=OKRAN_GUILD_ID)
+                synced = await bot.tree.sync(guild=guild)
+                print(f"✅ Synced {len(synced)} slash command(s) to guild {OKRAN_GUILD_ID}")
+                if synced:
+                    print(f"🔍 Guild synced commands: {[cmd.name for cmd in synced]}")
+            except Exception as guild_e:
+                print(f"❌ Guild sync also failed: {guild_e}")
+                import traceback
+                traceback.print_exc()
     
     await start_trivia()
 
