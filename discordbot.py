@@ -13476,11 +13476,6 @@ async def start_trivia():
             current_time = time.time()
             
             await load_parameters()
-            message = f"\u200b\n🧘‍♂️ A short breather. Relax, stretch, meditate.\n🎨 Live Trivia is a pure hobby effort.\n\n🙋 Help make it better!\n💡 [Submit Feedback](https://forms.gle/iWvmN24pfGEGSy7n7)\n\nLike it? Consider leaving a review!\n⭐ [Leave a Review](https://disboard.org/review/create/1367682586079395902)\u200b\n\n"
-            await safe_send(channel, message)
-            message = f"\u200b\n\u200b\n🥒 **Unlock perks? Become an Okran!**\n💚 [Join Role Subscriptions](https://discord.com/channels/1367682586079395902/role-subscriptions)\n"
-            message += f"\n🛒 **Score Live Trivia merch featuring Okra!**\n👕 [Shop Merch](https://livetriviamerch.com)\n\u200b"
-            await safe_send(channel, message)
 
             await sync_bumper_king_with_role() 
             #await get_survey_results()
@@ -13615,7 +13610,7 @@ async def start_trivia():
             await asyncio.sleep(10)
             await process_round_options(round_winner, winner_points, round_winner_id)
             
-            if round_count % 5 == 0:
+            if round_count % 3 == 0:
                 message = f"\u200b\n🧘‍♂️ A short breather. Relax, stretch, meditate.\n🎨 Live Trivia is a pure hobby effort.\n\n🙋 Help make it better!\n💡 [Submit Feedback](https://forms.gle/iWvmN24pfGEGSy7n7)\n\nLike it? Consider leaving a review!\n⭐ [Leave a Review](https://disboard.org/review/create/1367682586079395902)\u200b\n\n"
                 await safe_send(channel, message)
                 selected_questions = await select_trivia_questions(questions_per_round)  #Pick the next question set
