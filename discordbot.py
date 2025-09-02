@@ -1098,14 +1098,11 @@ def create_word_search_image(puzzle_text, found_words=None, is_solution=False, w
         # Try to use a monospace font
         try:
             font = ImageFont.truetype("Monaco", 24)
-            print("Monaco")
         except:
             try:
                 font = ImageFont.truetype("Courier", 24)
-                print("Courier")
             except:
                 font = ImageFont.load_default()
-                print("Default")
         
         # Grid starts immediately after padding (no title or clues)
         grid_start_y = padding
