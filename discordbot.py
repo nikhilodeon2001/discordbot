@@ -1095,14 +1095,22 @@ def create_word_search_image(puzzle_text, found_words=None, is_solution=False, w
         img = Image.new('RGB', (img_width, img_height), color='white')
         draw = ImageDraw.Draw(img)
         
-        # Try to use a monospace font
+        # Try to use Monaco font from fonts directory first, then system fonts
         try:
-            font = ImageFont.truetype("Monaco", 32)
+            font_path = os.path.join(os.path.dirname(__file__), "fonts", "Monaco.ttf")
+            font = ImageFont.truetype(font_path, 24)
+            print("Monaco from fonts folder")
         except:
             try:
-                font = ImageFont.truetype("Courier", 24)
+                font = ImageFont.truetype("Monaco", 24)
+                print("Monaco system font")
             except:
-                font = ImageFont.load_default()
+                try:
+                    font = ImageFont.truetype("Courier", 24)
+                    print("Courier")
+                except:
+                    font = ImageFont.load_default()
+                    print("Default font")
         
         # Grid starts immediately after padding (no title or clues)
         grid_start_y = padding
