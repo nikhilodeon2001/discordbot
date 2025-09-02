@@ -1,5 +1,5 @@
 # Initialize all variables
-local_mode = False
+local_mode = True
 
 import sentry_sdk
 from sentry_sdk.integrations.logging import LoggingIntegration
@@ -49,6 +49,9 @@ import operator
 from itertools import product
 import io
 import os
+import sys
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'vendor'))
+from word_search_generator import WordSearch
 import random
 from PIL import Image, ImageDraw, ImageFilter
 import numpy as np
@@ -187,7 +190,7 @@ intents.message_content = True
 intents.members = True  # Required to see guild members and their roles
 bot = commands.Bot(command_prefix="!", intents=intents)
 openai_client = AsyncOpenAI(api_key=openai_api_key)
-id_limits = {"general": 2000, "mysterybox": 2000, "crossword": 5000, "jeopardy": 5000, "wof": 1500, "list": 20, "feud": 1000, "posters": 2000, "movie_scenes": 5000, "missing_link": 2500, "people": 2500, "ranker_list": 4000, "animal": 2000, "riddle": 2500, "dictionary": 5000, "flags": 800, "lyric": 500, "polyglottery": 80, "book": 80, "element": 100, "jigsaw": 5000, "border": 100, "faceoff": 5000, "president": 80, "wordle": 1400, "myopic": 5000, "fusion": 5000, "microscopic": 5000, "chess": 5000, "stock": 800, "currency": 100}
+id_limits = {"general": 2000, "mysterybox": 2000, "crossword": 5000, "jeopardy": 5000, "wof": 1500, "list": 20, "feud": 1000, "posters": 2000, "movie_scenes": 5000, "missing_link": 2500, "people": 2500, "ranker_list": 4000, "animal": 2000, "riddle": 2500, "dictionary": 5000, "flags": 800, "lyric": 500, "polyglottery": 80, "book": 80, "element": 100, "jigsaw": 5000, "border": 100, "faceoff": 5000, "president": 80, "wordle": 1400, "myopic": 5000, "fusion": 5000, "microscopic": 5000, "chess": 5000, "stock": 800, "currency": 100, "search": 10}
 max_retries = 3
 delay_between_retries = 3
 first_place_bonus = 0
@@ -996,6 +999,739 @@ async def ask_faceoff_challenge(winner, winner_id, num=7):
         return faceoff_winner_id
     else:
         return None
+
+
+def find_word_positions(grid_lines, word):
+    """Find all positions where a word appears in the grid (horizontal, vertical, diagonal)"""
+    if not grid_lines or not word:
+        return []
+    
+    positions = []
+    word = word.upper().replace(' ', '').replace('-', '')
+    rows = len(grid_lines)
+    cols = len(grid_lines[0].split()) if grid_lines else 0
+    
+    # Convert grid to 2D array
+    grid = []
+    for line in grid_lines:
+        row = line.split()
+        if len(row) == cols:
+            grid.append([char.upper() for char in row])
+    
+    if not grid:
+        return positions
+    
+    # Directions: right, down, diagonal down-right, diagonal down-left, left, up, diagonal up-left, diagonal up-right
+    directions = [(0,1), (1,0), (1,1), (1,-1), (0,-1), (-1,0), (-1,-1), (-1,1)]
+    
+    for row in range(rows):
+        for col in range(cols):
+            for dr, dc in directions:
+                # Check if word fits in this direction
+                end_row = row + dr * (len(word) - 1)
+                end_col = col + dc * (len(word) - 1)
+                
+                if 0 <= end_row < rows and 0 <= end_col < cols:
+                    # Check if word matches
+                    found_word = ""
+                    word_positions = []
+                    for i in range(len(word)):
+                        r = row + dr * i
+                        c = col + dc * i
+                        found_word += grid[r][c]
+                        word_positions.append((r, c))
+                    
+                    if found_word == word:
+                        positions.append(word_positions)
+    
+    return positions
+
+def create_word_search_image(puzzle_text, found_words=None, is_solution=False, words_list=None):
+    """Create a PNG image from word search text using PIL"""
+    try:
+        
+        if found_words is None:
+            found_words = set()
+        
+        # Parse the puzzle text to separate grid and word list
+        lines = puzzle_text.strip().split('\n')
+        
+        # Find the grid section (after the line of dashes)
+        grid_start = 0
+        for i, line in enumerate(lines):
+            if '───' in line or '---' in line:
+                grid_start = i + 1
+                break
+        
+        # Extract grid lines (usually lines that have spaces between characters)
+        grid_lines = []
+        for line in lines[grid_start:]:
+            # Grid lines typically have single characters separated by spaces
+            if len(line.strip()) > 0 and ' ' in line and len(line.split()) > 10:
+                grid_lines.append(line.strip())
+            elif len(grid_lines) > 0:  # Stop when we hit the word list
+                break
+                
+        if not grid_lines:
+            # Fallback: just use the text as-is
+            grid_lines = [line.strip() for line in lines[grid_start:grid_start+20]]
+            grid_lines = [line for line in grid_lines if line]
+        
+        # Create image dimensions
+        char_width = 30
+        char_height = 35
+        grid_width = max(len(line.split()) for line in grid_lines) if grid_lines else 20
+        grid_height = len(grid_lines)
+        
+        # Image dimensions with padding (no title/clues, just grid)
+        padding = 50
+        # No word list needed for any image
+        word_list_height = 0
+            
+        img_width = grid_width * char_width + padding * 2
+        img_height = grid_height * char_height + padding * 2 + word_list_height
+        
+        # Create image
+        img = Image.new('RGB', (img_width, img_height), color='white')
+        draw = ImageDraw.Draw(img)
+        
+        # Try to use a monospace font
+        try:
+            font = ImageFont.truetype("Monaco", 24)
+        except:
+            try:
+                font = ImageFont.truetype("Courier", 24)
+            except:
+                font = ImageFont.load_default()
+        
+        # Grid starts immediately after padding (no title or clues)
+        grid_start_y = padding
+        
+        # Find positions of all words for highlighting
+        found_positions = set()
+        unfound_positions = set()
+        
+        if is_solution and words_list:
+            # For solution image: highlight all words
+            for word in words_list:
+                word_positions = find_word_positions(grid_lines, word)
+                for position_list in word_positions:
+                    for pos in position_list:
+                        if word.upper() in [w.upper() for w in found_words]:
+                            found_positions.add(pos)
+                        else:
+                            unfound_positions.add(pos)
+        elif found_words:
+            # For regular puzzle: only highlight found words
+            for word in found_words:
+                word_positions = find_word_positions(grid_lines, word)
+                for position_list in word_positions:
+                    for pos in position_list:
+                        found_positions.add(pos)
+        
+        # Draw grid
+        for row, line in enumerate(grid_lines):
+            chars = line.split()
+            for col, char in enumerate(chars):
+                x = padding + col * char_width
+                y = grid_start_y + row * char_height
+                
+                # Check if this position is part of found or unfound words
+                is_found_position = (row, col) in found_positions
+                is_unfound_position = (row, col) in unfound_positions
+                
+                # Color coding
+                if is_found_position:
+                    char_color = 'black'
+                    bg_color = 'lightgreen'
+                elif is_unfound_position:
+                    char_color = 'black'
+                    bg_color = 'lightpink'
+                else:
+                    char_color = 'black'
+                    bg_color = None
+                
+                # Draw background for found letters
+                if bg_color:
+                    draw.rectangle([x-2, y-2, x+22, y+30], fill=bg_color)
+                
+                draw.text((x, y), char.upper(), fill=char_color, font=font)
+        
+        # No word list displayed in images
+        
+        # Convert to bytes
+        buffer = io.BytesIO()
+        img.save(buffer, format='PNG')
+        buffer.seek(0)
+        return buffer
+        
+    except Exception as e:
+        print(f"Error creating word search image: {e}")
+        # Return a simple text-based fallback
+        return create_simple_text_image(puzzle_text)
+
+def create_simple_text_image(text):
+    """Fallback function to create a simple text image"""
+    try:
+        
+        img = Image.new('RGB', (800, 600), color='white')
+        draw = ImageDraw.Draw(img)
+        
+        try:
+            font = ImageFont.truetype("Monaco", 16)
+        except:
+            font = ImageFont.load_default()
+        
+        # Split text into lines and draw
+        lines = text.split('\n')[:30]  # Limit to 30 lines
+        for i, line in enumerate(lines):
+            draw.text((10, 10 + i * 20), line[:80], fill='black', font=font)  # Limit line length
+        
+        buffer = io.BytesIO()
+        img.save(buffer, format='PNG')
+        buffer.seek(0)
+        return buffer
+    except:
+        # Ultimate fallback - return empty buffer
+        return io.BytesIO()
+
+async def ask_search_challenge(winner, winner_id, num=1):
+    global wf_winner
+    wf_winner = True
+    
+    SEARCH_CATEGORIES = [
+        "Agreement And Disagreement",
+        "Animals",
+        "Appearance",
+        "Art",
+        "Body",
+        "Certainty And Doubt",
+        "Cinema And Theater",
+        "Clothes And Fashion",
+        "Colors And Shapes",
+        "Decision Suggestion Obligation",
+        "Eating Drinking And Serving",
+        "Education",
+        "Food And Drink Preparation",
+        "Food And Drinks",
+        "Food Ingredients",
+        "Health And Sickness",
+        "Hobbies Games",
+        "Land Transportation",
+        "Literature",
+        "Music",
+        "Opinion And Argument",
+        "Personal Care",
+        "Sports",
+        "Words Related To Architecture And Construction",
+        "Words Related To Home And Garden",
+        "Words Related To Linguistics",
+        "Words Related To Media And Communication",
+        "Words Related To Medical Science",
+        "Words Related To Performing Arts"
+    ]
+    
+    search_gifs = [
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/search1.gif",
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/search2.gif",
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/search3.gif",
+    ]
+    gif_url = random.choice(search_gifs)
+    
+    await safe_send(channel, content="\u200b\n🔍🔤 **Spotlight**: Find the hidden words!\n\u200b", embed=discord.Embed().set_image(url=gif_url))
+    await asyncio.sleep(3)
+    
+    # Category Selection Phase
+    categories_text = "\n".join([f"**{i+1}**. {cat}" for i, cat in enumerate(SEARCH_CATEGORIES)])
+    category_message = f"\u200b\n📚 **Choose a category:**\n\n{categories_text}\n\nType the **number** of your choice (1-{len(SEARCH_CATEGORIES)})\n\u200b"
+    await safe_send(channel, category_message)
+    
+    selected_category = None
+    start_time = asyncio.get_event_loop().time()
+    
+    def category_check(m):
+        return m.channel == channel and m.author != bot.user
+    
+    while asyncio.get_event_loop().time() - start_time < 30:
+        try:
+            msg = await bot.wait_for("message", timeout=2, check=category_check)
+            content = msg.content.strip()
+            
+            if content.isdigit():
+                choice = int(content)
+                if 1 <= choice <= len(SEARCH_CATEGORIES):
+                    selected_category = SEARCH_CATEGORIES[choice - 1]
+                    await safe_send(channel, f"\u200b\n✅ **Selected Category:** {selected_category}\n\u200b")
+                    break
+                    
+        except asyncio.TimeoutError:
+            continue
+        except Exception as e:
+            print(f"Error in category selection: {e}")
+            continue
+    
+    if not selected_category:
+        selected_category = random.choice(SEARCH_CATEGORIES)
+        await safe_send(channel, f"\u200b\n⏰ **Time's up!** Random category selected: **{selected_category}**\n\u200b")
+    
+    await asyncio.sleep(2)
+    
+    # MongoDB document selection
+    try:
+        collection = db["search_questions"]
+
+        # Get recent IDs to exclude
+        recent_search_ids = await get_recent_question_ids_from_mongo("search")
+        
+        # Build aggregation pipeline
+        pipeline = [
+            {"$match": {
+                "category": selected_category,
+                "_id": {"$nin": list(recent_search_ids)}
+            }},
+            {"$sample": {"size": 10}},
+            {"$sample": {"size": 1}}
+        ]
+        
+        documents = [doc async for doc in collection.aggregate(pipeline)]
+        
+        if not documents:
+            # Fallback without recent exclusion
+            pipeline = [
+                {"$match": {"category": selected_category}},
+                {"$sample": {"size": 1}}
+            ]
+            documents = [doc async for doc in collection.aggregate(pipeline)]
+            
+        if not documents:
+            await safe_send(channel, "\u200b\n❌ **No documents found for this category!**\n\u200b")
+            wf_winner = True
+            return None
+            
+        selected_doc = documents[0]
+        words_list = selected_doc.get("words", [])
+        selected_subcategory = selected_doc.get("subcategory", "Unknown")
+        words_id = selected_doc["_id"]
+
+        await safe_send(channel, f"\u200b\n🔸 **Topic:** {selected_subcategory}\n\u200b")
+        await asyncio.sleep(3)
+        
+        if len(words_list) < 5:
+            await safe_send(channel, "\u200b\n❌ **Not enough words in this category!**\n\u200b")
+            wf_winner = True
+            return None
+            
+        # Log the question ID
+        if words_id:
+            await store_question_ids_in_mongo([words_id], "search")
+
+        
+        
+    except Exception as e:
+        print(f"Error fetching search document: {e}")
+        await safe_send(channel, "\u200b\n❌ **Database error! Please try again.**\n\u200b")
+        wf_winner = True
+        return None
+        
+    # Limit words to 15 maximum for reasonable puzzle size
+    if len(words_list) > 15:
+        words_list = random.sample(words_list, 15)
+    
+    # Generate word search puzzle
+    try:
+        
+        # Filter and clean words - remove entries with special characters and keep compound words intact
+        filtered_words = []
+        original_to_formatted = {}  # Map formatted words back to originals
+        
+        for word in words_list:
+            # Skip words with special characters that cause issues
+            if any(char in word for char in ['[', ']', '{', '}', '|', '*']):
+                continue
+            # Skip very short words (less than 3 characters)
+            if len(word.replace(' ', '').replace('-', '')) < 3:
+                continue
+            
+            # Format compound words for the word search generator
+            # Replace spaces with hyphens and convert to uppercase
+            formatted_word = word.replace(' ', '-').upper()
+            filtered_words.append(formatted_word)
+            original_to_formatted[formatted_word] = word.lower()
+        
+        # Use filtered words
+        words_list = filtered_words
+        
+        # Create word search with words as space-separated string
+        words_string = " ".join(words_list)
+        ws = WordSearch(
+            words=words_string,
+            level=3,
+            size=20
+        )
+        
+        # Get puzzle as text
+        puzzle_text = str(ws)
+        
+        # Get the words that were actually placed in the puzzle
+        placed_words_formatted = [str(word) for word in ws.placed_words]
+        unplaced_words_formatted = [str(word) for word in ws.unplaced_words]
+        
+        # Create the final words list using original format for placed words
+        words_list = []
+        formatted_to_original = {}  # Map formatted back to original for game logic
+        
+        for formatted_word in placed_words_formatted:
+            if formatted_word in original_to_formatted:
+                original_word = original_to_formatted[formatted_word]
+                words_list.append(original_word)
+                formatted_to_original[formatted_word] = original_word
+        
+        # Debug info about placement
+        print(f"Placed words ({len(words_list)}): {words_list}")
+        if unplaced_words_formatted:
+            unplaced_originals = [original_to_formatted.get(word, word) for word in unplaced_words_formatted]
+            #print(f"Unplaced words ({len(unplaced_originals)}): {unplaced_originals}")
+        
+        # Check if we have enough words placed (minimum 3)
+        if len(words_list) < 3:
+            print(f"Word placement failed - only {len(words_list)} words placed. Trying random document...")
+            await safe_send(channel, "\u200b\n⚠️ **Word selection issue detected. Selecting random puzzle...**\n\u200b")
+            
+            # Try to get a completely random document from any category
+            try:
+                pipeline = [{"$sample": {"size": 1}}]
+                documents = [doc async for doc in collection.aggregate(pipeline)]
+                
+                if documents:
+                    selected_doc = documents[0]
+                    words_list_fallback = selected_doc.get("words", [])
+                    selected_category = selected_doc.get("category", "Random")
+                    selected_subcategory = selected_doc.get("subcategory", "Mixed")
+                    
+                    # Limit and filter words for fallback
+                    if len(words_list_fallback) > 15:
+                        words_list_fallback = random.sample(words_list_fallback, 15)
+                    
+                    # Filter and clean words for fallback
+                    filtered_words_fallback = []
+                    original_to_formatted_fallback = {}
+                    
+                    for word in words_list_fallback:
+                        if any(char in word for char in ['[', ']', '{', '}', '|', '*']):
+                            continue
+                        if len(word.replace(' ', '').replace('-', '')) < 3:
+                            continue
+                        formatted_word = word.replace(' ', '-').upper()
+                        filtered_words_fallback.append(formatted_word)
+                        original_to_formatted_fallback[formatted_word] = word.lower()
+                    
+                    # Try fallback word search
+                    if filtered_words_fallback:
+                        words_string_fallback = " ".join(filtered_words_fallback)
+                        ws_fallback = WordSearch(words=words_string_fallback, level=3, size=20)
+                        puzzle_text = str(ws_fallback)
+                        
+                        placed_words_formatted = [str(word) for word in ws_fallback.placed_words]
+                        words_list = []
+                        formatted_to_original = {}
+                        
+                        for formatted_word in placed_words_formatted:
+                            if formatted_word in original_to_formatted_fallback:
+                                original_word = original_to_formatted_fallback[formatted_word]
+                                words_list.append(original_word)
+                                formatted_to_original[formatted_word] = original_word
+                        
+                        print(f"Fallback placed words ({len(words_list)}): {words_list}")
+                        
+                        if len(words_list) < 3:
+                            # Still failed, use a hardcoded simple word list
+                            words_list = ["cat", "dog", "sun", "moon", "star", "tree", "book", "game"]
+                            ws_simple = WordSearch(words=" ".join([w.upper() for w in words_list]), level=1, size=15)
+                            puzzle_text = str(ws_simple)
+                            selected_category = "Simple Words"
+                            selected_subcategory = "Basic"
+                            print("Using simple hardcoded word list as final fallback")
+                            
+            except Exception as fallback_error:
+                print(f"Fallback failed: {fallback_error}")
+                # Final fallback to simple words
+                words_list = ["cat", "dog", "sun", "moon", "star", "tree", "book", "game"]
+                ws_simple = WordSearch(words=" ".join([w.upper() for w in words_list]), level=1, size=15)
+                puzzle_text = str(ws_simple)
+                selected_category = "Simple Words"
+                selected_subcategory = "Basic"
+                print("Using simple hardcoded word list as emergency fallback")
+        
+        # Convert text to image using PIL
+        puzzle_buffer = create_word_search_image(puzzle_text)
+            
+    except Exception as e:
+        print(f"Error generating word search: {e}")
+        await safe_send(channel, "\u200b\n❌ **Failed to generate puzzle! Please try again.**\n\u200b")
+        wf_winner = True
+        return None
+    
+    # Game setup
+    GAME_DURATION = 45
+    user_scores = {}  # {user_id: {"name": display_name, "words": [list of words found]}}
+    found_words = set()  # Track which words have been found
+    remaining_words = set(word.upper().replace(' ', '').replace('-', '') for word in words_list)
+    
+    # Send puzzle
+    puzzle_buffer.seek(0)
+    puzzle_file = discord.File(puzzle_buffer, filename="word_search.png")
+    
+    embed = discord.Embed(title="🔍 Word Search Challenge", color=0x3498db)
+    embed.description = f"**Category:** {selected_category}\n**Subcategory:** {selected_subcategory}\n**Words Found:** 0/{len(words_list)}"
+    embed.set_image(url="attachment://word_search.png")
+    embed.set_footer(text="🎯 **Game Started!** Start typing words you find!\n\n✨ Messages will erase during game.")
+    
+    game_message = await safe_send(channel, embed=embed, file=puzzle_file)
+    await asyncio.sleep(2)
+    
+    # No separate tracking message needed - will update the main game message only
+    
+    # Game loop
+    game_start_time = asyncio.get_event_loop().time()
+    last_update_time = game_start_time
+    
+    def game_check(m):
+        return m.channel == channel and m.author != bot.user
+    
+    while (asyncio.get_event_loop().time() - game_start_time < GAME_DURATION and 
+           len(remaining_words) > 0):
+        try:
+            current_time = asyncio.get_event_loop().time()
+            remaining_time = GAME_DURATION - (current_time - game_start_time)
+            
+            msg = await bot.wait_for("message", timeout=2, check=game_check)
+            
+            # Delete the user's guess message to keep chat clean
+            try:
+                await msg.delete()
+            except:
+                pass
+            
+            guess = msg.content.strip().upper().replace(' ', '').replace('-', '')
+            original_guess = msg.content.strip()  # Keep original format for display
+            user_id = msg.author.id
+            display_name = msg.author.display_name
+            
+            # Check if the guess matches any remaining word
+            if guess in remaining_words:
+                remaining_words.remove(guess)
+                found_words.add(guess)
+                
+                # Update user score
+                if user_id not in user_scores:
+                    user_scores[user_id] = {"name": display_name, "words": []}
+                user_scores[user_id]["words"].append(original_guess)
+                
+                # Found words info will be added to the main embed below
+                
+                # Update the original puzzle image when a word is found
+                try:
+                    # Create updated puzzle with crossed out words
+                    found_list = list(found_words)
+                    
+                    # Generate updated puzzle image showing found words
+                    updated_buffer = create_word_search_image(puzzle_text, found_words=found_list)
+                    
+                    if updated_buffer and len(updated_buffer.getvalue()) > 0:
+                        updated_buffer.seek(0)
+                        updated_file = discord.File(updated_buffer, filename="word_search.png")
+                        
+                        # Build the list of found words grouped by user
+                        found_entries = []
+                        for uid, user_data in user_scores.items():
+                            if user_data["words"]:
+                                words_list_str = ", ".join(user_data["words"])
+                                found_entries.append(f"🎉 **{user_data['name']}** found: {words_list_str}")
+                        
+                        # Update the original embed with current progress
+                        embed_update = discord.Embed(title="🔍 Word Search Challenge", color=0x27ae60 if len(remaining_words) == 0 else 0x3498db)
+                        
+                        # Create description with found words information
+                        description = f"**Category:** {selected_category}\n**Subcategory:** {selected_subcategory}\n**Words Found:** {len(found_words)}/{len(words_list)}"
+                        if found_entries:
+                            description += "\n\n" + "\n".join(found_entries)
+                        
+                        embed_update.description = description
+                        embed_update.set_image(url="attachment://word_search.png")
+                        embed_update.set_footer(text="🎯 Game Started! Start typing words you find!\n\n✨ Messages will erase during game.")
+                        
+                        # Edit the original game message to show updated progress
+                        await game_message.edit(embed=embed_update, attachments=[updated_file])
+                    last_update_time = current_time
+                except Exception as e:
+                    print(f"Error updating puzzle: {e}")
+                        
+                if len(remaining_words) == 0:
+                    break
+                    
+        except asyncio.TimeoutError:
+            # Check for time updates
+            current_time = asyncio.get_event_loop().time()
+            remaining_time = GAME_DURATION - (current_time - game_start_time)
+            
+            if current_time - last_update_time > 60:  # Update every minute
+                embed_update = discord.Embed(title="🔍 Word Search Status", color=0xf39c12)
+                embed_update.add_field(name="Found", value=f"{len(found_words)}/{len(words_list)}", inline=True)
+                await safe_send(channel, embed=embed_update)
+                last_update_time = current_time
+                
+            continue
+        except Exception as e:
+            print(f"Error in game loop: {e}")
+            continue
+    
+    # Game over - show final results
+    try:
+        # Generate final puzzle image showing all word locations
+        words_string = " ".join(words_list)
+        ws_solution = WordSearch(
+            words=words_string,
+            level=3,
+            size=20
+        )
+        solution_text = str(ws_solution)  # This should show solution with key
+        
+        # Convert solution text to image
+        solution_buffer = create_word_search_image(solution_text, found_words=found_words, is_solution=True, words_list=words_list)
+            
+    except Exception as e:
+        print(f"Error generating solution: {e}")
+        solution_buffer = None
+    
+    # Final results
+    if len(remaining_words) == 0:
+        final_message = "\u200b\n🏆 **PUZZLE COMPLETE!** All words found!\n\u200b"
+    else:
+        final_message = "\u200b\n⏰ **Time's Up!**\n\u200b"
+    
+    # Update the main game message one final time
+    try:
+        # Build final found words list
+        found_entries = []
+        if user_scores:
+            for user_id, user_data in user_scores.items():
+                if user_data["words"]:
+                    words_list_str = ", ".join(user_data["words"])
+                    found_entries.append(f"🎉 **{user_data['name']}** found: {words_list_str}")
+        
+        # Create final embed
+        final_embed = discord.Embed(
+            title="🔍 Word Search Challenge", 
+            color=0x27ae60 if len(remaining_words) == 0 else 0xe67e22
+        )
+        
+        # Create final description 
+        game_status = "🏆 **GAME COMPLETE!**" if len(remaining_words) == 0 else "⏰ **TIME'S UP!**"
+        description = f"**Category:** {selected_category}\n**Subcategory:** {selected_subcategory}\n**Words Found:** {len(found_words)}/{len(words_list)} - {game_status}"
+        if found_entries:
+            description += "\n\n" + "\n".join(found_entries)
+        
+        final_embed.description = description
+        final_embed.set_image(url="attachment://word_search.png")
+        final_embed.set_footer(text="🎮 Game Complete! Thanks for playing!")
+        
+        # Edit the main game message with final status
+        await game_message.edit(embed=final_embed)
+    except Exception as e:
+        print(f"Error updating final game message: {e}")
+    
+    await safe_send(channel, final_message)
+    await asyncio.sleep(2)
+    
+    # Show scores
+    if user_scores:
+        sorted_users = sorted(user_scores.items(), key=lambda x: len(x[1]["words"]), reverse=True)
+        
+        scores_embed = discord.Embed(title="🏆 Final Scores", color=0xffd700)
+        
+        for i, (user_id, data) in enumerate(sorted_users[:5]):
+            name = data["name"]
+            word_count = len(data["words"])
+            words_found = ", ".join(data["words"])
+            
+            if i == 0:
+                scores_embed.add_field(name=f"🥇 {name}", value=f"{word_count} words: {words_found}", inline=False)
+            elif i == 1:
+                scores_embed.add_field(name=f"🥈 {name}", value=f"{word_count} words: {words_found}", inline=False)
+            elif i == 2:
+                scores_embed.add_field(name=f"🥉 {name}", value=f"{word_count} words: {words_found}", inline=False)
+            else:
+                scores_embed.add_field(name=f"{i+1}. {name}", value=f"{word_count} words: {words_found}", inline=False)
+        
+        await safe_send(channel, embed=scores_embed)
+        
+        # Announce the winner
+        winner_id, winner_data = sorted_users[0]
+        winner_name = winner_data["name"]
+        words_found_count = len(winner_data["words"])
+        await safe_send(channel, f"\u200b\n🎉🥇 The winner is **{winner_name}** with **{words_found_count}** words found!\n\u200b")
+    else:
+        await safe_send(channel, "\u200b\n😢 **No words were found!**\n\u200b")
+    
+    await asyncio.sleep(2)
+    
+    # Show solution
+    if solution_buffer:
+        solution_buffer.seek(0)
+        solution_file = discord.File(solution_buffer, filename="word_search_solution.png")
+        
+        solution_embed = discord.Embed(title="📋 Solution", color=0x95a5a6)
+        
+        # Separate found and not found words
+        all_found_words = set()
+        for user_data in user_scores.values():
+            all_found_words.update(word.lower() for word in user_data["words"])
+        
+        words_found = [word for word in words_list if word.lower() in all_found_words]
+        words_not_found = [word for word in words_list if word.lower() not in all_found_words]
+        
+        if words_found:
+            solution_embed.add_field(name="Words Found", value=", ".join(words_found), inline=False)
+        if words_not_found:
+            solution_embed.add_field(name="Words Not Found", value=", ".join(words_not_found), inline=False)
+        solution_embed.set_image(url="attachment://word_search_solution.png")
+        
+        await safe_send(channel, embed=solution_embed, file=solution_file)
+    else:
+        # Just show the word list
+        solution_embed = discord.Embed(title="📋 Solution", color=0x95a5a6)
+        
+        # Separate found and not found words
+        all_found_words = set()
+        for user_data in user_scores.values():
+            all_found_words.update(word.lower() for word in user_data["words"])
+        
+        words_found = [word for word in words_list if word.lower() in all_found_words]
+        words_not_found = [word for word in words_list if word.lower() not in all_found_words]
+        
+        if words_found:
+            solution_embed.add_field(name="Words Found", value=", ".join(words_found), inline=False)
+        if words_not_found:
+            solution_embed.add_field(name="Words Not Found", value=", ".join(words_not_found), inline=False)
+        await safe_send(channel, embed=solution_embed)
+    
+    # Clean up any temporary files (if any were created)
+    try:
+        if os.path.exists("test_puzzle.pdf"):
+            os.remove("test_puzzle.pdf")
+    except:
+        pass
+    
+    wf_winner = True
+    await asyncio.sleep(3)
+    
+    # Return winner (user who found the most words)
+    if user_scores:
+        winner_id = max(user_scores.items(), key=lambda x: len(x[1]["words"]))[0]
+        return winner_id    
+    else:
+        return None
+
 
 
 async def ask_okrace_challenge(winner, winner_id, num=1):
@@ -2628,8 +3364,6 @@ def generate_music_puzzle(number_of_notes):
 
 
 def generate_music_image(note_string):
-    from PIL import Image, ImageDraw
-    import io
 
     if isinstance(note_string, list):
         notes = [n.strip().upper() for n in note_string]
@@ -4101,7 +4835,8 @@ async def ask_chaos_challenge(winner, winner_id, num_of_games):
         ask_tally_challenge,
         ask_currency_challenge,
         ask_chess_challenge,
-        ask_stock_challenge
+        ask_stock_challenge,
+        ask_search_challenge
     ]
 
     num_of_games = min(num_of_games, len(challenge_functions))
@@ -9033,6 +9768,8 @@ async def select_wof_questions(winner, winner_id):
         message += f"{counter}.\u200b 🌍💵 XXXX\n"
         counter = counter + 1
         message += f"{counter}.\u200b 🥒🏁 OkRACE\n"
+        counter = counter + 1
+        message += f"{counter}.\u200b 🔍🔤 Spotlight\n"
         message += f"99.\u200b 🌀🤯 CHAOS\n"
 
         message += f"\n⚙️ **Other Options**\n"
@@ -9234,6 +9971,11 @@ async def select_wof_questions(winner, winner_id):
         
         elif selected_wof_category == "40":
             await ask_okrace_challenge(winner, winner_id)
+            await asyncio.sleep(3)
+            return None
+        
+        elif selected_wof_category == "41":
+            await ask_search_challenge(winner, winner_id)
             await asyncio.sleep(3)
             return None
         
@@ -9497,10 +10239,11 @@ async def ask_wof_number(winner, winner_id):
         "38": "Wall Street",
         "39": "XXXX",
         "40": "OkRACE",
+        "41": "Spotlight",
         "99": "CHAOS"
     }
     multiplayer_required = {k for k in unlocks if k not in {"5", "6", "7", "8", "9"}}
-    all_options = {str(i) for i in range(41)} | {"00", "x", "99"}
+    all_options = {str(i) for i in range(42)} | {"00", "x", "99"}
 
     start = asyncio.get_event_loop().time()
     selected_question = None
@@ -9517,7 +10260,7 @@ async def ask_wof_number(winner, winner_id):
             if content == "00":
                 await message.add_reaction("👍")
                 set_a = [str(i) for i in range(5)]
-                set_b = [str(i) for i in range(5, 41)] if len(round_responders) >= num_list_players else [str(i) for i in range(5, 10)]
+                set_b = [str(i) for i in range(5, 42)] if len(round_responders) >= num_list_players else [str(i) for i in range(5, 10)]
                 selected_question = random.choice(set_a if random.random() < 0.5 else set_b)
                 
                 # Store frequency data for random selection
@@ -9557,7 +10300,7 @@ async def ask_wof_number(winner, winner_id):
 
     # Fallback random selection
     set_a = [str(i) for i in range(5)]
-    set_b = [str(i) for i in range(5, 41)] if len(round_responders) >= num_list_players else [str(i) for i in range(5, 10)]
+    set_b = [str(i) for i in range(5, 42)] if len(round_responders) >= num_list_players else [str(i) for i in range(5, 10)]
     selected_question = random.choice(set_a if random.random() < 0.5 else set_b)
     
     # Store frequency data for random selection
@@ -10758,7 +11501,6 @@ def create_summary_prompt_and_role(winner, message_type, is_sovereign, round_dat
             f"{winner} won, and everyone else should be embarrassed. Roast their username and mock their answers to prove they only won because everyone else was worse. Be hilariously mean, sarcastic, and over-the-top in your insults. Keep it to 4 sentences, and sprinkle liberally with emojis. {base_round_data}",
             f"A big 'congratulations' to {winner} 🙄. Use their username as fodder for the most sarcastic roast ever, and tear into their most ridiculous responses during the game. Be mean, petty, and emoji-heavy, like you're fake-smiling through gritted teeth. No more than 4 sentences. {base_round_data}"
         ]
-        import random
         prompt = random.choice(roast_prompts)
         system_role = "You are a bitter, dirty, and raunchy old curmudgeon who is completely fed up with all the trivia players."
         return prompt, system_role
@@ -13483,7 +14225,7 @@ async def start_trivia():
             #await ask_tally_challenge("TheOkraG",591861826690613248, 3)
             #await ask_stock_challenge("TheOkraG",591861826690613248, 3)
             #await ask_chess_challenge("TheOkraG",591861826690613248, 3)
-            #await ask_okrace_challenge("TheOkraG",591861826690613248, 3)
+            #await ask_search_challenge("TheOkraG",591861826690613248, 3)
             
 
             round_responders.clear()  # Reset round responders
@@ -13501,13 +14243,12 @@ async def start_trivia():
 
             start_message = f"\u200b\n✨🧪 **NEW** from the **Okra Lab**! 🧪✨\n"
             
-            start_message += f"\n🍔👑 **Bumper King** [Okranities]"
-            start_message += f"\n🏁🥒 **OkRACE** [Mini-Game]"
+            start_message += f"\n🔍🔤 **Spotlight** [Mini-Game]"
 
             start_message += "\n\u200b"
 
-            #await safe_send(channel, start_message)
-            #await asyncio.sleep(5)
+            await safe_send(channel, start_message)
+            await asyncio.sleep(5)
             
             
             start_message = f"\u200b\n\u200b\n⏩ **Starting a round of {questions_per_round} questions!** ⏩\n\u200b\n\u200b"
@@ -13833,7 +14574,12 @@ def extract_bumper_from_message(message: discord.Message) -> tuple[int | None, s
 async def on_message(message):
     global collected_responses, question_asked_start, question_asked_end, bumped_status, bumper_king_id, bumper_king_name
 
-    if message.author == bot.user:
+    #if message.author == bot.user:
+    #    return
+    
+    is_self = (message.author.id == bot.user.id)
+
+    if is_self:
         return
 
     if message.author.id == DISBOARD_BOT_ID:
@@ -13925,8 +14671,7 @@ async def on_message(message):
         else:
             await safe_send(channel, content=f"\n🙏😔 Sorry **{message.author.display_name}**. Only Okrans can toggle mid-game options 🥒️.\n")
             await message.add_reaction("😩")
-
-
+    
     if question_asked_start is None or question_asked_end is None:
         return
 
@@ -14025,6 +14770,7 @@ def get_minigame_name(number):
         "38": "Wall Street",
         "39": "XXXX",
         "40": "OkRACE",
+        "41": "Spotlight",
         "99": "CHAOS",
         "x": "Skip Mini Game"
     }
@@ -14146,7 +14892,6 @@ async def on_ready():
                     print(f"🔍 Guild synced commands: {[cmd.name for cmd in synced]}")
             except Exception as guild_e:
                 print(f"❌ Guild sync also failed: {guild_e}")
-                import traceback
                 traceback.print_exc()
     
     await start_trivia()
@@ -14154,3 +14899,6 @@ async def on_ready():
 
 if __name__ == "__main__":
     bot.run(discord_token)
+
+
+
