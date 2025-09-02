@@ -1097,7 +1097,7 @@ def create_word_search_image(puzzle_text, found_words=None, is_solution=False, w
         
         # Try to use a monospace font
         try:
-            font = ImageFont.truetype("Monaco", 24)
+            font = ImageFont.truetype("Monaco", 32)
         except:
             try:
                 font = ImageFont.truetype("Courier", 24)
@@ -14235,7 +14235,7 @@ async def start_trivia():
             #await ask_tally_challenge("TheOkraG",591861826690613248, 3)
             #await ask_stock_challenge("TheOkraG",591861826690613248, 3)
             #await ask_chess_challenge("TheOkraG",591861826690613248, 3)
-            await ask_search_challenge("TheOkraG",591861826690613248, 3)
+            #await ask_search_challenge("TheOkraG",591861826690613248, 3)
             
 
             round_responders.clear()  # Reset round responders
