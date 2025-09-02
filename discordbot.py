@@ -1098,11 +1098,14 @@ def create_word_search_image(puzzle_text, found_words=None, is_solution=False, w
         # Try to use a monospace font
         try:
             font = ImageFont.truetype("Monaco", 24)
+            print("Monaco")
         except:
             try:
                 font = ImageFont.truetype("Courier", 24)
+                print("Courier")
             except:
                 font = ImageFont.load_default()
+                print("Default")
         
         # Grid starts immediately after padding (no title or clues)
         grid_start_y = padding
@@ -1153,9 +1156,20 @@ def create_word_search_image(puzzle_text, found_words=None, is_solution=False, w
                 
                 # Draw background for found letters
                 if bg_color:
-                    draw.rectangle([x-2, y-2, x+22, y+30], fill=bg_color)
+                    draw.rectangle([x, y, x+char_width, y+char_height], fill=bg_color)
                 
-                draw.text((x, y), char.upper(), fill=char_color, font=font)
+                # Center the text in the cell
+                char_text = char.upper()
+                # Get text dimensions
+                bbox = draw.textbbox((0, 0), char_text, font=font)
+                text_width = bbox[2] - bbox[0]
+                text_height = bbox[3] - bbox[1]
+                
+                # Calculate centered position
+                text_x = x + (char_width - text_width) // 2
+                text_y = y + (char_height - text_height) // 2
+                
+                draw.text((text_x, text_y), char_text, fill=char_color, font=font)
         
         # No word list displayed in images
         
@@ -1487,7 +1501,6 @@ async def ask_search_challenge(winner, winner_id, num=1):
     embed.set_footer(text="🎯 **Game Started!** Start typing words you find!\n\n✨ Messages will erase during game.")
     
     game_message = await safe_send(channel, embed=embed, file=puzzle_file)
-    await asyncio.sleep(2)
     
     # No separate tracking message needed - will update the main game message only
     
@@ -14225,7 +14238,7 @@ async def start_trivia():
             #await ask_tally_challenge("TheOkraG",591861826690613248, 3)
             #await ask_stock_challenge("TheOkraG",591861826690613248, 3)
             #await ask_chess_challenge("TheOkraG",591861826690613248, 3)
-            #await ask_search_challenge("TheOkraG",591861826690613248, 3)
+            await ask_search_challenge("TheOkraG",591861826690613248, 3)
             
 
             round_responders.clear()  # Reset round responders
