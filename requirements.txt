@@ -34,6 +34,10 @@ lxml==5.4.0
 Metaphone==0.6
 motor==3.7.0
 multidict==6.4.3
+fpdf2==2.7.8
+rich==13.6.0
+ordered-set>=4.0.0
+python-dotenv
 nltk==3.9.1
 numpy==2.2.5
 openai==1.78.0
