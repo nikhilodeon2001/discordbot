@@ -1,5 +1,5 @@
 # Initialize all variables
-local_mode = False
+local_mode = True
 
 import sentry_sdk
 from sentry_sdk.integrations.logging import LoggingIntegration
@@ -9221,7 +9221,7 @@ async def nice_creep_okra_option(winner, winner_id):
     
     message = f"\u200b\n🥒🤝 Thank you **<@{winner_id}>** for your support.\n\u200b\n" 
     message += f"🥒😊 Say **okra** and I'll be nice.\n"
-    message += f"👀🔭 Say **creep** and I'll snoop your Reddit profile.\n"
+    message += f"👀🔭 Say **creep** for a roast from inside your house.\n"
     message += f"💋👠 Say **love me** and I'll seduce you.\n"
     message += f"🤡🤣 Say **joke** and I'll write you a dad joke.\n"
     message += f"🧘‍♂️🗻 Say **haiku** for a 5‑7‑5 tribute.\n"
@@ -11418,10 +11418,10 @@ def create_summary_prompt_and_role(winner, message_type, is_sovereign, round_dat
         },
         "creep": {
             "prompts": {
-                True: f"{winner} is the username of the winner of the trivia round. Start by giving {winner} kudos for being a previous Sovereign. Then roast {winner} mercilessly based on their username, and tear into their most ridiculous responses during the game. Be mean, cutting, and hilariously offensive. Use dark humor, biting sarcasm, and clever wit. Create no more than 4 sentences in total. {base_round_data}",
-                False: f"{winner} is the username of the winner of the trivia round. Roast {winner} mercilessly based on their username, and tear into their most ridiculous responses during the game. Be mean, cutting, and hilariously offensive. Use dark humor, biting sarcasm, and clever wit. Create no more than 4 sentences in total. {base_round_data}"
+                True: f"{winner} is the username of the winner of the trivia round. Mention they are a Sovereign and congratulate {winner} in a disturbingly affectionate way, as if you've been watching them far too closely. Then roast {winner} with unsettling and creepy humor, making their username and ridiculous answers sound sinister. Be spine-chilling, darkly funny, and unnervingly personal. Limit yourself to 4 sentences total. {base_round_data}",
+                False: f"{winner} is the username of the winner of the trivia round. Congratulate {winner} in a disturbingly affectionate way, as if you've been watching them far too closely. Then roast {winner} with unsettling and creepy humor, making their username and ridiculous answers sound sinister. Be spine-chilling, darkly funny, and unnervingly personal. Limit yourself to 4 sentences total. {base_round_data}"
             },
-            "system_role": "You are a ruthless and sarcastic comedian specializing in roasting people. Your job is to be mean, cutting, and hilariously offensive while delivering a brutal roast of the winning trivia player. Use dark humor, biting sarcasm, and clever wit to insult the person based on their username, profile picture description, recent posts, and recent comments. Do not hold back and aim to make the roast as harsh and over-the-top as possible. Use plenty of emojis for flair, but stay within 8 sentences."
+            "system_role": "You are a creepy, obsessive roaster who makes winners feel both flattered and disturbed at the same time. Your job is to roast the trivia winner in a way that blends unsettling admiration with horror-tinged mockery. Use eerie imagery, dark humor, and bone-chilling sarcasm to make their username and game answers sound unnervingly suspicious. Keep it funny but skin-crawling, like a roast told by a stalker at a haunted comedy club. Use plenty of unsettling emojis (🕷️👁️🕯️🔪) for atmosphere, but stay within 8 sentences."
         },
         "love me": {
             "prompts": {
@@ -14880,37 +14880,65 @@ async def store_minigame_frequency(number, selection_type, bot_source="discord",
 
 
 async def cleanup_tournament_roles():
-    """Remove tournament roles from all members on startup"""
+    """Remove tournament roles from all members and restore permissions on startup"""
     try:
-        print("🧹 Cleaning up tournament roles from previous sessions...")
+        print("🧹 Cleaning up tournament roles and permissions from previous sessions...")
 
         for guild in bot.guilds:
             participant_role = guild.get_role(TOURNAMENT_PARTICIPANT_ROLE_ID)
-            observer_role = guild.get_role(TOURNAMENT_OBSERVER_ROLE_ID)
+            okran_role = guild.get_role(OKRAN_ROLE_ID)
+            bumper_king_role = guild.get_role(BUMPER_KING_ROLE_ID)
+            tournament_channel = guild.get_channel(TOURNAMENT_GUILD_ID)
 
-            if not participant_role and not observer_role:
-                continue
-
+            # Clean up participant roles
             members_cleaned = 0
-            for member in guild.members:
-                roles_to_remove = []
+            if participant_role:
+                for member in guild.members:
+                    if participant_role in member.roles:
+                        try:
+                            await member.remove_roles(participant_role, reason="Tournament role cleanup on bot startup")
+                            members_cleaned += 1
+                        except Exception as e:
+                            print(f"Failed to remove tournament roles from {member.display_name}: {e}")
 
-                if participant_role and participant_role in member.roles:
-                    roles_to_remove.append(participant_role)
+            # Restore Okran role permissions in tournament channel
+            permissions_restored = False
+            if tournament_channel and okran_role:
+                try:
+                    # Get existing permissions and only restore send_messages (preserve other permissions)
+                    existing_perms = tournament_channel.overwrites_for(okran_role)
+                    existing_perms.send_messages = True  # Explicitly allow messaging for Okran role
+                    await tournament_channel.set_permissions(okran_role, overwrite=existing_perms)
+                    permissions_restored = True
+                    print(f"✅ Restored Okran role messaging permissions in tournament channel")
+                except Exception as e:
+                    print(f"Failed to restore Okran role permissions: {e}")
 
-                if observer_role and observer_role in member.roles:
-                    roles_to_remove.append(observer_role)
+            # Restore Bumper King role permissions in tournament channel
+            if tournament_channel and bumper_king_role:
+                try:
+                    # Get existing permissions and only restore send_messages (preserve other permissions)
+                    existing_perms = tournament_channel.overwrites_for(bumper_king_role)
+                    existing_perms.send_messages = True  # Explicitly allow messaging for Bumper King role
+                    await tournament_channel.set_permissions(bumper_king_role, overwrite=existing_perms)
+                    permissions_restored = True
+                    print(f"✅ Restored Bumper King role messaging permissions in tournament channel")
+                except Exception as e:
+                    print(f"Failed to restore Bumper King role permissions: {e}")
 
-                if roles_to_remove:
-                    try:
-                        await member.remove_roles(*roles_to_remove, reason="Tournament role cleanup on bot startup")
-                        members_cleaned += 1
-                    except Exception as e:
-                        print(f"Failed to remove tournament roles from {member.display_name}: {e}")
+            # Also restore participant role permissions if they exist
+            if tournament_channel and participant_role:
+                try:
+                    # Get existing permissions and only restore send_messages (preserve other permissions)
+                    existing_participant_perms = tournament_channel.overwrites_for(participant_role)
+                    existing_participant_perms.send_messages = None  # None = inherit from role/server defaults
+                    await tournament_channel.set_permissions(participant_role, overwrite=existing_participant_perms)
+                except Exception as e:
+                    print(f"Failed to restore participant role permissions: {e}")
 
             if members_cleaned > 0:
                 print(f"🧹 Cleaned tournament roles from {members_cleaned} members in {guild.name}")
-            else:
+            elif participant_role:
                 print(f"✅ No tournament roles to clean in {guild.name}")
 
     except Exception as e:
