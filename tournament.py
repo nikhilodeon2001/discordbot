@@ -357,20 +357,23 @@ class TournamentManager:
                 try:
                     message = await self.bot.wait_for('message', timeout=timeout, check=check_signup)
 
-                    # Check if user has OKRAN_ROLE_ID
+                    # Check if user has OKRAN_ROLE_ID or BUMPER_KING_ROLE_ID
                     import discordbot
                     okran_role_id = getattr(discordbot, 'OKRAN_ROLE_ID', None)
                     okran_role_id_2 = getattr(discordbot, 'OKRAN_ROLE_ID_2', None)
+                    bumper_king_role_id = getattr(discordbot, 'BUMPER_KING_ROLE_ID', None)
 
-                    has_okran_role = False
+                    has_tournament_role = False
                     if okran_role_id and any(role.id == okran_role_id for role in message.author.roles):
-                        has_okran_role = True
+                        has_tournament_role = True
                     elif okran_role_id_2 and any(role.id == okran_role_id_2 for role in message.author.roles):
-                        has_okran_role = True
+                        has_tournament_role = True
+                    elif bumper_king_role_id and any(role.id == bumper_king_role_id for role in message.author.roles):
+                        has_tournament_role = True
 
-                    if not has_okran_role:
-                        # User doesn't have Okran role
-                        await message.reply("Tournaments are for Okrans only")
+                    if not has_tournament_role:
+                        # User doesn't have tournament role
+                        await message.reply("Tournaments are for Okrans and Bumper Kings only")
                         await message.add_reaction("😔")
                         continue
 
@@ -877,26 +880,45 @@ class TournamentManager:
             # Import the role IDs from discordbot.py
             import discordbot
             participant_role_id = getattr(discordbot, 'TOURNAMENT_PARTICIPANT_ROLE_ID', None)
-            observer_role_id = getattr(discordbot, 'TOURNAMENT_OBSERVER_ROLE_ID', None)
+            okran_role_id = getattr(discordbot, 'OKRAN_ROLE_ID', None)
+            bumper_king_role_id = getattr(discordbot, 'BUMPER_KING_ROLE_ID', None)
 
-            if not participant_role_id or not observer_role_id:
-                logger.error("Tournament role IDs not found in discordbot.py")
+            if not participant_role_id:
+                logger.error("Tournament Participant role ID not found in discordbot.py")
                 return
 
             # Get the roles
             participant_role = channel.guild.get_role(participant_role_id)
-            observer_role = channel.guild.get_role(observer_role_id)
+            okran_role = channel.guild.get_role(okran_role_id) if okran_role_id else None
+            bumper_king_role = channel.guild.get_role(bumper_king_role_id) if bumper_king_role_id else None
 
-            if not participant_role or not observer_role:
-                logger.error("Tournament roles not found in guild")
+            if not participant_role:
+                logger.error("Tournament Participant role not found in guild")
                 return
 
-            # Set channel permissions: observers can't send messages, participants can
-            await channel.set_permissions(observer_role, send_messages=False)
-            await channel.set_permissions(participant_role, send_messages=True)
+            # Set channel permissions: only participants can send messages (preserve other permissions)
+            existing_participant_perms = channel.overwrites_for(participant_role)
+            existing_participant_perms.send_messages = True
+            await channel.set_permissions(participant_role, overwrite=existing_participant_perms)
 
-            # Assign roles to all current channel members
-            await self.assign_tournament_roles(channel, allowed_user_ids, participant_role, observer_role)
+            # Disable Okran role messaging during questions (preserve other permissions)
+            if okran_role:
+                # Get existing permissions for this role
+                existing_perms = channel.overwrites_for(okran_role)
+                # Only modify send_messages, keep everything else
+                existing_perms.send_messages = False
+                await channel.set_permissions(okran_role, overwrite=existing_perms)
+
+            # Disable Bumper King role messaging during questions (preserve other permissions)
+            if bumper_king_role:
+                # Get existing permissions for this role
+                existing_perms = channel.overwrites_for(bumper_king_role)
+                # Only modify send_messages, keep everything else
+                existing_perms.send_messages = False
+                await channel.set_permissions(bumper_king_role, overwrite=existing_perms)
+
+            # Assign participant role to the two current participants
+            await self.assign_tournament_roles(channel, allowed_user_ids, participant_role)
 
             logger.debug(f"Restricted permissions in {channel.name} to participants: {allowed_user_ids}")
         except Exception as e:
@@ -908,50 +930,54 @@ class TournamentManager:
             # Import the role IDs from discordbot.py
             import discordbot
             participant_role_id = getattr(discordbot, 'TOURNAMENT_PARTICIPANT_ROLE_ID', None)
-            observer_role_id = getattr(discordbot, 'TOURNAMENT_OBSERVER_ROLE_ID', None)
+            okran_role_id = getattr(discordbot, 'OKRAN_ROLE_ID', None)
+            bumper_king_role_id = getattr(discordbot, 'BUMPER_KING_ROLE_ID', None)
 
-            if participant_role_id and observer_role_id:
+            if participant_role_id:
                 participant_role = channel.guild.get_role(participant_role_id)
-                observer_role = channel.guild.get_role(observer_role_id)
+                okran_role = channel.guild.get_role(okran_role_id) if okran_role_id else None
+                bumper_king_role = channel.guild.get_role(bumper_king_role_id) if bumper_king_role_id else None
 
-                if participant_role and observer_role:
-                    # Remove channel permission overrides for tournament roles
-                    await channel.set_permissions(participant_role, send_messages=None)
-                    await channel.set_permissions(observer_role, send_messages=None)
+                if participant_role:
+                    # Remove channel permission overrides for tournament participant role (preserve other permissions)
+                    existing_participant_perms = channel.overwrites_for(participant_role)
+                    existing_participant_perms.send_messages = None  # None = inherit from role/server defaults
+                    await channel.set_permissions(participant_role, overwrite=existing_participant_perms)
 
-                    # Remove tournament roles from all members
-                    await self.remove_tournament_roles(channel, participant_role, observer_role)
+                    # Re-enable Okran role messaging after questions (preserve other permissions)
+                    if okran_role:
+                        # Get existing permissions for this role
+                        existing_perms = channel.overwrites_for(okran_role)
+                        # Explicitly allow send_messages for Okran role, keep everything else
+                        existing_perms.send_messages = True  # Explicitly allow messaging
+                        await channel.set_permissions(okran_role, overwrite=existing_perms)
+
+                    # Re-enable Bumper King role messaging after questions (preserve other permissions)
+                    if bumper_king_role:
+                        # Get existing permissions for this role
+                        existing_perms = channel.overwrites_for(bumper_king_role)
+                        # Explicitly allow send_messages for Bumper King role, keep everything else
+                        existing_perms.send_messages = True  # Explicitly allow messaging
+                        await channel.set_permissions(bumper_king_role, overwrite=existing_perms)
+
+                    # Remove tournament participant role from all members
+                    await self.remove_tournament_roles(channel, participant_role)
 
             logger.debug(f"Restored permissions in {channel.name}")
         except Exception as e:
             logger.error(f"Failed to restore channel permissions: {e}")
 
     async def assign_tournament_roles(self, channel: discord.TextChannel, participant_user_ids: List[str],
-                                    participant_role: discord.Role, observer_role: discord.Role):
-        """Assign tournament roles to channel members"""
+                                    participant_role: discord.Role):
+        """Assign tournament participant role to the current participants"""
         try:
-           
-            # Get all members who can see this channel
-            assigned_count = 0
+            # Only assign participant role to the two current participants
             for member in channel.guild.members:
-                if channel.permissions_for(member).view_channel:
-                    # Skip bots
-                    if member.bot:
-                        continue
-
-                    # Participants get participant role, everyone else gets observer role
+                if channel.permissions_for(member).view_channel and not member.bot:
                     if str(member.id) in participant_user_ids:
+                        # Add participant role if not already present
                         if participant_role not in member.roles:
                             await member.add_roles(participant_role, reason="Tournament participant")
-                        if observer_role in member.roles:
-                            await member.remove_roles(observer_role, reason="Tournament participant")
-                        assigned_count += 1
-                    else:
-                        if observer_role not in member.roles:
-                            await member.add_roles(observer_role, reason="Tournament observer")
-                        if participant_role in member.roles:
-                            await member.remove_roles(participant_role, reason="Tournament observer")
-                        assigned_count += 1
 
         except Exception as e:
             logger.error(f"Failed to assign tournament roles: {e}")
@@ -959,24 +985,18 @@ class TournamentManager:
             traceback.print_exc()
 
     async def remove_tournament_roles(self, channel: discord.TextChannel,
-                                    participant_role: discord.Role, observer_role: discord.Role):
-        """Remove tournament roles from all members"""
+                                    participant_role: discord.Role):
+        """Remove tournament participant role from all members"""
         try:
             for member in channel.guild.members:
-                roles_to_remove = []
                 if participant_role in member.roles:
-                    roles_to_remove.append(participant_role)
-                if observer_role in member.roles:
-                    roles_to_remove.append(observer_role)
-
-                if roles_to_remove:
-                    await member.remove_roles(*roles_to_remove, reason="Tournament ended")
+                    await member.remove_roles(participant_role, reason="Tournament question answered")
 
         except Exception as e:
             logger.error(f"Failed to remove tournament roles: {e}")
 
-    async def convert_participant_to_observer(self, channel: discord.TextChannel, user_id: str):
-        """Convert a participant to observer after they submit an answer"""
+    async def remove_participant_role_after_answer(self, channel: discord.TextChannel, user_id: str):
+        """Remove tournament participant role after they submit an answer"""
         try:
             # Skip fake players
             if user_id.startswith('fake_'):
@@ -985,16 +1005,14 @@ class TournamentManager:
             # Import the role IDs from discordbot.py
             import discordbot
             participant_role_id = getattr(discordbot, 'TOURNAMENT_PARTICIPANT_ROLE_ID', None)
-            observer_role_id = getattr(discordbot, 'TOURNAMENT_OBSERVER_ROLE_ID', None)
 
-            if not participant_role_id or not observer_role_id:
+            if not participant_role_id:
                 return
 
-            # Get the roles
+            # Get the role
             participant_role = channel.guild.get_role(participant_role_id)
-            observer_role = channel.guild.get_role(observer_role_id)
 
-            if not participant_role or not observer_role:
+            if not participant_role:
                 return
 
             # Get the member
@@ -1002,13 +1020,12 @@ class TournamentManager:
             if not member:
                 return
 
-            # Convert from participant to observer
+            # Remove participant role after submitting answer
             if participant_role in member.roles:
                 await member.remove_roles(participant_role, reason="Submitted answer")
-                await member.add_roles(observer_role, reason="Submitted answer - now observer")
 
         except Exception as e:
-            logger.error(f"Failed to convert participant to observer: {e}")
+            logger.error(f"Failed to remove participant role after answer: {e}")
 
     async def run_match(self, match: Dict, channel: discord.TextChannel) -> None:
         """Run a single match (RR or KO)"""
@@ -1425,8 +1442,8 @@ class TournamentManager:
                         if fake_user_id:
                             evaluation_result = self.evaluate_answer(answer, question_data)
 
-                            # Convert fake player to observer after submitting answer
-                            await self.convert_participant_to_observer(channel, fake_user_id)
+                            # Remove participant role after submitting answer
+                            await self.remove_participant_role_after_answer(channel, fake_user_id)
 
                             # React to fake player answer (for testing purposes)
                             try:
@@ -1453,8 +1470,8 @@ class TournamentManager:
                 else:
                     evaluation_result = self.evaluate_answer(message.content, question_data)
 
-                    # Convert real player to observer after submitting answer
-                    await self.convert_participant_to_observer(channel, str(message.author.id))
+                    # Remove participant role after submitting answer
+                    await self.remove_participant_role_after_answer(channel, str(message.author.id))
 
                     # React to player answer
                     try:
@@ -1706,6 +1723,9 @@ class TournamentManager:
             self.running_tasks[channel.id].cancel()
             del self.running_tasks[channel.id]
 
+        # Clean up roles and restore permissions
+        await self.restore_channel_permissions(channel)
+
         # Remove tournament from memory
         if channel.id in active_tournaments:
             del active_tournaments[channel.id]
@@ -1716,28 +1736,6 @@ class TournamentManager:
 
         return True
 
-    async def join_tournament(self, channel: discord.TextChannel, user: discord.Member) -> bool:
-        """Join a tournament in signup phase"""
-        tournament = self.load_tournament_by_channel(channel.id)
-        if not tournament or tournament["status"] != "signup":
-            return False
-
-        # Check if already joined
-        for player in tournament["players"]:
-            if player["user_id"] == str(user.id):
-                return False
-
-        # Add player to memory
-        new_player = {
-            "user_id": str(user.id),
-            "display_name": user.display_name,
-            "joined_at": datetime.now(timezone.utc),
-            "active": True,
-            "afk_strikes": 0
-        }
-
-        tournament["players"].append(new_player)
-        return True
 
 class TournamentCog(commands.Cog):
     """Discord cog for tournament slash commands"""
@@ -1763,20 +1761,23 @@ class TournamentCog(commands.Cog):
             )
             return
 
-        # Check if user has OKRAN_ROLE_ID
+        # Check if user has OKRAN_ROLE_ID or BUMPER_KING_ROLE_ID
         import discordbot
         okran_role_id = getattr(discordbot, 'OKRAN_ROLE_ID', None)
         okran_role_id_2 = getattr(discordbot, 'OKRAN_ROLE_ID_2', None)
+        bumper_king_role_id = getattr(discordbot, 'BUMPER_KING_ROLE_ID', None)
 
-        has_okran_role = False
+        has_tournament_role = False
         if okran_role_id and any(role.id == okran_role_id for role in interaction.user.roles):
-            has_okran_role = True
+            has_tournament_role = True
         elif okran_role_id_2 and any(role.id == okran_role_id_2 for role in interaction.user.roles):
-            has_okran_role = True
+            has_tournament_role = True
+        elif bumper_king_role_id and any(role.id == bumper_king_role_id for role in interaction.user.roles):
+            has_tournament_role = True
 
-        if not has_okran_role:
+        if not has_tournament_role:
             await interaction.response.send_message(
-                "Tournaments are for Okrans only",
+                "Tournaments are for Okrans and Bumper Kings only",
                 ephemeral=True
             )
             return
@@ -1859,23 +1860,6 @@ class TournamentCog(commands.Cog):
                 ephemeral=True
             )
 
-    @discord.app_commands.command(name="join", description="Join the tournament")
-    async def join(self, interaction: discord.Interaction):
-        if not self._is_channel_allowed(interaction):
-            await interaction.response.send_message(
-                "❌ This command can only be used in the designated tournament channel",
-                ephemeral=True
-            )
-            return
-        
-        success = await self.tournament_manager.join_tournament(interaction.channel, interaction.user)
-        if success:
-            await interaction.response.send_message("✅ You've joined the tournament!", ephemeral=True)
-        else:
-            await interaction.response.send_message(
-                "❌ Cannot join tournament (not in signup phase or already joined)",
-                ephemeral=True
-            )
 
 class TournamentStatsManager:
     """Manages tournament statistics and historical data"""
@@ -2066,11 +2050,11 @@ async def setup_tournament_system(bot: commands.Bot,
         logger.info("Tournament system setup complete!")
         logger.info("Available commands:")
         logger.info("  • /start - Start a new tournament")
-        logger.info("  • /status - Show current tournament status") 
+        logger.info("  • /status - Show current tournament status")
         logger.info("  • /cancel - Cancel active tournament (admin only)")
-        logger.info("  • /join - Join tournament signup")
         logger.info("  • /stats - Show your tournament statistics")
         logger.info("  • /leaderboard - Show server leaderboard")
+        logger.info("  • Type 'okra' during signup to join tournaments")
         
         if allowed_channel_id:
             logger.info(f"Tournament commands restricted to channel ID: {allowed_channel_id}")
