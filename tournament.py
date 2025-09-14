@@ -10,7 +10,7 @@ A comprehensive tournament system supporting:
 - Concurrency controls and channel restrictions
 
 Requirements:
-- Only works in #tournament channel
+- Only works in designated tournament channel
 - Single active tournament per channel
 - Tournament phases: signup -> rr -> semis -> final -> completed
 - Question timeout, AFK tracking, forfeit system
@@ -31,19 +31,18 @@ from bson import ObjectId
 import pymongo
 
 # Tournament Configuration Constants
-TOURNAMENT_CHANNEL_NAME = "tournament"
 ACTIVE_STATUSES = {"signup", "rr", "semis", "final"}
 
 # Tournament Configuration - Easily configurable defaults
-JOIN_WINDOW_SEC_DEFAULT = 5
-RR_QUESTIONS_PER_MATCH_DEFAULT = 1
-ANSWER_TIMEOUT_SEC_DEFAULT = 5
-MIN_PLAYERS_DEFAULT = 1
-MAX_PLAYERS_DEFAULT = 5
+JOIN_WINDOW_SEC_DEFAULT = 30
+RR_QUESTIONS_PER_MATCH_DEFAULT = 5
+ANSWER_TIMEOUT_SEC_DEFAULT = 15
+MIN_PLAYERS_DEFAULT = 4
+MAX_PLAYERS_DEFAULT = 8
 MODE_DEFAULT = "progressive"
 POINTS_PER_QUESTION_DEFAULT = 10
 MATCH_POINTS = {"win": 3, "tie": 1, "loss": 0}
-KO_BEST_OF = 1
+KO_BEST_OF = 5
 
 # Global tournament locks per channel
 tournament_locks: Dict[int, asyncio.Lock] = {}
@@ -69,7 +68,7 @@ class TournamentError(Exception):
     pass
 
 class ChannelError(TournamentError):
-    """Raised when tournament operations are attempted outside #tournament channel"""
+    """Raised when tournament operations are attempted outside designated tournament channel"""
     pass
 
 class ActiveTournamentError(TournamentError):
@@ -83,8 +82,10 @@ def get_tournament_lock(channel_id: int) -> asyncio.Lock:
     return tournament_locks[channel_id]
 
 def validate_tournament_channel(channel: discord.TextChannel) -> bool:
-    """Validate that the channel is named 'tournament'"""
-    return channel.name == TOURNAMENT_CHANNEL_NAME
+    """Validate that the channel ID matches TOURNAMENT_GUILD_ID"""
+    import discordbot
+    tournament_guild_id = getattr(discordbot, 'TOURNAMENT_GUILD_ID', None)
+    return tournament_guild_id is not None and channel.id == tournament_guild_id
 
 class TournamentManager:
     """Main tournament management class"""
@@ -239,7 +240,7 @@ class TournamentManager:
     async def start_tournament(self, interaction: discord.Interaction) -> None:
         """Start a new tournament"""
         if not validate_tournament_channel(interaction.channel):
-            raise ChannelError("Tournaments can only be started in #tournament channel")
+            raise ChannelError("Tournaments can only be started in designated tournament channel")
         
         channel_id = interaction.channel.id
         async with get_tournament_lock(channel_id):
@@ -527,6 +528,7 @@ class TournamentManager:
             await self.run_match(match, channel)
         
         # Round-robin complete, move to knockout phase
+        print(f"DEBUG: Round-robin completed, moving to knockout phase for channel {channel_id}")
         await self.start_knockout_phase(channel_id)
 
     async def start_knockout_phase(self, channel_id: int) -> None:
@@ -541,6 +543,7 @@ class TournamentManager:
         standings = self.compute_rr_standings(tournament)
         
         # Determine knockout format based on player count
+        print(f"DEBUG: Starting knockout phase with {len(standings)} players")
         if len(standings) >= 4:
             # Top 4 to semifinals
             seedings = [
@@ -1748,7 +1751,7 @@ class TournamentCog(commands.Cog):
     def _is_channel_allowed(self, interaction: discord.Interaction) -> bool:
         """Check if command is being used in allowed channel"""
         if self.allowed_channel_id is None:
-            # If no specific channel set, allow only in channels named exactly 'tournament'
+            # If no specific channel set, allow only in designated tournament channel
             return validate_tournament_channel(interaction.channel)
         return interaction.channel.id == self.allowed_channel_id
 
@@ -1756,7 +1759,7 @@ class TournamentCog(commands.Cog):
     async def start(self, interaction: discord.Interaction):
         if not self._is_channel_allowed(interaction):
             await interaction.response.send_message(
-                "❌ Tournament commands can only be used in channels named `#tournament`",
+                "❌ Tournament commands can only be used in the designated tournament channel",
                 ephemeral=True
             )
             return
@@ -1786,7 +1789,7 @@ class TournamentCog(commands.Cog):
         except ChannelError as e:
             print(f"❌ ChannelError: {e}")
             await interaction.response.send_message(
-                "❌ Tournaments can only be started in designated tournament channels",
+                "❌ Tournaments can only be started in the designated tournament channel",
                 ephemeral=True
             )
         except ActiveTournamentError as e:
@@ -1811,7 +1814,7 @@ class TournamentCog(commands.Cog):
     async def status(self, interaction: discord.Interaction):
         if not self._is_channel_allowed(interaction):
             await interaction.response.send_message(
-                "❌ This command can only be used in channels named `#tournament`",
+                "❌ This command can only be used in the designated tournament channel",
                 ephemeral=True
             )
             return
@@ -1823,7 +1826,7 @@ class TournamentCog(commands.Cog):
     async def cancel(self, interaction: discord.Interaction):
         if not self._is_channel_allowed(interaction):
             await interaction.response.send_message(
-                "❌ This command can only be used in channels named `#tournament`",
+                "❌ This command can only be used in the designated tournament channel",
                 ephemeral=True
             )
             return
@@ -1861,7 +1864,7 @@ class TournamentCog(commands.Cog):
     async def join(self, interaction: discord.Interaction):
         if not self._is_channel_allowed(interaction):
             await interaction.response.send_message(
-                "❌ This command can only be used in channels named `#tournament`",
+                "❌ This command can only be used in the designated tournament channel",
                 ephemeral=True
             )
             return
@@ -1960,7 +1963,7 @@ class TournamentStatsCommands(commands.Cog):
     def _is_channel_allowed(self, interaction: discord.Interaction) -> bool:
         """Check if command is being used in allowed channel"""
         if self.allowed_channel_id is None:
-            # If no specific channel set, allow only in channels named exactly 'tournament'
+            # If no specific channel set, allow only in designated tournament channel
             return validate_tournament_channel(interaction.channel)
         return interaction.channel.id == self.allowed_channel_id
     
@@ -1968,7 +1971,7 @@ class TournamentStatsCommands(commands.Cog):
     async def stats(self, interaction: discord.Interaction):
         if not self._is_channel_allowed(interaction):
             await interaction.response.send_message(
-                "❌ This command can only be used in channels named `#tournament`",
+                "❌ This command can only be used in the designated tournament channel",
                 ephemeral=True
             )
             return
@@ -1996,7 +1999,7 @@ class TournamentStatsCommands(commands.Cog):
     async def leaderboard(self, interaction: discord.Interaction):
         if not self._is_channel_allowed(interaction):
             await interaction.response.send_message(
-                "❌ This command can only be used in channels named `#tournament`",
+                "❌ This command can only be used in the designated tournament channel",
                 ephemeral=True
             )
             return
@@ -2073,7 +2076,7 @@ async def setup_tournament_system(bot: commands.Bot,
         if allowed_channel_id:
             logger.info(f"Tournament commands restricted to channel ID: {allowed_channel_id}")
         else:
-            logger.info("Tournament commands restricted to channels named exactly '#tournament'")
+            logger.info("Tournament commands restricted to designated tournament channel")
         
         return tournament_manager
         
