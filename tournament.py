@@ -527,7 +527,6 @@ class TournamentManager:
             await self.run_match(match, channel)
         
         # Round-robin complete, move to knockout phase
-        print(f"DEBUG: Round-robin completed, moving to knockout phase for channel {channel_id}")
         await self.start_knockout_phase(channel_id)
 
     async def start_knockout_phase(self, channel_id: int) -> None:
@@ -542,7 +541,6 @@ class TournamentManager:
         standings = self.compute_rr_standings(tournament)
         
         # Determine knockout format based on player count
-        print(f"DEBUG: Starting knockout phase with {len(standings)} players")
         if len(standings) >= 4:
             # Top 4 to semifinals
             seedings = [
