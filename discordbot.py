@@ -70,6 +70,9 @@ from discord import Embed, File
 from typing import Optional, Tuple
 import chess
 
+# Tournament system import
+from tournament import setup_tournament_system
+
 embed_color_default = discord.Color.green()
 embed_color = embed_color_default
 
@@ -163,6 +166,10 @@ if local_mode == True:
     BUMPER_KING_ROLE_ID = 1411103298907275346 # Stage
     OKRAN_ROLE_ID = 1409785437979148329 #Stage
     OKRAN_ROLE_ID_2 = ""
+    TOURNAMENT_GUILD_ID = 1415895468822495342 #Stage
+    TOURNAMENT_PARTICIPANT_ROLE_ID = 1416290287633825903 #Stage
+    TOURNAMENT_OBSERVER_ROLE_ID = 1416290512310370348 #Stage
+    HOST_ROLE_ID = 1416587636709134408 #Stage
 else:
     discord_token = os.getenv("discord_token")
     mongo_db_string = os.getenv("mongo_db_string")
@@ -180,6 +187,10 @@ else:
     BUMPER_KING_ROLE_ID = 1411057279209570374 # Production
     OKRAN_ROLE_ID = 1408305516131782736 #Prouction
     OKRAN_ROLE_ID_2 = 1409611716731605024
+    TOURNAMENT_GUILD_ID = 1416298250729820192 # Production
+    TOURNAMENT_PARTICIPANT_ROLE_ID = 1416298356849774612 #Production
+    TOURNAMENT_OBSERVER_ROLE_ID = 1416298438915788861 #Production
+    HOST_ROLE_ID = 1411059745774764193 # Production
 
 
 
@@ -14868,6 +14879,43 @@ async def store_minigame_frequency(number, selection_type, bot_source="discord",
         print(f"Error storing minigame frequency: {e}")
 
 
+async def cleanup_tournament_roles():
+    """Remove tournament roles from all members on startup"""
+    try:
+        print("🧹 Cleaning up tournament roles from previous sessions...")
+
+        for guild in bot.guilds:
+            participant_role = guild.get_role(TOURNAMENT_PARTICIPANT_ROLE_ID)
+            observer_role = guild.get_role(TOURNAMENT_OBSERVER_ROLE_ID)
+
+            if not participant_role and not observer_role:
+                continue
+
+            members_cleaned = 0
+            for member in guild.members:
+                roles_to_remove = []
+
+                if participant_role and participant_role in member.roles:
+                    roles_to_remove.append(participant_role)
+
+                if observer_role and observer_role in member.roles:
+                    roles_to_remove.append(observer_role)
+
+                if roles_to_remove:
+                    try:
+                        await member.remove_roles(*roles_to_remove, reason="Tournament role cleanup on bot startup")
+                        members_cleaned += 1
+                    except Exception as e:
+                        print(f"Failed to remove tournament roles from {member.display_name}: {e}")
+
+            if members_cleaned > 0:
+                print(f"🧹 Cleaned tournament roles from {members_cleaned} members in {guild.name}")
+            else:
+                print(f"✅ No tournament roles to clean in {guild.name}")
+
+    except Exception as e:
+        print(f"❌ Error cleaning tournament roles: {e}")
+
 @bot.event
 async def on_ready():
     global channel, db
@@ -14875,6 +14923,86 @@ async def on_ready():
     db =  await connect_to_mongodb()
     await load_parameters()
     channel = bot.get_channel(channel_id)
+
+    # Clean up tournament roles from previous sessions
+    await cleanup_tournament_roles()
+
+    # Setup tournament system
+    try:
+        print("🏆 Setting up tournament system...")
+        
+        # Setup tournament system - you can specify exact channel ID for testing
+        specific_channel_id = TOURNAMENT_GUILD_ID  # Your tournament channel ID
+        # Create a simple question selector for tournaments
+        async def get_tournament_question(*args, **kwargs):
+            try:
+                # Randomly choose between trivia_questions and jeopardy_questions
+                collections = ["trivia_questions", "jeopardy_questions"]
+                collection_name = random.choice(collections)
+                collection = db[collection_name]
+                
+                pipeline = [{"$sample": {"size": 1}}]
+                questions = await collection.aggregate(pipeline).to_list(length=1)
+                
+                if questions:
+                    question = questions[0]
+                    
+                    # Get answers array - handle both single answer and array formats
+                    answers = question.get("answers", [])
+                    
+                    if not answers:
+                        # Fallback to single answer field if answers array is empty
+                        single_answer = question.get("answer", "")
+                        if single_answer:
+                            answers = [single_answer]
+                    
+                    result = {
+                        "question": question.get("question", "No question found"),
+                        "answers": answers,  # Return full answers array
+                        "category": question.get("category", "General"),
+                        "url": question.get("url", ""),
+                        "source": collection_name
+                    }
+                    
+                    print(f"🎯 QUESTION: {result['question']}")
+                    print(f"🎯 ANSWER: {', '.join(answers)}")
+                    
+                    return result
+                return {
+                    "question": "What is 2+2?",
+                    "answers": ["4"], 
+                    "category": "Math",
+                    "url": "",
+                    "source": "fallback"
+                }
+            except Exception as e:
+                print(f"Error getting tournament question: {e}")
+                return {
+                    "question": "What is 2+2?",
+                    "answers": ["4"],
+                    "category": "Math", 
+                    "url": "",
+                    "source": "fallback"
+                }
+        
+        tournament_manager = await setup_tournament_system(
+            bot=bot,
+            db=db,
+            fuzzy_match_func=fuzzy_match,
+            select_trivia_questions_func=get_tournament_question,
+            allowed_channel_id=specific_channel_id  # Restrict to this specific channel
+        )
+        
+        print("✅ Tournament system integrated successfully!")
+        print("📋 Tournament commands restricted to #tournament channels only")
+        print("🎮 Commands: /start, /status, /cancel, /join, /stats, /leaderboard")
+        
+        # Tournament testing: Use add_fake_players.py script for adding test players
+        print("🧪 For testing: Use add_fake_players.py script to add fake players")
+        
+    except Exception as tournament_error:
+        print(f"❌ Failed to setup tournament system: {tournament_error}")
+        traceback.print_exc()
     
     # Debug: Check what commands are in the tree
     try:
@@ -14889,16 +15017,25 @@ async def on_ready():
     
     
     if sync_commands:
-    # Try global sync first, then guild sync as fallback
+        # Try syncing to specific tournament guild first
         try:
-            # Global sync
+            tournament_guild = discord.Object(id=TOURNAMENT_GUILD_ID)
+            synced = await bot.tree.sync(guild=tournament_guild)
+            print(f"✅ Synced {len(synced)} slash command(s) to tournament guild {TOURNAMENT_GUILD_ID}")
+            if synced:
+                print(f"🔍 Tournament guild synced commands: {[cmd.name for cmd in synced]}")
+        except Exception as tournament_e:
+            print(f"❌ Failed to sync commands to tournament guild: {tournament_e}")
+
+        # Try global sync
+        try:
             synced = await bot.tree.sync()
             print(f"✅ Synced {len(synced)} slash command(s) globally")
             if synced:
                 print(f"🔍 Globally synced commands: {[cmd.name for cmd in synced]}")
         except Exception as e:
             print(f"❌ Failed to sync slash commands globally: {e}")
-            # Try guild sync as fallback
+            # Try guild sync as fallback to main guild
             try:
                 guild = discord.Object(id=OKRAN_GUILD_ID)
                 synced = await bot.tree.sync(guild=guild)
@@ -14912,8 +15049,39 @@ async def on_ready():
     await start_trivia()
 
 
+@bot.command()
+async def sync_tournament_commands(ctx):
+    """Manual command to sync tournament slash commands"""
+    if not ctx.author.guild_permissions.administrator:
+        await ctx.send("❌ Only administrators can sync commands")
+        return
+
+    try:
+        # Sync to tournament guild
+        tournament_guild = discord.Object(id=TOURNAMENT_GUILD_ID)
+        synced = await bot.tree.sync(guild=tournament_guild)
+        await ctx.send(f"✅ Synced {len(synced)} slash command(s) to tournament guild!")
+        if synced:
+            commands_list = [cmd.name for cmd in synced]
+            await ctx.send(f"Commands: {', '.join(commands_list)}")
+    except Exception as e:
+        await ctx.send(f"❌ Failed to sync commands: {e}")
+
+@bot.command()
+async def sync_global(ctx):
+    """Manual command to sync all slash commands globally"""
+    if not ctx.author.guild_permissions.administrator:
+        await ctx.send("❌ Only administrators can sync commands")
+        return
+
+    try:
+        synced = await bot.tree.sync()
+        await ctx.send(f"✅ Synced {len(synced)} slash command(s) globally!")
+        if synced:
+            commands_list = [cmd.name for cmd in synced]
+            await ctx.send(f"Commands: {', '.join(commands_list)}")
+    except Exception as e:
+        await ctx.send(f"❌ Failed to sync commands: {e}")
+
 if __name__ == "__main__":
     bot.run(discord_token)
-
-
-
