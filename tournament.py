@@ -307,7 +307,6 @@ class TournamentManager:
         # AUTO-ADD FAKE PLAYERS FOR TESTING (only in local mode)
         import discordbot
         if discordbot.local_mode:
-            from datetime import datetime, timezone
             fake_players = [
                 {
                     "user_id": "fake_alpha",
