@@ -14276,8 +14276,8 @@ async def start_trivia():
 
             start_message += "\n\u200b"
 
-            await safe_send(channel, start_message)
-            await asyncio.sleep(5)
+            #await safe_send(channel, start_message)
+            #await asyncio.sleep(5)
             
             
             start_message = f"\u200b\n\u200b\n⏩ **Starting a round of {questions_per_round} questions!** ⏩\n\u200b\n\u200b"
