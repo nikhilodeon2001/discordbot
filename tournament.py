@@ -37,7 +37,7 @@ ACTIVE_STATUSES = {"signup", "rr", "semis", "final"}
 JOIN_WINDOW_SEC_DEFAULT = 30
 RR_QUESTIONS_PER_MATCH_DEFAULT = 5
 ANSWER_TIMEOUT_SEC_DEFAULT = 15
-MIN_PLAYERS_DEFAULT = 1
+MIN_PLAYERS_DEFAULT = 4
 MAX_PLAYERS_DEFAULT = 8
 MODE_DEFAULT = "progressive"
 POINTS_PER_QUESTION_DEFAULT = 10
@@ -1423,10 +1423,12 @@ class TournamentManager:
                 words = message.content.strip().split()
                 
                 # Handle fake player answer: "alpha answer" or "beta multiple word answer"
-                # Only allow fake player answers when local_mode is enabled
+                # Only allow HOST_ROLE_ID to control fake players
                 import discordbot
-                if (len(words) >= 2 and words[0].lower() in fake_players and
-                    getattr(discordbot, 'local_mode', False)):
+                host_role_id = getattr(discordbot, 'HOST_ROLE_ID', None)
+                has_host_role = host_role_id and any(role.id == host_role_id for role in message.author.roles)
+
+                if (len(words) >= 2 and words[0].lower() in fake_players and has_host_role):
                     try:
                         player_name = words[0].lower()
                         answer = ' '.join(words[1:])  # Everything after the player name
@@ -1736,6 +1738,60 @@ class TournamentManager:
 
         return True
 
+    async def add_fake_players_to_tournament(self, channel: discord.TextChannel) -> bool:
+        """Add fake players to active tournament for testing purposes"""
+        tournament = self.load_tournament_by_channel(channel.id)
+        if not tournament:
+            return False
+
+        if tournament["status"] != "signup":
+            return False
+
+        # Check if fake players are already added
+        existing_fake_players = [p for p in tournament["players"] if p["user_id"].startswith("fake_")]
+        if existing_fake_players:
+            return False  # Already have fake players
+
+        # Create fake players (same structure as in local_mode)
+        fake_players = [
+            {
+                "user_id": "fake_alpha",
+                "display_name": "Alpha",
+                "joined_at": datetime.now(timezone.utc),
+                "active": True,
+                "afk_strikes": 0
+            },
+            {
+                "user_id": "fake_beta",
+                "display_name": "Beta",
+                "joined_at": datetime.now(timezone.utc),
+                "active": True,
+                "afk_strikes": 0
+            },
+            {
+                "user_id": "fake_gamma",
+                "display_name": "Gamma",
+                "joined_at": datetime.now(timezone.utc),
+                "active": True,
+                "afk_strikes": 0
+            },
+            {
+                "user_id": "fake_delta",
+                "display_name": "Delta",
+                "joined_at": datetime.now(timezone.utc),
+                "active": True,
+                "afk_strikes": 0
+            }
+        ]
+
+        # Add fake players to tournament in memory
+        tournament["players"].extend(fake_players)
+
+        print(f"🤖 Added {len(fake_players)} fake players for testing via /test command")
+        await channel.send(f"🤖 Added {len(fake_players)} fake players for testing!")
+
+        return True
+
 
 class TournamentCog(commands.Cog):
     """Discord cog for tournament slash commands"""
@@ -1859,6 +1915,52 @@ class TournamentCog(commands.Cog):
                 "❌ No active tournament to cancel or insufficient permissions",
                 ephemeral=True
             )
+
+    @discord.app_commands.command(name="test", description="Add fake players for testing")
+    async def test(self, interaction: discord.Interaction):
+        if not self._is_channel_allowed(interaction):
+            await interaction.response.send_message(
+                "❌ This command can only be used in the designated tournament channel",
+                ephemeral=True
+            )
+            return
+
+        # Check if user has HOST_ROLE_ID to add test players
+        import discordbot
+        host_role_id = getattr(discordbot, 'HOST_ROLE_ID', None)
+
+        has_host_role = False
+        if host_role_id and any(role.id == host_role_id for role in interaction.user.roles):
+            has_host_role = True
+
+        if not has_host_role:
+            await interaction.response.send_message(
+                "❌ Only hosts can add test players.",
+                ephemeral=True
+            )
+            return
+
+        success = await self.tournament_manager.add_fake_players_to_tournament(interaction.channel)
+        if success:
+            await interaction.response.send_message("✅ Added 4 fake players (Alpha, Beta, Gamma, Delta) for testing!", ephemeral=True)
+        else:
+            # Check specific reasons for failure
+            tournament = self.tournament_manager.load_tournament_by_channel(interaction.channel.id)
+            if not tournament:
+                await interaction.response.send_message(
+                    "❌ No active tournament found",
+                    ephemeral=True
+                )
+            elif tournament["status"] != "signup":
+                await interaction.response.send_message(
+                    "❌ Can only add test players during signup phase",
+                    ephemeral=True
+                )
+            else:
+                await interaction.response.send_message(
+                    "❌ Fake players already added or tournament at capacity",
+                    ephemeral=True
+                )
 
 
 class TournamentStatsManager:
@@ -2051,7 +2153,8 @@ async def setup_tournament_system(bot: commands.Bot,
         logger.info("Available commands:")
         logger.info("  • /start - Start a new tournament")
         logger.info("  • /status - Show current tournament status")
-        logger.info("  • /cancel - Cancel active tournament (admin only)")
+        logger.info("  • /cancel - Cancel active tournament (host only)")
+        logger.info("  • /test - Add fake players for testing (host only)")
         logger.info("  • /stats - Show your tournament statistics")
         logger.info("  • /leaderboard - Show server leaderboard")
         logger.info("  • Type 'okra' during signup to join tournaments")
