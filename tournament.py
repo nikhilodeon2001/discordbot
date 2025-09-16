@@ -379,8 +379,8 @@ class TournamentManager:
                         await message.add_reaction("😔")
                         continue
 
-                    # Add player if not already signed up
-                    if not any(p["user_id"] == str(message.author.id) for p in players):
+                    # Add player if not already signed up (check tournament memory directly)
+                    if not any(p["user_id"] == str(message.author.id) for p in tournament["players"]):
                         # Check if tournament is at capacity
                         if len(tournament["players"]) >= MAX_PLAYERS_DEFAULT:
                             await message.add_reaction("🙏")
@@ -394,8 +394,7 @@ class TournamentManager:
                             "active": True,
                             "afk_strikes": 0
                         }
-                        players.append(player)
-                        # Also add to tournament memory immediately
+                        # Add to tournament memory
                         tournament["players"].append(player)
 
                         # React to confirm signup with golden trophy
