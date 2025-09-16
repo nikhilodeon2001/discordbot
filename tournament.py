@@ -35,14 +35,15 @@ ACTIVE_STATUSES = {"signup", "rr", "semis", "final"}
 
 # Tournament Configuration - Easily configurable defaults
 JOIN_WINDOW_SEC_DEFAULT = 30
-RR_QUESTIONS_PER_MATCH_DEFAULT = 5
+RR_QUESTIONS_PER_MATCH_DEFAULT = 3
 ANSWER_TIMEOUT_SEC_DEFAULT = 15
 MIN_PLAYERS_DEFAULT = 4
 MAX_PLAYERS_DEFAULT = 8
 MODE_DEFAULT = "progressive"
 POINTS_PER_QUESTION_DEFAULT = 10
 MATCH_POINTS = {"win": 3, "tie": 1, "loss": 0}
-KO_BEST_OF = 5
+KO_MAX_QUESTIONS = 7  # Knockout phases: max 7 questions (up to 7 questions, early end if decided)
+RR_MAX_QUESTIONS = 3  # Round Robin: max 3 questions (up to 3 questions, early end if decided)
 
 # Global tournament locks per channel
 tournament_locks: Dict[int, asyncio.Lock] = {}
@@ -241,9 +242,15 @@ class TournamentManager:
         """Start a new tournament"""
         if not validate_tournament_channel(interaction.channel):
             raise ChannelError("Tournaments can only be started in designated tournament channel")
-        
+
         channel_id = interaction.channel.id
         async with get_tournament_lock(channel_id):
+            # Check for existing active tournament FIRST (before any cleanup)
+            existing = self.load_tournament_by_channel(channel_id)
+            if existing and existing["status"] in ACTIVE_STATUSES:
+                raise ActiveTournamentError("A tournament is already active in this channel. Please wait for it to finish before starting a new one.")
+
+            # Only clean up if no active tournament exists or tournament is completed
             # Cancel any existing tournament task
             if channel_id in self.running_tasks:
                 self.running_tasks[channel_id].cancel()
@@ -256,11 +263,6 @@ class TournamentManager:
             # Clear active question state
             if channel_id in self.active_questions:
                 del self.active_questions[channel_id]
-
-            # Check for existing active tournament (should be clean now)
-            existing = self.load_tournament_by_channel(channel_id)
-            if existing:
-                raise ActiveTournamentError("A tournament is already active in this channel")
 
             # Create tournament
             config = {
@@ -281,7 +283,7 @@ class TournamentManager:
                 color=discord.Color.green()
             )
             embed.add_field(name="\u200b\nSettings",
-                           value=f"• Mode: {MODE_DEFAULT.title()}\n• Min Players: {MIN_PLAYERS_DEFAULT}\n• Max Players: {MAX_PLAYERS_DEFAULT}\n• Round Robin Questions: {RR_QUESTIONS_PER_MATCH_DEFAULT}\n• Answer Timeout: {ANSWER_TIMEOUT_SEC_DEFAULT}s")
+                           value=f"• Mode: {MODE_DEFAULT.title()}\n• Min Players: {MIN_PLAYERS_DEFAULT}\n• Max Players: {MAX_PLAYERS_DEFAULT}\n• Round Robin: Best of 5 (up to 5 questions)\n• Answer Timeout: {ANSWER_TIMEOUT_SEC_DEFAULT}s")
             
             await interaction.response.send_message(embed=embed)
             
@@ -509,7 +511,7 @@ class TournamentManager:
                 # Merged matchup announcement
                 merged_embed = discord.Embed(
                     title=f"🔔 Round Robin Match {i} of {total_matches}",
-                    description=f"\n**{match['player_a']['display_name']}** vs **{match['player_b']['display_name']}**\n\nMatch will begin in 15 seconds!",
+                    description=f"\n**{match['player_a']['display_name']}** vs **{match['player_b']['display_name']}**\n\n**Best of 5** - Up to 5 questions, ends early if decided!\nMatch will begin in 15 seconds!",
                     color=discord.Color.gold()
                 )
                 await channel.send(embed=merged_embed)
@@ -580,7 +582,7 @@ class TournamentManager:
             )
             bracket_embed.add_field(
                 name="\u200b\n📋 Format",
-                value=f"First to {KO_BEST_OF} wins!",
+                value=f"First to {KO_MAX_QUESTIONS} wins!",
                 inline=False
             )
             bracket_embed.add_field(
@@ -631,12 +633,12 @@ class TournamentManager:
         # Create semifinal matches: #1 vs #4, #2 vs #3
         s1_match = self.create_match(
             tournament["id"], players_by_seed[1], players_by_seed[4],
-            "semi", KO_BEST_OF, KO_BEST_OF
+            "semi", KO_MAX_QUESTIONS, KO_MAX_QUESTIONS
         )
 
         s2_match = self.create_match(
             tournament["id"], players_by_seed[2], players_by_seed[3],
-            "semi", KO_BEST_OF, KO_BEST_OF
+            "semi", KO_MAX_QUESTIONS, KO_MAX_QUESTIONS
         )
 
         # Store semifinal matches in tournament
@@ -702,7 +704,7 @@ class TournamentManager:
         
         # Create final match
         final_match = self.create_match(
-            tournament["id"], s1_winner, s2_winner, "final", KO_BEST_OF, KO_BEST_OF
+            tournament["id"], s1_winner, s2_winner, "final", KO_MAX_QUESTIONS, KO_MAX_QUESTIONS
         )
 
         # Store final match in tournament
@@ -736,7 +738,7 @@ class TournamentManager:
         )
         embed.add_field(
             name="\u200b\n📋 Format",
-            value=f"First to {KO_BEST_OF} wins!",
+            value=f"First to {KO_MAX_QUESTIONS} wins!",
             inline=False
         )
         embed.add_field(
@@ -1057,16 +1059,36 @@ class TournamentManager:
         while True:
             # Check if match should end
             if is_ko:
-                # KO: first to KO_BEST_OF wins
-                if score_a >= KO_BEST_OF or score_b >= KO_BEST_OF:
+                # KO phases: continue until someone has more points (no draws allowed)
+                # After target_questions, announce sudden death if tied
+                if questions_asked >= target_questions and score_a == score_b:
+                    if questions_asked == target_questions:  # First time hitting limit
+                        await channel.send("🔥 **TIE! SUDDEN DEATH!** 🔥\nContinuing until we have a winner...")
+                    # Continue asking questions
+                elif questions_asked >= target_questions and score_a != score_b:
+                    # Someone is ahead after target questions, end match
                     break
-                # Continue if neither reached KO_BEST_OF after target questions
-                if questions_asked >= target_questions and score_a < KO_BEST_OF and score_b < KO_BEST_OF:
-                    # Sudden death - continue until someone wins a question
-                    pass
+                # Check for mathematical impossibility
+                remaining_questions = target_questions - questions_asked
+                if questions_asked < target_questions:
+                    if score_a > score_b + remaining_questions:
+                        # Player A has already won (B can't catch up)
+                        break
+                    elif score_b > score_a + remaining_questions:
+                        # Player B has already won (A can't catch up)
+                        break
             else:
-                # RR: fixed number of questions
+                # RR phases: max questions format with early termination
                 if questions_asked >= target_questions:
+                    break
+
+                # Check if match is mathematically decided
+                remaining_questions = target_questions - questions_asked
+                if score_a > score_b + remaining_questions:
+                    # Player A has already won (B can't catch up)
+                    break
+                elif score_b > score_a + remaining_questions:
+                    # Player B has already won (A can't catch up)
                     break
             
             questions_asked += 1
@@ -1335,19 +1357,14 @@ class TournamentManager:
         winner_user_id = None
         is_draw = False
         
-        if is_ko:
-            if score_a > score_b:
-                winner_user_id = player_a_id
-            else:
-                winner_user_id = player_b_id
+        # Determine match result
+        if score_a > score_b:
+            winner_user_id = player_a_id
+        elif score_b > score_a:
+            winner_user_id = player_b_id
         else:
-            # RR scoring with match points
-            if score_a > score_b:
-                winner_user_id = player_a_id
-            elif score_b > score_a:
-                winner_user_id = player_b_id
-            else:
-                is_draw = True
+            # Only RR phases can end in draws (KO phases use sudden death)
+            is_draw = True
         
         # Complete match in memory
         match["winner_user_id"] = winner_user_id
@@ -1391,37 +1408,37 @@ class TournamentManager:
         if tournament and tournament["status"] == "rr":
             await asyncio.sleep(5)
 
-    async def wait_for_answer(self, channel: discord.TextChannel, 
-                            participants: List[str], question_data: Dict, 
+    async def wait_for_answer(self, channel: discord.TextChannel,
+                            participants: List[str], question_data: Dict,
                             timeout_sec: int) -> Optional[Dict]:
         """Wait for a correct answer from participants (supports simple fake player format)"""
         fake_players = ["alpha", "beta", "gamma", "delta"]
-        
+
         def check_answer(message):
             # Check for simple fake player format: "alpha paris" or "beta london"
             words = message.content.strip().split()
-            if (len(words) >= 2 and 
+            if (len(words) >= 2 and
                 words[0].lower() in fake_players):
-                
+
                 player_name = words[0].lower()
                 # Check if this fake player is a participant
                 for participant_id in participants:
-                    if (participant_id.startswith('fake_') and 
+                    if (participant_id.startswith('fake_') and
                         player_name in participant_id.lower()):
                         return True
                 return False
-            
+
             # Regular player answer
             return (message.channel.id == channel.id and
                    str(message.author.id) in participants and
                    not message.author.bot)
-        
+
         try:
             while True:
                 message = await self.bot.wait_for('message', timeout=timeout_sec, check=check_answer)
-                
+
                 words = message.content.strip().split()
-                
+
                 # Handle fake player answer: "alpha answer" or "beta multiple word answer"
                 # Only allow HOST_ROLE_ID to control fake players
                 import discordbot
@@ -1432,66 +1449,76 @@ class TournamentManager:
                     try:
                         player_name = words[0].lower()
                         answer = ' '.join(words[1:])  # Everything after the player name
-                        
+
                         # Find matching fake player ID
                         fake_user_id = None
                         for participant_id in participants:
-                            if (participant_id.startswith('fake_') and 
+                            if (participant_id.startswith('fake_') and
                                 player_name in participant_id.lower()):
                                 fake_user_id = participant_id
                                 break
-                        
+
                         if fake_user_id:
                             evaluation_result = self.evaluate_answer(answer, question_data)
 
-                            # Remove participant role after submitting answer
-                            await self.remove_participant_role_after_answer(channel, fake_user_id)
-
-                            # React to fake player answer (for testing purposes)
-                            try:
-                                if evaluation_result:
-                                    await message.add_reaction("✅")
-                                else:
-                                    await message.add_reaction("❌")
-                            except discord.HTTPException:
-                                pass  # Ignore reaction failures
-
                             if evaluation_result:
-                                # Show first correct answer instead of user's answer
-                                correct_answer = question_data.get("answers", [""])[0]
-                                #await channel.send(f"✅ {player_name.capitalize()} answered correctly: {correct_answer}")
+                                # FIRST correct answer wins - immediately return without reactions
+                                # Remove participant role after submitting answer
+                                await self.remove_participant_role_after_answer(channel, fake_user_id)
+
+                                # Add reaction only to the winning answer
+                                try:
+                                    await message.add_reaction("✅")
+                                except discord.HTTPException:
+                                    pass  # Ignore reaction failures
+
                                 return {
                                     "user_id": fake_user_id,
                                     "answer": answer
                                 }
+                            else:
+                                # Wrong answer - add X reaction and continue
+                                try:
+                                    await message.add_reaction("❌")
+                                except discord.HTTPException:
+                                    pass  # Ignore reaction failures
+
+                                # Remove participant role after submitting answer
+                                await self.remove_participant_role_after_answer(channel, fake_user_id)
+                                continue
                     except Exception as e:
                         logger.error(f"Error processing fake player answer: {e}")
                         continue
-                
+
                 # Handle regular player answer (your own answer)
                 else:
                     evaluation_result = self.evaluate_answer(message.content, question_data)
 
-                    # Remove participant role after submitting answer
-                    await self.remove_participant_role_after_answer(channel, str(message.author.id))
-
-                    # React to player answer
-                    try:
-                        if evaluation_result:
-                            await message.add_reaction("✅")
-                        else:
-                            await message.add_reaction("❌")
-                    except discord.HTTPException:
-                        pass  # Ignore reaction failures
-
                     if evaluation_result:
-                        # Show first correct answer instead of user's answer
-                        correct_answer = question_data.get("answers", [""])[0]
-                        #await channel.send(f"✅ {message.author.display_name} answered correctly: {correct_answer}")
+                        # FIRST correct answer wins - immediately return without other reactions
+                        # Remove participant role after submitting answer
+                        await self.remove_participant_role_after_answer(channel, str(message.author.id))
+
+                        # Add reaction only to the winning answer
+                        try:
+                            await message.add_reaction("✅")
+                        except discord.HTTPException:
+                            pass  # Ignore reaction failures
+
                         return {
                             "user_id": str(message.author.id),
                             "answer": message.content
                         }
+                    else:
+                        # Wrong answer - add X reaction and continue
+                        try:
+                            await message.add_reaction("❌")
+                        except discord.HTTPException:
+                            pass  # Ignore reaction failures
+
+                        # Remove participant role after submitting answer
+                        await self.remove_participant_role_after_answer(channel, str(message.author.id))
+                        continue
         except asyncio.TimeoutError:
             return None
     
@@ -1851,7 +1878,7 @@ class TournamentCog(commands.Cog):
         except ActiveTournamentError as e:
             print(f"❌ ActiveTournamentError: {e}")
             await interaction.response.send_message(
-                "❌ A tournament is already active in this channel",
+                f"❌ {str(e)}",
                 ephemeral=True
             )
         except Exception as e:
