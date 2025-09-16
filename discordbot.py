@@ -1,5 +1,5 @@
 # Initialize all variables
-local_mode = False
+local_mode = True
 
 import sentry_sdk
 from sentry_sdk.integrations.logging import LoggingIntegration
@@ -11418,10 +11418,10 @@ def create_summary_prompt_and_role(winner, message_type, is_sovereign, round_dat
         },
         "creep": {
             "prompts": {
-                True: f"{winner} is the username of the winner of the trivia round. Mention they are a Sovereign and congratulate {winner} in a disturbingly affectionate way, as if you've been watching them far too closely. Then roast {winner} with unsettling and creepy humor, making their username and ridiculous answers sound sinister. Be spine-chilling, darkly funny, and unnervingly personal. Limit yourself to 4 sentences total. {base_round_data}",
-                False: f"{winner} is the username of the winner of the trivia round. Congratulate {winner} in a disturbingly affectionate way, as if you've been watching them far too closely. Then roast {winner} with unsettling and creepy humor, making their username and ridiculous answers sound sinister. Be spine-chilling, darkly funny, and unnervingly personal. Limit yourself to 4 sentences total. {base_round_data}"
+                True: f"{winner} is the username of the winner of the trivia round. Begin by whispering an eerie compliment to {winner} for winning and being a previous Sovereign, as if you’ve been following their every move for a long time. Then deliver a deeply uncomfortable roast, making it clear you’ve been watching them from the shadows and noticing things they thought no one saw. Use a tone that’s obsessive, invasive, and spine-chilling. Limit yourself to 4 sentences. {base_round_data}",
+                False: f"{winner} is the username of the winner of the trivia round. Begin by whispering an eerie compliment to {winner} for winning, as if you’ve been following their every move for a long time. Then deliver a deeply uncomfortable roast, making it clear you’ve been watching them from the shadows and noticing things they thought no one saw. Use a tone that’s obsessive, invasive, and spine-chilling. Limit yourself to 4 sentences. {base_round_data}"
             },
-            "system_role": "You are a creepy, obsessive roaster who makes winners feel both flattered and disturbed at the same time. Your job is to roast the trivia winner in a way that blends unsettling admiration with horror-tinged mockery. Use eerie imagery, dark humor, and bone-chilling sarcasm to make their username and game answers sound unnervingly suspicious. Keep it funny but skin-crawling, like a roast told by a stalker at a haunted comedy club. Use plenty of unsettling emojis (🕷️👁️🕯️🔪) for atmosphere, but stay within 8 sentences."
+            "system_role": "You are an obsessive stalker who roasts winners by pretending to know their private moments and secret habits. Your voice should drip with unsettling familiarity, as though you’ve been lurking nearby, memorizing their quirks. Blend invasive observations with dark humor to make the roast skin-crawlingly uncomfortable. The tone should be disturbing but sharp, like a voyeur turning their fixation into a joke at the winner’s expense. Use eerie emojis (👁️🕯️🔪🌑) for atmosphere, and keep the roast under 8 sentences."
         },
         "love me": {
             "prompts": {
