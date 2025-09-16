@@ -1,5 +1,5 @@
 # Initialize all variables
-local_mode = True
+local_mode = False
 
 import sentry_sdk
 from sentry_sdk.integrations.logging import LoggingIntegration
