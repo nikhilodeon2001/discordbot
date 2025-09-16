@@ -283,7 +283,7 @@ class TournamentManager:
                 color=discord.Color.green()
             )
             embed.add_field(name="\u200b\nSettings",
-                           value=f"• Mode: {MODE_DEFAULT.title()}\n• Min Players: {MIN_PLAYERS_DEFAULT}\n• Max Players: {MAX_PLAYERS_DEFAULT}\n• Round Robin: Best of 5 (up to 5 questions)\n• Answer Timeout: {ANSWER_TIMEOUT_SEC_DEFAULT}s")
+                           value=f"• Mode: {MODE_DEFAULT.title()}\n• Min Players: {MIN_PLAYERS_DEFAULT}\n• Max Players: {MAX_PLAYERS_DEFAULT}\n• Round Robin: Best of 3\n• Knockout Rounds: Best of 7\n• Reveal Time: 5s\n• Question Time: 10s")
             
             await interaction.response.send_message(embed=embed)
             
@@ -441,8 +441,17 @@ class TournamentManager:
             color=discord.Color.blue()
         )
         player_list = "\n".join([f"• {p['display_name']}" for p in all_players])
-        embed.add_field(name="\u200b\nPlayers", value=player_list)
-        embed.add_field(name="", value="\u200b\n🚨 **ONE answer per question. Be careful!**", inline=False)
+        embed.add_field(name="\u200b\n👥 Players", value=player_list, inline=False)
+        embed.add_field(
+            name="\u200b\n📋 Format",
+            value="Best of 3 questions per match!",
+            inline=False
+        )
+        embed.add_field(
+            name="\u200b\n⏱️ Starting Soon",
+            value="Round-robin will begin in 5 seconds!\n\n🚨 **ONE answer per question. Be careful!**",
+            inline=False
+        )
         await channel.send(embed=embed)
 
         # 5 second delay before starting matches
@@ -511,7 +520,7 @@ class TournamentManager:
                 # Merged matchup announcement
                 merged_embed = discord.Embed(
                     title=f"🔔 Round Robin Match {i} of {total_matches}",
-                    description=f"\n**{match['player_a']['display_name']}** vs **{match['player_b']['display_name']}**\n\n**Best of 5** - Up to 5 questions, ends early if decided!\nMatch will begin in 15 seconds!",
+                    description=f"\n**{match['player_a']['display_name']}** vs **{match['player_b']['display_name']}**\n\nMatch will begin in 15 seconds!",
                     color=discord.Color.gold()
                 )
                 await channel.send(embed=merged_embed)
@@ -582,7 +591,7 @@ class TournamentManager:
             )
             bracket_embed.add_field(
                 name="\u200b\n📋 Format",
-                value=f"First to {KO_MAX_QUESTIONS} wins!",
+                value=f"Best of {KO_MAX_QUESTIONS} wins!",
                 inline=False
             )
             bracket_embed.add_field(
@@ -738,7 +747,7 @@ class TournamentManager:
         )
         embed.add_field(
             name="\u200b\n📋 Format",
-            value=f"First to {KO_MAX_QUESTIONS} wins!",
+            value=f"Best of {KO_MAX_QUESTIONS} wins!",
             inline=False
         )
         embed.add_field(
@@ -846,8 +855,40 @@ class TournamentManager:
                 inline=True
             )
         
-        # Add RR standings
-        if rr_standings:
+        # Add actual tournament standings (not just RR standings)
+        if champion or runner_up:
+            # Tournament with knockout phases completed
+            standings_text = ""
+            placement = 1
+
+            # 1st place: Champion
+            if champion:
+                standings_text += f"{placement}. {champion['display_name']} (Champion)\n"
+                placement += 1
+
+            # 2nd place: Runner-up (finalist who lost)
+            if runner_up:
+                standings_text += f"{placement}. {runner_up['display_name']} (Runner-up)\n"
+                placement += 1
+
+            # 3rd & 4th place: Semifinal losers (from RR standings order)
+            semifinal_losers = []
+            if rr_standings:
+                for player in rr_standings:
+                    # Skip champion and runner-up, they're already placed
+                    if (champion and player["user_id"] == champion["user_id"]) or \
+                       (runner_up and player["user_id"] == runner_up["user_id"]):
+                        continue
+                    semifinal_losers.append(player)
+
+                # Add remaining players in RR standings order
+                for player in semifinal_losers:
+                    standings_text += f"{placement}. {player['display_name']} ({player['mp']} MP, {player['qp_diff']:+d} QPD)\n"
+                    placement += 1
+
+            embed.add_field(name="\u200b\nFinal Standings", value=standings_text, inline=False)
+        elif rr_standings:
+            # Tournament ended at RR phase, show RR standings
             standings_text = ""
             for i, player in enumerate(rr_standings[:5], 1):
                 standings_text += f"{i}. {player['display_name']} ({player['mp']} MP, {player['qp_diff']:+d} QPD)\n"
@@ -1052,6 +1093,8 @@ class TournamentManager:
         score_a = 0
         score_b = 0
         questions_asked = 0
+        questions_correct_a = 0  # Count of questions answered correctly by player A
+        questions_correct_b = 0  # Count of questions answered correctly by player B
         
         is_ko = match["phase"] in ["semi", "final"]
         target_questions = match["questions_target"]
@@ -1060,21 +1103,51 @@ class TournamentManager:
             # Check if match should end
             if is_ko:
                 # KO phases: continue until someone has more points (no draws allowed)
+                # Hard cap at 10 questions to prevent indefinite matches
+                if questions_asked >= 10:
+                    # Force random winner selection after 10 questions
+                    import random
+                    random_winner = random.choice([player_a_id, player_b_id])
+
+                    # Award points to random winner to break tie
+                    if random_winner == player_a_id:
+                        questions_correct_a += 1
+                        score_a += 10  # Always use 10 points
+                    else:
+                        questions_correct_b += 1
+                        score_b += 10
+
+                    # Announce random winner selection
+                    random_embed = discord.Embed(
+                        title="🎲 Random Winner Selected!",
+                        description="It's clear neither player has any idea what's going on.\n\nRandomly selecting a winner to move forward.",
+                        color=discord.Color.purple()
+                    )
+                    await channel.send(embed=random_embed)
+                    break
+
                 # After target_questions, announce sudden death if tied
-                if questions_asked >= target_questions and score_a == score_b:
+                elif questions_asked >= target_questions and questions_correct_a == questions_correct_b:
                     if questions_asked == target_questions:  # First time hitting limit
-                        await channel.send("🔥 **TIE! SUDDEN DEATH!** 🔥\nContinuing until we have a winner...")
+                        sudden_death_embed = discord.Embed(
+                            title="🔥 TIE! SUDDEN DEATH! 🔥",
+                            description="Continuing until we have a winner...",
+                            color=discord.Color.orange()
+                        )
+                        await channel.send(embed=sudden_death_embed)
+                        # 15 second delay before first sudden death question
+                        await asyncio.sleep(15)
                     # Continue asking questions
-                elif questions_asked >= target_questions and score_a != score_b:
+                elif questions_asked >= target_questions and questions_correct_a != questions_correct_b:
                     # Someone is ahead after target questions, end match
                     break
-                # Check for mathematical impossibility
+                # Check for mathematical impossibility based on question counts
                 remaining_questions = target_questions - questions_asked
                 if questions_asked < target_questions:
-                    if score_a > score_b + remaining_questions:
+                    if questions_correct_a > questions_correct_b + remaining_questions:
                         # Player A has already won (B can't catch up)
                         break
-                    elif score_b > score_a + remaining_questions:
+                    elif questions_correct_b > questions_correct_a + remaining_questions:
                         # Player B has already won (A can't catch up)
                         break
             else:
@@ -1082,12 +1155,12 @@ class TournamentManager:
                 if questions_asked >= target_questions:
                     break
 
-                # Check if match is mathematically decided
+                # Check if match is mathematically decided based on question counts
                 remaining_questions = target_questions - questions_asked
-                if score_a > score_b + remaining_questions:
+                if questions_correct_a > questions_correct_b + remaining_questions:
                     # Player A has already won (B can't catch up)
                     break
-                elif score_b > score_a + remaining_questions:
+                elif questions_correct_b > questions_correct_a + remaining_questions:
                     # Player B has already won (A can't catch up)
                     break
             
@@ -1211,10 +1284,10 @@ class TournamentManager:
                     # Start progressive reveal in background
                     reveal_task = asyncio.create_task(progressive_reveal(message))
 
-                    # Start answer monitoring immediately but with extended timeout
+                    # Start answer monitoring immediately for the entire question duration
                     answer_task = asyncio.create_task(self.wait_for_answer(
                         channel, [player_a_id, player_b_id],
-                        question, reveal_time + config["answer_timeout_sec"]
+                        question, reveal_time + 10  # 5s reveal + 10s answer = 15s total
                     ))
 
                     # Wait for either reveal completion or early answer
@@ -1237,12 +1310,8 @@ class TournamentManager:
 
                         answer_result = await answer_task
                     else:
-                        # Reveal completed, now wait for answer with 5 seconds
-                        answer_task.cancel()
-                        answer_result = await self.wait_for_answer(
-                            channel, [player_a_id, player_b_id],
-                            question, 5
-                        )
+                        # Reveal completed, continue waiting for the existing answer_task
+                        answer_result = await answer_task
 
                 else:
                     # If reveal duration is 0 or negative, show full question immediately
@@ -1293,16 +1362,19 @@ class TournamentManager:
             answered_by = None
             correct = False
             
-            if answer_result:
+            if answer_result and "user_id" in answer_result:
+                # Someone answered correctly
                 answered_by = answer_result["user_id"]
                 correct = True
                 awarded_points = config["points_per_question"]
-                
+
                 if answered_by == player_a_id:
-                    score_a += 1 if is_ko else awarded_points
+                    score_a += awarded_points  # Always use 10 points per question for all rounds
+                    questions_correct_a += 1
                 else:
-                    score_b += 1 if is_ko else awarded_points
-                
+                    score_b += awarded_points  # Always use 10 points per question for all rounds
+                    questions_correct_b += 1
+
                 # Announce correct answer
                 # Handle fake players vs real users
                 if answered_by.startswith('fake_'):
@@ -1312,7 +1384,7 @@ class TournamentManager:
                         if player["user_id"] == answered_by:
                             player_name = player["display_name"]
                             break
-                    
+
                     embed = discord.Embed(
                         title=f"✅ {player_name}",
                         description=f"Answer: **{answer_text}**",
@@ -1330,8 +1402,16 @@ class TournamentManager:
                 if is_ko:
                     embed.add_field(name="Score", value=f"{score_a} - {score_b}")
                 await channel.send(embed=embed)
+            elif answer_result and answer_result.get("both_wrong"):
+                # Both contestants answered incorrectly
+                embed = discord.Embed(
+                    title="❌ Both contestants answered incorrectly!",
+                    description=f"Answer: **{answer_text}**",
+                    color=discord.Color.red()
+                )
+                await channel.send(embed=embed)
             else:
-
+                # Actual timeout - no one answered
                 embed = discord.Embed(
                     title="⏰ Time's up!",
                     description=f"Answer: **{answer_text}**",
@@ -1413,6 +1493,7 @@ class TournamentManager:
                             timeout_sec: int) -> Optional[Dict]:
         """Wait for a correct answer from participants (supports simple fake player format)"""
         fake_players = ["alpha", "beta", "gamma", "delta"]
+        answered_participants = set()  # Track which participants have answered
 
         def check_answer(message):
             # Check for simple fake player format: "alpha paris" or "beta london"
@@ -1462,7 +1543,7 @@ class TournamentManager:
                             evaluation_result = self.evaluate_answer(answer, question_data)
 
                             if evaluation_result:
-                                # FIRST correct answer wins - immediately return without reactions
+                                # FIRST correct answer wins - immediately return
                                 # Remove participant role after submitting answer
                                 await self.remove_participant_role_after_answer(channel, fake_user_id)
 
@@ -1477,7 +1558,7 @@ class TournamentManager:
                                     "answer": answer
                                 }
                             else:
-                                # Wrong answer - add X reaction and continue
+                                # Wrong answer - add X reaction and track participant
                                 try:
                                     await message.add_reaction("❌")
                                 except discord.HTTPException:
@@ -1485,6 +1566,14 @@ class TournamentManager:
 
                                 # Remove participant role after submitting answer
                                 await self.remove_participant_role_after_answer(channel, fake_user_id)
+
+                                # Track that this participant has answered
+                                answered_participants.add(fake_user_id)
+
+                                # Check if both participants have now answered incorrectly
+                                if len(answered_participants) >= len(participants):
+                                    return {"both_wrong": True}
+
                                 continue
                     except Exception as e:
                         logger.error(f"Error processing fake player answer: {e}")
@@ -1495,7 +1584,7 @@ class TournamentManager:
                     evaluation_result = self.evaluate_answer(message.content, question_data)
 
                     if evaluation_result:
-                        # FIRST correct answer wins - immediately return without other reactions
+                        # FIRST correct answer wins - immediately return
                         # Remove participant role after submitting answer
                         await self.remove_participant_role_after_answer(channel, str(message.author.id))
 
@@ -1510,7 +1599,7 @@ class TournamentManager:
                             "answer": message.content
                         }
                     else:
-                        # Wrong answer - add X reaction and continue
+                        # Wrong answer - add X reaction and track participant
                         try:
                             await message.add_reaction("❌")
                         except discord.HTTPException:
@@ -1518,6 +1607,14 @@ class TournamentManager:
 
                         # Remove participant role after submitting answer
                         await self.remove_participant_role_after_answer(channel, str(message.author.id))
+
+                        # Track that this participant has answered
+                        answered_participants.add(str(message.author.id))
+
+                        # Check if both participants have now answered incorrectly
+                        if len(answered_participants) >= len(participants):
+                            return {"both_wrong": True}
+
                         continue
         except asyncio.TimeoutError:
             return None
