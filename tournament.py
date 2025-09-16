@@ -816,18 +816,22 @@ class TournamentManager:
         champion = None
         runner_up = None
         
-        # Look for final match in tournament matches
-        final_matches = [m for m in tournament["matches"] if m["phase"] == "final"]
-        if final_matches:
-            final_match = final_matches[0]
-            if final_match.get("winner_user_id"):
-                # Find champion and runner-up from final
-                for player in tournament["players"]:
-                    if player["user_id"] == final_match["winner_user_id"]:
-                        champion = player
-                    elif player["user_id"] in [final_match["player_a"]["user_id"], final_match["player_b"]["user_id"]]:
-                        if player["user_id"] != final_match["winner_user_id"]:
-                            runner_up = player
+        # Look for final match - check tournament["final_match"] directly
+        final_match = tournament.get("final_match")
+        if final_match and final_match.get("winner_user_id"):
+            # Find champion and runner-up from final
+            for player in tournament["players"]:
+                if player["user_id"] == final_match["winner_user_id"]:
+                    champion = player
+                elif player["user_id"] in [final_match["player_a"]["user_id"], final_match["player_b"]["user_id"]]:
+                    if player["user_id"] != final_match["winner_user_id"]:
+                        runner_up = player
+        else:
+            # Debug logging for final match issues
+            if final_match:
+                logger.warning(f"Final match found but no winner_user_id: {final_match.get('winner_user_id')}")
+            else:
+                logger.warning("No final match found in tournament data")
         
         if not champion and rr_standings:
             # Use RR standings if no knockout
@@ -1502,16 +1506,18 @@ class TournamentManager:
                 words[0].lower() in fake_players):
 
                 player_name = words[0].lower()
-                # Check if this fake player is a participant
+                # Check if this fake player is a participant and hasn't answered yet
                 for participant_id in participants:
                     if (participant_id.startswith('fake_') and
-                        player_name in participant_id.lower()):
+                        player_name in participant_id.lower() and
+                        participant_id not in answered_participants):
                         return True
                 return False
 
-            # Regular player answer
+            # Regular player answer - only allow if they haven't answered yet
             return (message.channel.id == channel.id and
                    str(message.author.id) in participants and
+                   str(message.author.id) not in answered_participants and
                    not message.author.bot)
 
         try:
