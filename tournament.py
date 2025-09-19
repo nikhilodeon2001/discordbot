@@ -19,6 +19,7 @@ Requirements:
 import asyncio
 import random
 import logging
+import time
 from datetime import datetime, timezone
 from typing import Dict, List, Optional, Tuple, Any, Callable
 from itertools import combinations
@@ -31,19 +32,28 @@ from bson import ObjectId
 import pymongo
 
 # Tournament Configuration Constants
-ACTIVE_STATUSES = {"signup", "rr", "semis", "final"}
+ACTIVE_STATUSES = {"signup", "rr", "points_race", "semis", "final"}
 
 # Tournament Configuration - Easily configurable defaults
-JOIN_WINDOW_SEC_DEFAULT = 30
+JOIN_WINDOW_SEC_DEFAULT = 60
 RR_QUESTIONS_PER_MATCH_DEFAULT = 3
 ANSWER_TIMEOUT_SEC_DEFAULT = 15
+RR_REVEAL_TIME = 5  # Round robin question reveal time
 MIN_PLAYERS_DEFAULT = 4
-MAX_PLAYERS_DEFAULT = 8
+MAX_PLAYERS_DEFAULT = 10
 MODE_DEFAULT = "progressive"
 POINTS_PER_QUESTION_DEFAULT = 10
 MATCH_POINTS = {"win": 3, "tie": 1, "loss": 0}
 KO_MAX_QUESTIONS = 7  # Knockout phases: max 7 questions (up to 7 questions, early end if decided)
-RR_MAX_QUESTIONS = 3  # Round Robin: max 3 questions (up to 3 questions, early end if decided)
+
+# Seeding Mode Configuration
+SEEDING_MODE_DEFAULT = "points_race" # or "round_robin"
+
+POINTS_RACE_QUESTIONS = 10
+POINTS_RACE_REVEAL_TIME = 5  # Question reveals over 5 seconds
+POINTS_RACE_ANSWER_TIME = 15  # Answer window after full reveal
+POINTS_RACE_QUESTION_DELAY = 15  # Delay between questions
+POINTS_RACE_MAX_POINTS = 100
 
 # Global tournament locks per channel
 tournament_locks: Dict[int, asyncio.Lock] = {}
@@ -100,21 +110,14 @@ class TournamentManager:
         self.running_tasks: Dict[int, asyncio.Task] = {}  # channel_id -> tournament task
 
     async def ensure_indexes(self):
-        """Ensure database indexes are created"""
+        """Ensure database indexes are created for completed tournament storage"""
         tournaments = self.db.tournaments
         matches = self.db.matches
-        
-        # Single active tournament per channel constraint
-        await tournaments.create_index(
-            [("channel_id", 1), ("status", 1)],
-            unique=True,
-            partialFilterExpression={"status": {"$in": list(ACTIVE_STATUSES)}},
-            name="unique_active_tournament_per_channel"
-        )
-        
-        # Performance indexes
+
+        # Performance indexes for completed tournament data
         await tournaments.create_index([("created_at", -1)])
         await tournaments.create_index([("guild_id", 1)])
+        await tournaments.create_index([("status", 1)])  # For querying completed tournaments
         await matches.create_index([("tournament_id", 1)])
         await matches.create_index([("phase", 1)])
         await matches.create_index([("completed_at", 1)])
@@ -182,7 +185,8 @@ class TournamentManager:
                 "min_players": config.get("min_players", MIN_PLAYERS_DEFAULT),
                 "mode": config.get("mode", "standard"),
                 "points_per_question": config.get("points_per_question", POINTS_PER_QUESTION_DEFAULT),
-                "match_points": MATCH_POINTS.copy()
+                "match_points": MATCH_POINTS.copy(),
+                "seeding_mode": config.get("seeding_mode", SEEDING_MODE_DEFAULT)
             },
             "created_at": datetime.now(timezone.utc),
             "started_at": None,
@@ -271,7 +275,8 @@ class TournamentManager:
                 "answer_timeout_sec": ANSWER_TIMEOUT_SEC_DEFAULT,
                 "min_players": MIN_PLAYERS_DEFAULT,
                 "max_players": MAX_PLAYERS_DEFAULT,
-                "mode": MODE_DEFAULT
+                "mode": MODE_DEFAULT,
+                "seeding_mode": SEEDING_MODE_DEFAULT
             }
 
             tournament_id = self.create_tournament(interaction.channel, config)
@@ -282,8 +287,9 @@ class TournamentManager:
                 description=f"Type `okra` in the next **{JOIN_WINDOW_SEC_DEFAULT}** seconds to join the tournament!",
                 color=discord.Color.green()
             )
+            seeding_display = "Round Robin" if SEEDING_MODE_DEFAULT == "round_robin" else "Points Race"
             embed.add_field(name="\u200b\nSettings",
-                           value=f"• Mode: {MODE_DEFAULT.title()}\n• Min Players: {MIN_PLAYERS_DEFAULT}\n• Max Players: {MAX_PLAYERS_DEFAULT}\n• Round Robin: Best of 3\n• Knockout Rounds: Best of 7\n• Reveal Time: 5s\n• Question Time: 10s")
+                           value=f"• Mode: {MODE_DEFAULT.title()}\n• Min Players: {MIN_PLAYERS_DEFAULT}\n• Max Players: {MAX_PLAYERS_DEFAULT}\n• Seeding: {seeding_display}\n• Knockout Rounds: Best of 7\n• Reveal Time: 5s\n• Question Time: 10s")
             
             await interaction.response.send_message(embed=embed)
             
@@ -429,69 +435,160 @@ class TournamentManager:
         new_players_to_add = [p for p in players if p["user_id"] not in existing_user_ids]
         all_players = tournament["players"] + new_players_to_add
 
-        # Update tournament in memory and start round-robin
+        # Update tournament in memory
         tournament["players"] = all_players
-        tournament["status"] = "rr"
+        tournament["status"] = "rr"  # This will be updated in build_rr_schedule_and_start if needed
         tournament["started_at"] = datetime.now(timezone.utc)
-        
-        embed = discord.Embed(
-            title="🏆 Tournament Starting!",
-            description=f"**{len(all_players)} players** signed up. Beginning round-robin phase...",
-            color=discord.Color.blue()
-        )
-        player_list = "\n".join([f"• {p['display_name']}" for p in all_players])
-        embed.add_field(name="\u200b\n👥 Players", value=player_list, inline=False)
-        embed.add_field(
-            name="\u200b\n📋 Format",
-            value="Best of 3 questions per match!",
-            inline=False
-        )
-        embed.add_field(
-            name="\u200b\n⏱️ Starting Soon",
-            value="Round-robin will begin in 5 seconds!\n\n🚨 **ONE answer per question. Be careful!**",
-            inline=False
-        )
+
+        # Conduct seeding mode vote
+        seeding_mode = await self.conduct_seeding_vote(channel, tournament)
+
+        if seeding_mode == "points_race":
+            embed = discord.Embed(
+                title="🏆 Tournament Starting!",
+                description=f"**{len(all_players)} players** signed up. Beginning Points Race phase...",
+                color=discord.Color.blue()
+            )
+            player_list = "\n".join([f"• {p['display_name']}" for p in all_players])
+            embed.add_field(name="\u200b\n👥 Players", value=player_list, inline=False)
+            embed.add_field(
+                name="\u200b\n📋 Format",
+                value=f"Points Race: {POINTS_RACE_QUESTIONS} questions, time-based scoring (100→0 pts)",
+                inline=False
+            )
+            embed.add_field(
+                name="\u200b\n🎯 Advancement",
+                value="Top 4 players advance to knockout semifinals!",
+                inline=False
+            )
+            embed.add_field(
+                name="\u200b\n⏱️ Starting Soon",
+                value="Points Race will begin in 15 seconds!",
+                inline=False
+            )
+        else:
+            embed = discord.Embed(
+                title="🏆 Tournament Starting!",
+                description=f"**{len(all_players)} players** signed up. Beginning round-robin phase...",
+                color=discord.Color.blue()
+            )
+            player_list = "\n".join([f"• {p['display_name']}" for p in all_players])
+            embed.add_field(name="\u200b\n👥 Players", value=player_list, inline=False)
+            embed.add_field(
+                name="\u200b\n📋 Format",
+                value="Best of 3 questions per match!",
+                inline=False
+            )
+            embed.add_field(
+                name="\u200b\n🎯 Advancement",
+                value="Top 4 players advance to knockout semifinals!",
+                inline=False
+            )
+            embed.add_field(
+                name="\u200b\n⏱️ Starting Soon",
+                value="Round-robin will begin in 15 seconds!\n\n🚨 **ONE answer per question. Be careful!**",
+                inline=False
+            )
         await channel.send(embed=embed)
 
-        # 5 second delay before starting matches
-        await asyncio.sleep(5)
+        # 15 second delay before starting matches
+        await asyncio.sleep(15)
 
         await self.build_rr_schedule_and_start(channel_id, all_players)
 
+    async def conduct_seeding_vote(self, channel: discord.TextChannel, tournament: Dict) -> str:
+        """Conduct a vote to determine seeding mode between Round Robin and Points Race"""
+        # Create voting embed
+        embed = discord.Embed(
+            title="🗳️ Choose Seeding Format",
+            description="Tournament participants, vote for your preferred seeding format!\n\n**Round Robin:** Head-to-head matches determine rankings\n**Points Race:** 10 rapid-fire questions with time-based scoring",
+            color=discord.Color.gold()
+        )
+
+        # Add fields for vote counts (will be updated)
+        embed.add_field(name="🥊 Round Robin", value="*No votes yet*", inline=True)
+        embed.add_field(name="🏃 Points Race", value="*No votes yet*", inline=True)
+
+        # Create voting view
+        view = SeedingVoteView(tournament, embed)
+        message = await channel.send(embed=embed, view=view)
+        view.message = message
+
+        # Wait for voting to complete (30 seconds)
+        await asyncio.sleep(30)
+
+        # Disable buttons and announce result
+        view.disable_all_buttons()
+
+        # Determine result
+        rr_votes = len(view.round_robin_votes)
+        pr_votes = len(view.points_race_votes)
+        total_participants = len(tournament["players"])
+
+        # Round Robin wins only if it has majority of votes cast, ties default to Points Race
+        total_votes = rr_votes + pr_votes
+        if rr_votes > pr_votes:
+            result = "round_robin"
+            result_text = f"🥊 **Round Robin** wins! ({rr_votes}-{pr_votes} vote margin)"
+        else:
+            result = "points_race"
+            if rr_votes == pr_votes:
+                result_text = f"🏃 **Points Race** wins! (Tie {rr_votes}-{pr_votes}, default to Points Race)"
+            else:
+                result_text = f"🏃 **Points Race** wins! ({pr_votes}-{rr_votes} vote margin)"
+
+        # Update embed with final results (keep voter names visible)
+        embed.title = "🗳️ Voting Complete!"
+        embed.color = discord.Color.green()
+        # Don't change the fields - they already show voter names from update_embed_votes()
+        embed.add_field(name="🏆 Result", value=result_text, inline=False)
+
+        await message.edit(embed=embed, view=view)
+
+        return result
+
     async def build_rr_schedule_and_start(self, channel_id: int, players: List[Dict]) -> None:
-        """Build round-robin schedule and start matches"""
+        """Build schedule and start seeding phase (either round-robin or points race)"""
         # Get tournament from memory
         tournament = active_tournaments.get(channel_id)
         if not tournament:
             return
 
-        questions_per_match = tournament["config"]["rr_questions_per_match"]
-        
-        # Generate all player pairs
-        all_pairs = list(combinations(players, 2))
-        
-        # Create rounds of matches, each round has different pairs
-        scheduled_matches = []
-        
-        for round_num in range(1):  # 1 round per pair (change to range(2), range(3), etc. for more rounds)
-            # Shuffle pairs for this round to mix up the order
-            round_pairs = all_pairs.copy()
-            random.shuffle(round_pairs)
-            
-            round_matches = []
-            for player_a, player_b in round_pairs:
-                match_data = self.create_match(
-                    tournament["id"], player_a, player_b, "rr", questions_per_match
-                )
-                round_matches.append(match_data)
+        seeding_mode = tournament["config"].get("seeding_mode", SEEDING_MODE_DEFAULT)
 
-            scheduled_matches.extend(round_matches)
+        if seeding_mode == "points_race":
+            # Start Points Race
+            tournament["status"] = "points_race"
+            await self.run_points_race(channel_id)
+        else:
+            # Default to Round Robin
+            questions_per_match = tournament["config"]["rr_questions_per_match"]
 
-        # Store matches in tournament
-        tournament["matches"] = scheduled_matches
+            # Generate all player pairs
+            all_pairs = list(combinations(players, 2))
 
-        # Start round-robin matches
-        await self.run_round_robin(channel_id)
+            # Create rounds of matches, each round has different pairs
+            scheduled_matches = []
+
+            for round_num in range(1):  # 1 round per pair (change to range(2), range(3), etc. for more rounds)
+                # Shuffle pairs for this round to mix up the order
+                round_pairs = all_pairs.copy()
+                random.shuffle(round_pairs)
+
+                round_matches = []
+                for player_a, player_b in round_pairs:
+                    match_data = self.create_match(
+                        tournament["id"], player_a, player_b, "rr", questions_per_match
+                    )
+                    round_matches.append(match_data)
+
+                scheduled_matches.extend(round_matches)
+
+            # Store matches in tournament
+            tournament["matches"] = scheduled_matches
+
+            # Start round-robin matches
+            await self.run_round_robin(channel_id)
 
     async def run_round_robin(self, channel_id: int) -> None:
         """Execute all round-robin matches"""
@@ -540,7 +637,6 @@ class TournamentManager:
             await self.run_match(match, channel)
         
         # Round-robin complete, move to knockout phase
-        print(f"DEBUG: Round-robin completed, moving to knockout phase for channel {channel_id}")
         await self.start_knockout_phase(channel_id)
 
     async def start_knockout_phase(self, channel_id: int) -> None:
@@ -555,7 +651,6 @@ class TournamentManager:
         standings = self.compute_rr_standings(tournament)
         
         # Determine knockout format based on player count
-        print(f"DEBUG: Starting knockout phase with {len(standings)} players")
         if len(standings) >= 4:
             # Top 4 to semifinals
             seedings = [
@@ -620,6 +715,585 @@ class TournamentManager:
         else:
             # 2 or fewer players - declare winner from RR standings
             await self.complete_tournament(channel_id)
+
+    async def run_points_race(self, channel_id: int) -> None:
+        """Execute Points Race seeding phase - all players compete on 10 questions simultaneously"""
+        tournament = active_tournaments.get(channel_id)
+        if not tournament:
+            return
+
+        channel = self.bot.get_channel(channel_id)
+        if not channel:
+            return
+
+        players = tournament["players"]
+        if len(players) < 4:
+            await channel.send("❌ Need at least 4 players for Points Race")
+            return
+
+        # Initialize Points Race data structure
+        tournament["points_race_scores"] = {}
+        tournament["points_race_questions"] = []
+
+        for player in players:
+            tournament["points_race_scores"][player["user_id"]] = {
+                "total_points": 0,
+                "questions_correct": 0,
+                "questions_answered": 0,
+                "answer_times": []
+            }
+
+        # Update tournament status
+        tournament["status"] = "points_race"
+
+        # Wait 15 seconds before starting
+        await asyncio.sleep(15)
+
+        # Run 10 questions
+        for question_num in range(1, POINTS_RACE_QUESTIONS + 1):
+            await self.run_points_race_question(channel_id, question_num)
+
+            # Delay between questions (except after the last one)
+            if question_num < POINTS_RACE_QUESTIONS:
+                await asyncio.sleep(POINTS_RACE_QUESTION_DELAY)
+
+        # Show final standings and determine top 4
+        try:
+            await asyncio.sleep(5)
+            await self.complete_points_race(channel_id)
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+
+    async def run_points_race_question(self, channel_id: int, question_num: int) -> None:
+        """Run a single Points Race question with progressive reveal and time-based scoring"""
+        tournament = active_tournaments.get(channel_id)
+        if not tournament:
+            return
+
+        channel = self.bot.get_channel(channel_id)
+        if not channel:
+            return
+
+        # Get all players for this question
+        player_ids = [p["user_id"] for p in tournament["players"]]
+
+        # Assign Tournament Participant role to all players
+        await self.assign_points_race_participant_roles(channel, player_ids)
+
+        # Restrict channel permissions before question
+        await self.restrict_channel_permissions(channel, [str(pid) for pid in player_ids])
+
+        # Get question
+        question = await self.select_head_to_head_question()
+        if not question:
+            await channel.send("❌ Could not fetch question")
+            return
+
+        # Store question data
+        question_data = {
+            "number": question_num,
+            "question": question,
+            "answers": {},
+            "reveal_start_time": None,
+            "reveal_complete_time": None
+        }
+        tournament["points_race_questions"].append(question_data)
+
+        # Progressive reveal setup
+        full_prompt = question["prompt"]
+        answers = question.get("answers", [])
+        if not answers:
+            answers = [question.get("answer", "No answer available")]
+
+        # Display first answer or all answers if multiple, in all caps
+        if len(answers) == 1:
+            answer_text = answers[0].upper()
+        else:
+            answer_text = " / ".join([ans.upper() for ans in answers])
+
+        # Create initial question embed (matching round robin style)
+        question_embed = discord.Embed(
+            title=f"⚡ Question {question_num}/{POINTS_RACE_QUESTIONS}",
+            description="",  # Will be filled during reveal
+            color=discord.Color.blue()
+        )
+
+        # Add image if available
+        question_url = question.get("url", "")
+        if question_url and question_url.startswith("http"):
+            question_embed.set_image(url=question_url)
+
+        # Send initial embed
+        message = await channel.send(embed=question_embed)
+
+        # Progressive reveal
+        reveal_time = POINTS_RACE_REVEAL_TIME
+        update_interval = 1.0
+        total_updates = int(reveal_time)
+
+        question_data["reveal_start_time"] = time.time()
+
+        async def progressive_reveal(msg):
+            for i in range(total_updates):
+                if i == 0:
+                    await asyncio.sleep(update_interval)
+                    continue
+
+                # Calculate how much of the prompt to reveal
+                chars_to_reveal = int((i / total_updates) * len(full_prompt))
+                partial_prompt = full_prompt[:chars_to_reveal]
+
+                # Update embed
+                question_embed.description = partial_prompt
+                try:
+                    await msg.edit(embed=question_embed)
+                except (discord.NotFound, discord.HTTPException):
+                    pass  # Ignore if message can't be edited
+
+                await asyncio.sleep(update_interval)
+
+            # Final reveal - show complete question
+            question_embed.description = full_prompt
+            try:
+                await msg.edit(embed=question_embed)
+                question_data["reveal_complete_time"] = time.time()
+            except (discord.NotFound, discord.HTTPException):
+                pass
+
+        # Start progressive reveal and answer monitoring
+        reveal_task = asyncio.create_task(progressive_reveal(message))
+        answer_task = asyncio.create_task(self.wait_for_points_race_answers(
+            channel, player_ids, question, question_data, reveal_time + POINTS_RACE_ANSWER_TIME
+        ))
+
+        # Wait for both to complete
+        await asyncio.gather(reveal_task, answer_task)
+
+        # Show correct answer with question results
+        embed = discord.Embed(
+            title=f"✅ Question {question_num} Complete",
+            description=f"**Correct Answer:** {answer_text}",
+            color=discord.Color.green()
+        )
+
+        # Add question results showing who got it right and their points
+        tournament = active_tournaments.get(channel_id)
+        if tournament:
+            question_results = []
+            for player in tournament["players"]:
+                if "points_race_scores" in player and len(player["points_race_scores"]) >= question_num:
+                    score_data = player["points_race_scores"][question_num - 1]  # question_num is 1-indexed
+                    if score_data["correct"]:
+                        username = player.get("username") or player.get("display_name") or f"Player {player['user_id']}"
+                        question_results.append({
+                            "username": username,
+                            "points": score_data["points"],
+                            "time": score_data["answer_time"]
+                        })
+
+            # Sort by points (highest first)
+            question_results.sort(key=lambda x: x["points"], reverse=True)
+
+            if question_results:
+                results_text = ""
+                for result in question_results:
+                    results_text += f"**{result['username']}** - {result['points']} pts ({result['time']:.1f}s)\n"
+                embed.add_field(
+                    name="",
+                    value=results_text,
+                    inline=False
+                )
+            else:
+                embed.add_field(
+                    name="",
+                    value="No one got this question right",
+                    inline=False
+                )
+
+        await channel.send(embed=embed)
+
+        # Show current standings after this question
+        try:
+            await asyncio.sleep(3)
+            await self.show_points_race_standings(channel_id, question_num)
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+
+        # Restore channel permissions
+        await self.restore_channel_permissions(channel)
+
+    async def wait_for_points_race_answers(self, channel: discord.TextChannel, player_ids: List[int],
+                                         question: Dict[str, Any], question_data: Dict[str, Any],
+                                         timeout: float) -> None:
+        """Wait for answers from all Points Race participants and handle scoring"""
+        tournament = active_tournaments.get(channel.id)
+        if not tournament:
+            return
+
+        # Convert all player IDs to strings for consistent comparison (like round robin)
+        participants = [str(pid) for pid in player_ids]
+        # Add fake player IDs that might not be in player_ids
+        for player in tournament["players"]:
+            if str(player["user_id"]).startswith('fake_') and str(player["user_id"]) not in participants:
+                participants.append(str(player["user_id"]))
+
+        answered_players = set()
+        fake_players = ["alpha", "beta", "gamma", "delta"]
+        answer_messages = []  # Store messages for reactions later
+
+        def check_answer(message):
+
+            # Check for fake player format: "alpha answer" or "beta answer"
+            words = message.content.strip().split()
+            if len(words) >= 2 and words[0].lower() in fake_players:
+                player_name = words[0].lower()
+                # Check if this fake player is a participant and hasn't answered yet
+                for participant_id in participants:
+                    if (participant_id.startswith('fake_') and
+                        player_name in participant_id.lower() and
+                        participant_id not in answered_players):
+                        return True
+                return False
+
+            # Regular player answer - only allow if they haven't answered yet
+            is_valid = (message.channel.id == channel.id and
+                       str(message.author.id) in participants and
+                       str(message.author.id) not in answered_players and
+                       not message.author.bot)
+            return is_valid
+
+        start_time = time.time()
+        reveal_complete_time = question_data.get("reveal_complete_time", start_time)
+
+        total_players = len(participants)
+
+        while time.time() - start_time < timeout and len(answered_players) < total_players:
+            elapsed = time.time() - start_time
+
+            try:
+                # Calculate remaining time to ensure we don't exceed the total timeout
+                remaining_time = timeout - (time.time() - start_time)
+                if remaining_time <= 0:
+                    break
+
+                # Use the minimum of 1.0 second or remaining time
+                wait_timeout = min(1.0, remaining_time)
+                message = await self.bot.wait_for('message', check=check_answer, timeout=wait_timeout)
+
+                words = message.content.strip().split()
+
+                # Handle fake player answer with host role check (like round robin)
+                import discordbot
+                host_role_id = getattr(discordbot, 'HOST_ROLE_ID', None)
+                has_host_role = host_role_id and any(role.id == host_role_id for role in message.author.roles)
+
+                if len(words) >= 2 and words[0].lower() in fake_players and has_host_role:
+                    # Process fake player answer
+                    player_name = words[0].lower()
+                    answer_text = ' '.join(words[1:])
+
+                    # Find matching fake player ID
+                    answering_player_id = None
+                    for participant_id in participants:
+                        if (participant_id.startswith('fake_') and
+                            player_name in participant_id.lower()):
+                            answering_player_id = participant_id
+                            break
+
+                    if not answering_player_id:
+                        continue
+
+                else:
+                    # Process real player answer
+                    answering_player_id = str(message.author.id)
+                    answer_text = message.content
+
+                # Mark player as answered
+                answered_players.add(answering_player_id)
+
+                try:
+                    # Calculate answer time relative to when reveal completed
+                    if reveal_complete_time is None:
+                        reveal_complete_time = start_time
+                    answer_time = time.time() - reveal_complete_time
+
+                    # Calculate points based on time (1000 → 0 over full 20-second window)
+                    total_window = POINTS_RACE_REVEAL_TIME + POINTS_RACE_ANSWER_TIME  # 5 + 15 = 20 seconds
+
+                    if answer_time < 0:
+                        # Answered before question started (shouldn't happen)
+                        points_earned = POINTS_RACE_MAX_POINTS
+                    elif answer_time >= total_window:
+                        # Answered at/after full timeout
+                        points_earned = 0
+                    else:
+                        # Linear decrease from 1000 points at 0s to 0 points at 20s
+                        points_earned = int(POINTS_RACE_MAX_POINTS * (1 - (answer_time / total_window)))
+
+
+                    # Check if answer is correct
+                    is_correct = self.evaluate_answer(answer_text, question)
+
+                    if not is_correct:
+                        points_earned = 0
+
+                    # Update player's Points Race score (handle both string and int IDs)
+                    for player in tournament["players"]:
+                        if str(player["user_id"]) == str(answering_player_id):
+                            if "points_race_scores" not in player:
+                                player["points_race_scores"] = []
+                            player["points_race_scores"].append({
+                                "question_num": len(player["points_race_scores"]) + 1,
+                                "points": points_earned,
+                                "answer_time": answer_time,
+                                "correct": is_correct
+                            })
+                            break
+
+                    # Store message data for later reaction processing (reactions only)
+                    answer_messages.append({
+                        'message': message,
+                        'is_correct': is_correct,
+                        'player_id': answering_player_id
+                    })
+
+                    # Remove player from Tournament Participant role immediately (but delay reactions)
+                    if not str(answering_player_id).startswith('fake_'):
+                        try:
+                            # Ensure answering_player_id is an integer for get_member()
+                            player_id_int = int(answering_player_id) if isinstance(answering_player_id, str) else answering_player_id
+                            member = channel.guild.get_member(player_id_int)
+                            if member:
+                                tournament_participant_role = discord.utils.get(channel.guild.roles, name="Tournament Participant")
+                                okran_role = discord.utils.get(channel.guild.roles, name="Okran")
+
+                                if tournament_participant_role and tournament_participant_role in member.roles:
+                                    await member.remove_roles(tournament_participant_role)
+                                if okran_role:
+                                    await member.add_roles(okran_role)
+                        except (discord.HTTPException, ValueError) as e:
+                            pass
+
+                except Exception as e:
+                    continue
+
+
+            except asyncio.TimeoutError:
+                continue
+
+
+        # Handle players who didn't answer - assign 0 points
+        for player in tournament["players"]:
+            if str(player["user_id"]) not in answered_players:
+                if "points_race_scores" not in player:
+                    player["points_race_scores"] = []
+                player["points_race_scores"].append({
+                    "question_num": len(player["points_race_scores"]) + 1,
+                    "points": 0,
+                    "answer_time": POINTS_RACE_ANSWER_TIME,
+                    "correct": False
+                })
+
+                # Remove from Tournament Participant role and add to Okran role (only for real users)
+                if not str(player["user_id"]).startswith('fake_'):
+                    try:
+                        # Ensure user_id is an integer for get_member()
+                        player_id_int = int(player["user_id"]) if isinstance(player["user_id"], str) else player["user_id"]
+                        member = channel.guild.get_member(player_id_int)
+                        if member:
+                            tournament_participant_role = discord.utils.get(channel.guild.roles, name="Tournament Participant")
+                            okran_role = discord.utils.get(channel.guild.roles, name="Okran")
+
+                            if tournament_participant_role and tournament_participant_role in member.roles:
+                                await member.remove_roles(tournament_participant_role)
+                            if okran_role:
+                                await member.add_roles(okran_role)
+                    except (discord.HTTPException, ValueError):
+                        pass
+
+        # Process delayed reactions for all answers
+        for answer_data in answer_messages:
+            message = answer_data['message']
+            is_correct = answer_data['is_correct']
+            player_id = answer_data['player_id']
+
+            # Add reaction to indicate correct/incorrect
+            try:
+                if is_correct:
+                    await message.add_reaction("✅")
+                else:
+                    await message.add_reaction("❌")
+            except discord.HTTPException:
+                pass
+
+
+    async def show_points_race_standings(self, channel_id: int, question_num: int) -> None:
+        """Display current Points Race standings"""
+
+        tournament = active_tournaments.get(channel_id)
+        if not tournament:
+            return
+
+        channel = self.bot.get_channel(channel_id)
+        if not channel:
+            return
+
+
+        # Calculate total points for each player
+        player_standings = []
+
+        for i, player in enumerate(tournament["players"]):
+            total_points = 0
+            questions_answered = 0
+
+            if "points_race_scores" in player:
+                for score in player["points_race_scores"]:
+                    total_points += score["points"]
+                    questions_answered += 1
+            else:
+                pass
+
+            # Use display_name if username doesn't exist
+            username = player.get("username") or player.get("display_name") or f"Player {player['user_id']}"
+
+            player_standings.append({
+                "user_id": player["user_id"],
+                "username": username,
+                "total_points": total_points,
+                "questions_answered": questions_answered
+            })
+
+
+        # Sort by total points (descending)
+        player_standings.sort(key=lambda x: x["total_points"], reverse=True)
+
+        # Create standings embed
+        embed = discord.Embed(
+            title=f"🏁 Points Race Standings - After Question {question_num}",
+            color=discord.Color.blue()
+        )
+
+        standings_text = ""
+        for i, standing in enumerate(player_standings, 1):
+            place_emoji = "🥇" if i == 1 else "🥈" if i == 2 else "🥉" if i == 3 else "🏅" if i == 4 else "📍"
+            standings_text += f"{place_emoji} **{i}.** {standing['username']} - **{standing['total_points']}** pts\n"
+
+
+        embed.add_field(
+            name="",
+            value=standings_text if standings_text else "No standings yet",
+            inline=False
+        )
+
+        # Add qualification status
+        if len(player_standings) >= 4:
+            embed.add_field(
+                name="",
+                value="Top 4 Advance to Semifinals",
+                inline=False
+            )
+
+        embed.set_footer(text=f"{POINTS_RACE_QUESTIONS - question_num} questions remaining")
+
+        await channel.send(embed=embed)
+
+    async def complete_points_race(self, channel_id: int) -> None:
+        """Complete Points Race and advance top 4 to semifinals"""
+
+        tournament = active_tournaments.get(channel_id)
+        if not tournament:
+            return
+
+        channel = self.bot.get_channel(channel_id)
+        if not channel:
+            return
+
+
+        # Calculate final standings
+        player_standings = []
+        for player in tournament["players"]:
+            total_points = 0
+            if "points_race_scores" in player:
+                for score in player["points_race_scores"]:
+                    total_points += score["points"]
+
+            # Use display_name if username doesn't exist
+            username = player.get("username") or player.get("display_name") or f"Player {player['user_id']}"
+
+            player_standings.append({
+                "user_id": player["user_id"],
+                "username": username,
+                "total_points": total_points
+            })
+
+        # Sort by total points (descending)
+        player_standings.sort(key=lambda x: x["total_points"], reverse=True)
+
+        # Create final standings embed
+        embed = discord.Embed(
+            title="🏆 Points Race Final Results",
+            color=discord.Color.gold()
+        )
+
+        final_standings_text = ""
+        for i, standing in enumerate(player_standings, 1):
+            place_emoji = "🥇" if i == 1 else "🥈" if i == 2 else "🥉" if i == 3 else "🏅" if i == 4 else "📍"
+            status = " ✅ **Qualified**" if i <= 4 else " ❌ Eliminated"
+            final_standings_text += f"{place_emoji} **{i}.** {standing['username']} - **{standing['total_points']}** pts{status}\n"
+
+        embed.add_field(
+            name=f"",
+            value=final_standings_text,
+            inline=False
+        )
+
+        await channel.send(embed=embed)
+        await asyncio.sleep(5)
+
+        # Update tournament data with seedings for semifinals
+        if len(player_standings) >= 4:
+            seedings = []
+            for i in range(4):
+                seedings.append({
+                    "user_id": player_standings[i]["user_id"],
+                    "seed": i + 1,
+                    "total_points": player_standings[i]["total_points"]
+                })
+
+            tournament["seedings"] = seedings
+            tournament["status"] = "semis"
+
+            # Announce semifinals setup
+            semis_embed = discord.Embed(
+                title="🏟️ Semifinals Setup",
+                description="The top 4 players will now compete in knockout semifinals!",
+                color=discord.Color.purple()
+            )
+
+            semis_embed.add_field(
+                name="",
+                value=f"**Match 1:** #{seedings[0]['seed']} {player_standings[0]['username']} vs #{seedings[3]['seed']} {player_standings[3]['username']}\n"
+                      f"**Match 2:** #{seedings[1]['seed']} {player_standings[1]['username']} vs #{seedings[2]['seed']} {player_standings[2]['username']}",
+                inline=False
+            )
+
+            await channel.send(embed=semis_embed)
+            await asyncio.sleep(5)
+
+            # Wait a moment before starting semifinals
+            await asyncio.sleep(3)
+            await self.run_semifinals(channel_id)
+        else:
+            # Not enough players for semifinals
+            embed = discord.Embed(
+                title="❌ Tournament Incomplete",
+                description="Not enough players qualified for semifinals. Tournament ended.",
+                color=discord.Color.red()
+            )
+            await channel.send(embed=embed)
+            tournament["status"] = "completed"
 
     async def run_semifinals(self, channel_id: int) -> None:
         """Run semifinal matches"""
@@ -1073,6 +1747,31 @@ class TournamentManager:
         except Exception as e:
             logger.error(f"Failed to remove participant role after answer: {e}")
 
+    async def assign_points_race_participant_roles(self, channel: discord.TextChannel, player_ids: List[int]) -> None:
+        """Assign Tournament Participant role to all Points Race players"""
+        try:
+            import discordbot
+            participant_role_id = getattr(discordbot, 'TOURNAMENT_PARTICIPANT_ROLE_ID', None)
+
+            if not participant_role_id:
+                logger.error("Tournament Participant role ID not found in discordbot.py")
+                return
+
+            participant_role = channel.guild.get_role(participant_role_id)
+
+            if not participant_role:
+                logger.error("Tournament Participant role not found in guild")
+                return
+
+            # Assign participant role to all Points Race players
+            for player_id in player_ids:
+                member = channel.guild.get_member(player_id)
+                if member and participant_role not in member.roles:
+                    await member.add_roles(participant_role, reason="Points Race participant")
+
+        except Exception as e:
+            logger.error(f"Failed to assign Points Race participant roles: {e}")
+
     async def run_match(self, match: Dict, channel: discord.TextChannel) -> None:
         """Run a single match (RR or KO)"""
         if match.get("completed_at"):
@@ -1222,10 +1921,10 @@ class TournamentManager:
                 reveal_duration = answer_timeout - 3  # Reveal for all but last 3 seconds
 
                 if reveal_duration > 0:
-                    # Fixed reveal duration of 5 seconds with 1 update per second
-                    reveal_time = 5.0
+                    # Fixed reveal duration with 1 update per second
+                    reveal_time = RR_REVEAL_TIME
                     update_interval = 1.0  # Update every 1 second
-                    total_updates = 5  # Exactly 5 updates over 5 seconds
+                    total_updates = int(RR_REVEAL_TIME)  # Updates based on reveal time
                     chars_per_update = len(full_prompt) / total_updates if total_updates > 0 else len(full_prompt)
 
                     # Restrict channel permissions BEFORE sending embed
@@ -2238,6 +2937,92 @@ class TournamentStatsCommands(commands.Cog):
         
         embed.description = description
         await interaction.response.send_message(embed=embed)
+
+
+class SeedingVoteView(discord.ui.View):
+    """View for seeding mode voting with buttons"""
+
+    def __init__(self, tournament: Dict, embed: discord.Embed):
+        super().__init__(timeout=30)
+        self.tournament = tournament
+        self.embed = embed
+        self.message = None
+        self.round_robin_votes = set()  # Set of user IDs who voted for Round Robin
+        self.points_race_votes = set()  # Set of user IDs who voted for Points Race
+
+        # Get tournament participant IDs for validation
+        self.participant_ids = {player["user_id"] for player in tournament["players"]}
+
+    def is_participant(self, user_id: str) -> bool:
+        """Check if user is a tournament participant"""
+        return user_id in self.participant_ids
+
+    def update_embed_votes(self):
+        """Update the embed with current vote counts and voter names"""
+        # Round Robin voters
+        rr_names = []
+        for user_id in self.round_robin_votes:
+            for player in self.tournament["players"]:
+                if player["user_id"] == user_id:
+                    name = player.get("display_name", f"Player {user_id}")
+                    rr_names.append(name)
+                    break
+
+        # Points Race voters
+        pr_names = []
+        for user_id in self.points_race_votes:
+            for player in self.tournament["players"]:
+                if player["user_id"] == user_id:
+                    name = player.get("display_name", f"Player {user_id}")
+                    pr_names.append(name)
+                    break
+
+        # Update embed fields
+        rr_value = "\n".join([f"• {name}" for name in rr_names]) if rr_names else "*No votes yet*"
+        pr_value = "\n".join([f"• {name}" for name in pr_names]) if pr_names else "*No votes yet*"
+
+        self.embed.set_field_at(0, name="🥊 Round Robin", value=rr_value, inline=True)
+        self.embed.set_field_at(1, name="🏃 Points Race", value=pr_value, inline=True)
+
+    @discord.ui.button(label="Round Robin", style=discord.ButtonStyle.success, emoji="🥊")
+    async def round_robin_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        user_id = str(interaction.user.id)
+
+        # Check if user is a tournament participant
+        if not self.is_participant(user_id):
+            await interaction.response.send_message("❌ Only tournament participants can vote!", ephemeral=True)
+            return
+
+        # Remove from other vote if present, add to this vote
+        self.points_race_votes.discard(user_id)
+        self.round_robin_votes.add(user_id)
+
+        # Update embed and respond
+        self.update_embed_votes()
+        await interaction.response.edit_message(embed=self.embed, view=self)
+
+    @discord.ui.button(label="Points Race", style=discord.ButtonStyle.primary, emoji="🏃")
+    async def points_race_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        user_id = str(interaction.user.id)
+
+        # Check if user is a tournament participant
+        if not self.is_participant(user_id):
+            await interaction.response.send_message("❌ Only tournament participants can vote!", ephemeral=True)
+            return
+
+        # Remove from other vote if present, add to this vote
+        self.round_robin_votes.discard(user_id)
+        self.points_race_votes.add(user_id)
+
+        # Update embed and respond
+        self.update_embed_votes()
+        await interaction.response.edit_message(embed=self.embed, view=self)
+
+    def disable_all_buttons(self):
+        """Disable all buttons after voting ends"""
+        for item in self.children:
+            item.disabled = True
+
 
 async def setup_tournament_system(bot: commands.Bot, 
                                 db: AsyncIOMotorDatabase,
