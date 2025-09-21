@@ -73,6 +73,9 @@ import chess
 # Tournament system import
 from tournament import setup_tournament_system
 
+# Okra Hunt escape room import
+from okra_hunt import OkraHunt
+
 embed_color_default = discord.Color.green()
 embed_color = embed_color_default
 
@@ -170,6 +173,12 @@ if local_mode == True:
     TOURNAMENT_PARTICIPANT_ROLE_ID = 1416290287633825903 #Stage
     TOURNAMENT_OBSERVER_ROLE_ID = 1416290512310370348 #Stage
     HOST_ROLE_ID = 1416587636709134408 #Stage
+    HUNT_PROGRESS_CHANNEL_ID = 1419172605746741298
+    THE_LODGE_CHANNEL_ID = 1419174414263648266
+    LEVEL_0_CHANNEL_ID = 1419172497755996302
+    LEVEL_1_CHANNEL_ID = 1419175528526512149
+    LEVEL_0_ROLE_ID = 1419169185396953199
+    LEVEL_1_ROLE_ID = 1419170662089490464
 else:
     discord_token = os.getenv("discord_token")
     mongo_db_string = os.getenv("mongo_db_string")
@@ -191,6 +200,10 @@ else:
     TOURNAMENT_PARTICIPANT_ROLE_ID = 1416298356849774612 #Production
     TOURNAMENT_OBSERVER_ROLE_ID = 1416298438915788861 #Production
     HOST_ROLE_ID = 1411059745774764193 # Production
+    HUNT_PROGRESS_CHANNEL_ID = 1418471376632938568
+    THE_LODGE_CHANNEL_ID = 1419198606308806788
+    LEVEL_0_CHANNEL_ID = 1419198737904959508
+    LEVEL_1_CHANNEL_ID = 1419198838173995088
 
 
 
@@ -14608,6 +14621,14 @@ async def on_message(message):
     if is_self:
         return
 
+    # Check if message should be handled by Okra Hunt escape room system
+    if 'okra_hunt' in globals():
+        try:
+            if await okra_hunt.handle_message(message):
+                return  # Message was handled by okra hunt, don't process further
+        except Exception as e:
+            print(f"Error in okra hunt handler: {e}")
+
     if message.author.id == DISBOARD_BOT_ID:
         # Detect “Bump done!” (Disboard uses embeds; content is usually empty)
         bump_hit = False
@@ -15024,6 +15045,17 @@ async def on_ready():
         print("✅ Tournament system integrated successfully!")
         print("📋 Tournament commands restricted to #tournament channels only")
         print("🎮 Commands: /start, /status, /cancel, /join, /stats, /leaderboard")
+
+        # Initialize Okra Hunt escape room system
+        global okra_hunt
+        okra_hunt = OkraHunt(bot, THE_LODGE_CHANNEL_ID, LEVEL_0_CHANNEL_ID, LEVEL_0_ROLE_ID, HUNT_PROGRESS_CHANNEL_ID, LEVEL_1_CHANNEL_ID, HOST_ROLE_ID, okrag_id, LEVEL_1_ROLE_ID)
+
+        print("✅ Okra Hunt escape room system integrated successfully!")
+        print("🏃 Available channels: THE_LODGE -> LEVEL_0 -> LEVEL_1")
+
+        # Clean up escape room channels from previous sessions
+        print("🧹 Cleaning up escape room channels...")
+        await okra_hunt.cleanup_escape_room_channels()
         
         # Tournament testing: Use add_fake_players.py script for adding test players
         print("🧪 For testing: Use add_fake_players.py script to add fake players")
