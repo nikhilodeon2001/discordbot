@@ -4,7 +4,7 @@ import asyncio
 import logging
 
 class OkraHunt:
-    def __init__(self, bot, the_lodge_channel_id, level_0_channel_id, level_0_role_id, hunt_progress_channel_id, level_1_channel_id, host_role_id, okrag_id, level_1_role_id):
+    def __init__(self, bot, the_lodge_channel_id, level_0_channel_id, level_0_role_id, hunt_progress_channel_id, level_1_channel_id, host_role_id, okrag_id, level_1_role_id, level_2_channel_id, level_2_role_id, level_3_channel_id, level_3_role_id):
         self.bot = bot
         self.logger = logging.getLogger(__name__)
         self.the_lodge_channel_id = the_lodge_channel_id
@@ -15,6 +15,10 @@ class OkraHunt:
         self.host_role_id = host_role_id
         self.okrag_id = okrag_id
         self.level_1_role_id = level_1_role_id
+        self.level_2_channel_id = level_2_channel_id
+        self.level_2_role_id = level_2_role_id
+        self.level_3_channel_id = level_3_channel_id
+        self.level_3_role_id = level_3_role_id
 
     async def check_user_id_answer(self, message):
         """
@@ -209,6 +213,102 @@ class OkraHunt:
 
         return False
 
+    async def check_level_1_puzzle(self, message):
+        """
+        Check if user with LEVEL_1_ROLE_ID answered '94061' in LEVEL_1_CHANNEL
+        If correct, add LEVEL_2_ROLE_ID
+        """
+        if message.channel.id != self.level_1_channel_id:
+            return False
+
+        # Check if user has LEVEL_1_ROLE_ID
+        level_1_role = message.guild.get_role(self.level_1_role_id)
+        if not level_1_role or level_1_role not in message.author.roles:
+            return False
+
+        if message.content.strip() == '94061':
+            try:
+                # Get LEVEL_2_ROLE_ID
+                level_2_role = message.guild.get_role(self.level_2_role_id)
+
+                if not level_2_role:
+                    self.logger.error(f"LEVEL_2_ROLE_ID {self.level_2_role_id} not found in guild {message.guild.id}")
+                    return False
+
+                # Check if user already has LEVEL_2_ROLE_ID
+                if level_2_role in message.author.roles:
+                    await self.announce_progress(message.author, "already_completed", "LEVEL_1")
+                    return True
+
+                # Remove LEVEL_1_ROLE_ID and add LEVEL_2_ROLE_ID
+                await message.author.remove_roles(level_1_role)
+                await message.author.add_roles(level_2_role)
+
+                # Announce success in progress channel
+                await self.announce_progress(message.author, "completed", "LEVEL_1")
+
+                self.logger.info(f"User {message.author.id} ({message.author.name}) solved LEVEL_1 challenge")
+                return True
+
+            except discord.Forbidden:
+                self.logger.error(f"Bot lacks permission to add role {self.level_2_role_id} to user {message.author.id}")
+                await self.announce_progress(message.author, "error", "LEVEL_1")
+                return False
+            except Exception as e:
+                self.logger.error(f"Error processing LEVEL_1 challenge for user {message.author.id}: {e}")
+                await self.announce_progress(message.author, "error", "LEVEL_1")
+                return False
+
+        return False
+
+    async def check_level_2_puzzle(self, message):
+        """
+        Check if user with LEVEL_2_ROLE_ID answered '29212' in LEVEL_2_CHANNEL
+        If correct, add LEVEL_3_ROLE_ID
+        """
+        if message.channel.id != self.level_2_channel_id:
+            return False
+
+        # Check if user has LEVEL_2_ROLE_ID
+        level_2_role = message.guild.get_role(self.level_2_role_id)
+        if not level_2_role or level_2_role not in message.author.roles:
+            return False
+
+        if message.content.strip() == '29212':
+            try:
+                # Get LEVEL_3_ROLE_ID
+                level_3_role = message.guild.get_role(self.level_3_role_id)
+
+                if not level_3_role:
+                    self.logger.error(f"LEVEL_3_ROLE_ID {self.level_3_role_id} not found in guild {message.guild.id}")
+                    return False
+
+                # Check if user already has LEVEL_3_ROLE_ID
+                if level_3_role in message.author.roles:
+                    await self.announce_progress(message.author, "already_completed", "LEVEL_2")
+                    return True
+
+                # Remove LEVEL_2_ROLE_ID and add LEVEL_3_ROLE_ID
+                await message.author.remove_roles(level_2_role)
+                await message.author.add_roles(level_3_role)
+
+                # Announce success in progress channel
+                await self.announce_progress(message.author, "completed", "LEVEL_2")
+
+                self.logger.info(f"User {message.author.id} ({message.author.name}) solved LEVEL_2 challenge")
+                return True
+
+            except discord.Forbidden:
+                self.logger.error(f"Bot lacks permission to add role {self.level_3_role_id} to user {message.author.id}")
+                await self.announce_progress(message.author, "error", "LEVEL_2")
+                return False
+            except Exception as e:
+                self.logger.error(f"Error processing LEVEL_2 challenge for user {message.author.id}: {e}")
+                await self.announce_progress(message.author, "error", "LEVEL_2")
+                return False
+
+        return False
+
     async def announce_progress(self, user, status, challenge_name):
         """
         Announce user progress in the hunt progress channel
@@ -224,7 +324,9 @@ class OkraHunt:
                 display_names = {
                     "THE_LODGE": "The Lodge",
                     "LEVEL_0": "The Forest",
-                    "LEVEL_1": "The River"
+                    "LEVEL_1": "The River",
+                    "LEVEL_2": "The Mountain",
+                    "LEVEL_3": "The Summit"
                 }
 
                 display_name = display_names.get(challenge_name, challenge_name)
@@ -245,6 +347,18 @@ class OkraHunt:
                     embed.add_field(
                         name="Next Step",
                         value=f"Check out <#{self.level_1_channel_id}> for your next adventure!",
+                        inline=False
+                    )
+                elif challenge_name == "LEVEL_1":
+                    embed.add_field(
+                        name="Next Step",
+                        value=f"Check out <#{self.level_2_channel_id}> for your next adventure!",
+                        inline=False
+                    )
+                elif challenge_name == "LEVEL_2":
+                    embed.add_field(
+                        name="Next Step",
+                        value=f"Check out <#{self.level_3_channel_id}> for your next adventure!",
                         inline=False
                     )
                 else:
@@ -282,7 +396,9 @@ class OkraHunt:
         channels_to_clean = [
             (self.the_lodge_channel_id, "THE_LODGE"),
             (self.level_0_channel_id, "LEVEL_0"),
-            (self.level_1_channel_id, "LEVEL_1")
+            (self.level_1_channel_id, "LEVEL_1"),
+            (self.level_2_channel_id, "LEVEL_2"),
+            (self.level_3_channel_id, "LEVEL_3")
         ]
 
         print(f"🧹 Starting escape room cleanup - okrag_id: {self.okrag_id}, host_role_id: {self.host_role_id}")
@@ -410,7 +526,7 @@ class OkraHunt:
             return False
 
         # Check if message is in any escape room channel
-        escape_room_channels = [self.the_lodge_channel_id, self.level_0_channel_id, self.level_1_channel_id]
+        escape_room_channels = [self.the_lodge_channel_id, self.level_0_channel_id, self.level_1_channel_id, self.level_2_channel_id, self.level_3_channel_id]
 
         if message.channel.id in escape_room_channels:
             # Check if user has HOST_ROLE_ID
@@ -429,6 +545,12 @@ class OkraHunt:
                 # For LEVEL_0, still check if it's a correct answer
                 elif message.channel.id == self.level_0_channel_id:
                     await self.check_okra_rules_answer(message)
+                # For LEVEL_1, still check if it's a correct answer
+                elif message.channel.id == self.level_1_channel_id:
+                    await self.check_level_1_puzzle(message)
+                # For LEVEL_2, still check if it's a correct answer
+                elif message.channel.id == self.level_2_channel_id:
+                    await self.check_level_2_puzzle(message)
                 return False  # Don't delete, let message stay
 
             # Delete message from non-host users
@@ -446,6 +568,12 @@ class OkraHunt:
             # For LEVEL_0, still process the answer logic after deletion
             elif message.channel.id == self.level_0_channel_id:
                 await self.check_okra_rules_answer(message)
+            # For LEVEL_1, still process the answer logic after deletion
+            elif message.channel.id == self.level_1_channel_id:
+                await self.check_level_1_puzzle(message)
+            # For LEVEL_2, still process the answer logic after deletion
+            elif message.channel.id == self.level_2_channel_id:
+                await self.check_level_2_puzzle(message)
 
             return True  # Message was handled
 
@@ -497,4 +625,3 @@ class OkraHunt:
         except Exception as e:
             self.logger.error(f"Error resetting progress for user {user.id}: {e}")
             return False
-
