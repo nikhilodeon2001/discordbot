@@ -443,6 +443,9 @@ class TournamentManager:
         # Conduct seeding mode vote
         seeding_mode = await self.conduct_seeding_vote(channel, tournament)
 
+        # Store the voting result in tournament config
+        tournament["config"]["seeding_mode"] = seeding_mode
+
         if seeding_mode == "points_race":
             embed = discord.Embed(
                 title="🏆 Tournament Starting!",
@@ -934,10 +937,6 @@ class TournamentManager:
 
         # Convert all player IDs to strings for consistent comparison (like round robin)
         participants = [str(pid) for pid in player_ids]
-        # Add fake player IDs that might not be in player_ids
-        for player in tournament["players"]:
-            if str(player["user_id"]).startswith('fake_') and str(player["user_id"]) not in participants:
-                participants.append(str(player["user_id"]))
 
         answered_players = set()
         fake_players = ["alpha", "beta", "gamma", "delta"]
