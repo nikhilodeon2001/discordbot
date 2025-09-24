@@ -4,7 +4,7 @@ import asyncio
 import logging
 
 class OkraHunt:
-    def __init__(self, bot, the_lodge_channel_id, level_0_channel_id, level_0_role_id, hunt_progress_channel_id, level_1_channel_id, host_role_id, okrag_id, level_1_role_id, level_2_channel_id, level_2_role_id, level_3_channel_id, level_3_role_id, level_4_role_id, rules_channel_id):
+    def __init__(self, bot, the_lodge_channel_id, level_0_channel_id, level_0_role_id, hunt_progress_channel_id, level_1_channel_id, host_role_id, okrag_id, level_1_role_id, level_2_channel_id, level_2_role_id, level_3_channel_id, level_3_role_id, level_4_role_id, level_4_channel_id, rules_channel_id, rules_message_id):
         self.bot = bot
         self.logger = logging.getLogger(__name__)
         self.the_lodge_channel_id = the_lodge_channel_id
@@ -20,7 +20,9 @@ class OkraHunt:
         self.level_3_channel_id = level_3_channel_id
         self.level_3_role_id = level_3_role_id
         self.level_4_role_id = level_4_role_id
+        self.level_4_channel_id = level_4_channel_id
         self.rules_channel_id = rules_channel_id
+        self.rules_message_id = rules_message_id
 
     async def check_user_id_answer(self, message):
         """
@@ -313,7 +315,7 @@ class OkraHunt:
 
     async def check_level_3_reaction(self, reaction, user):
         """
-        Check if user with LEVEL_3_ROLE_ID reacted with :palm_tree: to message 1374598920973320313 in RULES_CHANNEL
+        Check if user with LEVEL_3_ROLE_ID reacted with :palm_tree: to message in RULES_CHANNEL
         If correct, remove LEVEL_3_ROLE_ID and add LEVEL_4_ROLE_ID
         """
         # Check if reaction is in RULES_CHANNEL
@@ -321,7 +323,7 @@ class OkraHunt:
             return False
 
         # Check if reaction is on the specific message
-        if reaction.message.id != 1374598920973320313:
+        if reaction.message.id != self.rules_message_id:
             return False
 
         # Check if the emoji is palm_tree
@@ -579,6 +581,48 @@ class OkraHunt:
         else:
             print("✅ Escape room cleanup complete! No messages needed removal")
             self.logger.info("✅ Escape room cleanup complete! No messages needed removal")
+
+    async def cleanup_rules_message_reactions(self):
+        """
+        Clean up all reactions on the rules message
+        """
+        try:
+            rules_channel = self.bot.get_channel(self.rules_channel_id)
+            if not rules_channel:
+                print(f"❌ Rules channel {self.rules_channel_id} not found")
+                self.logger.warning(f"Rules channel {self.rules_channel_id} not found")
+                return
+
+            print(f"🧹 Cleaning up reactions on rules message...")
+            self.logger.info(f"🧹 Cleaning up reactions on rules message...")
+
+            # Get the specific message
+            try:
+                rules_message = await rules_channel.fetch_message(self.rules_message_id)
+            except discord.NotFound:
+                print(f"❌ Rules message {self.rules_message_id} not found")
+                self.logger.warning(f"Rules message {self.rules_message_id} not found")
+                return
+            except discord.Forbidden:
+                print(f"❌ No permission to access rules message {self.rules_message_id}")
+                self.logger.error(f"No permission to access rules message {self.rules_message_id}")
+                return
+
+            # Clear all reactions from the message
+            try:
+                await rules_message.clear_reactions()
+                print(f"✅ Cleared all reactions from rules message")
+                self.logger.info(f"Cleared all reactions from rules message {self.rules_message_id}")
+            except discord.Forbidden:
+                print(f"❌ No permission to clear reactions from rules message")
+                self.logger.error(f"No permission to clear reactions from rules message {self.rules_message_id}")
+            except Exception as e:
+                print(f"❌ Error clearing reactions: {e}")
+                self.logger.error(f"Error clearing reactions from rules message {self.rules_message_id}: {e}")
+
+        except Exception as e:
+            print(f"❌ Error during rules message reaction cleanup: {e}")
+            self.logger.error(f"Error during rules message reaction cleanup: {e}")
 
     async def handle_message(self, message):
         """
