@@ -9883,7 +9883,7 @@ async def select_wof_questions(winner, winner_id):
             return None
 
         elif selected_wof_category == "9":
-            ask_feud_question(winner, "solo", winner_id)
+            await ask_feud_question(winner, "solo", winner_id)
             await asyncio.sleep(3)
             return None
 
