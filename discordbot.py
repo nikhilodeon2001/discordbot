@@ -186,6 +186,7 @@ if local_mode == True:
     LEVEL_3_ROLE_ID = 1419170873897779322
     LEVEL_4_ROLE_ID = 1419170916272705556
     RULES_CHANNEL_ID = 1420238660342648873
+    RULES_MESSAGE_ID = 1420248754862162022
 else:
     discord_token = os.getenv("discord_token")
     mongo_db_string = os.getenv("mongo_db_string")
@@ -220,6 +221,7 @@ else:
     LEVEL_3_ROLE_ID = 1418469027894001664
     LEVEL_4_ROLE_ID = 1418469150795366453
     RULES_CHANNEL_ID = 1372347624648347649
+    RULES_MESSAGE_ID = 1374598920973320313
 
 
 
@@ -228,6 +230,7 @@ intents = discord.Intents.default()
 intents.messages = True
 intents.message_content = True
 intents.members = True  # Required to see guild members and their roles
+intents.reactions = True  # Required to receive reaction events
 bot = commands.Bot(command_prefix="!", intents=intents)
 openai_client = AsyncOpenAI(api_key=openai_api_key)
 id_limits = {"general": 2000, "mysterybox": 2000, "crossword": 5000, "jeopardy": 5000, "wof": 1500, "list": 20, "feud": 1000, "posters": 2000, "movie_scenes": 5000, "missing_link": 2500, "people": 2500, "ranker_list": 4000, "animal": 2000, "riddle": 2500, "dictionary": 5000, "flags": 800, "lyric": 500, "polyglottery": 80, "book": 80, "element": 100, "jigsaw": 5000, "border": 100, "faceoff": 5000, "president": 80, "wordle": 1400, "myopic": 5000, "fusion": 5000, "microscopic": 5000, "chess": 5000, "stock": 800, "currency": 100, "search": 10}
@@ -9883,7 +9886,7 @@ async def select_wof_questions(winner, winner_id):
             return None
 
         elif selected_wof_category == "9":
-            await ask_feud_question(winner, "solo", winner_id)
+            ask_feud_question(winner, "solo", winner_id)
             await asyncio.sleep(3)
             return None
 
@@ -15064,14 +15067,18 @@ async def on_ready():
 
         # Initialize Okra Hunt escape room system
         global okra_hunt
-        okra_hunt = OkraHunt(bot, THE_LODGE_CHANNEL_ID, LEVEL_0_CHANNEL_ID, LEVEL_0_ROLE_ID, HUNT_PROGRESS_CHANNEL_ID, LEVEL_1_CHANNEL_ID, HOST_ROLE_ID, okrag_id, LEVEL_1_ROLE_ID, LEVEL_2_CHANNEL_ID, LEVEL_2_ROLE_ID, LEVEL_3_CHANNEL_ID, LEVEL_3_ROLE_ID, LEVEL_4_ROLE_ID, RULES_CHANNEL_ID)
+        okra_hunt = OkraHunt(bot, THE_LODGE_CHANNEL_ID, LEVEL_0_CHANNEL_ID, LEVEL_0_ROLE_ID, HUNT_PROGRESS_CHANNEL_ID, LEVEL_1_CHANNEL_ID, HOST_ROLE_ID, okrag_id, LEVEL_1_ROLE_ID, LEVEL_2_CHANNEL_ID, LEVEL_2_ROLE_ID, LEVEL_3_CHANNEL_ID, LEVEL_3_ROLE_ID, LEVEL_4_ROLE_ID, LEVEL_4_CHANNEL_ID, RULES_CHANNEL_ID, RULES_MESSAGE_ID)
 
         print("✅ Okra Hunt escape room system integrated successfully!")
-        print("🏃 Available channels: THE_LODGE -> LEVEL_0 -> LEVEL_1 -> LEVEL_2 -> LEVEL_3")
+        print("🏃 Available channels: THE_LODGE -> LEVEL_0 -> LEVEL_1 -> LEVEL_2 -> LEVEL_3 -> LEVEL_4")
 
         # Clean up escape room channels from previous sessions
         print("🧹 Cleaning up escape room channels...")
         await okra_hunt.cleanup_escape_room_channels()
+
+        # Clean up reactions on rules message
+        print("🧹 Cleaning up reactions on rules message...")
+        await okra_hunt.cleanup_rules_message_reactions()
         
         # Tournament testing: Use add_fake_players.py script for adding test players
         print("🧪 For testing: Use add_fake_players.py script to add fake players")
@@ -15160,6 +15167,80 @@ async def sync_global(ctx):
         await ctx.send(f"❌ Failed to sync commands: {e}")
 
 @bot.event
+async def on_raw_reaction_add(payload):
+    """
+    Handle raw reaction events for okra hunt system
+    """
+    # Only process reactions in RULES_CHANNEL_ID to the specific message
+    if payload.channel_id == RULES_CHANNEL_ID and payload.message_id == RULES_MESSAGE_ID:
+        # Get the guild, user, and roles
+        guild = bot.get_guild(payload.guild_id)
+        if not guild:
+            return
+
+        user = guild.get_member(payload.user_id)
+        if not user or user.bot:
+            return
+
+        # Check if this is the palm tree emoji from a qualified user
+        if str(payload.emoji) == "🌴":
+            level_3_role = guild.get_role(LEVEL_3_ROLE_ID)
+            level_4_role = guild.get_role(LEVEL_4_ROLE_ID)
+
+            if not level_3_role or not level_4_role:
+                await _remove_user_reaction(payload.channel_id, payload.message_id, payload.emoji, payload.user_id)
+                return
+
+            # If user has LEVEL_3_ROLE_ID and doesn't have LEVEL_4_ROLE_ID, process the role swap
+            if level_3_role in user.roles and level_4_role not in user.roles:
+                try:
+                    # Remove LEVEL_3_ROLE and add LEVEL_4_ROLE
+                    await user.remove_roles(level_3_role)
+                    await user.add_roles(level_4_role)
+
+                    # Announce in progress channel
+                    if 'okra_hunt' in globals() and okra_hunt:
+                        await okra_hunt.announce_progress(user, "completed", "LEVEL_3")
+
+                    # Remove the successful reaction to hide the answer
+                    await _remove_user_reaction(payload.channel_id, payload.message_id, payload.emoji, payload.user_id)
+
+                except Exception as e:
+                    print(f"❌ Error updating roles: {e}")
+            else:
+                # Remove the reaction if user doesn't qualify
+                await _remove_user_reaction(payload.channel_id, payload.message_id, payload.emoji, payload.user_id)
+        else:
+            # Remove any non-palm-tree reactions
+            await _remove_user_reaction(payload.channel_id, payload.message_id, payload.emoji, payload.user_id)
+
+async def _remove_user_reaction(channel_id, message_id, emoji, user_id):
+    """
+    Helper function to remove a specific user's reaction from a message
+    """
+    try:
+        channel = bot.get_channel(channel_id)
+        if not channel:
+            return
+
+        message = await channel.fetch_message(message_id)
+        if not message:
+            return
+
+        user = bot.get_user(user_id)
+        if not user:
+            return
+
+        await message.remove_reaction(emoji, user)
+
+    except discord.Forbidden:
+        print(f"❌ Missing permission to remove reaction from message {message_id}")
+    except discord.NotFound:
+        pass  # Reaction already removed or doesn't exist
+    except Exception as e:
+        print(f"❌ Error removing reaction: {e}")
+
+@bot.event
 async def on_reaction_add(reaction, user):
     """
     Handle reaction events for okra hunt system
@@ -15170,8 +15251,6 @@ async def on_reaction_add(reaction, user):
             await okra_hunt.handle_reaction(reaction, user)
     except Exception as e:
         print(f"❌ Error handling reaction: {e}")
-        import traceback
-        traceback.print_exc()
 
 if __name__ == "__main__":
     bot.run(discord_token)
