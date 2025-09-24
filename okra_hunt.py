@@ -4,7 +4,7 @@ import asyncio
 import logging
 
 class OkraHunt:
-    def __init__(self, bot, the_lodge_channel_id, level_0_channel_id, level_0_role_id, hunt_progress_channel_id, level_1_channel_id, host_role_id, okrag_id, level_1_role_id, level_2_channel_id, level_2_role_id, level_3_channel_id, level_3_role_id, level_4_role_id, level_4_channel_id, rules_channel_id, rules_message_id):
+    def __init__(self, bot, the_lodge_channel_id, level_0_channel_id, level_0_role_id, hunt_progress_channel_id, level_1_channel_id, host_role_id, okrag_id, level_1_role_id, level_2_channel_id, level_2_role_id, level_3_channel_id, level_3_role_id, level_4_role_id, level_4_channel_id, rules_channel_id, rules_message_id, hunt_leaderboard_channel_id, hunt_leaderboard_message_id):
         self.bot = bot
         self.logger = logging.getLogger(__name__)
         self.the_lodge_channel_id = the_lodge_channel_id
@@ -23,6 +23,8 @@ class OkraHunt:
         self.level_4_channel_id = level_4_channel_id
         self.rules_channel_id = rules_channel_id
         self.rules_message_id = rules_message_id
+        self.hunt_leaderboard_channel_id = hunt_leaderboard_channel_id
+        self.hunt_leaderboard_message_id = hunt_leaderboard_message_id
 
     async def check_user_id_answer(self, message):
         """
@@ -76,6 +78,9 @@ class OkraHunt:
                 # Announce success in progress channel
                 await self.announce_progress(message.author, "completed", "THE_LODGE")
 
+                # Update leaderboard
+                await self.update_leaderboard()
+
                 self.logger.info(f"User {message.author.id} ({message.author.name}) solved THE_LODGE challenge")
                 return True
 
@@ -118,6 +123,9 @@ class OkraHunt:
                 # Announce success in progress channel
                 await self.announce_progress(message.author, "completed", "THE_LODGE")
 
+                # Update leaderboard
+                await self.update_leaderboard()
+
                 self.logger.info(f"User {message.author.id} ({message.author.name}) solved THE_LODGE challenge")
 
             except discord.Forbidden:
@@ -154,6 +162,9 @@ class OkraHunt:
 
                 # Announce success in progress channel
                 await self.announce_progress(message.author, "completed", "THE_LODGE")
+
+                # Update leaderboard
+                await self.update_leaderboard()
 
                 self.logger.info(f"User {message.author.id} ({message.author.name}) solved THE_LODGE challenge")
 
@@ -203,6 +214,9 @@ class OkraHunt:
                 # Announce success in progress channel
                 await self.announce_progress(message.author, "completed", "LEVEL_0")
 
+                # Update leaderboard
+                await self.update_leaderboard()
+
                 self.logger.info(f"User {message.author.id} ({message.author.name}) solved LEVEL_0 challenge")
                 return True
 
@@ -251,6 +265,9 @@ class OkraHunt:
                 # Announce success in progress channel
                 await self.announce_progress(message.author, "completed", "LEVEL_1")
 
+                # Update leaderboard
+                await self.update_leaderboard()
+
                 self.logger.info(f"User {message.author.id} ({message.author.name}) solved LEVEL_1 challenge")
                 return True
 
@@ -298,6 +315,9 @@ class OkraHunt:
 
                 # Announce success in progress channel
                 await self.announce_progress(message.author, "completed", "LEVEL_2")
+
+                # Update leaderboard
+                await self.update_leaderboard()
 
                 self.logger.info(f"User {message.author.id} ({message.author.name}) solved LEVEL_2 challenge")
                 return True
@@ -354,6 +374,9 @@ class OkraHunt:
 
             # Announce success in progress channel
             await self.announce_progress(user, "completed", "LEVEL_3")
+
+            # Update leaderboard
+            await self.update_leaderboard()
 
             self.logger.info(f"User {user.id} ({user.name}) solved LEVEL_3 challenge")
             return True
@@ -746,3 +769,146 @@ class OkraHunt:
         except Exception as e:
             self.logger.error(f"Error resetting progress for user {user.id}: {e}")
             return False
+
+    async def get_all_level_roles(self):
+        """
+        Get all level roles that exist in the guild, following the LEVEL_N_ROLE_ID pattern
+        Returns list of (level_number, role) tuples sorted by level
+        """
+        guild = self.bot.get_guild(self.bot.guilds[0].id) if self.bot.guilds else None
+        if not guild:
+            return []
+
+        level_roles = []
+
+        # Check known level roles first
+        known_roles = [
+            (0, self.level_0_role_id),
+            (1, self.level_1_role_id),
+            (2, self.level_2_role_id),
+            (3, self.level_3_role_id),
+            (4, self.level_4_role_id)
+        ]
+
+        for level, role_id in known_roles:
+            role = guild.get_role(role_id)
+            if role and len(role.members) > 0:
+                level_roles.append((level, role))
+
+        # Check for higher levels with pattern LEVEL_N_ROLE_ID
+        # We'll check up to level 20 to be safe
+        for level in range(5, 21):
+            try:
+                # This assumes there might be variables like LEVEL_5_ROLE_ID, etc.
+                # For now, we'll just use the known roles
+                pass
+            except:
+                break
+
+        return sorted(level_roles, key=lambda x: x[0])
+
+    async def generate_leaderboard_embed(self):
+        """
+        Generate a Discord embed showing the current leaderboard
+        """
+        level_roles = await self.get_all_level_roles()
+
+        if not level_roles:
+            embed = discord.Embed(
+                title="🏆 Hunt Leaderboard",
+                description="No players currently in the hunt!",
+                color=discord.Color.blue()
+            )
+            return embed
+
+        embed = discord.Embed(
+            title="🏆 Hunt Leaderboard",
+            description="Current progress of all hunt participants\n\u200b",  # Add invisible space for padding
+            color=discord.Color.gold()
+        )
+
+        # Get role names and locations dynamically
+        def get_role_display_info(role, level):
+            if not role or not role.name:
+                return "Unknown Role", "🔸"
+
+            # Map level numbers to locations and emojis
+            location_map = {
+                0: ("The Forest", "🌲"),
+                1: ("The River", "🌊"),
+                2: ("The Mountain", "⛰️"),
+                3: ("The Meadow", "🌾"),
+                4: ("The Beach", "🌴")
+            }
+
+            location, emoji = location_map.get(level, ("Unknown Location", "🔸"))
+            # Clean up the role name - remove extra emojis and parentheses for cleaner display
+            clean_role_name = role.name
+            return f"**{clean_role_name}**", emoji, location
+
+        total_players = 0
+
+        for level, role in level_roles:
+            members = role.members
+            if not members:
+                continue
+
+            total_players += len(members)
+            role_display_text, emoji, location = get_role_display_info(role, level)
+
+            # Sort members by display name for consistent ordering
+            member_names = sorted([member.display_name for member in members])
+            members_text = ", ".join(member_names)
+
+            # Truncate if too long for embed field
+            if len(members_text) > 1024:
+                visible_names = []
+                current_length = 0
+                for name in member_names:
+                    if current_length + len(name) + 2 > 1000:  # Leave space for "..."
+                        break
+                    visible_names.append(name)
+                    current_length += len(name) + 2
+
+                members_text = ", ".join(visible_names) + f"... (+{len(members) - len(visible_names)} more)"
+
+            embed.add_field(
+                name=f"{role_display_text} ({len(members)})\n📍 {location} {emoji}",
+                value=f"{members_text}\n\u200b",  # Add spacing after each section
+                inline=False
+            )
+
+        # Remove footer and timestamp for cleaner look
+
+        return embed
+
+    async def update_leaderboard(self):
+        """
+        Update the leaderboard message in the hunt leaderboard channel
+        """
+        try:
+            leaderboard_channel = self.bot.get_channel(self.hunt_leaderboard_channel_id)
+            if not leaderboard_channel:
+                self.logger.error(f"Hunt leaderboard channel {self.hunt_leaderboard_channel_id} not found")
+                return
+
+            embed = await self.generate_leaderboard_embed()
+
+            # Try to update the existing message using the constant ID
+            try:
+                existing_message = await leaderboard_channel.fetch_message(self.hunt_leaderboard_message_id)
+                await existing_message.edit(embed=embed)
+                self.logger.info(f"Updated existing leaderboard message {self.hunt_leaderboard_message_id}")
+                return
+            except discord.NotFound:
+                self.logger.warning(f"Leaderboard message {self.hunt_leaderboard_message_id} not found, creating new one")
+            except Exception as e:
+                self.logger.error(f"Error updating leaderboard message {self.hunt_leaderboard_message_id}: {e}")
+
+            # Create new leaderboard message
+            message = await leaderboard_channel.send(embed=embed)
+            self.logger.info(f"Created new leaderboard message with ID {message.id}")
+            self.logger.warning(f"Please update HUNT_LEADERBOARD_MESSAGE_ID to {message.id} in discordbot.py")
+
+        except Exception as e:
+            self.logger.error(f"Error updating leaderboard: {e}")
