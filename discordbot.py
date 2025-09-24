@@ -1652,17 +1652,9 @@ async def ask_search_challenge(winner, winner_id, num=1):
     
     # Game over - show final results
     try:
-        # Generate final puzzle image showing all word locations
-        words_string = " ".join(words_list)
-        ws_solution = WordSearch(
-            words=words_string,
-            level=3,
-            size=20
-        )
-        solution_text = str(ws_solution)  # This should show solution with key
-        
-        # Convert solution text to image
-        solution_buffer = create_word_search_image(solution_text, found_words=found_words, is_solution=True, words_list=words_list)
+        # Use the ORIGINAL puzzle text to show solution, not a new random one
+        # Convert original puzzle text to solution image
+        solution_buffer = create_word_search_image(puzzle_text, found_words=found_words, is_solution=True, words_list=words_list)
             
     except Exception as e:
         print(f"Error generating solution: {e}")
