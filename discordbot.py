@@ -187,6 +187,8 @@ if local_mode == True:
     LEVEL_4_ROLE_ID = 1419170916272705556
     RULES_CHANNEL_ID = 1420238660342648873
     RULES_MESSAGE_ID = 1420248754862162022
+    HUNT_LEADERBOARD_CHANNEL_ID = 1420278277829951518
+    HUNT_LEADERBOARD_MESSAGE_ID = 1420281932566237244
 else:
     discord_token = os.getenv("discord_token")
     mongo_db_string = os.getenv("mongo_db_string")
@@ -222,6 +224,8 @@ else:
     LEVEL_4_ROLE_ID = 1418469150795366453
     RULES_CHANNEL_ID = 1372347624648347649
     RULES_MESSAGE_ID = 1374598920973320313
+    HUNT_LEADERBOARD_CHANNEL_ID = 1420277804075061320
+    HUNT_LEADERBOARD_MESSAGE_ID = 1420281703284346912
 
 
 
@@ -15067,7 +15071,7 @@ async def on_ready():
 
         # Initialize Okra Hunt escape room system
         global okra_hunt
-        okra_hunt = OkraHunt(bot, THE_LODGE_CHANNEL_ID, LEVEL_0_CHANNEL_ID, LEVEL_0_ROLE_ID, HUNT_PROGRESS_CHANNEL_ID, LEVEL_1_CHANNEL_ID, HOST_ROLE_ID, okrag_id, LEVEL_1_ROLE_ID, LEVEL_2_CHANNEL_ID, LEVEL_2_ROLE_ID, LEVEL_3_CHANNEL_ID, LEVEL_3_ROLE_ID, LEVEL_4_ROLE_ID, LEVEL_4_CHANNEL_ID, RULES_CHANNEL_ID, RULES_MESSAGE_ID)
+        okra_hunt = OkraHunt(bot, THE_LODGE_CHANNEL_ID, LEVEL_0_CHANNEL_ID, LEVEL_0_ROLE_ID, HUNT_PROGRESS_CHANNEL_ID, LEVEL_1_CHANNEL_ID, HOST_ROLE_ID, okrag_id, LEVEL_1_ROLE_ID, LEVEL_2_CHANNEL_ID, LEVEL_2_ROLE_ID, LEVEL_3_CHANNEL_ID, LEVEL_3_ROLE_ID, LEVEL_4_ROLE_ID, LEVEL_4_CHANNEL_ID, RULES_CHANNEL_ID, RULES_MESSAGE_ID, HUNT_LEADERBOARD_CHANNEL_ID, HUNT_LEADERBOARD_MESSAGE_ID)
 
         print("✅ Okra Hunt escape room system integrated successfully!")
         print("🏃 Available channels: THE_LODGE -> LEVEL_0 -> LEVEL_1 -> LEVEL_2 -> LEVEL_3 -> LEVEL_4")
@@ -15079,7 +15083,11 @@ async def on_ready():
         # Clean up reactions on rules message
         print("🧹 Cleaning up reactions on rules message...")
         await okra_hunt.cleanup_rules_message_reactions()
-        
+
+        # Update hunt leaderboard
+        print("📊 Updating hunt leaderboard...")
+        await okra_hunt.update_leaderboard()
+
         # Tournament testing: Use add_fake_players.py script for adding test players
         print("🧪 For testing: Use add_fake_players.py script to add fake players")
         
@@ -15201,6 +15209,8 @@ async def on_raw_reaction_add(payload):
                     # Announce in progress channel
                     if 'okra_hunt' in globals() and okra_hunt:
                         await okra_hunt.announce_progress(user, "completed", "LEVEL_3")
+                        # Update leaderboard
+                        await okra_hunt.update_leaderboard()
 
                     # Remove the successful reaction to hide the answer
                     await _remove_user_reaction(payload.channel_id, payload.message_id, payload.emoji, payload.user_id)
