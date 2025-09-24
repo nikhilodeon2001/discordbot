@@ -4,7 +4,7 @@ import asyncio
 import logging
 
 class OkraHunt:
-    def __init__(self, bot, the_lodge_channel_id, level_0_channel_id, level_0_role_id, hunt_progress_channel_id, level_1_channel_id, host_role_id, okrag_id, level_1_role_id, level_2_channel_id, level_2_role_id, level_3_channel_id, level_3_role_id):
+    def __init__(self, bot, the_lodge_channel_id, level_0_channel_id, level_0_role_id, hunt_progress_channel_id, level_1_channel_id, host_role_id, okrag_id, level_1_role_id, level_2_channel_id, level_2_role_id, level_3_channel_id, level_3_role_id, level_4_role_id, rules_channel_id):
         self.bot = bot
         self.logger = logging.getLogger(__name__)
         self.the_lodge_channel_id = the_lodge_channel_id
@@ -19,6 +19,8 @@ class OkraHunt:
         self.level_2_role_id = level_2_role_id
         self.level_3_channel_id = level_3_channel_id
         self.level_3_role_id = level_3_role_id
+        self.level_4_role_id = level_4_role_id
+        self.rules_channel_id = rules_channel_id
 
     async def check_user_id_answer(self, message):
         """
@@ -309,6 +311,60 @@ class OkraHunt:
 
         return False
 
+    async def check_level_3_reaction(self, reaction, user):
+        """
+        Check if user with LEVEL_3_ROLE_ID reacted with :palm_tree: to message 1374598920973320313 in RULES_CHANNEL
+        If correct, remove LEVEL_3_ROLE_ID and add LEVEL_4_ROLE_ID
+        """
+        # Check if reaction is in RULES_CHANNEL
+        if reaction.message.channel.id != self.rules_channel_id:
+            return False
+
+        # Check if reaction is on the specific message
+        if reaction.message.id != 1374598920973320313:
+            return False
+
+        # Check if the emoji is palm_tree
+        if str(reaction.emoji) != "🌴":
+            return False
+
+        # Check if user has LEVEL_3_ROLE_ID
+        level_3_role = user.guild.get_role(self.level_3_role_id)
+        if not level_3_role or level_3_role not in user.roles:
+            return False
+
+        try:
+            # Get LEVEL_4_ROLE_ID
+            level_4_role = user.guild.get_role(self.level_4_role_id)
+
+            if not level_4_role:
+                self.logger.error(f"LEVEL_4_ROLE_ID {self.level_4_role_id} not found in guild {user.guild.id}")
+                return False
+
+            # Check if user already has LEVEL_4_ROLE_ID
+            if level_4_role in user.roles:
+                await self.announce_progress(user, "already_completed", "LEVEL_3")
+                return True
+
+            # Remove LEVEL_3_ROLE_ID and add LEVEL_4_ROLE_ID
+            await user.remove_roles(level_3_role)
+            await user.add_roles(level_4_role)
+
+            # Announce success in progress channel
+            await self.announce_progress(user, "completed", "LEVEL_3")
+
+            self.logger.info(f"User {user.id} ({user.name}) solved LEVEL_3 challenge")
+            return True
+
+        except discord.Forbidden:
+            self.logger.error(f"Bot lacks permission to modify roles for user {user.id}")
+            await self.announce_progress(user, "error", "LEVEL_3")
+            return False
+        except Exception as e:
+            self.logger.error(f"Error processing LEVEL_3 challenge for user {user.id}: {e}")
+            await self.announce_progress(user, "error", "LEVEL_3")
+            return False
+
     async def announce_progress(self, user, status, challenge_name):
         """
         Announce user progress in the hunt progress channel
@@ -326,7 +382,8 @@ class OkraHunt:
                     "LEVEL_0": "The Forest",
                     "LEVEL_1": "The River",
                     "LEVEL_2": "The Mountain",
-                    "LEVEL_3": "The Summit"
+                    "LEVEL_3": "The Meadow",
+                    "LEVEL_4": "The Beach"
                 }
 
                 display_name = display_names.get(challenge_name, challenge_name)
@@ -359,6 +416,12 @@ class OkraHunt:
                     embed.add_field(
                         name="Next Step",
                         value=f"Check out <#{self.level_3_channel_id}> for your next adventure!",
+                        inline=False
+                    )
+                elif challenge_name == "LEVEL_3":
+                    embed.add_field(
+                        name="Next Step",
+                        value=f"Check out <#{self.level_4_channel_id}> for your next adventure!",
                         inline=False
                     )
                 else:
@@ -576,6 +639,20 @@ class OkraHunt:
                 await self.check_level_2_puzzle(message)
 
             return True  # Message was handled
+
+        return False
+
+    async def handle_reaction(self, reaction, user):
+        """
+        Main handler for okra hunt reactions
+        Returns True if reaction was handled by okra hunt system
+        """
+        if user.bot:
+            return False
+
+        # Check LEVEL_3 palm tree reaction challenge
+        if await self.check_level_3_reaction(reaction, user):
+            return True
 
         return False
 
