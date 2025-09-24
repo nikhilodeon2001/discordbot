@@ -179,10 +179,13 @@ if local_mode == True:
     LEVEL_1_CHANNEL_ID = 1419175528526512149
     LEVEL_2_CHANNEL_ID = 1419540779155587102
     LEVEL_3_CHANNEL_ID = 1419540643037843476
+    LEVEL_4_CHANNEL_ID = 1420239891106627676
     LEVEL_0_ROLE_ID = 1419169185396953199
     LEVEL_1_ROLE_ID = 1419170662089490464
     LEVEL_2_ROLE_ID = 1419170809699635344
     LEVEL_3_ROLE_ID = 1419170873897779322
+    LEVEL_4_ROLE_ID = 1419170916272705556
+    RULES_CHANNEL_ID = 1420238660342648873
 else:
     discord_token = os.getenv("discord_token")
     mongo_db_string = os.getenv("mongo_db_string")
@@ -210,10 +213,13 @@ else:
     LEVEL_1_CHANNEL_ID = 1419198838173995088 
     LEVEL_2_CHANNEL_ID = 1419539602733269103
     LEVEL_3_CHANNEL_ID = 1419540205592903700
+    LEVEL_4_CHANNEL_ID = 1420239588110106645
     LEVEL_0_ROLE_ID = 1418470440036208640
     LEVEL_1_ROLE_ID = 1418468519796019220
     LEVEL_2_ROLE_ID = 1418468900852596796
     LEVEL_3_ROLE_ID = 1418469027894001664
+    LEVEL_4_ROLE_ID = 1418469150795366453
+    RULES_CHANNEL_ID = 1372347624648347649
 
 
 
@@ -9877,7 +9883,7 @@ async def select_wof_questions(winner, winner_id):
             return None
 
         elif selected_wof_category == "9":
-            await ask_feud_question(winner, "solo", winner_id)
+            ask_feud_question(winner, "solo", winner_id)
             await asyncio.sleep(3)
             return None
 
@@ -15058,7 +15064,7 @@ async def on_ready():
 
         # Initialize Okra Hunt escape room system
         global okra_hunt
-        okra_hunt = OkraHunt(bot, THE_LODGE_CHANNEL_ID, LEVEL_0_CHANNEL_ID, LEVEL_0_ROLE_ID, HUNT_PROGRESS_CHANNEL_ID, LEVEL_1_CHANNEL_ID, HOST_ROLE_ID, okrag_id, LEVEL_1_ROLE_ID, LEVEL_2_CHANNEL_ID, LEVEL_2_ROLE_ID, LEVEL_3_CHANNEL_ID, LEVEL_3_ROLE_ID)
+        okra_hunt = OkraHunt(bot, THE_LODGE_CHANNEL_ID, LEVEL_0_CHANNEL_ID, LEVEL_0_ROLE_ID, HUNT_PROGRESS_CHANNEL_ID, LEVEL_1_CHANNEL_ID, HOST_ROLE_ID, okrag_id, LEVEL_1_ROLE_ID, LEVEL_2_CHANNEL_ID, LEVEL_2_ROLE_ID, LEVEL_3_CHANNEL_ID, LEVEL_3_ROLE_ID, LEVEL_4_ROLE_ID, RULES_CHANNEL_ID)
 
         print("✅ Okra Hunt escape room system integrated successfully!")
         print("🏃 Available channels: THE_LODGE -> LEVEL_0 -> LEVEL_1 -> LEVEL_2 -> LEVEL_3")
@@ -15152,6 +15158,20 @@ async def sync_global(ctx):
             await ctx.send(f"Commands: {', '.join(commands_list)}")
     except Exception as e:
         await ctx.send(f"❌ Failed to sync commands: {e}")
+
+@bot.event
+async def on_reaction_add(reaction, user):
+    """
+    Handle reaction events for okra hunt system
+    """
+    try:
+        # Let okra hunt system handle the reaction
+        if 'okra_hunt' in globals() and okra_hunt:
+            await okra_hunt.handle_reaction(reaction, user)
+    except Exception as e:
+        print(f"❌ Error handling reaction: {e}")
+        import traceback
+        traceback.print_exc()
 
 if __name__ == "__main__":
     bot.run(discord_token)
