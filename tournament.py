@@ -349,7 +349,6 @@ class TournamentManager:
             # Add fake players to tournament in memory
             tournament["players"].extend(fake_players)
 
-            print(f"🤖 Auto-added {len(fake_players)} fake players for testing")
             await channel.send(f"🤖 Added {len(fake_players)} fake players for testing!")
         
         signup_end_time = asyncio.get_event_loop().time() + join_window_sec
@@ -815,9 +814,12 @@ class TournamentManager:
         else:
             answer_text = " / ".join([ans.upper() for ans in answers])
 
+        # Extract category for title
+        category_text = question.get("category", "General")
+
         # Create initial question embed (matching round robin style)
         question_embed = discord.Embed(
-            title=f"⚡ Question {question_num}/{POINTS_RACE_QUESTIONS}",
+            title=f"⚡ Question {question_num}/{POINTS_RACE_QUESTIONS}: {category_text}",
             description="",  # Will be filled during reveal
             color=discord.Color.blue()
         )
@@ -968,120 +970,137 @@ class TournamentManager:
 
         total_players = len(participants)
 
-        while time.time() - start_time < timeout and len(answered_players) < total_players:
-            elapsed = time.time() - start_time
+        # Event-based message collection using queue
+        message_queue = asyncio.Queue()
 
-            try:
-                # Calculate remaining time to ensure we don't exceed the total timeout
-                remaining_time = timeout - (time.time() - start_time)
-                if remaining_time <= 0:
-                    break
+        def message_handler(message):
+            if check_answer(message):
+                logger.info(f"Message queued from {message.author.display_name}: '{message.content}'")
+                # Use asyncio.create_task to avoid blocking the event handler
+                asyncio.create_task(message_queue.put(message))
 
-                # Use the minimum of 1.0 second or remaining time
-                wait_timeout = min(1.0, remaining_time)
-                message = await self.bot.wait_for('message', check=check_answer, timeout=wait_timeout)
+        # Register event listener
+        self.bot.add_listener(message_handler, 'on_message')
 
-                words = message.content.strip().split()
+        try:
+            while time.time() - start_time < timeout and len(answered_players) < total_players:
+                try:
+                    # Check for messages with short timeout to allow frequent timeout checks
+                    remaining_time = timeout - (time.time() - start_time)
+                    if remaining_time <= 0:
+                        break
 
-                # Handle fake player answer with host role check (like round robin)
-                import discordbot
-                host_role_id = getattr(discordbot, 'HOST_ROLE_ID', None)
-                has_host_role = host_role_id and any(role.id == host_role_id for role in message.author.roles)
+                    wait_timeout = min(0.1, remaining_time)  # Check every 100ms for messages
+                    message = await asyncio.wait_for(message_queue.get(), timeout=wait_timeout)
 
-                if len(words) >= 2 and words[0].lower() in fake_players and has_host_role:
-                    # Process fake player answer
-                    player_name = words[0].lower()
-                    answer_text = ' '.join(words[1:])
+                    words = message.content.strip().split()
 
-                    # Find matching fake player ID
-                    answering_player_id = None
-                    for participant_id in participants:
-                        if (participant_id.startswith('fake_') and
-                            player_name in participant_id.lower()):
-                            answering_player_id = participant_id
-                            break
+                    # Handle fake player answer with host role check (like round robin)
+                    import discordbot
+                    host_role_id = getattr(discordbot, 'HOST_ROLE_ID', None)
+                    has_host_role = host_role_id and any(role.id == host_role_id for role in message.author.roles)
 
-                    if not answering_player_id:
+                    logger.info(f"Processing message from {message.author.display_name}: '{message.content}'")
+
+                    if len(words) >= 2 and words[0].lower() in fake_players and has_host_role:
+                        # Process fake player answer
+                        player_name = words[0].lower()
+                        answer_text = ' '.join(words[1:])
+
+                        # Find matching fake player ID
+                        answering_player_id = None
+                        for participant_id in participants:
+                            if (participant_id.startswith('fake_') and
+                                player_name in participant_id.lower()):
+                                answering_player_id = participant_id
+                                break
+
+                        if not answering_player_id:
+                            continue
+
+                    else:
+                        # Process real player answer
+                        answering_player_id = str(message.author.id)
+                        answer_text = message.content
+
+                    # Mark player as answered
+                    answered_players.add(answering_player_id)
+
+                    try:
+                        # Calculate answer time relative to when reveal completed
+                        if reveal_complete_time is None:
+                            reveal_complete_time = start_time
+                        answer_time = time.time() - reveal_complete_time
+
+                        # Calculate points based on time (1000 → 0 over full 20-second window)
+                        total_window = POINTS_RACE_REVEAL_TIME + POINTS_RACE_ANSWER_TIME  # 5 + 15 = 20 seconds
+
+                        if answer_time < 0:
+                            # Answered before question started (shouldn't happen)
+                            points_earned = POINTS_RACE_MAX_POINTS
+                        elif answer_time >= total_window:
+                            # Answered at/after full timeout
+                            points_earned = 0
+                        else:
+                            # Linear decrease from 1000 points at 0s to 0 points at 20s
+                            points_earned = int(POINTS_RACE_MAX_POINTS * (1 - (answer_time / total_window)))
+
+
+                        # Check if answer is correct
+                        is_correct = self.evaluate_answer(answer_text, question)
+                        logger.info(f"Answer evaluation for {answering_player_id}: '{answer_text}' -> {'CORRECT' if is_correct else 'INCORRECT'}")
+
+                        if not is_correct:
+                            points_earned = 0
+
+                        # Update player's Points Race score (handle both string and int IDs)
+                        for player in tournament["players"]:
+                            if str(player["user_id"]) == str(answering_player_id):
+                                if "points_race_scores" not in player:
+                                    player["points_race_scores"] = []
+                                player["points_race_scores"].append({
+                                    "question_num": len(player["points_race_scores"]) + 1,
+                                    "points": points_earned,
+                                    "answer_time": answer_time,
+                                    "correct": is_correct
+                                })
+                                break
+
+                        # Store message data for later reaction processing (reactions only)
+                        answer_messages.append({
+                            'message': message,
+                            'is_correct': is_correct,
+                            'player_id': answering_player_id
+                        })
+
+                        # Remove player from Tournament Participant role immediately (but delay reactions)
+                        if not str(answering_player_id).startswith('fake_'):
+                            try:
+                                # Ensure answering_player_id is an integer for get_member()
+                                player_id_int = int(answering_player_id) if isinstance(answering_player_id, str) else answering_player_id
+                                member = channel.guild.get_member(player_id_int)
+                                if member:
+                                    tournament_participant_role = discord.utils.get(channel.guild.roles, name="Tournament Participant")
+                                    okran_role = discord.utils.get(channel.guild.roles, name="Okran")
+
+                                    if tournament_participant_role and tournament_participant_role in member.roles:
+                                        await member.remove_roles(tournament_participant_role)
+                                    if okran_role:
+                                        await member.add_roles(okran_role)
+                            except (discord.HTTPException, ValueError) as e:
+                                pass
+
+                    except Exception as e:
+                        logger.error(f"Error processing answer from player {answering_player_id}: {e}")
                         continue
 
-                else:
-                    # Process real player answer
-                    answering_player_id = str(message.author.id)
-                    answer_text = message.content
-
-                # Mark player as answered
-                answered_players.add(answering_player_id)
-
-                try:
-                    # Calculate answer time relative to when reveal completed
-                    if reveal_complete_time is None:
-                        reveal_complete_time = start_time
-                    answer_time = time.time() - reveal_complete_time
-
-                    # Calculate points based on time (1000 → 0 over full 20-second window)
-                    total_window = POINTS_RACE_REVEAL_TIME + POINTS_RACE_ANSWER_TIME  # 5 + 15 = 20 seconds
-
-                    if answer_time < 0:
-                        # Answered before question started (shouldn't happen)
-                        points_earned = POINTS_RACE_MAX_POINTS
-                    elif answer_time >= total_window:
-                        # Answered at/after full timeout
-                        points_earned = 0
-                    else:
-                        # Linear decrease from 1000 points at 0s to 0 points at 20s
-                        points_earned = int(POINTS_RACE_MAX_POINTS * (1 - (answer_time / total_window)))
-
-
-                    # Check if answer is correct
-                    is_correct = self.evaluate_answer(answer_text, question)
-
-                    if not is_correct:
-                        points_earned = 0
-
-                    # Update player's Points Race score (handle both string and int IDs)
-                    for player in tournament["players"]:
-                        if str(player["user_id"]) == str(answering_player_id):
-                            if "points_race_scores" not in player:
-                                player["points_race_scores"] = []
-                            player["points_race_scores"].append({
-                                "question_num": len(player["points_race_scores"]) + 1,
-                                "points": points_earned,
-                                "answer_time": answer_time,
-                                "correct": is_correct
-                            })
-                            break
-
-                    # Store message data for later reaction processing (reactions only)
-                    answer_messages.append({
-                        'message': message,
-                        'is_correct': is_correct,
-                        'player_id': answering_player_id
-                    })
-
-                    # Remove player from Tournament Participant role immediately (but delay reactions)
-                    if not str(answering_player_id).startswith('fake_'):
-                        try:
-                            # Ensure answering_player_id is an integer for get_member()
-                            player_id_int = int(answering_player_id) if isinstance(answering_player_id, str) else answering_player_id
-                            member = channel.guild.get_member(player_id_int)
-                            if member:
-                                tournament_participant_role = discord.utils.get(channel.guild.roles, name="Tournament Participant")
-                                okran_role = discord.utils.get(channel.guild.roles, name="Okran")
-
-                                if tournament_participant_role and tournament_participant_role in member.roles:
-                                    await member.remove_roles(tournament_participant_role)
-                                if okran_role:
-                                    await member.add_roles(okran_role)
-                        except (discord.HTTPException, ValueError) as e:
-                            pass
-
-                except Exception as e:
+                except asyncio.TimeoutError:
+                    # No message received in this timeout window, continue checking
                     continue
 
-
-            except asyncio.TimeoutError:
-                continue
-
+        finally:
+            # Always remove the event listener to prevent memory leaks
+            self.bot.remove_listener(message_handler, 'on_message')
 
         # Handle players who didn't answer - assign 0 points
         for player in tournament["players"]:
@@ -1113,6 +1132,7 @@ class TournamentManager:
                         pass
 
         # Process delayed reactions for all answers
+        logger.info(f"Processing reactions for {len(answer_messages)} answers")
         for answer_data in answer_messages:
             message = answer_data['message']
             is_correct = answer_data['is_correct']
@@ -1122,10 +1142,12 @@ class TournamentManager:
             try:
                 if is_correct:
                     await message.add_reaction("✅")
+                    logger.info(f"Added ✅ reaction to {message.author.display_name}'s answer")
                 else:
                     await message.add_reaction("❌")
+                    logger.info(f"Added ❌ reaction to {message.author.display_name}'s answer")
             except discord.HTTPException:
-                pass
+                logger.error(f"Failed to add reaction to {message.author.display_name}'s message")
 
 
     async def show_points_race_standings(self, channel_id: int, question_num: int) -> None:
@@ -1483,6 +1505,9 @@ class TournamentManager:
         # Calculate final standings
         rr_standings = self.compute_rr_standings(tournament)
         tournament["standings"] = rr_standings
+
+        # Check seeding mode to determine how to rank semifinal losers
+        seeding_mode = tournament["config"].get("seeding_mode", SEEDING_MODE_DEFAULT)
         
         # Determine champion and runner-up
         champion = None
@@ -1498,13 +1523,7 @@ class TournamentManager:
                 elif player["user_id"] in [final_match["player_a"]["user_id"], final_match["player_b"]["user_id"]]:
                     if player["user_id"] != final_match["winner_user_id"]:
                         runner_up = player
-        else:
-            # Debug logging for final match issues
-            if final_match:
-                logger.warning(f"Final match found but no winner_user_id: {final_match.get('winner_user_id')}")
-            else:
-                logger.warning("No final match found in tournament data")
-        
+
         if not champion and rr_standings:
             # Use RR standings if no knockout
             champion = rr_standings[0]
@@ -1547,9 +1566,36 @@ class TournamentManager:
                 standings_text += f"{placement}. {runner_up['display_name']} (Runner-up)\n"
                 placement += 1
 
-            # 3rd & 4th place: Semifinal losers (from RR standings order)
+            # 3rd & 4th place: Semifinal losers (use appropriate seeding order)
             semifinal_losers = []
-            if rr_standings:
+
+            if seeding_mode == "points_race" and tournament.get("seedings"):
+                # For Points Race: Use seeding order for semifinal losers
+                points_race_seedings = tournament["seedings"]
+                for seeding in sorted(points_race_seedings, key=lambda x: x["seed"]):
+                    # Skip champion and runner-up, they're already placed
+                    if (champion and seeding["user_id"] == champion["user_id"]) or \
+                       (runner_up and seeding["user_id"] == runner_up["user_id"]):
+                        continue
+
+                    # Find player data
+                    for player in tournament["players"]:
+                        if player["user_id"] == seeding["user_id"]:
+                            semifinal_losers.append({
+                                "display_name": player.get("display_name") or player.get("username") or f"Player {player['user_id']}",
+                                "user_id": player["user_id"],
+                                "seed": seeding["seed"],
+                                "total_points": seeding["total_points"]
+                            })
+                            break
+
+                # Add semifinal losers in seeding order
+                for player in semifinal_losers:
+                    standings_text += f"{placement}. {player['display_name']} (#{player['seed']} seed, {player['total_points']} pts)\n"
+                    placement += 1
+
+            elif rr_standings:
+                # For Round Robin: Use RR standings order
                 for player in rr_standings:
                     # Skip champion and runner-up, they're already placed
                     if (champion and player["user_id"] == champion["user_id"]) or \
@@ -1639,7 +1685,6 @@ class TournamentManager:
             # Assign participant role to the two current participants
             await self.assign_tournament_roles(channel, allowed_user_ids, participant_role)
 
-            logger.debug(f"Restricted permissions in {channel.name} to participants: {allowed_user_ids}")
         except Exception as e:
             logger.error(f"Failed to restrict channel permissions: {e}")
 
@@ -1682,7 +1727,6 @@ class TournamentManager:
                     # Remove tournament participant role from all members
                     await self.remove_tournament_roles(channel, participant_role)
 
-            logger.debug(f"Restored permissions in {channel.name}")
         except Exception as e:
             logger.error(f"Failed to restore channel permissions: {e}")
 
@@ -1901,7 +1945,7 @@ class TournamentManager:
 
             # Second embed - Question text and image
             category_text = question.get("category", "General")
-            question_title = f"**Question {questions_asked}**: {category_text}"
+            question_title = f"**⚡ Question {questions_asked}**: {category_text}"
 
             # Store active question
             self.active_questions[channel.id] = {
@@ -2217,110 +2261,142 @@ class TournamentManager:
                    str(message.author.id) not in answered_participants and
                    not message.author.bot)
 
+        # Event-based message collection using queue
+        message_queue = asyncio.Queue()
+
+        def message_handler(message):
+            if check_answer(message):
+                logger.info(f"Round Robin message queued from {message.author.display_name}: '{message.content}'")
+                # Use asyncio.create_task to avoid blocking the event handler
+                asyncio.create_task(message_queue.put(message))
+
+        # Register event listener
+        self.bot.add_listener(message_handler, 'on_message')
+
+        start_time = time.time()
+
         try:
-            while True:
-                message = await self.bot.wait_for('message', timeout=timeout_sec, check=check_answer)
+            while time.time() - start_time < timeout_sec:
+                try:
+                    # Check for messages with short timeout to allow frequent timeout checks
+                    remaining_time = timeout_sec - (time.time() - start_time)
+                    if remaining_time <= 0:
+                        break
 
-                words = message.content.strip().split()
+                    wait_timeout = min(0.1, remaining_time)  # Check every 100ms for messages
+                    message = await asyncio.wait_for(message_queue.get(), timeout=wait_timeout)
 
-                # Handle fake player answer: "alpha answer" or "beta multiple word answer"
-                # Only allow HOST_ROLE_ID to control fake players
-                import discordbot
-                host_role_id = getattr(discordbot, 'HOST_ROLE_ID', None)
-                has_host_role = host_role_id and any(role.id == host_role_id for role in message.author.roles)
+                    logger.info(f"Processing Round Robin message from {message.author.display_name}: '{message.content}'")
 
-                if (len(words) >= 2 and words[0].lower() in fake_players and has_host_role):
-                    try:
-                        player_name = words[0].lower()
-                        answer = ' '.join(words[1:])  # Everything after the player name
+                    words = message.content.strip().split()
 
-                        # Find matching fake player ID
-                        fake_user_id = None
-                        for participant_id in participants:
-                            if (participant_id.startswith('fake_') and
-                                player_name in participant_id.lower()):
-                                fake_user_id = participant_id
-                                break
+                    # Handle fake player answer: "alpha answer" or "beta multiple word answer"
+                    # Only allow HOST_ROLE_ID to control fake players
+                    import discordbot
+                    host_role_id = getattr(discordbot, 'HOST_ROLE_ID', None)
+                    has_host_role = host_role_id and any(role.id == host_role_id for role in message.author.roles)
 
-                        if fake_user_id:
-                            evaluation_result = self.evaluate_answer(answer, question_data)
-
-                            if evaluation_result:
-                                # FIRST correct answer wins - immediately return
-                                # Remove participant role after submitting answer
-                                await self.remove_participant_role_after_answer(channel, fake_user_id)
-
-                                # Add reaction only to the winning answer
-                                try:
-                                    await message.add_reaction("✅")
-                                except discord.HTTPException:
-                                    pass  # Ignore reaction failures
-
-                                return {
-                                    "user_id": fake_user_id,
-                                    "answer": answer
-                                }
-                            else:
-                                # Wrong answer - add X reaction and track participant
-                                try:
-                                    await message.add_reaction("❌")
-                                except discord.HTTPException:
-                                    pass  # Ignore reaction failures
-
-                                # Remove participant role after submitting answer
-                                await self.remove_participant_role_after_answer(channel, fake_user_id)
-
-                                # Track that this participant has answered
-                                answered_participants.add(fake_user_id)
-
-                                # Check if both participants have now answered incorrectly
-                                if len(answered_participants) >= len(participants):
-                                    return {"both_wrong": True}
-
-                                continue
-                    except Exception as e:
-                        logger.error(f"Error processing fake player answer: {e}")
-                        continue
-
-                # Handle regular player answer (your own answer)
-                else:
-                    evaluation_result = self.evaluate_answer(message.content, question_data)
-
-                    if evaluation_result:
-                        # FIRST correct answer wins - immediately return
-                        # Remove participant role after submitting answer
-                        await self.remove_participant_role_after_answer(channel, str(message.author.id))
-
-                        # Add reaction only to the winning answer
+                    if (len(words) >= 2 and words[0].lower() in fake_players and has_host_role):
                         try:
-                            await message.add_reaction("✅")
-                        except discord.HTTPException:
-                            pass  # Ignore reaction failures
+                            player_name = words[0].lower()
+                            answer = ' '.join(words[1:])  # Everything after the player name
 
-                        return {
-                            "user_id": str(message.author.id),
-                            "answer": message.content
-                        }
+                            # Find matching fake player ID
+                            fake_user_id = None
+                            for participant_id in participants:
+                                if (participant_id.startswith('fake_') and
+                                    player_name in participant_id.lower()):
+                                    fake_user_id = participant_id
+                                    break
+
+                            if fake_user_id:
+                                evaluation_result = self.evaluate_answer(answer, question_data)
+
+                                if evaluation_result:
+                                    # FIRST correct answer wins - immediately return
+                                    # Remove participant role after submitting answer
+                                    await self.remove_participant_role_after_answer(channel, fake_user_id)
+
+                                    # Add reaction only to the winning answer
+                                    try:
+                                        await message.add_reaction("✅")
+                                    except discord.HTTPException:
+                                        pass  # Ignore reaction failures
+
+                                    return {
+                                        "user_id": fake_user_id,
+                                        "answer": answer
+                                    }
+                                else:
+                                    # Wrong answer - add X reaction and track participant
+                                    try:
+                                        await message.add_reaction("❌")
+                                    except discord.HTTPException:
+                                        pass  # Ignore reaction failures
+
+                                    # Remove participant role after submitting answer
+                                    await self.remove_participant_role_after_answer(channel, fake_user_id)
+
+                                    # Track that this participant has answered
+                                    answered_participants.add(fake_user_id)
+
+                                    # Check if both participants have now answered incorrectly
+                                    if len(answered_participants) >= len(participants):
+                                        return {"both_wrong": True}
+
+                                    continue
+                        except Exception as e:
+                            logger.error(f"Error processing fake player answer: {e}")
+                            continue
+
+                    # Handle regular player answer (your own answer)
                     else:
-                        # Wrong answer - add X reaction and track participant
-                        try:
-                            await message.add_reaction("❌")
-                        except discord.HTTPException:
-                            pass  # Ignore reaction failures
+                        evaluation_result = self.evaluate_answer(message.content, question_data)
 
-                        # Remove participant role after submitting answer
-                        await self.remove_participant_role_after_answer(channel, str(message.author.id))
+                        if evaluation_result:
+                            # FIRST correct answer wins - immediately return
+                            # Remove participant role after submitting answer
+                            await self.remove_participant_role_after_answer(channel, str(message.author.id))
 
-                        # Track that this participant has answered
-                        answered_participants.add(str(message.author.id))
+                            # Add reaction only to the winning answer
+                            try:
+                                await message.add_reaction("✅")
+                            except discord.HTTPException:
+                                pass  # Ignore reaction failures
 
-                        # Check if both participants have now answered incorrectly
-                        if len(answered_participants) >= len(participants):
-                            return {"both_wrong": True}
+                            return {
+                                "user_id": str(message.author.id),
+                                "answer": message.content
+                            }
+                        else:
+                            # Wrong answer - add X reaction and track participant
+                            try:
+                                await message.add_reaction("❌")
+                            except discord.HTTPException:
+                                pass  # Ignore reaction failures
 
-                        continue
-        except asyncio.TimeoutError:
-            return None
+                            # Remove participant role after submitting answer
+                            await self.remove_participant_role_after_answer(channel, str(message.author.id))
+
+                            # Track that this participant has answered
+                            answered_participants.add(str(message.author.id))
+
+                            # Check if both participants have now answered incorrectly
+                            if len(answered_participants) >= len(participants):
+                                return {"both_wrong": True}
+
+                            continue
+
+                except asyncio.TimeoutError:
+                    # No message received in this timeout window, continue checking
+                    continue
+
+        finally:
+            # Always remove the event listener to prevent memory leaks
+            self.bot.remove_listener(message_handler, 'on_message')
+
+        # If we exit the loop due to timeout, return None
+        return None
     
     def evaluate_answer(self, user_answer: str, question_data: Dict) -> bool:
         """Check if user answer matches any of the correct answers"""
@@ -2403,9 +2479,6 @@ class TournamentManager:
                 question_ids_to_store = {question_type: [doc["_id"]]}
                 await self.store_tournament_question_ids(question_ids_to_store)
 
-                # Debug logging for question audit
-                print(f"Question: {doc.get('question', doc.get('clue', 'N/A'))}")
-                print(f"Answer: {first_answer}")
 
                 return {
                     "q_id": str(doc["_id"]),
@@ -2614,7 +2687,6 @@ class TournamentManager:
         # Add fake players to tournament in memory
         tournament["players"].extend(fake_players)
 
-        print(f"🤖 Added {len(fake_players)} fake players for testing via /test command")
         await channel.send(f"🤖 Added {len(fake_players)} fake players for testing!")
 
         return True
@@ -2666,23 +2738,18 @@ class TournamentCog(commands.Cog):
             return
 
         try:
-            print(f"🏆 Starting tournament with default settings")
             await self.tournament_manager.start_tournament(interaction)
-            print("✅ Tournament started successfully")
         except ChannelError as e:
-            print(f"❌ ChannelError: {e}")
             await interaction.response.send_message(
                 "❌ Tournaments can only be started in the designated tournament channel",
                 ephemeral=True
             )
         except ActiveTournamentError as e:
-            print(f"❌ ActiveTournamentError: {e}")
             await interaction.response.send_message(
                 f"❌ {str(e)}",
                 ephemeral=True
             )
         except Exception as e:
-            print(f"❌ Unexpected error starting tournament: {type(e).__name__}: {e}")
             import traceback
             traceback.print_exc()
             try:
@@ -2691,7 +2758,7 @@ class TournamentCog(commands.Cog):
                     ephemeral=True
                 )
             except:
-                print("❌ Could not send error response to Discord")
+                pass
 
     @discord.app_commands.command(name="status", description="Show tournament status")
     async def status(self, interaction: discord.Interaction):
