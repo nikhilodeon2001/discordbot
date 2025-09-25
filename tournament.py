@@ -1,4 +1,4 @@
-\"""
+"""
 Discord Round-Robin Tournament System
 =====================================
 
