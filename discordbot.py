@@ -1,5 +1,5 @@
 # Initialize all variables
-local_mode = False
+local_mode = True
 
 import sentry_sdk
 from sentry_sdk.integrations.logging import LoggingIntegration
@@ -14635,6 +14635,8 @@ async def on_message(message):
 
     if is_self:
         return
+
+    # Tournament system will handle messages via its own @bot.listen('on_message') handler
 
     # Check if message should be handled by Okra Hunt escape room system
     if 'okra_hunt' in globals():
