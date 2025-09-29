@@ -14717,6 +14717,7 @@ async def on_message(message):
                 url="https://discord.com/channels/1367682586079395902/role-subscriptions",
             )
             await dm_channel.send(embed=embed)
+            return
         except Exception as e:
             await message.channel.send(f"\u200b\n{message.author.mention} ⚠️ I couldn't message you. Make sure your DMs are open.\n\u200b")
             print(f"Error sending DM: {e}")
@@ -14729,6 +14730,7 @@ async def on_message(message):
         if emoji_mode == True:
             await message.add_reaction("🚩")
         await update_audit_question(current_question, message.content.strip(), message.author.display_name)
+        return
 
     if message.content.startswith("#") and (message.author.id == current_longest_round_streak["user_id"] or message.author.id == okrag_id):
         if await get_coffees(current_longest_round_streak["user_id"]) > 0:
