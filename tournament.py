@@ -21,7 +21,7 @@ import random
 import logging
 import time
 from datetime import datetime, timezone
-from typing import Dict, List, Optional, Tuple, Any, Callable
+from typing import Dict, List, Optional, Tuple, Any, Callable, Set
 from itertools import combinations
 from collections import defaultdict
 
@@ -36,6 +36,7 @@ ACTIVE_STATUSES = {"signup", "rr", "points_race", "semis", "final"}
 
 # Tournament Configuration - Easily configurable defaults
 JOIN_WINDOW_SEC_DEFAULT = 60
+VOTE_WINDOW_SEC_DEFAULT = 30
 RR_QUESTIONS_PER_MATCH_DEFAULT = 3
 ANSWER_TIMEOUT_SEC_DEFAULT = 15
 RR_REVEAL_TIME = 5  # Round robin question reveal time
@@ -49,7 +50,7 @@ KO_MAX_QUESTIONS = 7  # Knockout phases: max 7 questions (up to 7 questions, ear
 # Seeding Mode Configuration
 SEEDING_MODE_DEFAULT = "points_race" # or "round_robin"
 
-POINTS_RACE_QUESTIONS = 10
+POINTS_RACE_QUESTIONS = 1
 POINTS_RACE_REVEAL_TIME = 5  # Question reveals over 5 seconds
 POINTS_RACE_ANSWER_TIME = 15  # Answer window after full reveal
 POINTS_RACE_QUESTION_DELAY = 15  # Delay between questions
@@ -108,6 +109,12 @@ class TournamentManager:
         self.question_func = question_func  # Function to get questions
         self.fuzzy_match_func = fuzzy_match_func  # Function to check answers
         self.running_tasks: Dict[int, asyncio.Task] = {}  # channel_id -> tournament task
+
+        # Tournament state management for event-driven message handling
+        self.tournament_contexts: Dict[int, Dict] = {}  # channel_id -> tournament context
+        self.signup_contexts: Dict[int, Dict] = {}  # channel_id -> signup context
+        self.question_contexts: Dict[int, Dict] = {}  # channel_id -> question context
+        self.active_tournament_channels: Set[int] = set()  # channels with active tournaments
 
     async def ensure_indexes(self):
         """Ensure database indexes are created for completed tournament storage"""
@@ -289,9 +296,21 @@ class TournamentManager:
             )
             seeding_display = "Round Robin" if SEEDING_MODE_DEFAULT == "round_robin" else "Points Race"
             embed.add_field(name="\u200b\nSettings",
-                           value=f"• Mode: {MODE_DEFAULT.title()}\n• Min Players: {MIN_PLAYERS_DEFAULT}\n• Max Players: {MAX_PLAYERS_DEFAULT}\n• Seeding: {seeding_display}\n• Knockout Rounds: Best of 7\n• Reveal Time: 5s\n• Question Time: 10s")
-            
+                           value=f"• Min Players: {MIN_PLAYERS_DEFAULT}\n• Max Players: {MAX_PLAYERS_DEFAULT}\n• Seeding: {seeding_display}\n• Knockout Rounds: Best of 7\n• Reveal Time: 5s\n• Question Time: 10s")
+
+            # Add joined players section
+            embed.add_field(name="Joined Players (0)", value="*Waiting for players...*", inline=False)
+
             await interaction.response.send_message(embed=embed)
+
+            # Get the message for editing later
+            signup_message = await interaction.original_response()
+
+            # Store signup message reference for dynamic updates
+            tournament_data = active_tournaments.get(channel_id)
+            if tournament_data:
+                tournament_data["signup_embed"] = embed
+                tournament_data["signup_message"] = signup_message
             
             # Start signup phase in background (don't await)
             task = asyncio.create_task(
@@ -300,7 +319,7 @@ class TournamentManager:
             self.running_tasks[channel_id] = task
 
     async def run_signup_phase(self, channel_id: int, join_window_sec: int, min_players: int) -> None:
-        """Handle the signup phase"""
+        """Handle the signup phase using event-driven approach"""
         # Get tournament from memory
         tournament = active_tournaments.get(channel_id)
         if not tournament:
@@ -351,67 +370,58 @@ class TournamentManager:
 
             print(f"🤖 Auto-added {len(fake_players)} fake players for testing")
             await channel.send(f"🤖 Added {len(fake_players)} fake players for testing!")
-        
+
+        # Set up signup context for event-driven message handling
+        self.set_signup_context(channel_id, tournament)
+
         signup_end_time = asyncio.get_event_loop().time() + join_window_sec
-        
-        def check_signup(message):
-            return (message.channel.id == channel.id and
-                   not message.author.bot and
-                   message.content.lower().strip() == "okra")
 
         try:
+            # Event-driven signup processing loop
             while asyncio.get_event_loop().time() < signup_end_time:
-                timeout = max(0.1, signup_end_time - asyncio.get_event_loop().time())
-                try:
-                    message = await self.bot.wait_for('message', timeout=timeout, check=check_signup)
+                # Process signup queue
+                signup_context = self.signup_contexts.get(channel_id)
+                if signup_context and 'signup_queue' in signup_context:
+                    while signup_context['signup_queue']:
+                        signup_data = signup_context['signup_queue'].pop(0)
 
-                    # Check if user has OKRAN_ROLE_ID or BUMPER_KING_ROLE_ID
-                    import discordbot
-                    okran_role_id = getattr(discordbot, 'OKRAN_ROLE_ID', None)
-                    okran_role_id_2 = getattr(discordbot, 'OKRAN_ROLE_ID_2', None)
-                    bumper_king_role_id = getattr(discordbot, 'BUMPER_KING_ROLE_ID', None)
+                        user_id = str(signup_data['user_id'])
+                        display_name = signup_data['display_name']
+                        message = signup_data['message']
 
-                    has_tournament_role = False
-                    if okran_role_id and any(role.id == okran_role_id for role in message.author.roles):
-                        has_tournament_role = True
-                    elif okran_role_id_2 and any(role.id == okran_role_id_2 for role in message.author.roles):
-                        has_tournament_role = True
-                    elif bumper_king_role_id and any(role.id == bumper_king_role_id for role in message.author.roles):
-                        has_tournament_role = True
+                        # Add player if not already signed up (check tournament memory directly)
+                        if not any(p["user_id"] == user_id for p in tournament["players"]):
+                            # Check if tournament is at capacity
+                            if len(tournament["players"]) >= MAX_PLAYERS_DEFAULT:
+                                await message.add_reaction("🙏")
+                                await message.reply(f"Sorry, the tournament has reached its maximum capacity of {MAX_PLAYERS_DEFAULT} players.")
+                                continue
 
-                    if not has_tournament_role:
-                        # User doesn't have tournament role
-                        await message.reply("Tournaments are for Okrans and Bumper Kings only")
-                        await message.add_reaction("😔")
-                        continue
+                            player = {
+                                "user_id": user_id,
+                                "display_name": display_name,
+                                "joined_at": datetime.now(timezone.utc),
+                                "active": True,
+                                "afk_strikes": 0
+                            }
+                            # Add to tournament memory
+                            tournament["players"].append(player)
 
-                    # Add player if not already signed up (check tournament memory directly)
-                    if not any(p["user_id"] == str(message.author.id) for p in tournament["players"]):
-                        # Check if tournament is at capacity
-                        if len(tournament["players"]) >= MAX_PLAYERS_DEFAULT:
-                            await message.add_reaction("🙏")
-                            await message.reply(f"Sorry, the tournament has reached its maximum capacity of {MAX_PLAYERS_DEFAULT} players.")
-                            continue
+                            # React to confirm signup with golden trophy
+                            await message.add_reaction("🏆")
 
-                        player = {
-                            "user_id": str(message.author.id),
-                            "display_name": message.author.display_name,
-                            "joined_at": datetime.now(timezone.utc),
-                            "active": True,
-                            "afk_strikes": 0
-                        }
-                        # Add to tournament memory
-                        tournament["players"].append(player)
+                            # Update signup embed with new player
+                            await self.update_signup_embed(channel_id)
 
-                        # React to confirm signup with golden trophy
-                        await message.add_reaction("🏆")
-                        
-                except asyncio.TimeoutError:
-                    break
-        
+                # Small delay to prevent busy waiting
+                await asyncio.sleep(0.1)
+
         except Exception as e:
             logger.error(f"Error in signup phase: {e}")
             return
+        finally:
+            # Clear signup context
+            self.clear_signup_context(channel_id)
         
         # Get final player count from memory
         final_player_count = len(tournament["players"])
@@ -518,7 +528,7 @@ class TournamentManager:
         view.message = message
 
         # Wait for voting to complete (30 seconds)
-        await asyncio.sleep(30)
+        await asyncio.sleep(VOTE_WINDOW_SEC_DEFAULT)
 
         # Disable buttons and announce result
         view.disable_all_buttons()
@@ -815,9 +825,10 @@ class TournamentManager:
         else:
             answer_text = " / ".join([ans.upper() for ans in answers])
 
-        # Create initial question embed (matching round robin style)
+        # Create initial question embed with category
+        category_text = question.get("category", "General")
         question_embed = discord.Embed(
-            title=f"⚡ Question {question_num}/{POINTS_RACE_QUESTIONS}",
+            title=f"⚡ Question {question_num}/{POINTS_RACE_QUESTIONS}: {category_text}",
             description="",  # Will be filled during reveal
             color=discord.Color.blue()
         )
@@ -875,7 +886,7 @@ class TournamentManager:
 
         # Show correct answer with question results
         embed = discord.Embed(
-            title=f"✅ Question {question_num} Complete",
+            title=f"✅ Question {question_num}/{POINTS_RACE_QUESTIONS}: {category_text} Complete",
             description=f"**Correct Answer:** {answer_text}",
             color=discord.Color.green()
         )
@@ -930,7 +941,7 @@ class TournamentManager:
     async def wait_for_points_race_answers(self, channel: discord.TextChannel, player_ids: List[int],
                                          question: Dict[str, Any], question_data: Dict[str, Any],
                                          timeout: float) -> None:
-        """Wait for answers from all Points Race participants and handle scoring"""
+        """Wait for answers from all Points Race participants and handle scoring using event-driven approach"""
         tournament = active_tournaments.get(channel.id)
         if not tournament:
             return
@@ -939,148 +950,128 @@ class TournamentManager:
         participants = [str(pid) for pid in player_ids]
 
         answered_players = set()
-        fake_players = ["alpha", "beta", "gamma", "delta"]
         answer_messages = []  # Store messages for reactions later
 
-        def check_answer(message):
-
-            # Check for fake player format: "alpha answer" or "beta answer"
-            words = message.content.strip().split()
-            if len(words) >= 2 and words[0].lower() in fake_players:
-                player_name = words[0].lower()
-                # Check if this fake player is a participant and hasn't answered yet
-                for participant_id in participants:
-                    if (participant_id.startswith('fake_') and
-                        player_name in participant_id.lower() and
-                        participant_id not in answered_players):
-                        return True
-                return False
-
-            # Regular player answer - only allow if they haven't answered yet
-            is_valid = (message.channel.id == channel.id and
-                       str(message.author.id) in participants and
-                       str(message.author.id) not in answered_players and
-                       not message.author.bot)
-            return is_valid
+        # Set up question context for event-driven message handling
+        self.set_question_context(channel.id, participants, question_data)
 
         start_time = time.time()
         reveal_complete_time = question_data.get("reveal_complete_time", start_time)
-
         total_players = len(participants)
 
-        while time.time() - start_time < timeout and len(answered_players) < total_players:
-            elapsed = time.time() - start_time
+        try:
+            # Event-driven answer processing loop
+            while time.time() - start_time < timeout and len(answered_players) < total_players:
+                # Process answer queue
+                question_context = self.question_contexts.get(channel.id)
+                if question_context and 'answer_queue' in question_context:
+                    while question_context['answer_queue']:
+                        answer_data = question_context['answer_queue'].pop(0)
 
-            try:
-                # Calculate remaining time to ensure we don't exceed the total timeout
-                remaining_time = timeout - (time.time() - start_time)
-                if remaining_time <= 0:
-                    break
+                        if answer_data['type'] == 'fake_player':
+                            # Process fake player answer
+                            player_name = answer_data['player_name']
+                            answer_text = answer_data['answer']
+                            message = answer_data['message']
 
-                # Use the minimum of 1.0 second or remaining time
-                wait_timeout = min(1.0, remaining_time)
-                message = await self.bot.wait_for('message', check=check_answer, timeout=wait_timeout)
+                            # Find matching fake player ID
+                            answering_player_id = None
+                            for participant_id in participants:
+                                if (participant_id.startswith('fake_') and
+                                    player_name in participant_id.lower()):
+                                    answering_player_id = participant_id
+                                    break
 
-                words = message.content.strip().split()
+                            if not answering_player_id or answering_player_id in answered_players:
+                                continue
 
-                # Handle fake player answer with host role check (like round robin)
-                import discordbot
-                host_role_id = getattr(discordbot, 'HOST_ROLE_ID', None)
-                has_host_role = host_role_id and any(role.id == host_role_id for role in message.author.roles)
+                        elif answer_data['type'] == 'regular_player':
+                            # Process real player answer
+                            answering_player_id = answer_data['user_id']
+                            answer_text = answer_data['answer']
+                            message = answer_data['message']
 
-                if len(words) >= 2 and words[0].lower() in fake_players and has_host_role:
-                    # Process fake player answer
-                    player_name = words[0].lower()
-                    answer_text = ' '.join(words[1:])
+                            if answering_player_id in answered_players:
+                                continue
 
-                    # Find matching fake player ID
-                    answering_player_id = None
-                    for participant_id in participants:
-                        if (participant_id.startswith('fake_') and
-                            player_name in participant_id.lower()):
-                            answering_player_id = participant_id
-                            break
+                        else:
+                            continue
 
-                    if not answering_player_id:
-                        continue
+                        # Mark player as answered
+                        answered_players.add(answering_player_id)
+                        question_context['answered_participants'].add(answering_player_id)
 
-                else:
-                    # Process real player answer
-                    answering_player_id = str(message.author.id)
-                    answer_text = message.content
-
-                # Mark player as answered
-                answered_players.add(answering_player_id)
-
-                try:
-                    # Calculate answer time relative to when reveal completed
-                    if reveal_complete_time is None:
-                        reveal_complete_time = start_time
-                    answer_time = time.time() - reveal_complete_time
-
-                    # Calculate points based on time (1000 → 0 over full 20-second window)
-                    total_window = POINTS_RACE_REVEAL_TIME + POINTS_RACE_ANSWER_TIME  # 5 + 15 = 20 seconds
-
-                    if answer_time < 0:
-                        # Answered before question started (shouldn't happen)
-                        points_earned = POINTS_RACE_MAX_POINTS
-                    elif answer_time >= total_window:
-                        # Answered at/after full timeout
-                        points_earned = 0
-                    else:
-                        # Linear decrease from 1000 points at 0s to 0 points at 20s
-                        points_earned = int(POINTS_RACE_MAX_POINTS * (1 - (answer_time / total_window)))
-
-
-                    # Check if answer is correct
-                    is_correct = self.evaluate_answer(answer_text, question)
-
-                    if not is_correct:
-                        points_earned = 0
-
-                    # Update player's Points Race score (handle both string and int IDs)
-                    for player in tournament["players"]:
-                        if str(player["user_id"]) == str(answering_player_id):
-                            if "points_race_scores" not in player:
-                                player["points_race_scores"] = []
-                            player["points_race_scores"].append({
-                                "question_num": len(player["points_race_scores"]) + 1,
-                                "points": points_earned,
-                                "answer_time": answer_time,
-                                "correct": is_correct
-                            })
-                            break
-
-                    # Store message data for later reaction processing (reactions only)
-                    answer_messages.append({
-                        'message': message,
-                        'is_correct': is_correct,
-                        'player_id': answering_player_id
-                    })
-
-                    # Remove player from Tournament Participant role immediately (but delay reactions)
-                    if not str(answering_player_id).startswith('fake_'):
                         try:
-                            # Ensure answering_player_id is an integer for get_member()
-                            player_id_int = int(answering_player_id) if isinstance(answering_player_id, str) else answering_player_id
-                            member = channel.guild.get_member(player_id_int)
-                            if member:
-                                tournament_participant_role = discord.utils.get(channel.guild.roles, name="Tournament Participant")
-                                okran_role = discord.utils.get(channel.guild.roles, name="Okran")
+                            # Calculate answer time relative to when reveal completed
+                            if reveal_complete_time is None:
+                                reveal_complete_time = start_time
+                            answer_time = time.time() - reveal_complete_time
 
-                                if tournament_participant_role and tournament_participant_role in member.roles:
-                                    await member.remove_roles(tournament_participant_role)
-                                if okran_role:
-                                    await member.add_roles(okran_role)
-                        except (discord.HTTPException, ValueError) as e:
-                            pass
+                            # Calculate points based on time (1000 → 0 over full 20-second window)
+                            total_window = POINTS_RACE_REVEAL_TIME + POINTS_RACE_ANSWER_TIME  # 5 + 15 = 20 seconds
 
-                except Exception as e:
-                    continue
+                            if answer_time < 0:
+                                # Answered before question started (shouldn't happen)
+                                points_earned = POINTS_RACE_MAX_POINTS
+                            elif answer_time >= total_window:
+                                # Answered at/after full timeout
+                                points_earned = 0
+                            else:
+                                # Linear decrease from 1000 points at 0s to 0 points at 20s
+                                points_earned = int(POINTS_RACE_MAX_POINTS * (1 - (answer_time / total_window)))
 
+                            # Check if answer is correct
+                            is_correct = self.evaluate_answer(answer_text, question)
 
-            except asyncio.TimeoutError:
-                continue
+                            if not is_correct:
+                                points_earned = 0
+
+                            # Update player's Points Race score (handle both string and int IDs)
+                            for player in tournament["players"]:
+                                if str(player["user_id"]) == str(answering_player_id):
+                                    if "points_race_scores" not in player:
+                                        player["points_race_scores"] = []
+                                    player["points_race_scores"].append({
+                                        "question_num": len(player["points_race_scores"]) + 1,
+                                        "points": points_earned,
+                                        "answer_time": answer_time,
+                                        "correct": is_correct
+                                    })
+                                    break
+
+                            # Store message data for later reaction processing (reactions only)
+                            answer_messages.append({
+                                'message': message,
+                                'is_correct': is_correct,
+                                'player_id': answering_player_id
+                            })
+
+                            # Remove player from Tournament Participant role immediately (but delay reactions)
+                            if not str(answering_player_id).startswith('fake_'):
+                                try:
+                                    # Ensure answering_player_id is an integer for get_member()
+                                    player_id_int = int(answering_player_id) if isinstance(answering_player_id, str) else answering_player_id
+                                    member = channel.guild.get_member(player_id_int)
+                                    if member:
+                                        tournament_participant_role = discord.utils.get(channel.guild.roles, name="Tournament Participant")
+                                        okran_role = discord.utils.get(channel.guild.roles, name="Okran")
+
+                                        if tournament_participant_role and tournament_participant_role in member.roles:
+                                            await member.remove_roles(tournament_participant_role)
+                                        if okran_role:
+                                            await member.add_roles(okran_role)
+                                except (discord.HTTPException, ValueError):
+                                    pass
+
+                        except Exception:
+                            continue
+
+                # Small delay to prevent busy waiting
+                await asyncio.sleep(0.1)
+
+        finally:
+            # Clear question context
+            self.clear_question_context(channel.id)
 
 
         # Handle players who didn't answer - assign 0 points
@@ -1170,7 +1161,7 @@ class TournamentManager:
 
         # Create standings embed
         embed = discord.Embed(
-            title=f"🏁 Points Race Standings - After Question {question_num}",
+            title=f"🏁 Points Race Standings - After Question {question_num}/{POINTS_RACE_QUESTIONS}",
             color=discord.Color.blue()
         )
 
@@ -1262,6 +1253,8 @@ class TournamentManager:
                 })
 
             tournament["seedings"] = seedings
+            # Store complete Points Race standings for final standings calculation
+            tournament["points_race_standings"] = player_standings
             tournament["status"] = "semis"
 
             # Announce semifinals setup
@@ -1480,9 +1473,17 @@ class TournamentManager:
         if not channel:
             return
 
-        # Calculate final standings
-        rr_standings = self.compute_rr_standings(tournament)
-        tournament["standings"] = rr_standings
+        # Calculate final standings based on tournament type
+        seeding_mode = tournament["config"].get("seeding_mode", "round_robin")
+        if seeding_mode == "points_race" and "points_race_standings" in tournament:
+            # Use Points Race standings for seeding and tie-breaking
+            base_standings = tournament["points_race_standings"]
+            tournament["standings"] = base_standings
+        else:
+            # Use Round Robin standings
+            rr_standings = self.compute_rr_standings(tournament)
+            tournament["standings"] = rr_standings
+            base_standings = rr_standings
         
         # Determine champion and runner-up
         champion = None
@@ -1547,27 +1548,39 @@ class TournamentManager:
                 standings_text += f"{placement}. {runner_up['display_name']} (Runner-up)\n"
                 placement += 1
 
-            # 3rd & 4th place: Semifinal losers (from RR standings order)
-            semifinal_losers = []
-            if rr_standings:
-                for player in rr_standings:
+            # 3rd & 4th place: Semifinal losers, then all others in base standings order
+            remaining_players = []
+            if base_standings:
+                for player in base_standings:
                     # Skip champion and runner-up, they're already placed
                     if (champion and player["user_id"] == champion["user_id"]) or \
                        (runner_up and player["user_id"] == runner_up["user_id"]):
                         continue
-                    semifinal_losers.append(player)
+                    remaining_players.append(player)
 
-                # Add remaining players in RR standings order
-                for player in semifinal_losers:
-                    standings_text += f"{placement}. {player['display_name']} ({player['mp']} MP, {player['qp_diff']:+d} QPD)\n"
+                # Add remaining players in original standings order (Points Race or RR)
+                for player in remaining_players:
+                    if seeding_mode == "points_race":
+                        # Show Points Race total points
+                        points_text = f"{player.get('total_points', 0)} pts"
+                        standings_text += f"{placement}. {player.get('username', player.get('display_name', 'Unknown'))} ({points_text})\n"
+                    else:
+                        # Show Round Robin stats
+                        standings_text += f"{placement}. {player['display_name']} ({player['mp']} MP, {player['qp_diff']:+d} QPD)\n"
                     placement += 1
 
             embed.add_field(name="\u200b\nFinal Standings", value=standings_text, inline=False)
-        elif rr_standings:
-            # Tournament ended at RR phase, show RR standings
+        elif base_standings:
+            # Tournament ended early, show base standings
             standings_text = ""
-            for i, player in enumerate(rr_standings[:5], 1):
-                standings_text += f"{i}. {player['display_name']} ({player['mp']} MP, {player['qp_diff']:+d} QPD)\n"
+            for i, player in enumerate(base_standings[:5], 1):
+                if seeding_mode == "points_race":
+                    # Show Points Race total points
+                    points_text = f"{player.get('total_points', 0)} pts"
+                    standings_text += f"{i}. {player.get('username', player.get('display_name', 'Unknown'))} ({points_text})\n"
+                else:
+                    # Show Round Robin stats
+                    standings_text += f"{i}. {player['display_name']} ({player['mp']} MP, {player['qp_diff']:+d} QPD)\n"
             embed.add_field(name="\u200b\nFinal Standings", value=standings_text, inline=False)
         
         await channel.send(embed=embed)
@@ -1901,7 +1914,7 @@ class TournamentManager:
 
             # Second embed - Question text and image
             category_text = question.get("category", "General")
-            question_title = f"**Question {questions_asked}**: {category_text}"
+            question_title = f"⚡ Question {questions_asked}/{target_questions}: {category_text}"
 
             # Store active question
             self.active_questions[channel.id] = {
@@ -2192,69 +2205,50 @@ class TournamentManager:
     async def wait_for_answer(self, channel: discord.TextChannel,
                             participants: List[str], question_data: Dict,
                             timeout_sec: int) -> Optional[Dict]:
-        """Wait for a correct answer from participants (supports simple fake player format)"""
-        fake_players = ["alpha", "beta", "gamma", "delta"]
+        """Wait for a correct answer from participants using event-driven approach"""
         answered_participants = set()  # Track which participants have answered
 
-        def check_answer(message):
-            # Check for simple fake player format: "alpha paris" or "beta london"
-            words = message.content.strip().split()
-            if (len(words) >= 2 and
-                words[0].lower() in fake_players):
+        # Set up question context for event-driven message handling
+        self.set_question_context(channel.id, participants, question_data)
 
-                player_name = words[0].lower()
-                # Check if this fake player is a participant and hasn't answered yet
-                for participant_id in participants:
-                    if (participant_id.startswith('fake_') and
-                        player_name in participant_id.lower() and
-                        participant_id not in answered_participants):
-                        return True
-                return False
-
-            # Regular player answer - only allow if they haven't answered yet
-            return (message.channel.id == channel.id and
-                   str(message.author.id) in participants and
-                   str(message.author.id) not in answered_participants and
-                   not message.author.bot)
+        start_time = time.time()
 
         try:
-            while True:
-                message = await self.bot.wait_for('message', timeout=timeout_sec, check=check_answer)
+            # Event-driven answer processing loop
+            while time.time() - start_time < timeout_sec:
+                # Process answer queue
+                question_context = self.question_contexts.get(channel.id)
+                if question_context and 'answer_queue' in question_context:
+                    while question_context['answer_queue']:
+                        answer_data = question_context['answer_queue'].pop(0)
 
-                words = message.content.strip().split()
+                        if answer_data['type'] == 'fake_player':
+                            # Process fake player answer
+                            player_name = answer_data['player_name']
+                            answer = answer_data['answer']
+                            message = answer_data['message']
 
-                # Handle fake player answer: "alpha answer" or "beta multiple word answer"
-                # Only allow HOST_ROLE_ID to control fake players
-                import discordbot
-                host_role_id = getattr(discordbot, 'HOST_ROLE_ID', None)
-                has_host_role = host_role_id and any(role.id == host_role_id for role in message.author.roles)
+                            # Find matching fake player ID
+                            fake_user_id = None
+                            for participant_id in participants:
+                                if (participant_id.startswith('fake_') and
+                                    player_name in participant_id.lower()):
+                                    fake_user_id = participant_id
+                                    break
 
-                if (len(words) >= 2 and words[0].lower() in fake_players and has_host_role):
-                    try:
-                        player_name = words[0].lower()
-                        answer = ' '.join(words[1:])  # Everything after the player name
+                            if not fake_user_id or fake_user_id in answered_participants:
+                                continue
 
-                        # Find matching fake player ID
-                        fake_user_id = None
-                        for participant_id in participants:
-                            if (participant_id.startswith('fake_') and
-                                player_name in participant_id.lower()):
-                                fake_user_id = participant_id
-                                break
-
-                        if fake_user_id:
                             evaluation_result = self.evaluate_answer(answer, question_data)
 
                             if evaluation_result:
                                 # FIRST correct answer wins - immediately return
-                                # Remove participant role after submitting answer
                                 await self.remove_participant_role_after_answer(channel, fake_user_id)
 
-                                # Add reaction only to the winning answer
                                 try:
                                     await message.add_reaction("✅")
                                 except discord.HTTPException:
-                                    pass  # Ignore reaction failures
+                                    pass
 
                                 return {
                                     "user_id": fake_user_id,
@@ -2265,62 +2259,64 @@ class TournamentManager:
                                 try:
                                     await message.add_reaction("❌")
                                 except discord.HTTPException:
-                                    pass  # Ignore reaction failures
+                                    pass
 
-                                # Remove participant role after submitting answer
                                 await self.remove_participant_role_after_answer(channel, fake_user_id)
-
-                                # Track that this participant has answered
                                 answered_participants.add(fake_user_id)
+                                question_context['answered_participants'].add(fake_user_id)
 
-                                # Check if both participants have now answered incorrectly
+                                # Check if all participants have now answered incorrectly
                                 if len(answered_participants) >= len(participants):
                                     return {"both_wrong": True}
 
+                        elif answer_data['type'] == 'regular_player':
+                            # Process real player answer
+                            user_id = answer_data['user_id']
+                            answer = answer_data['answer']
+                            message = answer_data['message']
+
+                            if user_id in answered_participants:
                                 continue
-                    except Exception as e:
-                        logger.error(f"Error processing fake player answer: {e}")
-                        continue
 
-                # Handle regular player answer (your own answer)
-                else:
-                    evaluation_result = self.evaluate_answer(message.content, question_data)
+                            evaluation_result = self.evaluate_answer(answer, question_data)
 
-                    if evaluation_result:
-                        # FIRST correct answer wins - immediately return
-                        # Remove participant role after submitting answer
-                        await self.remove_participant_role_after_answer(channel, str(message.author.id))
+                            if evaluation_result:
+                                # FIRST correct answer wins - immediately return
+                                await self.remove_participant_role_after_answer(channel, user_id)
 
-                        # Add reaction only to the winning answer
-                        try:
-                            await message.add_reaction("✅")
-                        except discord.HTTPException:
-                            pass  # Ignore reaction failures
+                                try:
+                                    await message.add_reaction("✅")
+                                except discord.HTTPException:
+                                    pass
 
-                        return {
-                            "user_id": str(message.author.id),
-                            "answer": message.content
-                        }
-                    else:
-                        # Wrong answer - add X reaction and track participant
-                        try:
-                            await message.add_reaction("❌")
-                        except discord.HTTPException:
-                            pass  # Ignore reaction failures
+                                return {
+                                    "user_id": user_id,
+                                    "answer": answer
+                                }
+                            else:
+                                # Wrong answer - add X reaction and track participant
+                                try:
+                                    await message.add_reaction("❌")
+                                except discord.HTTPException:
+                                    pass
 
-                        # Remove participant role after submitting answer
-                        await self.remove_participant_role_after_answer(channel, str(message.author.id))
+                                await self.remove_participant_role_after_answer(channel, user_id)
+                                answered_participants.add(user_id)
+                                question_context['answered_participants'].add(user_id)
 
-                        # Track that this participant has answered
-                        answered_participants.add(str(message.author.id))
+                                # Check if all participants have now answered incorrectly
+                                if len(answered_participants) >= len(participants):
+                                    return {"both_wrong": True}
 
-                        # Check if both participants have now answered incorrectly
-                        if len(answered_participants) >= len(participants):
-                            return {"both_wrong": True}
+                # Small delay to prevent busy waiting
+                await asyncio.sleep(0.1)
 
-                        continue
-        except asyncio.TimeoutError:
+            # Timeout reached
             return None
+
+        finally:
+            # Clear question context
+            self.clear_question_context(channel.id)
     
     def evaluate_answer(self, user_answer: str, question_data: Dict) -> bool:
         """Check if user answer matches any of the correct answers"""
@@ -2618,6 +2614,212 @@ class TournamentManager:
         await channel.send(f"🤖 Added {len(fake_players)} fake players for testing!")
 
         return True
+
+    # Event-driven message handling methods
+
+    def should_handle_message(self, message: discord.Message) -> bool:
+        """Determine if a message should be handled by the tournament system"""
+        if message.author.bot:
+            return False
+
+        channel_id = message.channel.id
+
+        # Check if this channel has any active tournament contexts
+        if (channel_id in self.signup_contexts or
+            channel_id in self.question_contexts or
+            channel_id in self.active_tournament_channels):
+            return True
+
+        return False
+
+    async def handle_message(self, message: discord.Message) -> bool:
+        """Handle tournament-related messages. Returns True if message was handled."""
+        channel_id = message.channel.id
+
+        try:
+            # Handle signup messages
+            if channel_id in self.signup_contexts:
+                return await self._handle_signup_message(message)
+
+            # Handle question answer messages
+            if channel_id in self.question_contexts:
+                return await self._handle_question_message(message)
+
+            return False
+
+        except Exception as e:
+            logger.error(f"Error handling tournament message: {e}")
+            return False
+
+    async def _handle_signup_message(self, message: discord.Message) -> bool:
+        """Handle messages during tournament signup phase"""
+        channel_id = message.channel.id
+        signup_context = self.signup_contexts.get(channel_id)
+
+        if not signup_context:
+            return False
+
+        # Check if message is "okra" signup
+        if message.content.lower().strip() != "okra":
+            return False
+
+        # Validate user has tournament role
+        import discordbot
+        okran_role_id = getattr(discordbot, 'OKRAN_ROLE_ID', None)
+        okran_role_id_2 = getattr(discordbot, 'OKRAN_ROLE_ID_2', None)
+        bumper_king_role_id = getattr(discordbot, 'BUMPER_KING_ROLE_ID', None)
+
+        has_tournament_role = False
+        if okran_role_id and any(role.id == okran_role_id for role in message.author.roles):
+            has_tournament_role = True
+        elif okran_role_id_2 and any(role.id == okran_role_id_2 for role in message.author.roles):
+            has_tournament_role = True
+        elif bumper_king_role_id and any(role.id == bumper_king_role_id for role in message.author.roles):
+            has_tournament_role = True
+
+        if not has_tournament_role:
+            await message.reply("Tournaments are for Okrans and Bumper Kings only")
+            await message.add_reaction("😔")
+            return True
+
+        # Add to signup queue for processing
+        if 'signup_queue' not in signup_context:
+            signup_context['signup_queue'] = []
+
+        signup_context['signup_queue'].append({
+            'user_id': message.author.id,
+            'display_name': message.author.display_name,
+            'message': message
+        })
+
+        return True
+
+    async def _handle_question_message(self, message: discord.Message) -> bool:
+        """Handle messages during tournament question phase"""
+        channel_id = message.channel.id
+        question_context = self.question_contexts.get(channel_id)
+
+        if not question_context:
+            return False
+
+        participants = question_context.get('participants', [])
+        fake_players = ["alpha", "beta", "gamma", "delta"]
+
+        words = message.content.strip().split()
+
+        # Handle fake player commands
+        if (len(words) >= 2 and words[0].lower() in fake_players):
+            import discordbot
+            host_role_id = getattr(discordbot, 'HOST_ROLE_ID', None)
+            has_host_role = host_role_id and any(role.id == host_role_id for role in message.author.roles)
+
+            if has_host_role:
+                # Add to answer queue for processing
+                if 'answer_queue' not in question_context:
+                    question_context['answer_queue'] = []
+
+                question_context['answer_queue'].append({
+                    'type': 'fake_player',
+                    'player_name': words[0].lower(),
+                    'answer': ' '.join(words[1:]),
+                    'message': message
+                })
+                return True
+
+        # Handle regular player answers
+        user_id = str(message.author.id)
+        if user_id in participants:
+            answered_participants = question_context.get('answered_participants', set())
+
+            if user_id not in answered_participants:
+                # Add to answer queue for processing
+                if 'answer_queue' not in question_context:
+                    question_context['answer_queue'] = []
+
+                question_context['answer_queue'].append({
+                    'type': 'regular_player',
+                    'user_id': user_id,
+                    'answer': message.content,
+                    'message': message
+                })
+                return True
+
+        return False
+
+    def set_signup_context(self, channel_id: int, tournament_data: Dict):
+        """Set up signup context for a tournament"""
+        self.signup_contexts[channel_id] = {
+            'tournament': tournament_data,
+            'signup_queue': []
+        }
+        self.active_tournament_channels.add(channel_id)
+
+    def clear_signup_context(self, channel_id: int):
+        """Clear signup context when signup phase ends"""
+        if channel_id in self.signup_contexts:
+            del self.signup_contexts[channel_id]
+
+    def set_question_context(self, channel_id: int, participants: List[str], question_data: Dict):
+        """Set up question context for answer collection"""
+        self.question_contexts[channel_id] = {
+            'participants': participants,
+            'question_data': question_data,
+            'answer_queue': [],
+            'answered_participants': set()
+        }
+        self.active_tournament_channels.add(channel_id)
+
+    def clear_question_context(self, channel_id: int):
+        """Clear question context when question phase ends"""
+        if channel_id in self.question_contexts:
+            del self.question_contexts[channel_id]
+
+    def clear_tournament_context(self, channel_id: int):
+        """Clear all tournament contexts for a channel"""
+        self.clear_signup_context(channel_id)
+        self.clear_question_context(channel_id)
+        if channel_id in self.active_tournament_channels:
+            self.active_tournament_channels.remove(channel_id)
+
+    async def update_signup_embed(self, channel_id: int):
+        """Update the signup embed with current joined players"""
+        tournament = active_tournaments.get(channel_id)
+        if not tournament or "signup_embed" not in tournament or "signup_message" not in tournament:
+            return
+
+        # Get current players
+        players = tournament.get("players", [])
+        player_count = len(players)
+
+        # Create joined players text
+        if player_count == 0:
+            players_text = "*Waiting for players...*"
+        else:
+            players_list = []
+            for player in players:
+                display_name = player.get("display_name", f"Player {player['user_id']}")
+                players_list.append(f"🏆 {display_name}")
+            players_text = "\n".join(players_list)
+
+        # Update the embed
+        embed = tournament["signup_embed"]
+        # Find and update the joined players field (it should be the last field)
+        if embed.fields:
+            # Update the last field which is the joined players field
+            embed.set_field_at(
+                index=len(embed.fields) - 1,
+                name=f"Joined Players ({player_count})",
+                value=players_text,
+                inline=False
+            )
+
+            # Try to edit the message
+            try:
+                signup_message = tournament["signup_message"]
+                await signup_message.edit(embed=embed)
+            except (discord.NotFound, discord.HTTPException):
+                # Message might have been deleted or we can't edit it
+                pass
 
 
 class TournamentCog(commands.Cog):
