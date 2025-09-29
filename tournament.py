@@ -50,7 +50,7 @@ KO_MAX_QUESTIONS = 7  # Knockout phases: max 7 questions (up to 7 questions, ear
 # Seeding Mode Configuration
 SEEDING_MODE_DEFAULT = "points_race" # or "round_robin"
 
-POINTS_RACE_QUESTIONS = 1
+POINTS_RACE_QUESTIONS = 10
 POINTS_RACE_REVEAL_TIME = 5  # Question reveals over 5 seconds
 POINTS_RACE_ANSWER_TIME = 15  # Answer window after full reveal
 POINTS_RACE_QUESTION_DELAY = 15  # Delay between questions
