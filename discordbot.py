@@ -9882,7 +9882,7 @@ async def select_wof_questions(winner, winner_id):
             return None
 
         elif selected_wof_category == "9":
-            ask_feud_question(winner, "solo", winner_id)
+            await ask_feud_question(winner, "solo", winner_id)
             await asyncio.sleep(3)
             return None
 
@@ -14636,8 +14636,6 @@ async def on_message(message):
     if is_self:
         return
 
-    # Tournament system will handle messages via its own @bot.listen('on_message') handler
-
     # Check if message should be handled by Okra Hunt escape room system
     if 'okra_hunt' in globals():
         try:
@@ -14645,6 +14643,15 @@ async def on_message(message):
                 return  # Message was handled by okra hunt, don't process further
         except Exception as e:
             print(f"Error in okra hunt handler: {e}")
+
+    # Check if message should be handled by tournament system
+    if 'tournament_manager' in globals():
+        try:
+            if tournament_manager.should_handle_message(message):
+                if await tournament_manager.handle_message(message):
+                    return  # Message was handled by tournament, don't process further
+        except Exception as e:
+            print(f"Error in tournament handler: {e}")
 
     if message.author.id == DISBOARD_BOT_ID:
         # Detect “Bump done!” (Disboard uses embeds; content is usually empty)
@@ -15051,6 +15058,7 @@ async def on_ready():
                     "source": "fallback"
                 }
         
+        global tournament_manager
         tournament_manager = await setup_tournament_system(
             bot=bot,
             db=db,
