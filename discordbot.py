@@ -189,6 +189,7 @@ if local_mode == True:
     RULES_MESSAGE_ID = 1420248754862162022
     HUNT_LEADERBOARD_CHANNEL_ID = 1420278277829951518
     HUNT_LEADERBOARD_MESSAGE_ID = 1420281932566237244
+    EVERYONE_ROLE_ID = 1375328358573015050
 else:
     discord_token = os.getenv("discord_token")
     mongo_db_string = os.getenv("mongo_db_string")
@@ -226,6 +227,7 @@ else:
     RULES_MESSAGE_ID = 1374598920973320313
     HUNT_LEADERBOARD_CHANNEL_ID = 1420277804075061320
     HUNT_LEADERBOARD_MESSAGE_ID = 1420292321370570844
+    EVERYONE_ROLE_ID = 1367682586079395902
 
 
 
@@ -14717,7 +14719,6 @@ async def on_message(message):
                 url="https://discord.com/channels/1367682586079395902/role-subscriptions",
             )
             await dm_channel.send(embed=embed)
-            return
         except Exception as e:
             await message.channel.send(f"\u200b\n{message.author.mention} ⚠️ I couldn't message you. Make sure your DMs are open.\n\u200b")
             print(f"Error sending DM: {e}")
@@ -14730,7 +14731,6 @@ async def on_message(message):
         if emoji_mode == True:
             await message.add_reaction("🚩")
         await update_audit_question(current_question, message.content.strip(), message.author.display_name)
-        return
 
     if message.content.startswith("#") and (message.author.id == current_longest_round_streak["user_id"] or message.author.id == okrag_id):
         if await get_coffees(current_longest_round_streak["user_id"]) > 0:
