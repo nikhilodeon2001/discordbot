@@ -14564,6 +14564,12 @@ def handle_sigterm(signum, frame):
 BUMPER_ROLE_NAME = "👑🍔 Bumper King 🍔👑"
 
 async def ensure_bumper_role(guild: discord.Guild) -> discord.Role:
+    # First try to get the role by configured ID
+    role = guild.get_role(BUMPER_KING_ROLE_ID)
+    if role is not None:
+        return role
+
+    # Fallback: search by name
     role = discord.utils.get(guild.roles, name=BUMPER_ROLE_NAME)
     if role is None:
         role = await guild.create_role(name=BUMPER_ROLE_NAME, reason="Create Bumper King role")
@@ -14933,8 +14939,6 @@ async def cleanup_tournament_roles():
 
         for guild in bot.guilds:
             participant_role = guild.get_role(TOURNAMENT_PARTICIPANT_ROLE_ID)
-            okran_role = guild.get_role(OKRAN_ROLE_ID)
-            bumper_king_role = guild.get_role(BUMPER_KING_ROLE_ID)
             tournament_channel = guild.get_channel(TOURNAMENT_GUILD_ID)
 
             # Clean up participant roles
@@ -14948,40 +14952,31 @@ async def cleanup_tournament_roles():
                         except Exception as e:
                             print(f"Failed to remove tournament roles from {member.display_name}: {e}")
 
-            # Restore Okran role permissions in tournament channel
-            permissions_restored = False
-            if tournament_channel and okran_role:
+            # Restore @everyone and participant role permissions in tournament channel
+            if tournament_channel:
                 try:
-                    # Get existing permissions and only restore send_messages (preserve other permissions)
-                    existing_perms = tournament_channel.overwrites_for(okran_role)
-                    existing_perms.send_messages = True  # Explicitly allow messaging for Okran role
-                    await tournament_channel.set_permissions(okran_role, overwrite=existing_perms)
-                    permissions_restored = True
-                    print(f"✅ Restored Okran role messaging permissions in tournament channel")
-                except Exception as e:
-                    print(f"Failed to restore Okran role permissions: {e}")
+                    everyone_role = guild.default_role
 
-            # Restore Bumper King role permissions in tournament channel
-            if tournament_channel and bumper_king_role:
-                try:
-                    # Get existing permissions and only restore send_messages (preserve other permissions)
-                    existing_perms = tournament_channel.overwrites_for(bumper_king_role)
-                    existing_perms.send_messages = True  # Explicitly allow messaging for Bumper King role
-                    await tournament_channel.set_permissions(bumper_king_role, overwrite=existing_perms)
-                    permissions_restored = True
-                    print(f"✅ Restored Bumper King role messaging permissions in tournament channel")
-                except Exception as e:
-                    print(f"Failed to restore Bumper King role permissions: {e}")
+                    # Restore @everyone messaging permissions
+                    current_overwrites = tournament_channel.overwrites
+                    if everyone_role in current_overwrites:
+                        existing_everyone_perms = current_overwrites[everyone_role]
+                    else:
+                        existing_everyone_perms = discord.PermissionOverwrite()
 
-            # Also restore participant role permissions if they exist
-            if tournament_channel and participant_role:
-                try:
-                    # Get existing permissions and only restore send_messages (preserve other permissions)
-                    existing_participant_perms = tournament_channel.overwrites_for(participant_role)
-                    existing_participant_perms.send_messages = None  # None = inherit from role/server defaults
-                    await tournament_channel.set_permissions(participant_role, overwrite=existing_participant_perms)
+                    existing_everyone_perms.send_messages = True
+                    await tournament_channel.set_permissions(everyone_role, overwrite=existing_everyone_perms)
+                    print(f"✅ Restored @everyone messaging permissions in tournament channel")
+
+                    # Reset participant role permissions if they exist
+                    if participant_role:
+                        existing_participant_perms = tournament_channel.overwrites_for(participant_role)
+                        existing_participant_perms.send_messages = None  # None = inherit from role/server defaults
+                        await tournament_channel.set_permissions(participant_role, overwrite=existing_participant_perms)
+                        print(f"✅ Reset participant role permissions in tournament channel")
+
                 except Exception as e:
-                    print(f"Failed to restore participant role permissions: {e}")
+                    print(f"Failed to restore channel permissions: {e}")
 
             if members_cleaned > 0:
                 print(f"🧹 Cleaned tournament roles from {members_cleaned} members in {guild.name}")
