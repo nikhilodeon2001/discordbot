@@ -35,8 +35,8 @@ import pymongo
 ACTIVE_STATUSES = {"signup", "rr", "points_race", "semis", "final"}
 
 # Tournament Configuration - Easily configurable defaults
-JOIN_WINDOW_SEC_DEFAULT = 60
-VOTE_WINDOW_SEC_DEFAULT = 30
+JOIN_WINDOW_SEC_DEFAULT = 10
+VOTE_WINDOW_SEC_DEFAULT = 10
 RR_QUESTIONS_PER_MATCH_DEFAULT = 3
 ANSWER_TIMEOUT_SEC_DEFAULT = 15
 RR_REVEAL_TIME = 5  # Round robin question reveal time
