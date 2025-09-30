@@ -41,7 +41,7 @@ RR_QUESTIONS_PER_MATCH_DEFAULT = 3
 ANSWER_TIMEOUT_SEC_DEFAULT = 15
 RR_REVEAL_TIME = 5  # Round robin question reveal time
 MIN_PLAYERS_DEFAULT = 4
-MAX_PLAYERS_DEFAULT = 10
+MAX_PLAYERS_DEFAULT = 12
 MODE_DEFAULT = "progressive"
 POINTS_PER_QUESTION_DEFAULT = 10
 MATCH_POINTS = {"win": 3, "tie": 1, "loss": 0}
@@ -291,12 +291,12 @@ class TournamentManager:
             # Send signup message
             embed = discord.Embed(
                 title="🥒 Tournament Signup Open!",
-                description=f"Type `okra` in the next **{JOIN_WINDOW_SEC_DEFAULT}** seconds to join the tournament!",
+                description=f"Type `okra` in the next **{JOIN_WINDOW_SEC_DEFAULT}** seconds to join the tournament!\n\n**Okrans** and **The Bumper King** get preference!",
                 color=discord.Color.green()
             )
             seeding_display = "Round Robin" if SEEDING_MODE_DEFAULT == "round_robin" else "Points Race"
             embed.add_field(name="\u200b\nSettings",
-                           value=f"• Min Players: {MIN_PLAYERS_DEFAULT}\n• Max Players: {MAX_PLAYERS_DEFAULT}\n• Seeding: {seeding_display}\n• Knockout Rounds: Best of 7\n• Reveal Time: 5s\n• Question Time: 10s")
+                           value=f"• Min Players: {MIN_PLAYERS_DEFAULT}\n• Max Players: {MAX_PLAYERS_DEFAULT}\n• Seeding: Points Race or Round Robin (Vote)\n• Knockout Rounds: Best of 7\n• Reveal Time: 5s\n• Question Time: 10s")
 
             # Add joined players section
             embed.add_field(name="Joined Players (0)", value="*Waiting for players...*", inline=False)
@@ -376,11 +376,16 @@ class TournamentManager:
 
         signup_end_time = asyncio.get_event_loop().time() + join_window_sec
 
+        # Initialize waitlist in tournament
+        if "waitlist" not in tournament:
+            tournament["waitlist"] = []
+
         try:
             # Event-driven signup processing loop
             while asyncio.get_event_loop().time() < signup_end_time:
-                # Process signup queue
                 signup_context = self.signup_contexts.get(channel_id)
+
+                # Process privileged signup queue (first come first serve up to max)
                 if signup_context and 'signup_queue' in signup_context:
                     while signup_context['signup_queue']:
                         signup_data = signup_context['signup_queue'].pop(0)
@@ -413,6 +418,32 @@ class TournamentManager:
                             # Update signup embed with new player
                             await self.update_signup_embed(channel_id)
 
+                # Process waitlist queue
+                if signup_context and 'waitlist_queue' in signup_context:
+                    while signup_context['waitlist_queue']:
+                        signup_data = signup_context['waitlist_queue'].pop(0)
+
+                        user_id = str(signup_data['user_id'])
+                        display_name = signup_data['display_name']
+                        message = signup_data['message']
+
+                        # Add to waitlist if not already in waitlist or participants
+                        if not any(p["user_id"] == user_id for p in tournament["players"]) and \
+                           not any(w["user_id"] == user_id for w in tournament["waitlist"]):
+                            waitlist_entry = {
+                                "user_id": user_id,
+                                "display_name": display_name,
+                                "message": message,
+                                "joined_at": datetime.now(timezone.utc)
+                            }
+                            tournament["waitlist"].append(waitlist_entry)
+
+                            # React to confirm waitlist with hourglass
+                            await message.add_reaction("⏳")
+
+                            # Update signup embed with new waitlist user
+                            await self.update_signup_embed(channel_id)
+
                 # Small delay to prevent busy waiting
                 await asyncio.sleep(0.1)
 
@@ -422,7 +453,59 @@ class TournamentManager:
         finally:
             # Clear signup context
             self.clear_signup_context(channel_id)
-        
+
+        # Process waitlist - randomly select users to fill remaining spots
+        import random
+        waitlist = tournament.get("waitlist", [])
+        selected_from_waitlist = []
+
+        if waitlist:
+            remaining_spots = MAX_PLAYERS_DEFAULT - len(tournament["players"])
+            if remaining_spots > 0:
+                # Randomly select from waitlist to fill remaining spots
+                num_to_select = min(remaining_spots, len(waitlist))
+                selected_entries = random.sample(waitlist, num_to_select)
+                selected_user_ids = {entry["user_id"] for entry in selected_entries}
+
+                # Update reactions for all waitlist users
+                for entry in waitlist:
+                    if entry["user_id"] in selected_user_ids:
+                        # Selected: add to participants and change reaction to trophy
+                        player = {
+                            "user_id": entry["user_id"],
+                            "display_name": entry["display_name"],
+                            "joined_at": datetime.now(timezone.utc),
+                            "active": True,
+                            "afk_strikes": 0
+                        }
+                        tournament["players"].append(player)
+                        selected_from_waitlist.append(entry)
+
+                        # Update reaction from hourglass to trophy
+                        try:
+                            await entry["message"].remove_reaction("⏳", channel.guild.me)
+                            await entry["message"].add_reaction("🏆")
+                        except Exception as e:
+                            logger.error(f"Error updating reaction for selected waitlist user: {e}")
+                    else:
+                        # Not selected: change reaction to red X
+                        try:
+                            await entry["message"].remove_reaction("⏳", channel.guild.me)
+                            await entry["message"].add_reaction("❌")
+                        except Exception as e:
+                            logger.error(f"Error updating reaction for unselected waitlist user: {e}")
+            else:
+                # No spots available - mark all waitlist users with red X
+                for entry in waitlist:
+                    try:
+                        await entry["message"].remove_reaction("⏳", channel.guild.me)
+                        await entry["message"].add_reaction("❌")
+                    except Exception as e:
+                        logger.error(f"Error updating reaction for unselected waitlist user: {e}")
+
+        # Store selected waitlist users for later announcement
+        tournament["selected_from_waitlist"] = selected_from_waitlist
+
         # Get final player count from memory
         final_player_count = len(tournament["players"])
 
@@ -449,6 +532,33 @@ class TournamentManager:
         tournament["players"] = all_players
         tournament["status"] = "rr"  # This will be updated in build_rr_schedule_and_start if needed
         tournament["started_at"] = datetime.now(timezone.utc)
+
+        # Announce final participants with waitlist information
+        selected_from_waitlist = tournament.get("selected_from_waitlist", [])
+
+        participants_embed = discord.Embed(
+            title="📋 Final Tournament Participants",
+            description=f"**{len(all_players)} players** will compete in the tournament!",
+            color=discord.Color.green()
+        )
+
+        # List all participants
+        players_list = "\n".join([f"🏆 {p['display_name']}" for p in all_players])
+        participants_embed.add_field(name="Participants", value=players_list, inline=False)
+
+        # Add waitlist selection info if applicable
+        if selected_from_waitlist:
+            waitlist_selected = "\n".join([f"✨ {entry['display_name']}" for entry in selected_from_waitlist])
+            participants_embed.add_field(
+                name=f"🎲 Randomly Selected from Waitlist ({len(selected_from_waitlist)})",
+                value=waitlist_selected,
+                inline=False
+            )
+
+        await channel.send(embed=participants_embed)
+
+        # 5 second delay before voting
+        await asyncio.sleep(5)
 
         # Conduct seeding mode vote
         seeding_mode = await self.conduct_seeding_vote(channel, tournament)
@@ -1612,8 +1722,6 @@ class TournamentManager:
             # Import the role IDs from discordbot.py
             import discordbot
             participant_role_id = getattr(discordbot, 'TOURNAMENT_PARTICIPANT_ROLE_ID', None)
-            okran_role_id = getattr(discordbot, 'OKRAN_ROLE_ID', None)
-            bumper_king_role_id = getattr(discordbot, 'BUMPER_KING_ROLE_ID', None)
 
             if not participant_role_id:
                 logger.error("Tournament Participant role ID not found in discordbot.py")
@@ -1621,33 +1729,27 @@ class TournamentManager:
 
             # Get the roles
             participant_role = channel.guild.get_role(participant_role_id)
-            okran_role = channel.guild.get_role(okran_role_id) if okran_role_id else None
-            bumper_king_role = channel.guild.get_role(bumper_king_role_id) if bumper_king_role_id else None
+            everyone_role = channel.guild.default_role  # @everyone role
 
             if not participant_role:
                 logger.error("Tournament Participant role not found in guild")
                 return
 
+            # Disable @everyone from sending messages (preserve all other permissions)
+            # Get current overwrite if it exists, preserving all settings
+            current_overwrites = channel.overwrites
+            if everyone_role in current_overwrites:
+                existing_everyone_perms = current_overwrites[everyone_role]
+            else:
+                existing_everyone_perms = discord.PermissionOverwrite()
+
+            existing_everyone_perms.send_messages = False
+            await channel.set_permissions(everyone_role, overwrite=existing_everyone_perms)
+
             # Set channel permissions: only participants can send messages (preserve other permissions)
             existing_participant_perms = channel.overwrites_for(participant_role)
             existing_participant_perms.send_messages = True
             await channel.set_permissions(participant_role, overwrite=existing_participant_perms)
-
-            # Disable Okran role messaging during questions (preserve other permissions)
-            if okran_role:
-                # Get existing permissions for this role
-                existing_perms = channel.overwrites_for(okran_role)
-                # Only modify send_messages, keep everything else
-                existing_perms.send_messages = False
-                await channel.set_permissions(okran_role, overwrite=existing_perms)
-
-            # Disable Bumper King role messaging during questions (preserve other permissions)
-            if bumper_king_role:
-                # Get existing permissions for this role
-                existing_perms = channel.overwrites_for(bumper_king_role)
-                # Only modify send_messages, keep everything else
-                existing_perms.send_messages = False
-                await channel.set_permissions(bumper_king_role, overwrite=existing_perms)
 
             # Assign participant role to the two current participants
             await self.assign_tournament_roles(channel, allowed_user_ids, participant_role)
@@ -1662,35 +1764,28 @@ class TournamentManager:
             # Import the role IDs from discordbot.py
             import discordbot
             participant_role_id = getattr(discordbot, 'TOURNAMENT_PARTICIPANT_ROLE_ID', None)
-            okran_role_id = getattr(discordbot, 'OKRAN_ROLE_ID', None)
-            bumper_king_role_id = getattr(discordbot, 'BUMPER_KING_ROLE_ID', None)
+
+            everyone_role = channel.guild.default_role  # @everyone role
+
+            # Explicitly enable @everyone messaging (preserve all other permissions)
+            # Get current overwrite if it exists, preserving all settings
+            current_overwrites = channel.overwrites
+            if everyone_role in current_overwrites:
+                existing_everyone_perms = current_overwrites[everyone_role]
+            else:
+                existing_everyone_perms = discord.PermissionOverwrite()
+
+            existing_everyone_perms.send_messages = True  # Explicitly enable with green checkmark
+            await channel.set_permissions(everyone_role, overwrite=existing_everyone_perms)
 
             if participant_role_id:
                 participant_role = channel.guild.get_role(participant_role_id)
-                okran_role = channel.guild.get_role(okran_role_id) if okran_role_id else None
-                bumper_king_role = channel.guild.get_role(bumper_king_role_id) if bumper_king_role_id else None
 
                 if participant_role:
                     # Remove channel permission overrides for tournament participant role (preserve other permissions)
                     existing_participant_perms = channel.overwrites_for(participant_role)
                     existing_participant_perms.send_messages = None  # None = inherit from role/server defaults
                     await channel.set_permissions(participant_role, overwrite=existing_participant_perms)
-
-                    # Re-enable Okran role messaging after questions (preserve other permissions)
-                    if okran_role:
-                        # Get existing permissions for this role
-                        existing_perms = channel.overwrites_for(okran_role)
-                        # Explicitly allow send_messages for Okran role, keep everything else
-                        existing_perms.send_messages = True  # Explicitly allow messaging
-                        await channel.set_permissions(okran_role, overwrite=existing_perms)
-
-                    # Re-enable Bumper King role messaging after questions (preserve other permissions)
-                    if bumper_king_role:
-                        # Get existing permissions for this role
-                        existing_perms = channel.overwrites_for(bumper_king_role)
-                        # Explicitly allow send_messages for Bumper King role, keep everything else
-                        existing_perms.send_messages = True  # Explicitly allow messaging
-                        await channel.set_permissions(bumper_king_role, overwrite=existing_perms)
 
                     # Remove tournament participant role from all members
                     await self.remove_tournament_roles(channel, participant_role)
@@ -2663,7 +2758,7 @@ class TournamentManager:
         if message.content.lower().strip() != "okra":
             return False
 
-        # Validate user has tournament role
+        # Check if user has privileged tournament role
         import discordbot
         okran_role_id = getattr(discordbot, 'OKRAN_ROLE_ID', None)
         okran_role_id_2 = getattr(discordbot, 'OKRAN_ROLE_ID_2', None)
@@ -2677,20 +2772,25 @@ class TournamentManager:
         elif bumper_king_role_id and any(role.id == bumper_king_role_id for role in message.author.roles):
             has_tournament_role = True
 
-        if not has_tournament_role:
-            await message.reply("Tournaments are for Okrans and Bumper Kings only")
-            await message.add_reaction("😔")
-            return True
-
-        # Add to signup queue for processing
-        if 'signup_queue' not in signup_context:
-            signup_context['signup_queue'] = []
-
-        signup_context['signup_queue'].append({
-            'user_id': message.author.id,
-            'display_name': message.author.display_name,
-            'message': message
-        })
+        # Add to appropriate queue for processing
+        if has_tournament_role:
+            if 'signup_queue' not in signup_context:
+                signup_context['signup_queue'] = []
+            signup_context['signup_queue'].append({
+                'user_id': message.author.id,
+                'display_name': message.author.display_name,
+                'message': message,
+                'privileged': True
+            })
+        else:
+            if 'waitlist_queue' not in signup_context:
+                signup_context['waitlist_queue'] = []
+            signup_context['waitlist_queue'].append({
+                'user_id': message.author.id,
+                'display_name': message.author.display_name,
+                'message': message,
+                'privileged': False
+            })
 
         return True
 
@@ -2782,7 +2882,7 @@ class TournamentManager:
             self.active_tournament_channels.remove(channel_id)
 
     async def update_signup_embed(self, channel_id: int):
-        """Update the signup embed with current joined players"""
+        """Update the signup embed with current joined players and waitlist"""
         tournament = active_tournaments.get(channel_id)
         if not tournament or "signup_embed" not in tournament or "signup_message" not in tournament:
             return
@@ -2791,25 +2891,46 @@ class TournamentManager:
         players = tournament.get("players", [])
         player_count = len(players)
 
-        # Create joined players text
+        # Get waitlist
+        waitlist = tournament.get("waitlist", [])
+        waitlist_count = len(waitlist)
+
+        # Create participants text
         if player_count == 0:
-            players_text = "*Waiting for players...*"
+            participants_text = "*Waiting for players...*"
         else:
-            players_list = []
+            participants_list = []
             for player in players:
                 display_name = player.get("display_name", f"Player {player['user_id']}")
-                players_list.append(f"🏆 {display_name}")
-            players_text = "\n".join(players_list)
+                participants_list.append(f"🏆 {display_name}")
+            participants_text = "\n".join(participants_list)
+
+        # Create waitlist text
+        if waitlist_count == 0:
+            waitlist_text = "*No one waiting*"
+        else:
+            waitlist_list = []
+            for entry in waitlist:
+                display_name = entry.get("display_name", f"Player {entry['user_id']}")
+                waitlist_list.append(f"⏳ {display_name}")
+            waitlist_text = "\n".join(waitlist_list)
 
         # Update the embed
         embed = tournament["signup_embed"]
         # Find and update the joined players field (it should be the last field)
         if embed.fields:
-            # Update the last field which is the joined players field
-            embed.set_field_at(
-                index=len(embed.fields) - 1,
-                name=f"Joined Players ({player_count})",
-                value=players_text,
+            # Remove the last field (old joined players field)
+            embed.remove_field(len(embed.fields) - 1)
+
+            # Add two new fields: Participants and Waitlist
+            embed.add_field(
+                name=f"✅ Participants ({player_count}/{MAX_PLAYERS_DEFAULT})",
+                value=participants_text,
+                inline=False
+            )
+            embed.add_field(
+                name=f"📋 Waitlist ({waitlist_count})",
+                value=waitlist_text,
                 inline=False
             )
 
@@ -2862,7 +2983,7 @@ class TournamentCog(commands.Cog):
 
         if not has_tournament_role:
             await interaction.response.send_message(
-                "Tournaments are for Okrans and Bumper Kings only",
+                "Tournaments can only be started by Okrans and The Bumper King.",
                 ephemeral=True
             )
             return
