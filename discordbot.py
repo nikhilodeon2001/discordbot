@@ -9621,7 +9621,6 @@ async def get_coffees(user_id):
 
 def get_math_question():
     question_functions = [create_mean_question, create_median_question, create_derivative_question, create_zeroes_question, create_factors_question, create_base_question, create_trig_question, create_algebra_question]
-    #question_functions = [create_algebra_question]
     selected_question_function = random.choice(question_functions)
     return selected_question_function()
 
@@ -12491,15 +12490,21 @@ def derivative_checker(response, answer):
 def factors_checker(response, answer):
     response = response.lower()
     answer = answer.lower()
+    
     response = response.replace(" ", "")      
     answer = answer.replace(" ", "")
+    
     response = response.replace("*", "")      
     answer = answer.replace("*", "")
 
-    if (response == answer or jaccard_similarity(response, answer) == 1) and len(response) == len(answer):
-        return True
-    else:
-        return False
+    response = response.replace("(", "")      
+    answer = answer.replace("(", "")
+
+    response = response.replace(")", "")      
+    answer = answer.replace(")", "")
+
+    return response == answer
+
 
 
 def trig_checker(response, answer):
@@ -14643,6 +14648,10 @@ async def on_message(message):
 
     if is_self:
         return
+    
+    if "okra" in message.content.strip().lower() and emoji_mode == True and message.author.id != bot.user.id:
+        if emoji_mode == True:
+            await message.add_reaction("🥒")
 
     # Check if message should be handled by Okra Hunt escape room system
     if 'okra_hunt' in globals():
@@ -14725,20 +14734,19 @@ async def on_message(message):
                 url="https://discord.com/channels/1367682586079395902/role-subscriptions",
             )
             await dm_channel.send(embed=embed)
+            return
         except Exception as e:
             await message.channel.send(f"\u200b\n{message.author.mention} ⚠️ I couldn't message you. Make sure your DMs are open.\n\u200b")
             print(f"Error sending DM: {e}")
+            return
 
-    if "okra" in message.content.strip().lower() and emoji_mode == True and message.author.id != bot.user.id:
-        if emoji_mode == True:
-            await message.add_reaction("🥒")
-
-    if "#flag" in message.content.strip().lower() and collect_feedback_mode == True and message.author.id != bot.user.id:
+    if "#flag" in message.content.strip().lower() and collect_feedback_mode == True and message.author.id != bot.user.id and message.channel.id == channel_id:
         if emoji_mode == True:
             await message.add_reaction("🚩")
         await update_audit_question(current_question, message.content.strip(), message.author.display_name)
+        return
 
-    if message.content.startswith("#") and (message.author.id == current_longest_round_streak["user_id"] or message.author.id == okrag_id):
+    if message.content.startswith("#") and (message.author.id == current_longest_round_streak["user_id"] or message.author.id == okrag_id) and message.channel.id == channel_id:
         if await get_coffees(current_longest_round_streak["user_id"]) > 0:
             reset_command = message.content[1:] 
             if(await reset_round_options(reset_command, message.author)) == True:
@@ -14750,8 +14758,9 @@ async def on_message(message):
         else:
             await safe_send(channel, content=f"\n🙏😔 Sorry **{message.author.display_name}**. Only Okrans can toggle mid-game options 🥒️.\n")
             await message.add_reaction("😩")
+        return
     
-    if question_asked_start is None or question_asked_end is None:
+    if question_asked_start is None or question_asked_end is None or message.channel.id != channel_id:
         return
 
     # Check if the message is during the active question window
@@ -14765,7 +14774,6 @@ async def on_message(message):
             "message": message  # Save the original message object for deletion if needed
         })
         
-
         ESCAPE_PREFIXES = (".", ",", "~")
 
         if (ghost_mode or (cloaked_user is not None and message.author.id == cloaked_user)) and not message.content.lstrip().startswith(ESCAPE_PREFIXES):
