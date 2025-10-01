@@ -35,8 +35,8 @@ import pymongo
 ACTIVE_STATUSES = {"signup", "rr", "points_race", "semis", "final"}
 
 # Tournament Configuration - Easily configurable defaults
-JOIN_WINDOW_SEC_DEFAULT = 10
-VOTE_WINDOW_SEC_DEFAULT = 10
+JOIN_WINDOW_SEC_DEFAULT = 60
+VOTE_WINDOW_SEC_DEFAULT = 30
 RR_QUESTIONS_PER_MATCH_DEFAULT = 3
 ANSWER_TIMEOUT_SEC_DEFAULT = 15
 RR_REVEAL_TIME = 5  # Round robin question reveal time
@@ -298,8 +298,9 @@ class TournamentManager:
             embed.add_field(name="\u200b\nSettings",
                            value=f"• Min Players: {MIN_PLAYERS_DEFAULT}\n• Max Players: {MAX_PLAYERS_DEFAULT}\n• Seeding: Points Race or Round Robin (Vote)\n• Knockout Rounds: Best of 7\n• Reveal Time: 5s\n• Question Time: 10s")
 
-            # Add joined players section
-            embed.add_field(name="Joined Players (0)", value="*Waiting for players...*", inline=False)
+            # Add participants and waitlist sections
+            embed.add_field(name=f"✅ Participants (0/{MAX_PLAYERS_DEFAULT})", value="*Waiting for players...*", inline=False)
+            embed.add_field(name="📋 Waitlist (0)", value="*No one waiting*", inline=False)
 
             await interaction.response.send_message(embed=embed)
 
@@ -1551,6 +1552,10 @@ class TournamentManager:
     async def store_tournament_results(self, tournament: Dict) -> None:
         """Store final tournament results for stats/leaderboard"""
         try:
+            # Determine actual tournament format based on seeding mode
+            seeding_mode = tournament["config"].get("seeding_mode", "round_robin")
+            tournament_format = f"{seeding_mode}_knockout"
+
             results_doc = {
                 "guild_id": tournament["guild_id"],
                 "channel_id": tournament["channel_id"],
@@ -1559,13 +1564,14 @@ class TournamentManager:
                 "players": [
                     {
                         "user_id": p["user_id"],
-                        "display_name": p["display_name"],
+                        # Handle both display_name (RR) and username (Points Race) fields
+                        "display_name": p.get("display_name") or p.get("username", f"Player {p['user_id']}"),
                         "final_rank": i + 1
                     }
                     for i, p in enumerate(tournament.get("standings", []))
                 ],
                 "completed_at": datetime.now(timezone.utc),
-                "tournament_format": "round_robin_knockout"
+                "tournament_format": tournament_format
             }
 
             await self.db.tournament_results.insert_one(results_doc)
@@ -1700,6 +1706,35 @@ class TournamentManager:
             tournament["winner"] = champion["user_id"]
         if runner_up:
             tournament["runner_up"] = runner_up["user_id"]
+
+        # Build correct final standings array for database storage
+        # This must reflect actual tournament results, not just seeding standings
+        final_standings = []
+
+        if champion or runner_up:
+            # Tournament completed with knockout rounds
+            # 1st place: Champion
+            if champion:
+                final_standings.append(champion)
+
+            # 2nd place: Runner-up
+            if runner_up:
+                final_standings.append(runner_up)
+
+            # 3rd+ place: Remaining players in seeding order
+            if base_standings:
+                for player in base_standings:
+                    # Skip champion and runner-up, they're already placed
+                    if (champion and player["user_id"] == champion["user_id"]) or \
+                       (runner_up and player["user_id"] == runner_up["user_id"]):
+                        continue
+                    final_standings.append(player)
+        elif base_standings:
+            # Tournament ended early (no knockout), use seeding standings as final
+            final_standings = base_standings
+
+        # Update tournament standings with correct final standings
+        tournament["standings"] = final_standings
 
         # Store final results in database for stats
         await self.store_tournament_results(tournament)
@@ -2917,30 +2952,39 @@ class TournamentManager:
 
         # Update the embed
         embed = tournament["signup_embed"]
-        # Find and update the joined players field (it should be the last field)
+
+        # Remove existing Participants and Waitlist fields if they exist
+        # We need to iterate backwards to avoid index issues when removing
         if embed.fields:
-            # Remove the last field (old joined players field)
-            embed.remove_field(len(embed.fields) - 1)
+            indices_to_remove = []
+            for i, field in enumerate(embed.fields):
+                # Check if this field is one of our dynamic fields
+                if field.name.startswith("✅ Participants") or field.name.startswith("📋 Waitlist"):
+                    indices_to_remove.append(i)
 
-            # Add two new fields: Participants and Waitlist
-            embed.add_field(
-                name=f"✅ Participants ({player_count}/{MAX_PLAYERS_DEFAULT})",
-                value=participants_text,
-                inline=False
-            )
-            embed.add_field(
-                name=f"📋 Waitlist ({waitlist_count})",
-                value=waitlist_text,
-                inline=False
-            )
+            # Remove in reverse order to maintain correct indices
+            for i in reversed(indices_to_remove):
+                embed.remove_field(i)
 
-            # Try to edit the message
-            try:
-                signup_message = tournament["signup_message"]
-                await signup_message.edit(embed=embed)
-            except (discord.NotFound, discord.HTTPException):
-                # Message might have been deleted or we can't edit it
-                pass
+        # Add two new fields: Participants and Waitlist
+        embed.add_field(
+            name=f"✅ Participants ({player_count}/{MAX_PLAYERS_DEFAULT})",
+            value=participants_text,
+            inline=False
+        )
+        embed.add_field(
+            name=f"📋 Waitlist ({waitlist_count})",
+            value=waitlist_text,
+            inline=False
+        )
+
+        # Try to edit the message
+        try:
+            signup_message = tournament["signup_message"]
+            await signup_message.edit(embed=embed)
+        except (discord.NotFound, discord.HTTPException):
+            # Message might have been deleted or we can't edit it
+            pass
 
 
 class TournamentCog(commands.Cog):
