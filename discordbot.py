@@ -239,7 +239,7 @@ intents.members = True  # Required to see guild members and their roles
 intents.reactions = True  # Required to receive reaction events
 bot = commands.Bot(command_prefix="!", intents=intents)
 openai_client = AsyncOpenAI(api_key=openai_api_key)
-id_limits = {"general": 2000, "mysterybox": 2000, "crossword": 5000, "jeopardy": 5000, "wof": 1500, "list": 20, "feud": 1000, "posters": 2000, "movie_scenes": 5000, "missing_link": 2500, "people": 2500, "ranker_list": 4000, "animal": 2000, "riddle": 2500, "dictionary": 5000, "flags": 800, "lyric": 500, "polyglottery": 80, "book": 80, "element": 100, "jigsaw": 5000, "border": 100, "faceoff": 5000, "president": 80, "wordle": 1400, "myopic": 5000, "fusion": 5000, "microscopic": 5000, "chess": 5000, "stock": 800, "currency": 100, "search": 10}
+id_limits = {"general": 2000, "mysterybox": 2000, "crossword": 5000, "jeopardy": 5000, "wof": 1500, "list": 20, "feud": 1000, "posters": 2000, "movie_scenes": 5000, "missing_link": 2500, "people": 2500, "ranker_list": 4000, "animal": 2000, "riddle": 2500, "dictionary": 5000, "flags": 800, "lyric": 500, "polyglottery": 80, "book": 80, "element": 100, "jigsaw": 5000, "border": 100, "faceoff": 5000, "president": 80, "wordle": 1400, "myopic": 5000, "fusion": 5000, "microscopic": 5000, "chess": 5000, "stock": 800, "currency": 100, "search": 10, "billboard": 40}
 max_retries = 3
 delay_between_retries = 3
 first_place_bonus = 0
@@ -3509,6 +3509,127 @@ async def ask_lyric_challenge(winner, winner_id, num=7):
     await safe_send(channel, content="\u200b\n\u200b\n🎧🎤 **LyrIQ**: Name the Song OR Artist\n\u200b", embed=discord.Embed().set_image(url=gif_url))
     await asyncio.sleep(3)
 
+    # Get 5 random year documents from MongoDB
+    recent_ids = await get_recent_question_ids_from_mongo("billboard")
+    billboard_collection = db["billboard_questions"]
+    pipeline = [
+        {"$match": {"_id": {"$nin": list(recent_ids)}}},
+        {"$sample": {"size": 5}}
+    ]
+    year_docs = [doc async for doc in billboard_collection.aggregate(pipeline)]
+
+    if not year_docs:
+        await safe_send(channel, "\u200b\n❌ Unable to get year data. Please try again.\n\u200b")
+        return None
+
+    # Present year choices to user
+    year_choices_message = f"\u200b\n📅🎵 **<@{winner_id}>**, which year's **Billboard Top 100** shall we revisit?\n\n"
+    for i, doc in enumerate(year_docs, start=1):
+        year_choices_message += f"{i}. **{doc['year']}**\n"
+    year_choices_message += "\u200b"
+    await safe_send(channel, year_choices_message)
+
+    # Wait for user selection (10 seconds)
+    selected_year_doc = None
+    start_time = asyncio.get_event_loop().time()
+    processed_messages = set()
+
+    while selected_year_doc is None and (asyncio.get_event_loop().time() - start_time) < 10:
+        try:
+            remaining_time = 10 - (asyncio.get_event_loop().time() - start_time)
+            if remaining_time <= 0:
+                break
+
+            msg = await bot.wait_for("message",
+                                   timeout=remaining_time,
+                                   check=lambda m: (m.author.id == winner_id and
+                                                  m.channel == channel and
+                                                  m.id not in processed_messages))
+
+            processed_messages.add(msg.id)
+            user_input = msg.content.strip()
+
+            # Check if it's a valid choice (1-5 or actual year)
+            try:
+                choice_num = int(user_input)
+                # Check if it's a number 1-5
+                if 1 <= choice_num <= len(year_docs):
+                    selected_year_doc = year_docs[choice_num - 1]
+                    await msg.add_reaction("✅")
+                    await safe_send(channel, f"\u200b\n✅ **{selected_year_doc['year']}** - What a year!\n\u200b")
+                else:
+                    # Check if it matches any of the actual years
+                    for doc in year_docs:
+                        if doc['year'] == choice_num:
+                            selected_year_doc = doc
+                            await msg.add_reaction("✅")
+                            await safe_send(channel, f"\u200b\n✅ **{selected_year_doc['year']}** - What a year!\n\u200b")
+                            break
+                    if selected_year_doc is None:
+                        await msg.add_reaction("❌")
+            except ValueError:
+                await msg.add_reaction("❌")
+
+        except asyncio.TimeoutError:
+            break
+
+    # If no valid year was received, randomly pick one
+    if selected_year_doc is None:
+        selected_year_doc = random.choice(year_docs)
+        await safe_send(channel, f"\u200b\n😬⏱️ Time's up! Randomly selected **{selected_year_doc['year']}**.\n\u200b")
+
+    # Store the selected year document ID in recent IDs
+    await store_question_ids_in_mongo([selected_year_doc["_id"]], "billboard")
+
+    # Ask for portion selection (beginning, middle, or end)
+    await safe_send(channel, f"\u200b\n🎯 **<@{winner_id}>**, what section of the song should I lookra at?\n\n1. **Beginning**\n2. **Middle**\n3. **End**\n\u200b")
+
+    selected_portion = None
+    start_time = asyncio.get_event_loop().time()
+    processed_messages = set()
+
+    while selected_portion is None and (asyncio.get_event_loop().time() - start_time) < 10:
+        try:
+            remaining_time = 10 - (asyncio.get_event_loop().time() - start_time)
+            if remaining_time <= 0:
+                break
+
+            msg = await bot.wait_for("message",
+                                   timeout=remaining_time,
+                                   check=lambda m: (m.author.id == winner_id and
+                                                  m.channel == channel and
+                                                  m.id not in processed_messages))
+
+            processed_messages.add(msg.id)
+            user_input = msg.content.strip()
+
+            # Check if it's a valid choice (1-3) or text
+            portion_map = {
+                "1": "beginning",
+                "2": "middle",
+                "3": "end",
+                "beginning": "beginning",
+                "middle": "middle",
+                "end": "end"
+            }
+
+            if user_input.lower() in portion_map:
+                selected_portion = portion_map[user_input.lower()]
+                await msg.add_reaction("✅")
+                await safe_send(channel, f"\u200b\n✅ **{selected_portion.capitalize()}** - Let's go!\n\u200b")
+            else:
+                await msg.add_reaction("❌")
+
+        except asyncio.TimeoutError:
+            break
+
+    # If no valid portion was received, randomly pick one
+    if selected_portion is None:
+        selected_portion = random.choice(["beginning", "middle", "end"])
+        await safe_send(channel, f"\u200b\n😬⏱️ Time's up! Randomly selected **{selected_portion}**.\n\u200b")
+
+    await asyncio.sleep(2)
+
     user_data = {}
 
     if num > 1:
@@ -3519,39 +3640,73 @@ async def ask_lyric_challenge(winner, winner_id, num=7):
     round_num = 1
     while round_num <= num:
         try:
-            recent_ids = await get_recent_question_ids_from_mongo("lyric")
-            collection = db["lyric_questions"]
-            pipeline = [
-                {"$match": {"_id": {"$nin": list(recent_ids)}, "enabled": "1"}},
-                {"$sample": {"size": 100}},
-                {"$group": {"_id": "$question", "question_doc": {"$first": "$$ROOT"}}},
-                {"$replaceRoot": {"newRoot": "$question_doc"}},
-                {"$sample": {"size": 1}}
-            ]
-            questions = [doc async for doc in collection.aggregate(pipeline)]
-            q = questions[0]
-
-            artist = q["artist"]
-            title = q["title"]
-            url = q["url"]
-            category = q["category"]
-            lyrics = q["lyrics"]
-            qid = q["_id"]
-
-            pretty_categories = [("R&B" if c == "rb" else c.title()) for c in category if c != "all"]
-
-            if qid:
-                await store_question_ids_in_mongo([qid], "lyric")
-            print(f"{artist} - {title}")
-
-            if len(lyrics) < 2:
-                await safe_send(channel, "⚠️ Not enough lyric lines. Skipping this round.")
+            # Select a random song from the chosen year
+            songs = selected_year_doc.get("songs", [])
+            if not songs:
+                await safe_send(channel, "⚠️ No songs found for this year. Skipping.")
                 continue
 
-            selected_lines = random.sample(lyrics, 2)
-            selected_lines.sort(key=lambda x: x["line_number"])
-            line1 = f"Line {selected_lines[0]['line_number']}: \"{selected_lines[0]['text']}\""
-            line2 = f"Line {selected_lines[1]['line_number']}: \"{selected_lines[1]['text']}\""
+            song = random.choice(songs)
+
+            artist = song.get("artist", "Unknown Artist")
+            title = song.get("song", "Unknown Song")
+            lyrics = song.get("lyrics", "")
+            rank = song.get("rank", "?")
+            year = selected_year_doc.get("year", "?")
+
+            # Split lyrics into words
+            words = lyrics.split()
+            total_words = len(words)
+
+            if total_words < 30:
+                await safe_send(channel, "⚠️ Not enough lyrics. Skipping this round.")
+                continue
+
+            # Determine word range based on selected portion
+            if selected_portion == "beginning":
+                # First third of the lyrics
+                portion_start = 0
+                portion_end = max(30, total_words // 3)
+            elif selected_portion == "middle":
+                # Middle third of the lyrics
+                portion_start = total_words // 3
+                portion_end = (2 * total_words) // 3
+            else:  # end
+                # Last third of the lyrics
+                portion_start = (2 * total_words) // 3
+                portion_end = total_words
+
+            # Ensure we have enough words in the portion
+            portion_length = portion_end - portion_start
+            if portion_length < 30:
+                portion_start = max(0, total_words - 30)
+                portion_end = total_words
+                portion_length = portion_end - portion_start
+
+            # Pick two different random starting positions for 10-word segments
+            # within the selected portion
+            max_start = portion_end - 10
+            if max_start <= portion_start:
+                line1_start = portion_start
+                line2_start = portion_start
+            else:
+                # Randomly select two different starting positions
+                available_positions = list(range(portion_start, max_start + 1))
+                if len(available_positions) >= 2:
+                    selected_positions = random.sample(available_positions, 2)
+                    line1_start = selected_positions[0]
+                    line2_start = selected_positions[1]
+                else:
+                    line1_start = portion_start
+                    line2_start = min(portion_start + 10, max_start) if max_start > portion_start else portion_start
+
+            line1_words = words[line1_start:line1_start + 20]
+            line2_words = words[line2_start:line2_start + 20]
+
+            line1 = f"\"{' '.join(line1_words)}\""
+            line2 = f"\"{' '.join(line2_words)}\""
+
+            print(f"{artist} - {title}")
 
             image_buffer_1 = generate_text_image(line1, 255, 99, 130, 255, 255, 255, True, "okra.png")
             image_buffer_2 = generate_text_image(line2, 255, 99, 130, 255, 255, 255, True, "okra.png")
@@ -3561,13 +3716,15 @@ async def ask_lyric_challenge(winner, winner_id, num=7):
             print(f"Error fetching lyric:\n{traceback.format_exc()}")
             continue
 
-        await safe_send(channel, f"\u200b\n🎵 **Song {round_num}/{num}**\n📂 Category: {', '.join(pretty_categories)}\n\u200b")
+        await safe_send(channel, f"\u200b\n🎵 **Song {round_num}/{num}**\n\n📅 Year: {year}\n\n🏆 Rank: #{rank}/100\n\u200b")
         file_1 = discord.File(fp=image_buffer_1, filename="lyric1.png")
         embed_1 = discord.Embed().set_image(url="attachment://lyric1.png")
         file_2 = discord.File(fp=image_buffer_2, filename="lyric2.png")
         embed_2 = discord.Embed().set_image(url="attachment://lyric2.png")
 
+        await asyncio.sleep(3)
         await safe_send(channel, file=file_1, embed=embed_1)
+        await asyncio.sleep(1)
         await safe_send(channel, file=file_2, embed=embed_2)
 
         start_time = asyncio.get_event_loop().time()
@@ -3591,7 +3748,7 @@ async def ask_lyric_challenge(winner, winner_id, num=7):
                 processed_users.add(key)
 
                 for answer in [artist, title]:
-                    if fuzzy_match(content, answer, category, url):
+                    if fuzzy_match(content, answer, "", ""):
                         await message.add_reaction("✅")
                         await safe_send(channel, f"\u200b\n✅🎉 **<@{user_id}>** got it! **{artist.upper()} - {title.upper()}**\n\u200b")
                         if user_id not in user_data:
@@ -14290,6 +14447,7 @@ async def start_trivia():
             #await ask_stock_challenge("TheOkraG",591861826690613248, 3)
             #await ask_chess_challenge("TheOkraG",591861826690613248, 3)
             #await ask_search_challenge("TheOkraG",591861826690613248, 3)
+            #await ask_lyric_challenge("TheOkraG",591861826690613248, 3)
             
 
             round_responders.clear()  # Reset round responders
@@ -14307,12 +14465,12 @@ async def start_trivia():
 
             start_message = f"\u200b\n✨🧪 **NEW** from the **Okra Lab**! 🧪✨\n"
             
-            start_message += f"\n🔍🔤 **Spotlight** [Mini-Game]"
+            start_message += f"\n🎧🎤 **LyrIQ** Remastered"
 
             start_message += "\n\u200b"
 
-            #await safe_send(channel, start_message)
-            #await asyncio.sleep(5)
+            await safe_send(channel, start_message)
+            await asyncio.sleep(5)
             
             
             start_message = f"\u200b\n\u200b\n⏩ **Starting a round of {questions_per_round} questions!** ⏩\n\u200b\n\u200b"
