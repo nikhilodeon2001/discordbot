@@ -2,9 +2,10 @@ import discord
 from discord.ext import commands
 import asyncio
 import logging
+import pytz
 
 class OkraHunt:
-    def __init__(self, bot, the_lodge_channel_id, level_0_channel_id, level_0_role_id, hunt_progress_channel_id, level_1_channel_id, host_role_id, okrag_id, level_1_role_id, level_2_channel_id, level_2_role_id, level_3_channel_id, level_3_role_id, level_4_role_id, level_4_channel_id, rules_channel_id, rules_message_id, hunt_leaderboard_channel_id, hunt_leaderboard_message_id):
+    def __init__(self, bot, the_lodge_channel_id, level_0_channel_id, level_0_role_id, hunt_progress_channel_id, level_1_channel_id, host_role_id, okrag_id, level_1_role_id, level_2_channel_id, level_2_role_id, level_3_channel_id, level_3_role_id, level_4_role_id, level_4_channel_id, rules_channel_id, rules_message_id, hunt_leaderboard_channel_id, hunt_leaderboard_message_id, level_5_role_id, level_5_channel_id):
         self.bot = bot
         self.logger = logging.getLogger(__name__)
         self.the_lodge_channel_id = the_lodge_channel_id
@@ -25,6 +26,8 @@ class OkraHunt:
         self.rules_message_id = rules_message_id
         self.hunt_leaderboard_channel_id = hunt_leaderboard_channel_id
         self.hunt_leaderboard_message_id = hunt_leaderboard_message_id
+        self.level_5_role_id = level_5_role_id
+        self.level_5_channel_id = level_5_channel_id
 
     async def check_user_id_answer(self, message):
         """
@@ -333,6 +336,92 @@ class OkraHunt:
 
         return False
 
+    async def check_level_4_puzzle(self, message):
+        """
+        Check if user with LEVEL_4_ROLE_ID answered their Discord account creation time in WAT
+        Accepts formats: HHMM, HMM, HH:MM, H:MM, Hpm/am, HHpm/am, H:MM pm/am, etc.
+        If correct, remove LEVEL_4_ROLE_ID and add LEVEL_5_ROLE_ID
+        """
+        if message.channel.id != self.level_4_channel_id:
+            return False
+
+        # Check if user has LEVEL_4_ROLE_ID
+        level_4_role = message.guild.get_role(self.level_4_role_id)
+        if not level_4_role or level_4_role not in message.author.roles:
+            return False
+
+        # Get user's Discord account creation time in WAT (West Africa Time, UTC+1)
+        user_created_utc = message.author.created_at
+        user_created_wat = user_created_utc.astimezone(pytz.timezone("Africa/Lagos"))
+
+        hour_24 = user_created_wat.hour  # 0-23
+        minute = user_created_wat.minute  # 0-59
+
+        # Normalize user's answer: remove spaces, colons, lowercase
+        user_answer = message.content.strip().replace(" ", "").replace(":", "").lower()
+
+        # Build list of valid answers
+        valid_answers = []
+
+        # 24-hour formats
+        valid_answers.append(f"{hour_24:02d}{minute:02d}")  # e.g., "1430" or "0930"
+        if hour_24 < 10:
+            valid_answers.append(f"{hour_24}{minute:02d}")  # e.g., "930" for 09:30
+
+        # 12-hour formats
+        hour_12 = hour_24 % 12
+        if hour_12 == 0:
+            hour_12 = 12
+        am_pm = "pm" if hour_24 >= 12 else "am"
+
+        # 12-hour with leading zero: "0930am", "0230pm"
+        valid_answers.append(f"{hour_12:02d}{minute:02d}{am_pm}")
+        # 12-hour without leading zero: "930am", "230pm"
+        valid_answers.append(f"{hour_12}{minute:02d}{am_pm}")
+
+        # Also accept with 'a'/'p' only
+        valid_answers.append(f"{hour_12:02d}{minute:02d}{am_pm[0]}")
+        valid_answers.append(f"{hour_12}{minute:02d}{am_pm[0]}")
+
+        # Check if user's answer matches any valid format
+        if user_answer in valid_answers:
+            try:
+                # Get LEVEL_5_ROLE_ID
+                level_5_role = message.guild.get_role(self.level_5_role_id)
+
+                if not level_5_role:
+                    self.logger.error(f"LEVEL_5_ROLE_ID {self.level_5_role_id} not found in guild {message.guild.id}")
+                    return False
+
+                # Check if user already has LEVEL_5_ROLE_ID
+                if level_5_role in message.author.roles:
+                    await self.announce_progress(message.author, "already_completed", "LEVEL_4")
+                    return True
+
+                # Remove LEVEL_4_ROLE_ID and add LEVEL_5_ROLE_ID
+                await message.author.remove_roles(level_4_role)
+                await message.author.add_roles(level_5_role)
+
+                # Announce success in progress channel
+                await self.announce_progress(message.author, "completed", "LEVEL_4")
+
+                # Update leaderboard
+                await self.update_leaderboard()
+
+                self.logger.info(f"User {message.author.id} ({message.author.name}) solved LEVEL_4 challenge")
+                return True
+
+            except discord.Forbidden:
+                self.logger.error(f"Bot lacks permission to add role {self.level_5_role_id} to user {message.author.id}")
+                await self.announce_progress(message.author, "error", "LEVEL_4")
+                return False
+            except Exception as e:
+                self.logger.error(f"Error processing LEVEL_4 challenge for user {message.author.id}: {e}")
+                await self.announce_progress(message.author, "error", "LEVEL_4")
+                return False
+
+        return False
+
     async def check_level_3_reaction(self, reaction, user):
         """
         Check if user with LEVEL_3_ROLE_ID reacted with :palm_tree: to message in RULES_CHANNEL
@@ -408,7 +497,8 @@ class OkraHunt:
                     "LEVEL_1": "The River",
                     "LEVEL_2": "The Mountain",
                     "LEVEL_3": "The Meadow",
-                    "LEVEL_4": "The Beach"
+                    "LEVEL_4": "The Beach",
+                    "LEVEL_5": "The Ship"
                 }
 
                 display_name = display_names.get(challenge_name, challenge_name)
@@ -447,6 +537,12 @@ class OkraHunt:
                     embed.add_field(
                         name="Next Step",
                         value=f"Check out <#{self.level_4_channel_id}> for your next adventure!",
+                        inline=False
+                    )
+                elif challenge_name == "LEVEL_4":
+                    embed.add_field(
+                        name="Next Step",
+                        value=f"Check out <#{self.level_5_channel_id}> for your next adventure!",
                         inline=False
                     )
                 else:
@@ -656,7 +752,7 @@ class OkraHunt:
             return False
 
         # Check if message is in any escape room channel
-        escape_room_channels = [self.the_lodge_channel_id, self.level_0_channel_id, self.level_1_channel_id, self.level_2_channel_id, self.level_3_channel_id]
+        escape_room_channels = [self.the_lodge_channel_id, self.level_0_channel_id, self.level_1_channel_id, self.level_2_channel_id, self.level_3_channel_id, self.level_4_channel_id]
 
         if message.channel.id in escape_room_channels:
             # Check if user has HOST_ROLE_ID
@@ -681,6 +777,9 @@ class OkraHunt:
                 # For LEVEL_2, still check if it's a correct answer
                 elif message.channel.id == self.level_2_channel_id:
                     await self.check_level_2_puzzle(message)
+                # For LEVEL_4, still check if it's a correct answer
+                elif message.channel.id == self.level_4_channel_id:
+                    await self.check_level_4_puzzle(message)
                 return False  # Don't delete, let message stay
 
             # Delete message from non-host users
@@ -704,6 +803,9 @@ class OkraHunt:
             # For LEVEL_2, still process the answer logic after deletion
             elif message.channel.id == self.level_2_channel_id:
                 await self.check_level_2_puzzle(message)
+            # For LEVEL_4, still process the answer logic after deletion
+            elif message.channel.id == self.level_4_channel_id:
+                await self.check_level_4_puzzle(message)
 
             return True  # Message was handled
 
@@ -787,7 +889,8 @@ class OkraHunt:
             (1, self.level_1_role_id),
             (2, self.level_2_role_id),
             (3, self.level_3_role_id),
-            (4, self.level_4_role_id)
+            (4, self.level_4_role_id),
+            (5, self.level_5_role_id)
         ]
 
         for level, role_id in known_roles:
@@ -838,7 +941,8 @@ class OkraHunt:
                 1: ("The River", "🌊"),
                 2: ("The Mountain", "⛰️"),
                 3: ("The Meadow", "🌾"),
-                4: ("The Beach", "🌴")
+                4: ("The Beach", "🌴"),
+                5: ("The Ship", "🚢")
             }
 
             location, emoji = location_map.get(level, ("Unknown Location", "🔸"))
