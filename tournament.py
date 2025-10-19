@@ -1948,7 +1948,7 @@ class TournamentManager:
             if is_ko:
                 # KO phases: continue until someone has more points (no draws allowed)
                 # Hard cap at 10 questions to prevent indefinite matches
-                if questions_asked >= 10 and questions_correct_a == questions_correct_b:
+                if questions_asked >= 12 and questions_correct_a == questions_correct_b:
                     # Force random winner selection after 10 questions
                     import random
                     random_winner = random.choice([player_a_id, player_b_id])
