@@ -3636,6 +3636,19 @@ async def ask_lyric_challenge(winner, winner_id, num=7):
 
     user_data = {}
 
+    # Pre-fetch and validate songs list before starting the game
+    songs = selected_year_doc.get("songs", [])
+    if not songs:
+        await safe_send(channel, "⚠️ No songs found for this year.")
+        return None
+
+    if len(songs) < num:
+        await safe_send(channel, f"⚠️ Not enough unique songs in {selected_year_doc.get('year', '?')} (only {len(songs)} available, need {num}).")
+        return None
+
+    # Pre-select all unique songs for the entire game to prevent duplicates
+    selected_songs = random.sample(songs, num)
+
     if num > 1:
         message = f"\u200b\n5️⃣🥇 Let's do a best of **{num}**...\n\u200b"
         await safe_send(channel, message)
@@ -3644,13 +3657,8 @@ async def ask_lyric_challenge(winner, winner_id, num=7):
     round_num = 1
     while round_num <= num:
         try:
-            # Select a random song from the chosen year
-            songs = selected_year_doc.get("songs", [])
-            if not songs:
-                await safe_send(channel, "⚠️ No songs found for this year. Skipping.")
-                continue
-
-            song = random.choice(songs)
+            # Use pre-selected song instead of random.choice to guarantee uniqueness
+            song = selected_songs[round_num - 1]
 
             artist = song.get("artist", "Unknown Artist")
             title = song.get("song", "Unknown Song")
@@ -14449,7 +14457,7 @@ async def start_trivia():
             #await ask_stock_challenge("TheOkraG",591861826690613248, 3)
             #await ask_chess_challenge("TheOkraG",591861826690613248, 3)
             #await ask_search_challenge("TheOkraG",591861826690613248, 3)
-            #await ask_lyric_challenge("TheOkraG",591861826690613248, 3)
+            #await ask_lyric_challenge("TheOkraG",591861826690613248, 7)
             
 
             round_responders.clear()  # Reset round responders
@@ -14463,7 +14471,7 @@ async def start_trivia():
                 selected_gif_url = await select_intro_image_url()         
                 await safe_send(channel, content="\u200b\n\u200b\n🎉🤹‍♂️ **Live Trivia & Games for Discord!**\n\u200b", embed=discord.Embed().set_image(url=selected_gif_url))
 
-            await asyncio.sleep(2)
+            #await asyncio.sleep(2)
 
             start_message = f"\u200b\n✨🧪 **NEW** from the **Okra Lab**! 🧪✨\n"
             
@@ -14471,7 +14479,7 @@ async def start_trivia():
 
             start_message += "\n\u200b"
 
-            await safe_send(channel, start_message)
+            #await safe_send(channel, start_message)
             await asyncio.sleep(5)
             
             
