@@ -3672,6 +3672,7 @@ async def ask_lyric_challenge(winner, winner_id, num=7):
 
             if total_words < 30:
                 await safe_send(channel, "⚠️ Not enough lyrics. Skipping this round.")
+                round_num = round_num + 1
                 continue
 
             # Determine word range based on selected portion
