@@ -1,5 +1,6 @@
 # Initialize all variables
 local_mode = False
+prod_or_stage = "stage"
 
 import sentry_sdk
 from sentry_sdk.integrations.logging import LoggingIntegration
@@ -71,13 +72,26 @@ from typing import Optional, Tuple
 import chess
 
 # Tournament system import
-from tournament import setup_tournament_system
+from tournament import setup_tournament_system, active_tournaments
 
 # Okra Hunt escape room import
 from okra_hunt import OkraHunt
 
 embed_color_default = discord.Color.green()
 embed_color = embed_color_default
+
+from self_update import self_update
+
+async def end_of_round():
+    print("Round ended. Checking for updates...")
+    try:
+        updated = await self_update()
+        if not updated:
+            print("No update performed, continuing game as usual.")
+        return updated
+    except Exception as e:
+        print(f"Self-update failed: {e}")
+        return False
 
 def randomize_embed_color():
     """
@@ -151,8 +165,7 @@ last_bump_time = None
 
 
 if local_mode == True:
-    discord_token = "REMOVED_DISCORD_TOKEN" #Stage
-    #discord_token = "" #Prod
+    discord_token = "REMOVED_DISCORD_TOKEN" 
     mongo_db_string = "mongodb+srv://nsharma2:REMOVED_MONGO_PASSWORD@staging.oxez2.mongodb.net/?retryWrites=true&w=majority&appName=staging"
     openai_api_key = "REMOVED_OPENAI_KEY"
     openweather_api_key = "REMOVED_OPENWEATHER_KEY"
@@ -160,19 +173,32 @@ if local_mode == True:
     googletranslate_api_key = "REMOVED_GOOGLETRANSLATE_KEY"
     webster_api_key = "REMOVED_WEBSTER_KEY"
     webster_thes_api_key = "REMOVED_WEBSTER_THES_KEY"
-    currency_api_key = "REMOVED_CURRENCY_KEY"  # Replace with actual API key
-    channel_id = 1375328414151610458 #Stage
-    #channel_id = 1402517943979343942 #Production  
+    currency_api_key = "REMOVED_CURRENCY_KEY" 
+    channel_id = 1375328414151610458
+else:
+    discord_token = os.getenv("discord_token")
+    mongo_db_string = os.getenv("mongo_db_string")
+    openai_api_key = os.getenv("openai_api_key")
+    openweather_api_key = os.getenv("openweather_api_key")
+    googlemaps_api_key = os.getenv("googlemaps_api_key")
+    googletranslate_api_key = os.getenv("googletranslate_api_key")
+    webster_api_key = os.getenv("webster_api_key")
+    webster_thes_api_key = os.getenv("webster_thes_api_key")
+    currency_api_key = os.getenv("currency_api_key")
+    channel_id = int(os.getenv("channel_id"))
+
+
+if prod_or_stage == "stage":
     okrag_id = 591861826690613248  
-    OKRAN_GUILD_ID = 1375328358573015050  # Stage
-    DISBOARD_BOT_ID = 591861826690613248  # TheOkraG
-    BUMPER_KING_ROLE_ID = 1411103298907275346 # Stage
-    OKRAN_ROLE_ID = 1409785437979148329 #Stage
+    OKRAN_GUILD_ID = 1375328358573015050 
+    DISBOARD_BOT_ID = 591861826690613248 
+    BUMPER_KING_ROLE_ID = 1411103298907275346 
+    OKRAN_ROLE_ID = 1409785437979148329 
     OKRAN_ROLE_ID_2 = ""
-    TOURNAMENT_GUILD_ID = 1415895468822495342 #Stage
-    TOURNAMENT_PARTICIPANT_ROLE_ID = 1416290287633825903 #Stage
-    TOURNAMENT_OBSERVER_ROLE_ID = 1416290512310370348 #Stage
-    HOST_ROLE_ID = 1416587636709134408 #Stage
+    TOURNAMENT_GUILD_ID = 1415895468822495342
+    TOURNAMENT_PARTICIPANT_ROLE_ID = 1416290287633825903 
+    TOURNAMENT_OBSERVER_ROLE_ID = 1416290512310370348 
+    HOST_ROLE_ID = 1416587636709134408 
     HUNT_PROGRESS_CHANNEL_ID = 1419172605746741298
     THE_LODGE_CHANNEL_ID = 1419174414263648266
     LEVEL_0_CHANNEL_ID = 1419172497755996302
@@ -192,17 +218,8 @@ if local_mode == True:
     HUNT_LEADERBOARD_CHANNEL_ID = 1420278277829951518
     HUNT_LEADERBOARD_MESSAGE_ID = 1420281932566237244
     EVERYONE_ROLE_ID = 1375328358573015050
-else:
-    discord_token = os.getenv("discord_token")
-    mongo_db_string = os.getenv("mongo_db_string")
-    openai_api_key = os.getenv("openai_api_key")
-    openweather_api_key = os.getenv("openweather_api_key")
-    googlemaps_api_key = os.getenv("googlemaps_api_key")
-    googletranslate_api_key = os.getenv("googletranslate_api_key")
-    webster_api_key = os.getenv("webster_api_key")
-    webster_thes_api_key = os.getenv("webster_thes_api_key")
-    currency_api_key = os.getenv("currency_api_key")
-    channel_id = int(os.getenv("channel_id"))
+
+elif prod_or_stage == "prod":
     okrag_id = 591861826690613248
     OKRAN_GUILD_ID = 1367682586079395902  # Production
     DISBOARD_BOT_ID = 302050872383242240  # Disboard
@@ -9396,6 +9413,147 @@ async def load_parameters():
                 time_between_questions = time_between_questions_default
 
 
+async def get_int_param(db, param_id, default_value):
+    """Helper to get integer parameter from MongoDB."""
+    try:
+        doc = await db.parameters_discord.find_one({"_id": param_id})
+        return int(doc.get("value", default_value)) if doc else default_value
+    except Exception as e:
+        sentry_sdk.capture_exception(e)
+        return default_value
+
+
+async def save_round_options_to_db():
+    """Save current round options state to MongoDB parameters_discord collection."""
+    global time_between_questions, ghost_mode, num_crossword_clues
+    global num_jeopardy_clues, num_mysterybox_clues, num_wof_clues
+    global god_mode, yolo_mode, num_math_questions, num_stats_questions
+    global image_questions, marx_mode, blind_mode, sniper_mode
+    global cloak_mode, cloaked_user
+
+    try:
+        # Store each variable as a document with _id as the variable name
+        updates = [
+            {"_id": "round_time_between_questions", "value": time_between_questions},
+            {"_id": "round_ghost_mode", "value": int(ghost_mode)},  # Convert bool to int
+            {"_id": "round_num_crossword_clues", "value": num_crossword_clues},
+            {"_id": "round_num_jeopardy_clues", "value": num_jeopardy_clues},
+            {"_id": "round_num_mysterybox_clues", "value": num_mysterybox_clues},
+            {"_id": "round_num_wof_clues", "value": num_wof_clues},
+            {"_id": "round_god_mode", "value": int(god_mode)},
+            {"_id": "round_yolo_mode", "value": int(yolo_mode)},
+            {"_id": "round_num_math_questions", "value": num_math_questions},
+            {"_id": "round_num_stats_questions", "value": num_stats_questions},
+            {"_id": "round_image_questions", "value": int(image_questions)},
+            {"_id": "round_marx_mode", "value": int(marx_mode)},
+            {"_id": "round_blind_mode", "value": int(blind_mode)},
+            {"_id": "round_sniper_mode", "value": int(sniper_mode)},
+            {"_id": "round_cloak_mode", "value": int(cloak_mode)},
+            {"_id": "round_cloaked_user", "value": cloaked_user or 0},  # Store 0 if None
+        ]
+
+        for update in updates:
+            await db.parameters_discord.update_one(
+                {"_id": update["_id"]},
+                {"$set": {"value": update["value"]}},
+                upsert=True
+            )
+
+        print("✅ Saved round options to MongoDB")
+    except Exception as e:
+        sentry_sdk.capture_exception(e)
+        print(f"❌ Error saving round options to MongoDB: {e}")
+
+
+async def load_round_options_from_db():
+    """Load round options state from MongoDB and set global variables."""
+    global time_between_questions, ghost_mode, num_crossword_clues
+    global num_jeopardy_clues, num_mysterybox_clues, num_wof_clues
+    global god_mode, yolo_mode, num_math_questions, num_stats_questions
+    global image_questions, marx_mode, blind_mode, sniper_mode
+    global cloak_mode, cloaked_user
+
+    try:
+        # Load each variable, with fallback to defaults
+        time_between_questions = await get_int_param(db, "round_time_between_questions", time_between_questions_default)
+        ghost_mode = bool(await get_int_param(db, "round_ghost_mode", int(ghost_mode_default)))
+        num_crossword_clues = await get_int_param(db, "round_num_crossword_clues", num_crossword_clues_default)
+        num_jeopardy_clues = await get_int_param(db, "round_num_jeopardy_clues", num_jeopardy_clues_default)
+        num_mysterybox_clues = await get_int_param(db, "round_num_mysterybox_clues", num_mysterybox_clues_default)
+        num_wof_clues = await get_int_param(db, "round_num_wof_clues", num_wof_clues_default)
+        god_mode = bool(await get_int_param(db, "round_god_mode", int(god_mode_default)))
+        yolo_mode = bool(await get_int_param(db, "round_yolo_mode", int(yolo_mode_default)))
+        num_math_questions = await get_int_param(db, "round_num_math_questions", num_math_questions_default)
+        num_stats_questions = await get_int_param(db, "round_num_stats_questions", num_stats_questions_default)
+        image_questions = bool(await get_int_param(db, "round_image_questions", int(image_questions_default)))
+        marx_mode = bool(await get_int_param(db, "round_marx_mode", int(marx_mode_default)))
+        blind_mode = bool(await get_int_param(db, "round_blind_mode", int(blind_mode_default)))
+        sniper_mode = bool(await get_int_param(db, "round_sniper_mode", int(sniper_mode_default)))
+        cloak_mode = bool(await get_int_param(db, "round_cloak_mode", int(cloak_mode_default)))
+
+        cloaked_user_val = await get_int_param(db, "round_cloaked_user", 0)
+        cloaked_user = cloaked_user_val if cloaked_user_val != 0 else None
+
+        print("✅ Loaded round options from MongoDB")
+    except Exception as e:
+        sentry_sdk.capture_exception(e)
+        print(f"❌ Error loading round options from MongoDB: {e}")
+
+
+async def save_selected_questions_to_db(selected_questions):
+    """Save selected questions to MongoDB round_questions collection."""
+    try:
+        # Clear the collection first (only store next round's questions)
+        await db.round_questions.delete_many({})
+
+        # Convert tuple format to document format for MongoDB
+        documents = []
+        for idx, (category, question, url, answers, db_name, question_id) in enumerate(selected_questions):
+            doc = {
+                "_id": idx,
+                "category": category,
+                "question": question,
+                "url": url,
+                "answers": answers,
+                "db": db_name,
+                "question_id": question_id
+            }
+            documents.append(doc)
+
+        if documents:
+            await db.round_questions.insert_many(documents)
+            print(f"✅ Saved {len(documents)} questions to MongoDB")
+
+    except Exception as e:
+        sentry_sdk.capture_exception(e)
+        print(f"❌ Error saving questions to MongoDB: {e}")
+
+
+async def load_selected_questions_from_db():
+    """Load selected questions from MongoDB round_questions collection."""
+    try:
+        cursor = db.round_questions.find().sort("_id", 1)
+        documents = await cursor.to_list(length=None)
+
+        if not documents:
+            print("ℹ️ No saved questions found in MongoDB")
+            return None
+
+        # Convert documents back to tuple format
+        selected_questions = [
+            (doc["category"], doc["question"], doc["url"], doc["answers"], doc["db"], doc["question_id"])
+            for doc in documents
+        ]
+
+        print(f"✅ Loaded {len(selected_questions)} questions from MongoDB")
+        return selected_questions
+
+    except Exception as e:
+        sentry_sdk.capture_exception(e)
+        print(f"❌ Error loading questions from MongoDB: {e}")
+        return None
+
+
 async def nice_creep_okra_option(winner, winner_id):
     global nice_okra, creep_okra, wf_winner, seductive_okra, joke_okra
     
@@ -11260,9 +11418,12 @@ async def prompt_user_for_response(round_winner, winner_points, winner_coffees, 
             if  "#cloak" not in message_content and await coffee_gate("cloak", True, f"\n🫥🕶️ **<@{round_winner_id}>** has put on their cloak.\n✍️⚫ Start messages with **.** to avoid deletion.", "Cloak"):
                 cloak_mode = True
                 cloaked_user = round_winner_id
+            
 
         except asyncio.TimeoutError:
             break
+    
+    await save_round_options_to_db()
 
     
 async def generate_okra_joke(winner_name):
@@ -14434,9 +14595,14 @@ async def start_trivia():
         print(round_winner)
         print(round_winner_id)
 
-            
-        selected_questions = await select_trivia_questions(questions_per_round)  #Pick the initial question set
-        
+
+        # Try to load questions from previous round (in case bot restarted between rounds)
+        selected_questions = await load_selected_questions_from_db()
+
+        # If no saved questions, select new ones
+        if selected_questions is None or len(selected_questions) == 0:
+            selected_questions = await select_trivia_questions(questions_per_round)  #Pick the initial question set
+
         while True:  # Endless loop     
             reset_embed_color()  
             current_time = time.time()
@@ -14485,6 +14651,7 @@ async def start_trivia():
             
             
             start_message = f"\u200b\n\u200b\n⏩ **Starting a round of {questions_per_round} questions!** ⏩\n\u200b\n\u200b"
+            start_message = f"\u200b\n\u200b\n⏩ **FROG a round of {questions_per_round} questions!** ⏩\n\u200b\n\u200b"
 
             start_message += f"\u200b\n🚩 Type **#flag** to report question\n"
             start_message += f"🗝️ Type **#perks** to unlock perks\n\u200b"
@@ -14585,6 +14752,7 @@ async def start_trivia():
             message += f"\n🛒 **Score Live Trivia merch featuring Okra!**\n👕 [Shop Merch](https://merch.94mes.com)\n\u200b"
             await safe_send(channel, message)
             selected_questions = await select_trivia_questions(questions_per_round)  #Pick the next question set
+            await save_selected_questions_to_db(selected_questions)  # Save for next round in case of restart
             await asyncio.sleep(10)
             await round_preview(selected_questions)
             await asyncio.sleep(10)  # Adjust this time to whatever delay you need between rounds
@@ -14596,8 +14764,20 @@ async def start_trivia():
             
             #if len(scoreboard) >= 1000:
             #    await ask_survey_question()
-                
-            await asyncio.sleep(5)
+
+            if len(active_tournaments) == 0:  # No tournaments active anywhere
+                if await end_of_round():
+                    # Update detected - build triggered and dyno restart requested
+                    # Wait indefinitely for SIGTERM to prevent starting a new round
+                    print("Waiting for dyno restart...")
+                    while True:
+                        await asyncio.sleep(60)
+                else:
+                    # No update, continue to next round
+                    await asyncio.sleep(5)
+            else:
+                # Tournament active - skip update check and continue
+                await asyncio.sleep(5)
 
     except Exception as e:
         sentry_sdk.capture_exception(e)
@@ -15169,6 +15349,7 @@ async def on_ready():
     print(f"✅ Logged in as {bot.user}")
     db =  await connect_to_mongodb()
     await load_parameters()
+    await load_round_options_from_db()
     channel = bot.get_channel(channel_id)
 
     # Clean up tournament roles from previous sessions
