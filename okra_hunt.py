@@ -8,6 +8,7 @@ class OkraHunt:
     def __init__(self, bot, the_lodge_channel_id, level_0_channel_id, level_0_role_id, hunt_progress_channel_id, level_1_channel_id, host_role_id, okrag_id, level_1_role_id, level_2_channel_id, level_2_role_id, level_3_channel_id, level_3_role_id, level_4_role_id, level_4_channel_id, rules_channel_id, rules_message_id, hunt_leaderboard_channel_id, hunt_leaderboard_message_id, level_5_role_id, level_5_channel_id):
         self.bot = bot
         self.logger = logging.getLogger(__name__)
+        self.logger.setLevel(logging.CRITICAL + 1)  # Disable all log messages
         self.the_lodge_channel_id = the_lodge_channel_id
         self.level_0_channel_id = level_0_channel_id
         self.level_0_role_id = level_0_role_id
@@ -46,7 +47,7 @@ class OkraHunt:
 
         # If user has host role, don't delete their message
         if has_host_role:
-            print(f"✅ Preserving message from host user: {message.author.display_name}")
+            # print(f"✅ Preserving message from host user: {message.author.display_name}")
             return False  # Don't handle this message, let it stay
 
         # Delete the message immediately to prevent others from seeing the answer
@@ -585,7 +586,7 @@ class OkraHunt:
             (self.level_3_channel_id, "LEVEL_3")
         ]
 
-        print(f"🧹 Starting escape room cleanup - okrag_id: {self.okrag_id}, host_role_id: {self.host_role_id}")
+        # print(f"🧹 Starting escape room cleanup - okrag_id: {self.okrag_id}, host_role_id: {self.host_role_id}")
         self.logger.info(f"🧹 Starting escape room cleanup - okrag_id: {self.okrag_id}, host_role_id: {self.host_role_id}")
         total_cleaned = 0
 
@@ -593,11 +594,11 @@ class OkraHunt:
             try:
                 channel = self.bot.get_channel(channel_id)
                 if not channel:
-                    print(f"❌ Channel {channel_name} ({channel_id}) not found")
+                    # print(f"❌ Channel {channel_name} ({channel_id}) not found")
                     self.logger.warning(f"Channel {channel_name} ({channel_id}) not found")
                     continue
 
-                print(f"🧹 Cleaning up {channel_name} channel (ID: {channel_id})...")
+                # print(f"🧹 Cleaning up {channel_name} channel (ID: {channel_id})...")
                 self.logger.info(f"🧹 Cleaning up {channel_name} channel (ID: {channel_id})...")
 
                 # Get all messages in the channel
@@ -612,7 +613,7 @@ class OkraHunt:
 
                     # Debug logging for okrag specifically
                     if message.author.id == self.okrag_id:
-                        print(f"🔍 Found message from okrag_id ({self.okrag_id}) in {channel_name}: '{message.content[:50]}...'")
+                        # print(f"🔍 Found message from okrag_id ({self.okrag_id}) in {channel_name}: '{message.content[:50]}...'")
                         self.logger.info(f"Found message from okrag_id ({self.okrag_id}) in {channel_name}: '{message.content[:50]}...'")
 
                     # Check if the author has the HOST_ROLE_ID
@@ -620,25 +621,26 @@ class OkraHunt:
                     if hasattr(message.author, 'roles'):
                         host_role = message.guild.get_role(self.host_role_id)
                         if message.author.id == self.okrag_id:
-                            print(f"🔍 okrag role debug - host_role found: {host_role is not None}, host_role_id: {self.host_role_id}")
-                            print(f"🔍 okrag user roles: {[role.id for role in message.author.roles]}")
-                            print(f"🔍 okrag has host role: {host_role in message.author.roles if host_role else False}")
+                            # print(f"🔍 okrag role debug - host_role found: {host_role is not None}, host_role_id: {self.host_role_id}")
+                            # print(f"🔍 okrag user roles: {[role.id for role in message.author.roles]}")
+                            # print(f"🔍 okrag has host role: {host_role in message.author.roles if host_role else False}")
+                            pass
 
                         if host_role and host_role in message.author.roles:
                             has_host_role = True
                             # Debug logging for host role
                             if message.author.id == self.okrag_id:
-                                print(f"✅ okrag_id ({self.okrag_id}) HAS host role - preserving message")
+                                # print(f"✅ okrag_id ({self.okrag_id}) HAS host role - preserving message")
                                 self.logger.info(f"okrag_id ({self.okrag_id}) HAS host role - preserving message")
 
                     # If user doesn't have host role, mark for deletion
                     if not has_host_role:
                         if message.author.id == self.okrag_id:
-                            print(f"❌ okrag_id ({self.okrag_id}) does NOT have host role - marking for deletion")
+                            # print(f"❌ okrag_id ({self.okrag_id}) does NOT have host role - marking for deletion")
                             self.logger.info(f"okrag_id ({self.okrag_id}) does NOT have host role - marking for deletion")
                         messages_to_delete.append(message)
 
-                print(f"📊 Checked {total_messages_checked} messages in {channel_name}, marked {len(messages_to_delete)} for deletion")
+                # print(f"📊 Checked {total_messages_checked} messages in {channel_name}, marked {len(messages_to_delete)} for deletion")
                 self.logger.info(f"Checked {total_messages_checked} messages in {channel_name}, marked {len(messages_to_delete)} for deletion")
 
                 # Delete messages in batches
@@ -695,10 +697,10 @@ class OkraHunt:
                 self.logger.error(f"Error cleaning up {channel_name} channel: {e}")
 
         if total_cleaned > 0:
-            print(f"✅ Escape room cleanup complete! Removed {total_cleaned} messages total")
+            # print(f"✅ Escape room cleanup complete! Removed {total_cleaned} messages total")
             self.logger.info(f"✅ Escape room cleanup complete! Removed {total_cleaned} messages total")
         else:
-            print("✅ Escape room cleanup complete! No messages needed removal")
+            # print("✅ Escape room cleanup complete! No messages needed removal")
             self.logger.info("✅ Escape room cleanup complete! No messages needed removal")
 
     async def cleanup_rules_message_reactions(self):
@@ -708,39 +710,39 @@ class OkraHunt:
         try:
             rules_channel = self.bot.get_channel(self.rules_channel_id)
             if not rules_channel:
-                print(f"❌ Rules channel {self.rules_channel_id} not found")
+                # print(f"❌ Rules channel {self.rules_channel_id} not found")
                 self.logger.warning(f"Rules channel {self.rules_channel_id} not found")
                 return
 
-            print(f"🧹 Cleaning up reactions on rules message...")
+            # print(f"🧹 Cleaning up reactions on rules message...")
             self.logger.info(f"🧹 Cleaning up reactions on rules message...")
 
             # Get the specific message
             try:
                 rules_message = await rules_channel.fetch_message(self.rules_message_id)
             except discord.NotFound:
-                print(f"❌ Rules message {self.rules_message_id} not found")
+                # print(f"❌ Rules message {self.rules_message_id} not found")
                 self.logger.warning(f"Rules message {self.rules_message_id} not found")
                 return
             except discord.Forbidden:
-                print(f"❌ No permission to access rules message {self.rules_message_id}")
+                # print(f"❌ No permission to access rules message {self.rules_message_id}")
                 self.logger.error(f"No permission to access rules message {self.rules_message_id}")
                 return
 
             # Clear all reactions from the message
             try:
                 await rules_message.clear_reactions()
-                print(f"✅ Cleared all reactions from rules message")
+                # print(f"✅ Cleared all reactions from rules message")
                 self.logger.info(f"Cleared all reactions from rules message {self.rules_message_id}")
             except discord.Forbidden:
-                print(f"❌ No permission to clear reactions from rules message")
+                # print(f"❌ No permission to clear reactions from rules message")
                 self.logger.error(f"No permission to clear reactions from rules message {self.rules_message_id}")
             except Exception as e:
-                print(f"❌ Error clearing reactions: {e}")
+                # print(f"❌ Error clearing reactions: {e}")
                 self.logger.error(f"Error clearing reactions from rules message {self.rules_message_id}: {e}")
 
         except Exception as e:
-            print(f"❌ Error during rules message reaction cleanup: {e}")
+            # print(f"❌ Error during rules message reaction cleanup: {e}")
             self.logger.error(f"Error during rules message reaction cleanup: {e}")
 
     async def handle_message(self, message):
@@ -764,7 +766,7 @@ class OkraHunt:
 
             # If user has host role, preserve their message
             if has_host_role:
-                print(f"✅ Preserving message from host user: {message.author.display_name} in {message.channel.name}")
+                # print(f"✅ Preserving message from host user: {message.author.display_name} in {message.channel.name}")
                 # For THE_LODGE, still check if it's a correct answer
                 if message.channel.id == self.the_lodge_channel_id:
                     await self.check_user_id_answer_without_deletion(message)
@@ -785,7 +787,7 @@ class OkraHunt:
             # Delete message from non-host users
             try:
                 await message.delete()
-                print(f"🗑️ Deleted message from {message.author.display_name} in {message.channel.name}")
+                # print(f"🗑️ Deleted message from {message.author.display_name} in {message.channel.name}")
             except discord.Forbidden:
                 self.logger.warning(f"Cannot delete message in channel {message.channel.id} - missing permissions")
             except Exception as e:
