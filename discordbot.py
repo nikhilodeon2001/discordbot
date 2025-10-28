@@ -14650,7 +14650,7 @@ async def start_trivia():
             await asyncio.sleep(5)
             
             
-            start_message = f"\u200b\n\u200b\n⏩ **Starting a **{questions_per_round} question** round!** ⏩\n\u200b\n\u200b"
+            start_message = f"\u200b\n\u200b\n⏩ Starting a **{questions_per_round} question** round! ⏩\n\u200b\n\u200b"
 
             start_message += f"\u200b\n🚩 Type **#flag** to report question\n"
             start_message += f"🗝️ Type **#perks** to unlock perks\n\u200b"
@@ -14750,33 +14750,27 @@ async def start_trivia():
             message = f"\u200b\n\u200b\n🥒 **Unlock perks? Become an Okran!**\n💚 [Join Role Subscriptions](https://discord.com/channels/1367682586079395902/role-subscriptions)\n"
             message += f"\n🛒 **Score Live Trivia merch featuring Okra!**\n👕 [Shop Merch](https://merch.94mes.com)\n\u200b"
             await safe_send(channel, message)
+            
             selected_questions = await select_trivia_questions(questions_per_round)  #Pick the next question set
             await save_selected_questions_to_db(selected_questions)  # Save for next round in case of restart
+            
             await asyncio.sleep(10)
+            
             await round_preview(selected_questions)
-            await asyncio.sleep(10)  # Adjust this time to whatever delay you need between rounds
-
-            await check_bump_status()
-            if bumped_status == False:
-                await get_bump_url_from_s3()
-                await asyncio.sleep(10)
+            
             
             #if len(scoreboard) >= 1000:
             #    await ask_survey_question()
 
-            if len(active_tournaments) == 0:  # No tournaments active anywhere
-                if await end_of_round():
-                    # Update detected - build triggered and dyno restart requested
-                    # Wait indefinitely for SIGTERM to prevent starting a new round
-                    print("Waiting for dyno restart...")
-                    while True:
-                        await asyncio.sleep(60)
-                else:
-                    # No update, continue to next round
-                    await asyncio.sleep(5)
-            else:
-                # Tournament active - skip update check and continue
-                await asyncio.sleep(5)
+            if len(active_tournaments) == 0: 
+                await end_of_round()
+            
+            await asyncio.sleep(10)  # Adjust this time to whatever delay you need between rounds
+            
+            await check_bump_status()
+            if bumped_status == False:
+                await get_bump_url_from_s3()
+                await asyncio.sleep(10)
 
     except Exception as e:
         sentry_sdk.capture_exception(e)
