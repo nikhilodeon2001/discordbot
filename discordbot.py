@@ -14650,8 +14650,7 @@ async def start_trivia():
             await asyncio.sleep(5)
             
             
-            start_message = f"\u200b\n\u200b\n⏩ **Starting a round of {questions_per_round} questions!** ⏩\n\u200b\n\u200b"
-            start_message = f"\u200b\n\u200b\n⏩ **FROG a round of {questions_per_round} questions!** ⏩\n\u200b\n\u200b"
+            start_message = f"\u200b\n\u200b\n⏩ **Starting a **{questions_per_round} question** round!** ⏩\n\u200b\n\u200b"
 
             start_message += f"\u200b\n🚩 Type **#flag** to report question\n"
             start_message += f"🗝️ Type **#perks** to unlock perks\n\u200b"
