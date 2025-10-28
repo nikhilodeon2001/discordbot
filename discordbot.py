@@ -14743,7 +14743,7 @@ async def start_trivia():
             await process_round_options(round_winner, winner_points, round_winner_id)
             
             if round_count % 3 == 0:
-                message = f"\u200b\n🧘‍♂️ A short breather. Relax, stretch, meditate.\n🎨 Live Trivia is a pure hobby effort.\n\n🙋 Help make it better!\n💡 [Submit Feedback](https://forms.gle/iWvmN24pfGEGSy7n7)\n\nLike it? Consider leaving a review!\n⭐ [Leave a Review](https://disboard.org/review/create/1367682586079395902)\u200b\n\n"
+                message = f"\u200b\n🧘‍♂️ A short breather. Relax, stretch, meditate.\n🎨 Live Trivia is a pure hobby effort.\n\n🙋 Help make it better!\n💡 [Submit Feedback](https://forms.gle/iWvmN24pfGEGSy7n7)\n\n🗣️ Like it? Spread the word!\n⭐ [Leave a Review](https://disboard.org/review/create/1367682586079395902)\u200b\n\n"
                 await safe_send(channel, message)
                 await asyncio.sleep(20)
 
