@@ -18,7 +18,7 @@ charset-normalizer==3.4.2
 click==8.2.0
 cssselect2==0.8.0
 defusedxml==0.7.1
-discord.py==2.5.2
+discord.py==2.6.4
 distro==1.9.0
 dnspython==2.7.0
 EbookLib==0.19
