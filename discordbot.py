@@ -1,6 +1,6 @@
 # Initialize all variables
 local_mode = False
-prod_or_stage = "prod"
+prod_or_stage = "stage"
 
 import sentry_sdk
 from sentry_sdk.integrations.logging import LoggingIntegration
@@ -59,9 +59,6 @@ import numpy as np
 import cairosvg
 import asyncio
 import difflib
-import nltk
-nltk.data.path.append("./nltk_data")
-from nltk.corpus import wordnet as wn
 from metaphone import doublemetaphone
 import discord
 from discord.ext import commands
@@ -218,6 +215,7 @@ if prod_or_stage == "stage":
     HUNT_LEADERBOARD_CHANNEL_ID = 1420278277829951518
     HUNT_LEADERBOARD_MESSAGE_ID = 1420281932566237244
     EVERYONE_ROLE_ID = 1375328358573015050
+    TRIVIA_VOICE_CHANNEL_ID = 1432952256721850469
 
 elif prod_or_stage == "prod":
     okrag_id = 591861826690613248
@@ -249,18 +247,15 @@ elif prod_or_stage == "prod":
     HUNT_LEADERBOARD_CHANNEL_ID = 1420277804075061320
     HUNT_LEADERBOARD_MESSAGE_ID = 1420292321370570844
     EVERYONE_ROLE_ID = 1367682586079395902
+    TRIVIA_VOICE_CHANNEL_ID = 1432951778244038756
 
 
 
 
-intents = discord.Intents.default()
-intents.messages = True
-intents.message_content = True
-intents.members = True  # Required to see guild members and their roles
-intents.reactions = True  # Required to receive reaction events
+intents = discord.Intents.all()
 bot = commands.Bot(command_prefix="!", intents=intents)
 openai_client = AsyncOpenAI(api_key=openai_api_key)
-id_limits = {"general": 2000, "mysterybox": 2000, "crossword": 5000, "jeopardy": 5000, "wof": 1500, "list": 20, "feud": 1000, "posters": 2000, "movie_scenes": 5000, "missing_link": 2500, "people": 2500, "ranker_list": 4000, "animal": 2000, "riddle": 2500, "dictionary": 5000, "flags": 800, "lyric": 500, "polyglottery": 80, "book": 80, "element": 100, "jigsaw": 5000, "border": 100, "faceoff": 5000, "president": 80, "wordle": 1400, "myopic": 5000, "fusion": 5000, "microscopic": 5000, "chess": 5000, "stock": 800, "currency": 100, "search": 10, "billboard": 40}
+id_limits = {"general": 2000, "mysterybox": 2000, "crossword": 5000, "jeopardy": 5000, "wof": 1500, "list": 20, "feud": 1000, "posters": 2000, "movie_scenes": 5000, "missing_link": 2500, "people": 2500, "ranker_list": 4000, "animal": 2000, "riddle": 2500, "dictionary": 5000, "flags": 800, "lyric": 500, "polyglottery": 80, "book": 80, "element": 100, "jigsaw": 5000, "border": 100, "faceoff": 5000, "president": 80, "wordle": 1400, "myopic": 5000, "fusion": 5000, "microscopic": 5000, "chess": 5000, "stock": 800, "currency": 100, "search": 10, "billboard": 40, "soundfx": 5000}
 max_retries = 3
 delay_between_retries = 3
 first_place_bonus = 0
@@ -661,10 +656,7 @@ def word_similarity(guess, answer):
     answer_phonetic = doublemetaphone(answer)
     phonetic_match = 0.2 if any(g == a and g != '' for g in guess_phonetic for a in answer_phonetic) else 0
 
-    guess_synonyms = {lemma.name().lower() for syn in wn.synsets(guess) for lemma in syn.lemmas()}
-    synonym_match = 0.2 if answer in guess_synonyms else 0
-
-    score = (seq_similarity * 0.5) + first_letter_bonus + last_letter_bonus + length_similarity + phonetic_match + synonym_match
+    score = (seq_similarity * 0.5) + first_letter_bonus + last_letter_bonus + length_similarity + phonetic_match
     return round(min(score, 1.0), 3)
 
 
@@ -3840,6 +3832,32 @@ async def ask_lyric_challenge(winner, winner_id, num=7):
         return None
 
 
+class VoiceChannelJoinView(discord.ui.View):
+    """View with a green button to join voice channel (shows native Discord join UI)"""
+
+    def __init__(self, voice_channel_id: int, guild_id: int):
+        super().__init__(timeout=None)
+        self.voice_channel_id = voice_channel_id
+        self.guild_id = guild_id
+
+    @discord.ui.button(label="Join Voice", style=discord.ButtonStyle.success, emoji="🎧")
+    async def join_voice_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        """Green button that shows the channel mention - clicking it opens native Discord join UI"""
+        try:
+            voice_channel = interaction.guild.get_channel(self.voice_channel_id)
+            if voice_channel:
+                # Send message with channel mention - Discord will render this with the native join UI
+                await interaction.response.send_message(
+                    f"**Click the channel name below to join:**\n\n{voice_channel.mention}",
+                    ephemeral=True
+                )
+            else:
+                await interaction.response.send_message("❌ Voice channel not found!", ephemeral=True)
+        except Exception as e:
+            print(f"Error in join voice button: {e}")
+            await interaction.response.send_message("❌ An error occurred.", ephemeral=True)
+
+
 class HTMLTextExtractor(HTMLParser):
     def __init__(self):
         super().__init__()
@@ -5141,6 +5159,284 @@ async def ask_chaos_challenge(winner, winner_id, num_of_games):
 
 
 
+async def ask_soundfx_challenge(winner, winner_id, num=7):
+    global wf_winner
+    wf_winner = True
+
+    user_data = {}
+    voice_client = None  # Initialize at function level for scope accessibility
+    sorted_users = []  # Initialize to prevent UnboundLocalError
+
+    gifs = [
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/soundfx1.gif",
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/soundfx2.gif",
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/soundfx3.gif"
+    ]
+    gif_url = random.choice(gifs)
+
+    await safe_send(channel, content="\u200b\n👂➡️ **Hear Here 🎧**: Do You Hear What I Hear?\n\u200b", embed=discord.Embed().set_image(url=gif_url))
+    
+    voice_channel = bot.get_channel(TRIVIA_VOICE_CHANNEL_ID)
+    if voice_channel:
+        try:
+            voice_client = voice_channel.guild.voice_client
+
+            # If connected to a different channel, move to the correct one
+            if voice_client and voice_client.channel != voice_channel:
+                await voice_client.move_to(voice_channel)
+            # If not connected at all, connect with timeout
+            elif voice_client is None:
+                # Add 30 second timeout for voice connection (discord.py will retry internally)
+                voice_client = await asyncio.wait_for(
+                    voice_channel.connect(),
+                    timeout=30.0
+                )
+        except asyncio.TimeoutError:
+            print("Voice connection timed out after 30 seconds")
+            await safe_send(channel, "⚠️ Could not connect to voice channel. Continuing with text-only mode.")
+            voice_client = None  # Ensure it's None so audio playback is skipped
+        except Exception as e:
+            print(f"Voice connection error: {e}")
+            await safe_send(channel, "⚠️ Voice connection failed. Continuing with text-only mode.")
+            voice_client = None
+
+        # Remind users to join voice channel (only if connected)
+        if voice_client:
+            # Make voice channel visible to everyone
+            try:
+                everyone_role = voice_channel.guild.get_role(EVERYONE_ROLE_ID)
+                if everyone_role:
+                    # Get current permissions or create new ones
+                    existing_perms = voice_channel.overwrites_for(everyone_role)
+                    # Set view_channel to True, preserving other permissions
+                    existing_perms.view_channel = True
+                    await voice_channel.set_permissions(everyone_role, overwrite=existing_perms)
+                    print(f"✅ Made voice channel visible to @everyone")
+            except Exception as e:
+                print(f"Error making voice channel visible: {e}")
+
+            voice_embed = discord.Embed(
+                title="🎧 Audio Challenge - Join Voice Channel!",
+                description=f"**{voice_channel.mention}**",
+                color=discord.Color.gold()  # Use gold like tournament for visual prominence
+            )
+
+            await safe_send(channel, embed=voice_embed)
+
+
+    await asyncio.sleep(7)
+
+    if num > 1:
+        await safe_send(channel, f"\u200b\n5️⃣🥇 Let's do a best of **{num}**...\n\u200b")
+        await asyncio.sleep(3)
+
+    # Pre-fetch all questions with unique topics before the loop
+    try:
+        recent_ids = await get_recent_question_ids_from_mongo("soundfx")
+        collection = db["soundfx_questions"]
+        pipeline = [
+            {"$match": {"_id": {"$nin": list(recent_ids)}, "enabled": True}},
+            {"$sample": {"size": 100}},  # Sample larger pool to ensure enough unique topics
+            {"$group": {"_id": "$topic", "question_doc": {"$first": "$$ROOT"}}},  # Group by topic to ensure uniqueness
+            {"$replaceRoot": {"newRoot": "$question_doc"}},
+            {"$sample": {"size": num}}  # Randomly sample num questions from the unique topics
+        ]
+        questions = [doc async for doc in collection.aggregate(pipeline)]
+
+        # Store all question IDs upfront
+        question_ids = [q["_id"] for q in questions]
+        if question_ids:
+            await store_question_ids_in_mongo(question_ids, "soundfx")
+    except Exception as e:
+        sentry_sdk.capture_exception(e)
+        print(traceback.format_exc())
+        await safe_send(channel, "\u200b\n⚠️ Error fetching questions. Please try again.\n\u200b")
+        return None
+
+    round_num = 1
+    for q in questions:
+        try:
+            url = q["url"]
+            topic = q["topic"]
+            description = q["description"]
+            clip_num = q["clip_num"]
+            category = "Sound Fx"
+
+            print(f"{topic}: {description}")
+
+
+            message = f"\u200b\n🎧➡️ Sound **{round_num}** of **{num}**\n\n👂 What do you hear?\n\u200b"
+            await safe_send(channel, message)
+
+            answered = False
+
+            # Play the sound effect in the voice channel (looping)
+            audio_task = None
+            try:
+                if voice_client:
+                    # Create a background task to loop the audio
+                    async def loop_audio():
+                        try:
+                            while not answered:
+                                if voice_client and not voice_client.is_playing():
+                                    if answered:  # Double-check before playing
+                                        break
+                                    audio_source = discord.FFmpegPCMAudio(url)
+                                    voice_client.play(audio_source)
+                                    # Wait for audio to finish playing with very frequent checks
+                                    while voice_client.is_playing() and not answered:
+                                        await asyncio.sleep(0.01)  # Check every 10ms
+                                    # Stop immediately if answered during playback
+                                    if answered and voice_client.is_playing():
+                                        voice_client.stop()
+                                        break
+                                    # 0.5s delay before repeating (if not answered)
+                                    if not answered:
+                                        await asyncio.sleep(0.5)
+                                else:
+                                    await asyncio.sleep(0.01)  # Check every 10ms
+                        except Exception as e:
+                            print(f"Error in audio loop: {e}")
+
+                    # Start the audio loop task in the background
+                    audio_task = asyncio.create_task(loop_audio())
+            except Exception as e:
+                print(f"Error starting audio: {e}")
+            start_time = asyncio.get_event_loop().time()
+
+            def check(m):
+                return m.channel == channel and m.author != bot.user
+
+            while asyncio.get_event_loop().time() - start_time < 20 and not answered:
+                try:
+                    timeout = 20 - (asyncio.get_event_loop().time() - start_time)
+                    msg = await bot.wait_for("message", timeout=timeout, check=check)
+                    guess = msg.content.strip()
+                    uid = msg.author.id
+                    display = msg.author.display_name
+
+                    # Odd Duck
+                    if fuzzy_match(guess, description, category, url):
+                        # Set flag first so loop stops immediately
+                        answered = True
+
+                        # Force stop voice client immediately
+                        if voice_client and voice_client.is_playing():
+                            voice_client.stop()
+
+                        # Give the loop a moment to see answered=True and stop
+                        await asyncio.sleep(0.05)
+
+                        # Cancel the audio loop task
+                        if audio_task and not audio_task.done():
+                            audio_task.cancel()
+                            try:
+                                await audio_task
+                            except asyncio.CancelledError:
+                                pass
+
+                        await msg.add_reaction("✅")
+                        user_data[uid] = (display, user_data.get(uid, (display, 0))[1] + 1)
+                        await safe_send(channel, f"\u200b\n✅🎉 **{display}** got it! **{description.upper()}**\n\u200b")
+                        break
+
+                except asyncio.TimeoutError:
+                    break
+
+            # Stop the audio loop task
+            if audio_task and not audio_task.done():
+                audio_task.cancel()
+                try:
+                    await audio_task
+                except asyncio.CancelledError:
+                    pass
+
+            # Stop any playing audio
+            if voice_client and voice_client.is_playing():
+                voice_client.stop()
+
+            if not answered:
+                await safe_send(channel, f"\u200b\n❌😢 No one got it.\n\n📝🧠 Answer: **{description.upper()}**\n\u200b")
+
+
+            await asyncio.sleep(5)
+
+        except Exception as e:
+            sentry_sdk.capture_exception(e)
+            print(traceback.format_exc())
+            await safe_send(channel, "\u200b\n⚠️ Error during round, skipping.\n\u200b")
+            continue
+
+        await asyncio.sleep(1)
+
+        round_num += 1
+
+        message = ""
+        sorted_users = sorted(user_data.items(), key=lambda x: x[1][1], reverse=True)
+
+        if num == 1:
+            if sorted_users:
+                soundfx_winner_id, (display_name, final_score) = sorted_users[0]
+                return soundfx_winner_id
+            else:
+                return None
+
+        if sorted_users:
+            if round_num > num:
+                message += "\u200b\n🏁🏆 Final Standings\n\u200b"
+            else:
+                message += "\u200b\n📊🏆 Current Standings\n\u200b"
+
+            for counter, (uid, (name, score)) in enumerate(sorted_users, start=1):
+                message += f"{counter}. **{name}**: {score}\n\u200b"
+
+        if message:
+            await safe_send(channel, message)
+        await asyncio.sleep(3)
+
+    await asyncio.sleep(2)
+    if sorted_users:
+        soundfx_winner_id, (display_name, final_score) = sorted_users[0]
+        await safe_send(channel, f"\u200b\n🎉🥇 The winner is **{display_name}**!\n\u200b")
+    else:
+        await safe_send(channel, f"\u200b\n👎😢 **No right answers**. I'm ashamed to call you Okrans.\n\u200b")
+
+    wf_winner = True
+    await asyncio.sleep(3)
+
+    # Disconnect from voice channel
+    try:
+        if voice_client and voice_client.is_connected():
+            await voice_client.disconnect()
+            print(f"✅ Disconnected from voice channel")
+    except Exception as e:
+        print(f"Error disconnecting from voice: {e}")
+
+    # Hide voice channel from everyone
+    try:
+        if voice_channel:
+            everyone_role = voice_channel.guild.get_role(EVERYONE_ROLE_ID)
+            if everyone_role:
+                # Get current permissions
+                existing_perms = voice_channel.overwrites_for(everyone_role)
+                # Set view_channel to False, preserving other permissions
+                existing_perms.view_channel = False
+                await voice_channel.set_permissions(everyone_role, overwrite=existing_perms)
+                print(f"✅ Hidden voice channel from @everyone")
+    except Exception as e:
+        print(f"Error hiding voice channel: {e}")
+
+    if sorted_users:
+        return soundfx_winner_id
+    else:
+        return None
+
+
+
+
+
+
+
 async def ask_president_challenge(winner, winner_id, num=7):
     global wf_winner
     wf_winner = True
@@ -5148,7 +5444,9 @@ async def ask_president_challenge(winner, winner_id, num=7):
     user_data = {}
 
     gifs = [
-        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/president1.gif"
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/president1.gif",
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/president2.gif",
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/president3.gif"
     ]
     gif_url = random.choice(gifs)
 
@@ -10154,6 +10452,8 @@ async def select_wof_questions(winner, winner_id):
         message += f"{counter}.\u200b 🥒🏁 OkRACE\n"
         counter = counter + 1
         message += f"{counter}.\u200b 🔍🔤 Spotlight\n"
+        counter = counter + 1
+        message += f"{counter}.\u200b 👂➡️ Hear Here 🎧 \n"
         message += f"99.\u200b 🌀🤯 CHAOS\n"
 
         message += f"\n⚙️ **Other Options**\n"
@@ -10360,6 +10660,11 @@ async def select_wof_questions(winner, winner_id):
         
         elif selected_wof_category == "41":
             await ask_search_challenge(winner, winner_id)
+            await asyncio.sleep(3)
+            return None
+        
+        elif selected_wof_category == "42":
+            await ask_soundfx_challenge(winner, winner_id, 5)
             await asyncio.sleep(3)
             return None
         
@@ -10624,10 +10929,11 @@ async def ask_wof_number(winner, winner_id):
         "39": "XXXX",
         "40": "OkRACE",
         "41": "Spotlight",
+        "42": "Hear Here",
         "99": "CHAOS"
     }
     multiplayer_required = {k for k in unlocks if k not in {"5", "6", "7", "8", "9"}}
-    all_options = {str(i) for i in range(42)} | {"00", "x", "99"}
+    all_options = {str(i) for i in range(43)} | {"00", "x", "99"}
 
     start = asyncio.get_event_loop().time()
     selected_question = None
@@ -10644,7 +10950,7 @@ async def ask_wof_number(winner, winner_id):
             if content == "00":
                 await message.add_reaction("👍")
                 set_a = [str(i) for i in range(5)]
-                set_b = [str(i) for i in range(5, 42)] if len(round_responders) >= num_list_players else [str(i) for i in range(5, 10)]
+                set_b = [str(i) for i in range(5, 43)] if len(round_responders) >= num_list_players else [str(i) for i in range(5, 10)]
                 selected_question = random.choice(set_a if random.random() < 0.5 else set_b)
                 
                 # Store frequency data for random selection
@@ -10684,7 +10990,7 @@ async def ask_wof_number(winner, winner_id):
 
     # Fallback random selection
     set_a = [str(i) for i in range(5)]
-    set_b = [str(i) for i in range(5, 42)] if len(round_responders) >= num_list_players else [str(i) for i in range(5, 10)]
+    set_b = [str(i) for i in range(5, 43)] if len(round_responders) >= num_list_players else [str(i) for i in range(5, 10)]
     selected_question = random.choice(set_a if random.random() < 0.5 else set_b)
     
     # Store frequency data for random selection
@@ -14625,6 +14931,7 @@ async def start_trivia():
             #await ask_chess_challenge("TheOkraG",591861826690613248, 3)
             #await ask_search_challenge("TheOkraG",591861826690613248, 3)
             #await ask_lyric_challenge("TheOkraG",591861826690613248, 7)
+            #await ask_soundfx_challenge("TheOkraG",591861826690613248, 7)
             
 
             round_responders.clear()  # Reset round responders
@@ -14642,11 +14949,11 @@ async def start_trivia():
 
             start_message = f"\u200b\n✨🧪 **NEW** from the **Okra Lab**! 🧪✨\n"
             
-            start_message += f"\n🎧🎤 **LyrIQ** Remastered"
+            start_message += f"\n👂➡️ **Hear Here** [🎧 Mini-Game]"
 
             start_message += "\n\u200b"
 
-            #await safe_send(channel, start_message)
+            await safe_send(channel, start_message)
             await asyncio.sleep(5)
             
             
