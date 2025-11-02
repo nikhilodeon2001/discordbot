@@ -15,7 +15,7 @@ import requests
 import json
 import random
 import importlib
-import traceback
+import tracebackewn
 import unicodedata
 import datetime
 from datetime import timezone
@@ -14945,7 +14945,7 @@ async def start_trivia():
                 selected_gif_url = await select_intro_image_url()         
                 await safe_send(channel, content="\u200b\n\u200b\n🎉🤹‍♂️ **Live Trivia & Games for Discord!**\n\u200b", embed=discord.Embed().set_image(url=selected_gif_url))
 
-            #await asyncio.sleep(2)
+            await asyncio.sleep(5)
 
             start_message = f"\u200b\n✨🧪 **NEW** from the **Okra Lab**! 🧪✨\n"
             
