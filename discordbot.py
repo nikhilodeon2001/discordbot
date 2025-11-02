@@ -14949,7 +14949,7 @@ async def start_trivia():
 
             start_message = f"\u200b\n✨🧪 **NEW** from the **Okra Lab**! 🧪✨\n"
             
-            start_message += f"\n👂➡️ **Hear Here** [🎧 Mini-Game]"
+            start_message += f"\n👂➡️ **Hear Here** [Audio Mini-Game]"
 
             start_message += "\n\u200b"
 
