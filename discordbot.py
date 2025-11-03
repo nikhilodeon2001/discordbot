@@ -5208,10 +5208,11 @@ async def ask_soundfx_challenge(winner, winner_id, num=7):
                 if everyone_role:
                     # Get current permissions or create new ones
                     existing_perms = voice_channel.overwrites_for(everyone_role)
-                    # Set view_channel to True, preserving other permissions
+                    # Set view_channel and connect to True, preserving other permissions
                     existing_perms.view_channel = True
+                    existing_perms.connect = True
                     await voice_channel.set_permissions(everyone_role, overwrite=existing_perms)
-                    print(f"✅ Made voice channel visible to @everyone")
+                    print(f"✅ Made voice channel visible and connectable to @everyone")
             except Exception as e:
                 print(f"Error making voice channel visible: {e}")
 
@@ -5419,10 +5420,11 @@ async def ask_soundfx_challenge(winner, winner_id, num=7):
             if everyone_role:
                 # Get current permissions
                 existing_perms = voice_channel.overwrites_for(everyone_role)
-                # Set view_channel to False, preserving other permissions
+                # Set view_channel and connect to False, preserving other permissions
                 existing_perms.view_channel = False
+                existing_perms.connect = False
                 await voice_channel.set_permissions(everyone_role, overwrite=existing_perms)
-                print(f"✅ Hidden voice channel from @everyone")
+                print(f"✅ Hidden voice channel and removed connect permission from @everyone")
     except Exception as e:
         print(f"Error hiding voice channel: {e}")
 
