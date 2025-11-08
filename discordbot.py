@@ -12157,7 +12157,7 @@ async def prompt_user_for_response(round_winner, winner_points, winner_coffees, 
                 cloak_mode = True
                 cloaked_user = round_winner_id
 
-            if  "#blitz" not in message_content and await coffee_gate("blitz", True, f"\n🫥🕶️ **<@{round_winner_id}>** wants all the glory!", "Blitz"):
+            if  "#blitz" not in message_content and await coffee_gate("blitz", True, f"\n🥇🤩 **<@{round_winner_id}>** wants all the glory!", "Blitz"):
                 blitz_mode = True
             
 
@@ -15636,9 +15636,9 @@ async def reset_round_options(reset_command, winner_id):
         blitz_mode = not blitz_mode
         reset_success = True
         if blitz_mode == True:
-            await safe_send(channel, content=f"\n🧢🎤 **{current_longest_round_streak["user"]}** wants all the glory!\n")
+            await safe_send(channel, content=f"\n🥇🤩 **{current_longest_round_streak["user"]}** wants all the glory!\n")
         else:
-            await safe_send(channel, content=f"\n⚾👽 **{current_longest_round_streak["user"]}** welcomes all winners to the podium.\n")
+            await safe_send(channel, content=f"\n🥇🙌 **{current_longest_round_streak["user"]}** welcomes all winners to the podium.\n")
 
 
     if "cloak" in reset_command:
