@@ -13737,7 +13737,12 @@ async def check_correct_responses_delete(question_ask_time, trivia_answer_list, 
     user_first_response = {}
 
     # Process collected responses
+    first_correct_found = False
     for response in collected_responses:
+        if first_correct_found == True:
+            break
+
+        
         message = response["message"]
         #message_content = message.content
         message_content = response["message_content"]
@@ -13831,7 +13836,7 @@ async def check_correct_responses_delete(question_ask_time, trivia_answer_list, 
                 fastest_correct_message = message
 
             if blitz_mode:
-                continue
+                first_correct_found = True
             
     if emoji_mode == True and fastest_response_time is not None and blind_mode == False and marx_mode == False:
         try:
