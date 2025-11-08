@@ -11399,7 +11399,7 @@ async def ask_wof_number(winner, winner_id):
                 continue
 
             # Check multiplayer lock
-            if content in multiplayer_required and len(round_responders) < num_list_players:
+            if content in multiplayer_required and len(round_responders) < num_list_players and winner_id != okrag_id:
                 await message.add_reaction("😢")
                 await safe_send(channel, f"\n🙏😔 Sorry **<@{winner_id}>**. '**{unlocks[content]}**' requires **{num_list_players}+ players**.\n")
                 continue
