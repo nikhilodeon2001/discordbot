@@ -15585,49 +15585,49 @@ async def reset_round_options(reset_command, winner_id):
         blind_mode = not blind_mode
         reset_success = True
         if blind_mode:
-            await safe_send(channel, content=f"🙈🚫 **{current_longest_round_streak['user']}** is blind to the truth. No answers will be shown.\n")
+            await safe_send(channel, content=f"🙈🚫 **{winner_id}** is blind to the truth. No answers will be shown.\n")
         else:
-            await safe_send(channel, content=f"🙈✅ **{current_longest_round_streak['user']}** can see again! Answers will now be shown.\n")                
+            await safe_send(channel, content=f"🙈✅ **{winner_id}** can see again! Answers will now be shown.\n")                
 
     if "marx" in reset_command:
         marx_mode = not marx_mode
         reset_success = True
         if marx_mode:
-            await safe_send(channel, content=f"🚩🔨 **{current_longest_round_streak['user']}** is a commie. No celebrating right answers.\n")
+            await safe_send(channel, content=f"🚩🔨 **{winner_id}** is a commie. No celebrating right answers.\n")
         else:
-            await safe_send(channel, content=f"💼💰 **{current_longest_round_streak['user']}** is a capitalist. Let's celebrate right answers.\n")
+            await safe_send(channel, content=f"💼💰 **{winner_id}** is a capitalist. Let's celebrate right answers.\n")
     
     if "yolo" in reset_command:
         yolo_mode = not yolo_mode
         reset_success = True
         if yolo_mode:
-            await safe_send(channel, content=f"🤘🔥 Yolo. **{current_longest_round_streak['user']}** says 'don't sweat the small stuff'. No scores.\n")
+            await safe_send(channel, content=f"🤘🔥 Yolo. **{winner_id}** says 'don't sweat the small stuff'. No scores.\n")
         else:
-            await safe_send(channel, content=f"🪑📚 Nolo. **{current_longest_round_streak['user']}** wants to play it by the rules. Back to scoring\n.")
+            await safe_send(channel, content=f"🪑📚 Nolo. **{winner_id}** wants to play it by the rules. Back to scoring\n.")
     
     if "image" in reset_command:
         image_questions = not image_questions
         reset_success = True
         if image_questions:
-            await safe_send(channel, content=f"❌📷 **{current_longest_round_streak['user']}** thinks a word is worth 1000 images.\n")
+            await safe_send(channel, content=f"❌📷 **{winner_id}** thinks a word is worth 1000 images.\n")
         else:
-            await safe_send(channel, content=f"✅📷 **{current_longest_round_streak['user']}** thinks an image is worth 1000 words.\n")
+            await safe_send(channel, content=f"✅📷 **{winner_id}** thinks an image is worth 1000 words.\n")
     
     if "ghost" in reset_command:
         ghost_mode = not ghost_mode
         reset_success = True
         if ghost_mode:
-            await safe_send(channel, content=f"\n👻🎃 **{current_longest_round_streak['user']}** says Boo! Your responses will disappear.\n✍️⚫ Start messages with **.** to avoid deletion.\n")
+            await safe_send(channel, content=f"\n👻🎃 **{winner_id}** says Boo! Your responses will disappear.\n✍️⚫ Start messages with **.** to avoid deletion.\n")
         else:
-            await safe_send(channel, content=f"\n☀️📖 **{current_longest_round_streak['user']}** says Hello! Your responses will now remain.\n")
+            await safe_send(channel, content=f"\n☀️📖 **{winner_id}** says Hello! Your responses will now remain.\n")
 
     if "dicktator" in reset_command:
         god_mode = not god_mode
         reset_success = True
         if god_mode:
-            await safe_send(channel, content=f"\n🎖🍆 **{current_longest_round_streak['user']}** is a dick.\n")
+            await safe_send(channel, content=f"\n🎖🍆 **{winner_id}** is a dick.\n")
         else:
-            await safe_send(channel, content=f"\n🎖🫡 **{current_longest_round_streak['user']}** is not a dick.\n")
+            await safe_send(channel, content=f"\n🎖🫡 **{winner_id}** is not a dick.\n")
     
     if "sniper" in reset_command:
         sniper_mode = not sniper_mode
@@ -15661,7 +15661,7 @@ async def reset_round_options(reset_command, winner_id):
         delay_value = max(3, min(delay_value, 15))
         time_between_questions = delay_value
         reset_success = True
-        await safe_send(channel, content=f"⏱️⏳ **{current_longest_round_streak['user']}** has set {time_between_questions}s between questions.\n")
+        await safe_send(channel, content=f"⏱️⏳ **{winner_id}** has set {time_between_questions}s between questions.\n")
 
     #print_round_settings()
     return reset_success
