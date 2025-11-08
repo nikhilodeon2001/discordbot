@@ -15853,7 +15853,7 @@ async def on_message(message):
         return
 
     if message.content.startswith("#") and (message.author.id == current_longest_round_streak["user_id"] or message.author.id == okrag_id) and message.channel.id == channel_id:
-        if await get_coffees(current_longest_round_streak["user_id"]) > 0:
+        if await get_coffees(message.author.id) > 0:
             reset_command = message.content[1:] 
             if(await reset_round_options(reset_command, message.author)) == True:
                 if emoji_mode == True:
