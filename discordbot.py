@@ -15497,7 +15497,7 @@ async def start_trivia():
                 await asyncio.sleep(20)
 
             message = f"\u200b\n\u200b\n🥒 **Unlock perks? Become an Okran!**\n💚 [Join Role Subscriptions](https://discord.com/channels/1367682586079395902/role-subscriptions)\n"
-            message += f"\n🛒 **Score Live Trivia merch featuring Okra!**\n👕 [Shop Merch](https://merch.94mes.com)\n\u200b"
+            message += f"\n🛒 **Score Live Trivia merch!**\n👕 [Shop Merch](https://merch.94mes.com)\n\u200b"
             await safe_send(channel, message)
             
             selected_questions = await select_trivia_questions(questions_per_round)  #Pick the next question set
