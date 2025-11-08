@@ -79,6 +79,54 @@ embed_color = embed_color_default
 
 from self_update import self_update
 
+# AWS S3 Configuration for presigned URLs
+import boto3
+AWS_ACCESS_KEY_ID = os.environ.get('AWS_ACCESS_KEY_ID', 'REMOVED_AWS_KEY_ID')
+AWS_SECRET_ACCESS_KEY = os.environ.get('AWS_SECRET_ACCESS_KEY', 'REMOVED_AWS_SECRET')
+AWS_REGION = os.environ.get('AWS_REGION', 'us-east-2')
+S3_BUCKET_NAME = 'triviabotwebsite'
+S3_MUSIC_FOLDER = 'music_audio'
+
+# Initialize S3 client for presigned URLs
+s3_client = boto3.client(
+    's3',
+    aws_access_key_id=AWS_ACCESS_KEY_ID,
+    aws_secret_access_key=AWS_SECRET_ACCESS_KEY,
+    region_name=AWS_REGION
+)
+
+def generate_presigned_url(s3_url, expiration=3600):
+    """
+    Generate a presigned URL for a private S3 file.
+
+    Args:
+        s3_url: Full S3 URL from MongoDB like:
+                'https://triviabotwebsite.s3.us-east-2.amazonaws.com/music_audio/Song.mp3'
+        expiration: Time in seconds for the URL to remain valid (default: 1 hour)
+
+    Returns:
+        Presigned URL string, or the original URL if error occurs
+    """
+    try:
+        # Extract filename from the full S3 URL
+        filename = s3_url.split('/')[-1]
+        s3_key = f"{S3_MUSIC_FOLDER}/{filename}"
+
+        # Generate presigned URL
+        presigned_url = s3_client.generate_presigned_url(
+            'get_object',
+            Params={
+                'Bucket': S3_BUCKET_NAME,
+                'Key': s3_key
+            },
+            ExpiresIn=expiration
+        )
+        return presigned_url
+    except Exception as e:
+        print(f"Error generating presigned URL for {s3_url}: {e}")
+        # Return original URL as fallback
+        return s3_url
+
 async def end_of_round():
     print("Round ended. Checking for updates...")
     try:
@@ -255,7 +303,7 @@ elif prod_or_stage == "prod":
 intents = discord.Intents.all()
 bot = commands.Bot(command_prefix="!", intents=intents)
 openai_client = AsyncOpenAI(api_key=openai_api_key)
-id_limits = {"general": 2000, "mysterybox": 2000, "crossword": 5000, "jeopardy": 5000, "wof": 1500, "list": 20, "feud": 1000, "posters": 2000, "movie_scenes": 5000, "missing_link": 2500, "people": 2500, "ranker_list": 4000, "animal": 2000, "riddle": 2500, "dictionary": 5000, "flags": 800, "lyric": 500, "polyglottery": 80, "book": 80, "element": 100, "jigsaw": 5000, "border": 100, "faceoff": 5000, "president": 80, "wordle": 1400, "myopic": 5000, "fusion": 5000, "microscopic": 5000, "chess": 5000, "stock": 800, "currency": 100, "search": 10, "billboard": 40, "soundfx": 500}
+id_limits = {"general": 2000, "mysterybox": 2000, "crossword": 5000, "jeopardy": 5000, "wof": 1500, "list": 20, "feud": 1000, "posters": 2000, "movie_scenes": 5000, "missing_link": 2500, "people": 2500, "ranker_list": 4000, "animal": 2000, "riddle": 2500, "dictionary": 5000, "flags": 800, "lyric": 500, "polyglottery": 80, "book": 80, "element": 100, "jigsaw": 5000, "border": 100, "faceoff": 5000, "president": 80, "wordle": 1400, "myopic": 5000, "fusion": 5000, "microscopic": 5000, "chess": 5000, "stock": 800, "currency": 100, "search": 10, "billboard": 40, "soundfx": 500, "audio_music":100}
 max_retries = 3
 delay_between_retries = 3
 first_place_bonus = 0
@@ -297,6 +345,8 @@ image_questions_default = True
 image_questions = image_questions_default
 sniper_mode_default = False
 sniper_mode = sniper_mode_default
+blitz_mode_default = False
+blitz_mode = blitz_mode_default
 cloak_mode_default = False
 cloak_mode = cloak_mode_default
 cloaked_user = None
@@ -5100,7 +5150,9 @@ async def ask_chaos_challenge(winner, winner_id, num_of_games):
         ask_currency_challenge,
         ask_chess_challenge,
         ask_stock_challenge,
-        ask_search_challenge
+        ask_search_challenge,
+        ask_soundfx_challenge,
+        ask_audio_music_challenge
     ]
 
     num_of_games = min(num_of_games, len(challenge_functions))
@@ -5433,6 +5485,371 @@ async def ask_soundfx_challenge(winner, winner_id, num=7):
     else:
         return None
 
+
+
+
+async def ask_audio_music_challenge(winner, winner_id, num=7):
+    global wf_winner
+    wf_winner = True
+
+    user_data = {}
+    voice_client = None  # Initialize at function level for scope accessibility
+    sorted_users = []  # Initialize to prevent UnboundLocalError
+
+    gifs = [
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/audio_music1.gif",
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/audio_music2.gif",
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/audio_music3.gif"
+    ]
+    gif_url = random.choice(gifs)
+
+    await safe_send(channel, content="\u200b\n🎶🤔 **Who Says? 🎧**: Name the Artist or Song!\n\u200b", embed=discord.Embed().set_image(url=gif_url))
+
+    voice_channel = bot.get_channel(TRIVIA_VOICE_CHANNEL_ID)
+    if voice_channel:
+        try:
+            voice_client = voice_channel.guild.voice_client
+
+            # If connected to a different channel, move to the correct one
+            if voice_client and voice_client.channel != voice_channel:
+                await voice_client.move_to(voice_channel)
+            # If not connected at all, connect with timeout
+            elif voice_client is None:
+                # Add 30 second timeout for voice connection (discord.py will retry internally)
+                voice_client = await asyncio.wait_for(
+                    voice_channel.connect(),
+                    timeout=30.0
+                )
+        except asyncio.TimeoutError:
+            print("Voice connection timed out after 30 seconds")
+            await safe_send(channel, "⚠️ Could not connect to voice channel. Continuing with text-only mode.")
+            voice_client = None  # Ensure it's None so audio playback is skipped
+        except Exception as e:
+            print(f"Voice connection error: {e}")
+            await safe_send(channel, "⚠️ Voice connection failed. Continuing with text-only mode.")
+            voice_client = None
+
+        # Remind users to join voice channel (only if connected)
+        if voice_client:
+            # Make voice channel visible to everyone
+            try:
+                everyone_role = voice_channel.guild.get_role(EVERYONE_ROLE_ID)
+                if everyone_role:
+                    # Get current permissions or create new ones
+                    existing_perms = voice_channel.overwrites_for(everyone_role)
+                    # Set view_channel and connect to True, preserving other permissions
+                    existing_perms.view_channel = True
+                    existing_perms.connect = True
+                    await voice_channel.set_permissions(everyone_role, overwrite=existing_perms)
+                    print(f"✅ Made voice channel visible and connectable to @everyone")
+            except Exception as e:
+                print(f"Error making voice channel visible: {e}")
+
+            voice_embed = discord.Embed(
+                title="🎧 Audio Challenge - Join Voice Channel!",
+                description=f"**{voice_channel.mention}**",
+                color=discord.Color.gold()  # Use gold like tournament for visual prominence
+            )
+
+            await safe_send(channel, embed=voice_embed)
+
+
+    await asyncio.sleep(7)
+
+    # Ask winner for category selection
+    await safe_send(channel, f"\u200b\n🎵📊 **<@{winner_id}>**, choose a music category:\n\n**1.** Billboard Greatest All Time\n**2.** Billboard Greatest Alternative\n**3.** Billboard Greatest 80s Pop\n\u200b")
+
+    selected_category = None
+    # Map user choices to exact MongoDB category field values
+    category_map = {
+        1: "Billboard Greatest",
+        2: "Billboard Alternative",
+        3: "Billboard 80s Pop"
+    }
+    start_time = asyncio.get_event_loop().time()
+
+    def check_category(m):
+        return m.author.id == winner_id and m.channel == channel and m.author != bot.user
+
+    while asyncio.get_event_loop().time() - start_time < magic_time + 5:
+        try:
+            timeout = magic_time + 5 - (asyncio.get_event_loop().time() - start_time)
+            msg = await bot.wait_for("message", timeout=timeout, check=check_category)
+
+            # Extract first number from message
+            numbers = re.findall(r'\d+', msg.content.strip())
+            if numbers:
+                user_choice = int(numbers[0])
+                if user_choice in category_map:
+                    selected_category = category_map[user_choice]
+                    await msg.add_reaction("🎵")
+                    break
+        except asyncio.TimeoutError:
+            break
+
+    if selected_category:
+        await safe_send(channel, f"\u200b\n🎯✅ Great choice! We'll play from **{selected_category}**!\n\u200b")
+    else:
+        # Default to Billboard Greatest All Time if no response
+        selected_category = category_map[1]
+        await safe_send(channel, f"\u200b\n😬⏱️ Time's up! We'll play from **{selected_category}**!\n\u200b")
+
+    await asyncio.sleep(2)
+
+    # Ask winner for song segment percentage
+    await safe_send(channel, f"\u200b\n✍️🎵 **<@{winner_id}>**, what **% into the song** do you want to hear? [**5** to **95**]\n\u200b")
+
+    song_segment_pct = None
+    start_time = asyncio.get_event_loop().time()
+
+    def check_pct(m):
+        return m.author.id == winner_id and m.channel == channel and m.author != bot.user
+
+    while asyncio.get_event_loop().time() - start_time < magic_time + 5:
+        try:
+            timeout = magic_time + 5 - (asyncio.get_event_loop().time() - start_time)
+            msg = await bot.wait_for("message", timeout=timeout, check=check_pct)
+
+            # Extract first number from message
+            numbers = re.findall(r'\d+', msg.content.strip())
+            if numbers:
+                user_pct = int(numbers[0])
+                # Apply bounds: clamp to 5-95 range
+                if user_pct < 5:
+                    song_segment_pct = 5
+                elif user_pct > 95:
+                    song_segment_pct = 95
+                else:
+                    song_segment_pct = user_pct
+                await msg.add_reaction("🎶")
+                break
+        except asyncio.TimeoutError:
+            break
+
+    if song_segment_pct:
+        await safe_send(channel, f"\u200b\n💥🤯 Ok...ra! I'll play segments **{song_segment_pct}%** into the song!\n\u200b")
+    else:
+        song_segment_pct = random.randint(5, 95)
+        await safe_send(channel, f"\u200b\n😬⏱️ Time's up! I'll play segments **{song_segment_pct}%** into the song!\n\u200b")
+
+    await asyncio.sleep(2)
+
+    if num > 1:
+        await safe_send(channel, f"\u200b\n5️⃣🥇 Let's do a best of **{num}**...\n\u200b")
+        await asyncio.sleep(3)
+
+    # Pre-fetch all questions with unique topics before the loop
+    try:
+        recent_ids = await get_recent_question_ids_from_mongo("audio_music")
+        collection = db["audio_music_questions"]
+        pipeline = [
+            {"$match": {
+                "_id": {"$nin": list(recent_ids)},
+                "category": selected_category,  # Filter by selected category
+            }},
+            {"$addFields": {
+                "segment_start_num": {"$toDouble": "$segment_start_time_pct"},
+                "segment_end_num": {"$toDouble": "$segment_end_time_pct"}
+            }},
+            {"$match": {
+                "segment_start_num": {"$lte": song_segment_pct},  # Segment must start before or at the chosen percentage
+                "segment_end_num": {"$gte": song_segment_pct}  # Segment must end after or at the chosen percentage
+            }},
+            {"$sample": {"size": 100}},  # Sample larger pool to ensure enough unique artists
+            {"$group": {"_id": "$artist", "question_doc": {"$first": "$$ROOT"}}},  # Group by artist to ensure uniqueness
+            {"$replaceRoot": {"newRoot": "$question_doc"}},
+            {"$sample": {"size": num}}  # Randomly sample num questions from the unique artists
+        ]
+        questions = [doc async for doc in collection.aggregate(pipeline)]
+
+        # Store all question IDs upfront
+        question_ids = [q["_id"] for q in questions]
+        if question_ids:
+            await store_question_ids_in_mongo(question_ids, "audio_music")
+    except Exception as e:
+        sentry_sdk.capture_exception(e)
+        print(traceback.format_exc())
+        await safe_send(channel, "\u200b\n⚠️ Error fetching questions. Please try again.\n\u200b")
+        return None
+
+    round_num = 1
+    for q in questions:
+        try:
+            # Generate presigned URL from the MongoDB URL
+            original_url = q["file_name"]
+            url = generate_presigned_url(original_url)
+            artist = q["artist"]
+            title = q["title"]
+            category = "Audio Music"
+
+            print(f"{artist.upper()} - {title.upper()}")
+
+            message = f"\u200b\n🎧➡️ Song **{round_num}** of **{num}**\n\n👂 Name the Artist or Title\n\u200b"
+            await safe_send(channel, message)
+
+            answered = False
+
+            # Play the sound effect in the voice channel (looping)
+            audio_task = None
+            try:
+                if voice_client:
+                    # Create a background task to loop the audio
+                    async def loop_audio():
+                        try:
+                            while not answered:
+                                if voice_client and not voice_client.is_playing():
+                                    if answered:  # Double-check before playing
+                                        break
+                                    audio_source = discord.FFmpegPCMAudio(url)
+                                    voice_client.play(audio_source)
+                                    # Wait for audio to finish playing with very frequent checks
+                                    while voice_client.is_playing() and not answered:
+                                        await asyncio.sleep(0.01)  # Check every 10ms
+                                    # Stop immediately if answered during playback
+                                    if answered and voice_client.is_playing():
+                                        voice_client.stop()
+                                        break
+                                    # 0.5s delay before repeating (if not answered)
+                                    if not answered:
+                                        await asyncio.sleep(0.5)
+                                else:
+                                    await asyncio.sleep(0.01)  # Check every 10ms
+                        except Exception as e:
+                            print(f"Error in audio loop: {e}")
+
+                    # Start the audio loop task in the background
+                    audio_task = asyncio.create_task(loop_audio())
+            except Exception as e:
+                print(f"Error starting audio: {e}")
+            start_time = asyncio.get_event_loop().time()
+
+            def check(m):
+                return m.channel == channel and m.author != bot.user
+
+            while asyncio.get_event_loop().time() - start_time < 20 and not answered:
+                try:
+                    timeout = 20 - (asyncio.get_event_loop().time() - start_time)
+                    msg = await bot.wait_for("message", timeout=timeout, check=check)
+                    guess = msg.content.strip()
+                    uid = msg.author.id
+                    display = msg.author.display_name
+
+                    # Check if guess matches either artist or title
+                    if fuzzy_match(guess, artist, category, url) or fuzzy_match(guess, title, category, url):
+                        # Set flag first so loop stops immediately
+                        answered = True
+
+                        # Force stop voice client immediately
+                        if voice_client and voice_client.is_playing():
+                            voice_client.stop()
+
+                        # Give the loop a moment to see answered=True and stop
+                        await asyncio.sleep(0.05)
+
+                        # Cancel the audio loop task
+                        if audio_task and not audio_task.done():
+                            audio_task.cancel()
+                            try:
+                                await audio_task
+                            except asyncio.CancelledError:
+                                pass
+
+                        await msg.add_reaction("✅")
+                        user_data[uid] = (display, user_data.get(uid, (display, 0))[1] + 1)
+                        await safe_send(channel, f"\u200b\n✅🎉 **{display}** got it! **{artist.upper()} - {title.upper()}**\n\u200b")
+                        break
+
+                except asyncio.TimeoutError:
+                    break
+
+            # Stop the audio loop task
+            if audio_task and not audio_task.done():
+                audio_task.cancel()
+                try:
+                    await audio_task
+                except asyncio.CancelledError:
+                    pass
+
+            # Stop any playing audio
+            if voice_client and voice_client.is_playing():
+                voice_client.stop()
+
+            if not answered:
+                await safe_send(channel, f"\u200b\n❌😢 No one got it.\n\n📝🧠 Answer: **{artist.upper()} - {title.upper()}**\n\u200b")
+
+
+            await asyncio.sleep(5)
+
+        except Exception as e:
+            sentry_sdk.capture_exception(e)
+            print(traceback.format_exc())
+            await safe_send(channel, "\u200b\n⚠️ Error during round, skipping.\n\u200b")
+            continue
+
+        await asyncio.sleep(1)
+
+        round_num += 1
+
+        message = ""
+        sorted_users = sorted(user_data.items(), key=lambda x: x[1][1], reverse=True)
+
+        if num == 1:
+            if sorted_users:
+                audio_music_winner_id, (display_name, final_score) = sorted_users[0]
+                return audio_music_winner_id
+            else:
+                return None
+
+        if sorted_users:
+            if round_num > num:
+                message += "\u200b\n🏁🏆 Final Standings\n\u200b"
+            else:
+                message += "\u200b\n📊🏆 Current Standings\n\u200b"
+
+            for counter, (uid, (name, score)) in enumerate(sorted_users, start=1):
+                message += f"{counter}. **{name}**: {score}\n\u200b"
+
+        if message:
+            await safe_send(channel, message)
+        await asyncio.sleep(3)
+
+    await asyncio.sleep(2)
+    if sorted_users:
+        audio_music_winner_id, (display_name, final_score) = sorted_users[0]
+        await safe_send(channel, f"\u200b\n🎉🥇 The winner is **{display_name}**!\n\u200b")
+    else:
+        await safe_send(channel, f"\u200b\n👎😢 **No right answers**. I'm ashamed to call you Okrans.\n\u200b")
+
+    wf_winner = True
+    await asyncio.sleep(3)
+
+    # Disconnect from voice channel
+    try:
+        if voice_client and voice_client.is_connected():
+            await voice_client.disconnect()
+            print(f"✅ Disconnected from voice channel")
+    except Exception as e:
+        print(f"Error disconnecting from voice: {e}")
+
+    # Hide voice channel from everyone
+    try:
+        if voice_channel:
+            everyone_role = voice_channel.guild.get_role(EVERYONE_ROLE_ID)
+            if everyone_role:
+                # Get current permissions
+                existing_perms = voice_channel.overwrites_for(everyone_role)
+                # Set view_channel and connect to False, preserving other permissions
+                existing_perms.view_channel = False
+                existing_perms.connect = False
+                await voice_channel.set_permissions(everyone_role, overwrite=existing_perms)
+                print(f"✅ Hidden voice channel and removed connect permission from @everyone")
+    except Exception as e:
+        print(f"Error hiding voice channel: {e}")
+
+    if sorted_users:
+        return audio_music_winner_id
+    else:
+        return None
 
 
 
@@ -9728,7 +10145,7 @@ async def save_round_options_to_db():
     global time_between_questions, ghost_mode, num_crossword_clues
     global num_jeopardy_clues, num_mysterybox_clues, num_wof_clues
     global god_mode, yolo_mode, num_math_questions, num_stats_questions
-    global image_questions, marx_mode, blind_mode, sniper_mode
+    global image_questions, marx_mode, blind_mode, sniper_mode, blitz_mode
     global cloak_mode, cloaked_user
 
     try:
@@ -9748,6 +10165,7 @@ async def save_round_options_to_db():
             {"_id": "round_marx_mode", "value": int(marx_mode)},
             {"_id": "round_blind_mode", "value": int(blind_mode)},
             {"_id": "round_sniper_mode", "value": int(sniper_mode)},
+            {"_id": "round_blitz_mode", "value": int(blitz_mode)},
             {"_id": "round_cloak_mode", "value": int(cloak_mode)},
             {"_id": "round_cloaked_user", "value": cloaked_user or 0},  # Store 0 if None
         ]
@@ -9770,7 +10188,7 @@ async def load_round_options_from_db():
     global time_between_questions, ghost_mode, num_crossword_clues
     global num_jeopardy_clues, num_mysterybox_clues, num_wof_clues
     global god_mode, yolo_mode, num_math_questions, num_stats_questions
-    global image_questions, marx_mode, blind_mode, sniper_mode
+    global image_questions, marx_mode, blind_mode, sniper_mode, blitz_mode
     global cloak_mode, cloaked_user
 
     try:
@@ -9789,6 +10207,7 @@ async def load_round_options_from_db():
         marx_mode = bool(await get_int_param(db, "round_marx_mode", int(marx_mode_default)))
         blind_mode = bool(await get_int_param(db, "round_blind_mode", int(blind_mode_default)))
         sniper_mode = bool(await get_int_param(db, "round_sniper_mode", int(sniper_mode_default)))
+        blitz_mode = bool(await get_int_param(db, "round_blitz_mode", int(blitz_mode_default)))
         cloak_mode = bool(await get_int_param(db, "round_cloak_mode", int(cloak_mode_default)))
 
         cloaked_user_val = await get_int_param(db, "round_cloaked_user", 0)
@@ -10456,6 +10875,8 @@ async def select_wof_questions(winner, winner_id):
         message += f"{counter}.\u200b 🔍🔤 Spotlight\n"
         counter = counter + 1
         message += f"{counter}.\u200b 👂➡️ Hear Here 🎧 \n"
+        counter = counter + 1
+        message += f"{counter}.\u200b 🎶🤔 Who Says? 🎧 \n"
         message += f"99.\u200b 🌀🤯 CHAOS\n"
 
         message += f"\n⚙️ **Other Options**\n"
@@ -10667,6 +11088,11 @@ async def select_wof_questions(winner, winner_id):
         
         elif selected_wof_category == "42":
             await ask_soundfx_challenge(winner, winner_id, 5)
+            await asyncio.sleep(3)
+            return None
+        
+        elif selected_wof_category == "43":
+            await ask_audio_music_challenge(winner, winner_id, 5)
             await asyncio.sleep(3)
             return None
         
@@ -10932,10 +11358,11 @@ async def ask_wof_number(winner, winner_id):
         "40": "OkRACE",
         "41": "Spotlight",
         "42": "Hear Here",
+        "43": "Who Says?",
         "99": "CHAOS"
     }
     multiplayer_required = {k for k in unlocks if k not in {"5", "6", "7", "8", "9"}}
-    all_options = {str(i) for i in range(43)} | {"00", "x", "99"}
+    all_options = {str(i) for i in range(44)} | {"00", "x", "99"}
 
     start = asyncio.get_event_loop().time()
     selected_question = None
@@ -10952,7 +11379,7 @@ async def ask_wof_number(winner, winner_id):
             if content == "00":
                 await message.add_reaction("👍")
                 set_a = [str(i) for i in range(5)]
-                set_b = [str(i) for i in range(5, 43)] if len(round_responders) >= num_list_players else [str(i) for i in range(5, 10)]
+                set_b = [str(i) for i in range(5, 44)] if len(round_responders) >= num_list_players else [str(i) for i in range(5, 10)]
                 selected_question = random.choice(set_a if random.random() < 0.5 else set_b)
                 
                 # Store frequency data for random selection
@@ -10991,8 +11418,9 @@ async def ask_wof_number(winner, winner_id):
         pass
 
     # Fallback random selection
+    return "x"
     set_a = [str(i) for i in range(5)]
-    set_b = [str(i) for i in range(5, 43)] if len(round_responders) >= num_list_players else [str(i) for i in range(5, 10)]
+    set_b = [str(i) for i in range(5, 44)] if len(round_responders) >= num_list_players else [str(i) for i in range(5, 10)]
     selected_question = random.choice(set_a if random.random() < 0.5 else set_b)
     
     # Store frequency data for random selection
@@ -11556,7 +11984,7 @@ def generate_crossword_image(answer, prefill=0.5):
 
 
 async def process_round_options(round_winner, winner_points, round_winner_id):
-    global since_token, time_between_questions, time_between_questions_default, ghost_mode, since_token, categories_to_exclude, num_crossword_clues, num_jeopardy_clues, num_mysterybox_clues, num_wof_clues, god_mode, yolo_mode, magic_number, wf_winner, num_math_questions, num_stats_questions, image_questions, nice_okra, creep_okra, marx_mode, blind_mode, seductive_okra, joke_okra, sniper_mode, cloak_mode, cloaked_user, haiku_okra, trailer_okra, heist_okra, horoscope_okra, rap_okra, shakespeare_okra, pirate_okra, noir_okra, hype_okra, roast_okra
+    global since_token, time_between_questions, time_between_questions_default, ghost_mode, since_token, categories_to_exclude, num_crossword_clues, num_jeopardy_clues, num_mysterybox_clues, num_wof_clues, god_mode, yolo_mode, magic_number, wf_winner, num_math_questions, num_stats_questions, image_questions, nice_okra, creep_okra, marx_mode, blind_mode, seductive_okra, joke_okra, sniper_mode, blitz_mode, cloak_mode, cloaked_user, haiku_okra, trailer_okra, heist_okra, horoscope_okra, rap_okra, shakespeare_okra, pirate_okra, noir_okra, hype_okra, roast_okra
     time_between_questions = time_between_questions_default
     ghost_mode = ghost_mode_default
     categories_to_exclude.clear()
@@ -11588,6 +12016,7 @@ async def process_round_options(round_winner, winner_points, round_winner_id):
     marx_mode = marx_mode_default
     blind_mode = blind_mode_default
     sniper_mode = sniper_mode_default
+    blitz_mode = blitz_mode_default
     cloak_mode = cloak_mode_default
     cloaked_user = None
 
@@ -11610,7 +12039,8 @@ async def process_round_options(round_winner, winner_points, round_winner_id):
         "📷❌ **Blank** No image questions.\n"
         "👻🎃 **Ghost** Responses will vanish.\n"
         "🧢🎤 **Sniper**: Only first answers accepted\n"
-        "🫥🕶️ **Cloak**: Only your answers vanish\n"  
+        "🫥🕶️ **Cloak**: Only your answers vanish\n"
+        "🚀⚡  **Blitz**: First answer wins!\n"  
    
         "\n🕹️: Toggle mid-round with **#[command]**\n\n"
 
@@ -11635,7 +12065,7 @@ async def prompt_user_for_response(round_winner, winner_points, winner_coffees, 
     global since_token, time_between_questions, ghost_mode
     global num_jeopardy_clues, num_crossword_clues, num_mysterybox_clues, num_wof_clues
     global yolo_mode, god_mode, num_math_questions, num_stats_questions
-    global image_questions, marx_mode, blind_mode, sniper_mode, cloak_mode, cloaked_user
+    global image_questions, marx_mode, blind_mode, sniper_mode, blitz_mode, cloak_mode, cloaked_user
 
     def check(m):
         return m.channel == channel and m.author != bot.user and m.author.id == round_winner_id
@@ -11726,6 +12156,9 @@ async def prompt_user_for_response(round_winner, winner_points, winner_coffees, 
             if  "#cloak" not in message_content and await coffee_gate("cloak", True, f"\n🫥🕶️ **<@{round_winner_id}>** has put on their cloak.\n✍️⚫ Start messages with **.** to avoid deletion.", "Cloak"):
                 cloak_mode = True
                 cloaked_user = round_winner_id
+
+            if  "#blitz" not in message_content and await coffee_gate("blitz", True, f"\n🫥🕶️ **<@{round_winner_id}>** wants all the glory!", "Blitz"):
+                blitz_mode = True
             
 
         except asyncio.TimeoutError:
@@ -13396,6 +13829,9 @@ async def check_correct_responses_delete(question_ask_time, trivia_answer_list, 
                 fastest_correct_user = display_name
                 fastest_response_time = response_time
                 fastest_correct_message = message
+
+            if blitz_mode:
+                continue
             
     if emoji_mode == True and fastest_response_time is not None and blind_mode == False and marx_mode == False:
         try:
@@ -14934,6 +15370,7 @@ async def start_trivia():
             #await ask_search_challenge("TheOkraG",591861826690613248, 3)
             #await ask_lyric_challenge("TheOkraG",591861826690613248, 7)
             #await ask_soundfx_challenge("TheOkraG",591861826690613248, 7)
+            #await ask_audio_music_challenge("TheOkraG",591861826690613248, 7)
             
 
             round_responders.clear()  # Reset round responders
@@ -14951,6 +15388,9 @@ async def start_trivia():
 
             start_message = f"\u200b\n✨🧪 **NEW** from the **Okra Lab**! 🧪✨\n"
             
+            
+            start_message += f"\n🚀⚡ **Blitz** [Game Mode]"
+            start_message += f"\n🎶🤔 **Who Says?** [Audio Mini-Game]"
             start_message += f"\n👂➡️ **Hear Here** [Audio Mini-Game]"
 
             start_message += "\n\u200b"
@@ -14959,7 +15399,7 @@ async def start_trivia():
             await asyncio.sleep(5)
             
             
-            start_message = f"\u200b\n\u200b\n⏩ Starting a **{questions_per_round} question** round! ⏩\n\u200b\n\u200b"
+            start_message = f"\u200b\n\u200b\n⏩ Starting a **{questions_per_round} question** round! ⏩\n\u200b"
 
             start_message += f"\u200b\n🚩 Type **#flag** to report question\n"
             start_message += f"🗝️ Type **#perks** to unlock perks\n\u200b"
@@ -15117,7 +15557,7 @@ async def get_bump_url_from_s3():
 def print_round_settings():
     global time_between_questions, ghost_mode, god_mode, yolo_mode
     global image_questions, marx_mode
-    global blind_mode, sniper_mode, cloak_mode
+    global blind_mode, sniper_mode, cloak_mode, blitz_mode
 
     print(f"🛠️ Current Round Settings:")
     print(f"⏱️  Time Between Questions: {time_between_questions}")
@@ -15129,9 +15569,10 @@ def print_round_settings():
     print(f"🙈  Blind Mode: {blind_mode}")
     print(f"🧢🎤 Sniper Mode: {sniper_mode}")
     print(f"🫥🕶️ Cloak Mode: {cloak_mode}")
+    print(f"🚀⚡ Blitz Mode: {blitz_mode}")
 
 async def reset_round_options(reset_command, winner_id):
-    global time_between_questions, ghost_mode, god_mode, yolo_mode, mirror_mode, echo_mode, image_questions, marx_mode, blind_mode, zen_mode, sniper_mode, cloak_mode, cloaked_user
+    global time_between_questions, ghost_mode, god_mode, yolo_mode, mirror_mode, echo_mode, image_questions, marx_mode, blind_mode, zen_mode, sniper_mode, blitz_mode, cloak_mode, cloaked_user
 
     reset_success = False
     
@@ -15190,6 +15631,15 @@ async def reset_round_options(reset_command, winner_id):
             await safe_send(channel, content=f"\n🧢🎤 **{current_longest_round_streak["user"]}** says 'You only get one shot, do not miss your chance.'\n")
         else:
             await safe_send(channel, content=f"\n⚾👽 **{current_longest_round_streak["user"]}** says 'Swing away Merrill (and everyone else)!'\n")
+
+    if "blitz" in reset_command:
+        blitz_mode = not blitz_mode
+        reset_success = True
+        if blitz_mode == True:
+            await safe_send(channel, content=f"\n🧢🎤 **{current_longest_round_streak["user"]}** wants all the glory!\n")
+        else:
+            await safe_send(channel, content=f"\n⚾👽 **{current_longest_round_streak["user"]}** welcomes all winners to the podium.\n")
+
 
     if "cloak" in reset_command:
         cloak_mode = not cloak_mode
@@ -15509,6 +15959,8 @@ def get_minigame_name(number):
         "39": "XXXX",
         "40": "OkRACE",
         "41": "Spotlight",
+        "42": "Hear Here",
+        "43": "Who Says?",
         "99": "CHAOS",
         "x": "Skip Mini Game"
     }
