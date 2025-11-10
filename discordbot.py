@@ -9598,7 +9598,7 @@ async def get_random_city(winner):
                 messages=[
                     {
                         "role": "system",
-                        "content": f"You are OkraStrut fleeing from <@{winner_id}> like Carmen Sandiego. Use these facts:"
+                        "content": f"You are OkraStrut fleeing from {winner} like Carmen Sandiego. Use these facts:"
                     },
                     {"role": "user", "content": summary}
                 ],
@@ -15855,7 +15855,7 @@ async def on_message(message):
     if message.content.startswith("#") and (message.author.id == current_longest_round_streak["user_id"] or message.author.id == okrag_id) and message.channel.id == channel_id:
         if await get_coffees(message.author.id) > 0:
             reset_command = message.content[1:] 
-            if(await reset_round_options(reset_command, message.author)) == True:
+            if(await reset_round_options(reset_command, message.author.display_name)) == True:
                 if emoji_mode == True:
                     if message.author.id == okrag_id:
                         await message.add_reaction("🙇")
