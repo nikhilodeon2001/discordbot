@@ -5428,6 +5428,38 @@ async def ask_soundfx_challenge(winner, winner_id, num=7):
         sorted_users = sorted(user_data.items(), key=lambda x: x[1][1], reverse=True)
 
         if num == 1:
+            # Disconnect from voice channel
+            try:
+                if voice_client and voice_client.is_connected():
+                    await voice_client.disconnect()
+                    print(f"✅ Disconnected from voice channel")
+            except Exception as e:
+                print(f"Error disconnecting from voice: {e}")
+
+            # Kick all members from voice channel before hiding it
+            try:
+                if voice_channel:
+                    for member in voice_channel.members:
+                        await member.move_to(None)
+                    print(f"✅ Kicked all members from voice channel")
+            except Exception as e:
+                print(f"Error kicking members from voice channel: {e}")
+
+            # Hide voice channel from everyone
+            try:
+                if voice_channel:
+                    everyone_role = voice_channel.guild.get_role(EVERYONE_ROLE_ID)
+                    if everyone_role:
+                        # Get current permissions
+                        existing_perms = voice_channel.overwrites_for(everyone_role)
+                        # Set view_channel and connect to False, preserving other permissions
+                        existing_perms.view_channel = False
+                        existing_perms.connect = False
+                        await voice_channel.set_permissions(everyone_role, overwrite=existing_perms)
+                        print(f"✅ Hidden voice channel and removed connect permission from @everyone")
+            except Exception as e:
+                print(f"Error hiding voice channel: {e}")
+
             if sorted_users:
                 soundfx_winner_id, (display_name, final_score) = sorted_users[0]
                 return soundfx_winner_id
@@ -5464,6 +5496,15 @@ async def ask_soundfx_challenge(winner, winner_id, num=7):
             print(f"✅ Disconnected from voice channel")
     except Exception as e:
         print(f"Error disconnecting from voice: {e}")
+
+    # Kick all members from voice channel before hiding it
+    try:
+        if voice_channel:
+            for member in voice_channel.members:
+                await member.move_to(None)
+            print(f"✅ Kicked all members from voice channel")
+    except Exception as e:
+        print(f"Error kicking members from voice channel: {e}")
 
     # Hide voice channel from everyone
     try:
@@ -5503,7 +5544,7 @@ async def ask_audio_music_challenge(winner, winner_id, num=7):
     ]
     gif_url = random.choice(gifs)
 
-    await safe_send(channel, content="\u200b\n🎶🤔 **Who Says? 🎧**: Name the Artist or Song!\n\u200b", embed=discord.Embed().set_image(url=gif_url))
+    await safe_send(channel, content="\u200b\n🎶🤔 **Who Says? 🎧**: Do you remember this song?\n\u200b", embed=discord.Embed().set_image(url=gif_url))
 
     voice_channel = bot.get_channel(TRIVIA_VOICE_CHANNEL_ID)
     if voice_channel:
@@ -5556,16 +5597,24 @@ async def ask_audio_music_challenge(winner, winner_id, num=7):
 
     await asyncio.sleep(7)
 
-    # Ask winner for category selection
-    await safe_send(channel, f"\u200b\n🎵📊 **<@{winner_id}>**, choose a music category:\n\n**1.** Billboard Greatest All Time\n**2.** Billboard Greatest Alternative\n**3.** Billboard Greatest 80s Pop\n\u200b")
-
     selected_category = None
     # Map user choices to exact MongoDB category field values
     category_map = {
         1: "Billboard Greatest",
         2: "Billboard Alternative",
-        3: "Billboard 80s Pop"
+        3: "Billboard 80s Pop",
+        4: "Christmas Music"
     }
+    # Map user choices to emojis
+    emoji_map = {
+        1: "🏆",
+        2: "🎸",
+        3: "🕺",
+        4: "🎅"
+    }
+
+    # Ask winner for category selection
+    await safe_send(channel, f"\u200b\n🎵📊 **<@{winner_id}>**, choose a music category:\n\n**1.** {emoji_map[1]} Billboard Greatest All Time\n**2.** {emoji_map[2]} Billboard Greatest Alternative\n**3.** {emoji_map[3]} Billboard Greatest 80s Pop\n**4.** {emoji_map[4]} Christmas Music\n\u200b")
     start_time = asyncio.get_event_loop().time()
 
     def check_category(m):
@@ -5582,7 +5631,7 @@ async def ask_audio_music_challenge(winner, winner_id, num=7):
                 user_choice = int(numbers[0])
                 if user_choice in category_map:
                     selected_category = category_map[user_choice]
-                    await msg.add_reaction("🎵")
+                    await msg.add_reaction(emoji_map[user_choice])
                     break
         except asyncio.TimeoutError:
             break
@@ -5655,8 +5704,8 @@ async def ask_audio_music_challenge(winner, winner_id, num=7):
                 "segment_start_num": {"$lte": song_segment_pct},  # Segment must start before or at the chosen percentage
                 "segment_end_num": {"$gte": song_segment_pct}  # Segment must end after or at the chosen percentage
             }},
-            {"$sample": {"size": 100}},  # Sample larger pool to ensure enough unique artists
-            {"$group": {"_id": "$artist", "question_doc": {"$first": "$$ROOT"}}},  # Group by artist to ensure uniqueness
+            {"$sample": {"size": 100}},  # Sample larger pool to ensure enough unique artists and titles
+            {"$group": {"_id": {"artist": "$artist", "title": "$title"}, "question_doc": {"$first": "$$ROOT"}}},  # Group by artist and title to ensure uniqueness
             {"$replaceRoot": {"newRoot": "$question_doc"}},
             {"$sample": {"size": num}}  # Randomly sample num questions from the unique artists
         ]
@@ -5680,11 +5729,15 @@ async def ask_audio_music_challenge(winner, winner_id, num=7):
             url = generate_presigned_url(original_url)
             artist = q["artist"]
             title = q["title"]
-            category = "Audio Music"
+            sanitized_title = q["sanitized_title"]
+            category = q["category"]
 
             print(f"{artist.upper()} - {title.upper()}")
 
-            message = f"\u200b\n🎧➡️ Song **{round_num}** of **{num}**\n\n👂 Name the Artist or Title\n\u200b"
+            if category == "Christmas Music":
+                message = f"\u200b\n🎧➡️ Song **{round_num}** of **{num}**\n\n👂 Name the **TITLE**.\n\n🎅 **Christmas** will ***NOT*** be accepted!.\n\u200b"
+            else:
+                message = f"\u200b\n🎧➡️ Song **{round_num}** of **{num}**\n\n👂 Name the **Artist** or **Title**\n\u200b"
             await safe_send(channel, message)
 
             answered = False
@@ -5735,7 +5788,7 @@ async def ask_audio_music_challenge(winner, winner_id, num=7):
                     display = msg.author.display_name
 
                     # Check if guess matches either artist or title
-                    if fuzzy_match(guess, artist, category, url) or fuzzy_match(guess, title, category, url):
+                    if (category == "Christmas Music" and fuzzy_match(guess, sanitized_title, category, url)) or (category != "Christmas Music" and (fuzzy_match(guess, artist, category, url) or fuzzy_match(guess, title, category, url))):
                         # Set flag first so loop stops immediately
                         answered = True
 
@@ -5794,6 +5847,38 @@ async def ask_audio_music_challenge(winner, winner_id, num=7):
         sorted_users = sorted(user_data.items(), key=lambda x: x[1][1], reverse=True)
 
         if num == 1:
+            # Disconnect from voice channel
+            try:
+                if voice_client and voice_client.is_connected():
+                    await voice_client.disconnect()
+                    print(f"✅ Disconnected from voice channel")
+            except Exception as e:
+                print(f"Error disconnecting from voice: {e}")
+
+            # Kick all members from voice channel before hiding it
+            try:
+                if voice_channel:
+                    for member in voice_channel.members:
+                        await member.move_to(None)
+                    print(f"✅ Kicked all members from voice channel")
+            except Exception as e:
+                print(f"Error kicking members from voice channel: {e}")
+
+            # Hide voice channel from everyone
+            try:
+                if voice_channel:
+                    everyone_role = voice_channel.guild.get_role(EVERYONE_ROLE_ID)
+                    if everyone_role:
+                        # Get current permissions
+                        existing_perms = voice_channel.overwrites_for(everyone_role)
+                        # Set view_channel and connect to False, preserving other permissions
+                        existing_perms.view_channel = False
+                        existing_perms.connect = False
+                        await voice_channel.set_permissions(everyone_role, overwrite=existing_perms)
+                        print(f"✅ Hidden voice channel and removed connect permission from @everyone")
+            except Exception as e:
+                print(f"Error hiding voice channel: {e}")
+
             if sorted_users:
                 audio_music_winner_id, (display_name, final_score) = sorted_users[0]
                 return audio_music_winner_id
@@ -5830,6 +5915,15 @@ async def ask_audio_music_challenge(winner, winner_id, num=7):
             print(f"✅ Disconnected from voice channel")
     except Exception as e:
         print(f"Error disconnecting from voice: {e}")
+
+    # Kick all members from voice channel before hiding it
+    try:
+        if voice_channel:
+            for member in voice_channel.members:
+                await member.move_to(None)
+            print(f"✅ Kicked all members from voice channel")
+    except Exception as e:
+        print(f"Error kicking members from voice channel: {e}")
 
     # Hide voice channel from everyone
     try:
@@ -15374,8 +15468,8 @@ async def start_trivia():
             #await ask_chess_challenge("TheOkraG",591861826690613248, 3)
             #await ask_search_challenge("TheOkraG",591861826690613248, 3)
             #await ask_lyric_challenge("TheOkraG",591861826690613248, 7)
-            #await ask_soundfx_challenge("TheOkraG",591861826690613248, 7)
-            #await ask_audio_music_challenge("TheOkraG",591861826690613248, 7)
+            #await ask_soundfx_challenge("TheOkraG",591861826690613248, 2)
+            #await ask_audio_music_challenge("TheOkraG",591861826690613248, 1)
             
 
             round_responders.clear()  # Reset round responders
@@ -15393,10 +15487,7 @@ async def start_trivia():
 
             start_message = f"\u200b\n✨🧪 **NEW** from the **Okra Lab**! 🧪✨\n"
             
-            
-            start_message += f"\n🚀⚡ **Blitz** [Game Mode]"
-            start_message += f"\n🎶🤔 **Who Says?** [Audio Mini-Game]"
-            start_message += f"\n👂➡️ **Hear Here** [Audio Mini-Game]"
+            start_message += f"\n🎄🎅 **Who Says?** [Music Pack]"
 
             start_message += "\n\u200b"
 
@@ -15633,17 +15724,17 @@ async def reset_round_options(reset_command, winner_id):
         sniper_mode = not sniper_mode
         reset_success = True
         if sniper_mode == True:
-            await safe_send(channel, content=f"\n🧢🎤 **{current_longest_round_streak["user"]}** says 'You only get one shot, do not miss your chance.'\n")
+            await safe_send(channel, content=f"\n🧢🎤 **{winner_id}** says 'You only get one shot, do not miss your chance.'\n")
         else:
-            await safe_send(channel, content=f"\n⚾👽 **{current_longest_round_streak["user"]}** says 'Swing away Merrill (and everyone else)!'\n")
+            await safe_send(channel, content=f"\n⚾👽 **{winner_id}** says 'Swing away Merrill (and everyone else)!'\n")
 
     if "blitz" in reset_command:
         blitz_mode = not blitz_mode
         reset_success = True
         if blitz_mode == True:
-            await safe_send(channel, content=f"\n🥇🤩 **{current_longest_round_streak["user"]}** wants all the glory!\n")
+            await safe_send(channel, content=f"\n🥇🤩 **{winner_id}** wants all the glory!\n")
         else:
-            await safe_send(channel, content=f"\n🥇🙌 **{current_longest_round_streak["user"]}** welcomes all winners to the podium.\n")
+            await safe_send(channel, content=f"\n🥇🙌 **{winner_id}** welcomes all winners to the podium.\n")
 
 
     if "cloak" in reset_command:
@@ -15651,10 +15742,10 @@ async def reset_round_options(reset_command, winner_id):
         reset_success = True
         if cloak_mode == True:
             cloaked_user = winner_id
-            await safe_send(channel, content=f"\n🫥🕶️ **{current_longest_round_streak["user"]}** has put on their cloak.\n✍️⚫ Start messages with **.** to avoid deletion.\n")
+            await safe_send(channel, content=f"\n🫥🕶️ **{winner_id}** has put on their cloak.\n✍️⚫ Start messages with **.** to avoid deletion.\n")
         else:
             cloaked_user = None
-            await safe_send(channel, content=f"\n🌞✨ **{current_longest_round_streak["user"]}** has taken off their cloak.\n")
+            await safe_send(channel, content=f"\n🌞✨ **{winner_id}** has taken off their cloak.\n")
         
     if any(str(i) in reset_command for i in range(3, 16)):
         delay_value = int(''.join(filter(str.isdigit, reset_command)))
