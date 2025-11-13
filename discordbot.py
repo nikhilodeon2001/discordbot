@@ -5599,22 +5599,65 @@ async def ask_audio_music_challenge(winner, winner_id, num=7):
 
     selected_category = None
     # Map user choices to exact MongoDB category field values
+
+
     category_map = {
-        1: "Billboard Greatest",
-        2: "Billboard Alternative",
-        3: "Billboard 80s Pop",
-        4: "Christmas Music"
+        1: "All Time Hits",
+        2: "Alternative",
+        3: "Rock",
+        4: "80s Pop",
+        5: "80s R&B",
+        6: "80s Hits",
+        7: "90s Hits",
+        8: "90s Love Songs",
+        9: "Christmas",
+        10: "Variety"
     }
-    # Map user choices to emojis
+
     emoji_map = {
-        1: "🏆",
-        2: "🎸",
-        3: "🕺",
-        4: "🎅"
+        1: "🏆",  # All Time Hits
+        2: "🎸",  # Alternative
+        3: "🤘",  # Rock
+        4: "🕺",  # 80s Pop
+        5: "🎤",  # 80s R&B
+        6: "📼",  # 80s Hits
+        7: "💿",  # 90s Hits
+        8: "💘",  # 90s Love Songs
+        9: "🎄", # Christmas
+        10: "🌈"  # A Little Bit of Everything
+    }
+
+    # Map display names to MongoDB category field values
+    # Option 1 maps to a list to query both Billboard Greatest and Rolling Stone
+    category_to_mongo_map = {
+        "All Time Hits": ["Billboard Greatest", "rs_500"],
+        "Alternative": "Billboard Alternative",
+        "Rock": "bill_mainstream_rock",
+        "80s Pop": "Billboard 80s Pop",
+        "80s R&B": "bill_80s_rb",
+        "80s Hits": "bill_80s",
+        "90s Hits": "bill_90s",
+        "90s Love Songs": "bill_90s_love",
+        "Christmas": "Christmas Music",
+        "Variety": None  # No category filter for this option
     }
 
     # Ask winner for category selection
-    await safe_send(channel, f"\u200b\n🎵📊 **<@{winner_id}>**, choose a music category:\n\n**1.** {emoji_map[1]} Billboard Greatest All Time\n**2.** {emoji_map[2]} Billboard Greatest Alternative\n**3.** {emoji_map[3]} Billboard Greatest 80s Pop\n**4.** {emoji_map[4]} Christmas Music\n\u200b")
+    await safe_send(
+        channel,
+        f"\u200b\n🎵📊 **<@{winner_id}>**, choose a music category:\n\n"
+        f"**1.** {emoji_map[1]} {category_map[1]}\n"
+        f"**2.** {emoji_map[2]} {category_map[2]}\n"
+        f"**3.** {emoji_map[3]} {category_map[3]}\n"
+        f"**4.** {emoji_map[4]} {category_map[4]}\n"
+        f"**5.** {emoji_map[5]} {category_map[5]}\n"
+        f"**6.** {emoji_map[6]} {category_map[6]}\n"
+        f"**7.** {emoji_map[7]} {category_map[7]}\n"
+        f"**8.** {emoji_map[8]} {category_map[8]}\n"
+        f"**9.** {emoji_map[9]} {category_map[9]}\n"
+        f"**10.** {emoji_map[10]} {category_map[10]}\n\u200b"
+    )
+    
     start_time = asyncio.get_event_loop().time()
 
     def check_category(m):
@@ -5642,6 +5685,9 @@ async def ask_audio_music_challenge(winner, winner_id, num=7):
         # Default to Billboard Greatest All Time if no response
         selected_category = category_map[1]
         await safe_send(channel, f"\u200b\n😬⏱️ Time's up! We'll play from **{selected_category}**!\n\u200b")
+
+    # Translate display name to MongoDB category field value
+    mongo_category = category_to_mongo_map.get(selected_category)
 
     await asyncio.sleep(2)
 
@@ -5691,11 +5737,18 @@ async def ask_audio_music_challenge(winner, winner_id, num=7):
     try:
         recent_ids = await get_recent_question_ids_from_mongo("audio_music")
         collection = db["audio_music_questions"]
+
+        # Build the initial match filter
+        match_filter = {"_id": {"$nin": list(recent_ids)}}
+        if mongo_category is not None:
+            # If mongo_category is a list, use $in operator for multiple categories
+            if isinstance(mongo_category, list):
+                match_filter["category"] = {"$in": mongo_category}
+            else:
+                match_filter["category"] = mongo_category  # Filter by selected category
+
         pipeline = [
-            {"$match": {
-                "_id": {"$nin": list(recent_ids)},
-                "category": selected_category,  # Filter by selected category
-            }},
+            {"$match": match_filter},
             {"$addFields": {
                 "segment_start_num": {"$toDouble": "$segment_start_time_pct"},
                 "segment_end_num": {"$toDouble": "$segment_end_time_pct"}
@@ -15469,7 +15522,7 @@ async def start_trivia():
             #await ask_search_challenge("TheOkraG",591861826690613248, 3)
             #await ask_lyric_challenge("TheOkraG",591861826690613248, 7)
             #await ask_soundfx_challenge("TheOkraG",591861826690613248, 2)
-            #await ask_audio_music_challenge("TheOkraG",591861826690613248, 1)
+            #await ask_audio_music_challenge("TheOkraG",591861826690613248, 7)
             
 
             round_responders.clear()  # Reset round responders
@@ -15487,8 +15540,13 @@ async def start_trivia():
 
             start_message = f"\u200b\n✨🧪 **NEW** from the **Okra Lab**! 🧪✨\n"
             
-            start_message += f"\n🎄🎅 **Who Says?** [Music Pack]"
-
+            start_message += f"\n🎶 **Who Says?** [All Time Hits]"
+            start_message += f"\n🤘 **Who Says?** [Rock]"
+            start_message += f"\n🎤 **Who Says?** [80s R&B]"
+            start_message += f"\n📼 **Who Says?** [80s Hits]"
+            start_message += f"\n💿 **Who Says?** [90s Hits]"
+            start_message += f"\n💘 **Who Says?** [90s Love Songs]"
+        
             start_message += "\n\u200b"
 
             await safe_send(channel, start_message)
