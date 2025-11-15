@@ -12200,8 +12200,7 @@ async def process_round_options(round_winner, winner_points, round_winner_id):
         "🫥🕶️ **Cloak**: Only your answers vanish\n"
         "🚀⚡  **Blitz**: First answer wins\n"
         "🤓🔍 **Poindexter**: Stricter answers\n"
-        "⛳📉 **Golf**: Lowest score wins\n" 
-
+        #"⛳📉 **Golf**: Lowest score wins\n" 
         "\n🕹️: Toggle mid-round with **#[command]**\n\n"
 
 
@@ -15577,7 +15576,7 @@ async def start_trivia():
 
             start_message = f"\u200b\n✨🧪 **NEW** from the **Okra Lab**! 🧪✨\n"
             
-            start_message += f"\n⛳📉 **Golf** [Game Mode]"
+            #start_message += f"\n⛳📉 **Golf** [Game Mode]"
             start_message += f"\n🤓🔍 **Poindexter** [Game Mode]"
         
             start_message += "\n\u200b"
