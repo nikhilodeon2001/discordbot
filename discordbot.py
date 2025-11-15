@@ -15838,12 +15838,7 @@ async def reset_round_options(reset_command, winner_id):
             await safe_send(channel, content=f"\n😵‍💫🍃 **{winner_id}** says chillax. Close enough.\n")
 
     if "golf" in reset_command:
-        golf_mode = not golf_mode
-        reset_success = True
-        if golf_mode == True:
-            await safe_send(channel, content=f"\n⛳📉 **{winner_id}** strives for the bottom!\n")
-        else:
-            await safe_send(channel, content=f"\n🏔️📈 **{winner_id}** strives for the top!\n")
+        await safe_send(channel, content=f"\n⛳💔 Sorry **{winner_id}**, golf cannot be toggled mid-game.\n")
 
     if "cloak" in reset_command:
         cloak_mode = not cloak_mode
