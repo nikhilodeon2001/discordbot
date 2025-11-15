@@ -12200,7 +12200,7 @@ async def process_round_options(round_winner, winner_points, round_winner_id):
         "🧢🎤 **Sniper**: One answer per player\n"
         "🚀⚡  **Blitz**: One winner per question\n"
         "🤓🔍 **Poindexter**: Stricter answers\n"
-        "⛳📉 **Golf**: Lowest score wins\n" 
+        "⛳📉 **Golf**: Slowest answers win\n" 
 
         "\n🕹️: Toggle mid-round with **#[command]**"
         "\n⛳: Golf excluded\n\n"
@@ -13669,9 +13669,14 @@ async def ask_question(trivia_category, trivia_question, trivia_url, trivia_answ
     return response_time, new_question, new_solution
 
 
-def calculate_points(response_time):  
-    points = max(1000 - int(response_time * (995 / question_time)), 5)
-    points = round(points / 5) * 5  
+def calculate_points(response_time):
+    if golf_mode:
+        # In golf mode, points increase from 5 to 1000 as response_time increases
+        points = min(5 + int(response_time * (995 / question_time)), 1000)
+    else:
+        # Normal mode: points decrease from 1000 to 5 as response_time increases
+        points = max(1000 - int(response_time * (995 / question_time)), 5)
+    points = round(points / 5) * 5
     return points
     
 
@@ -14004,12 +14009,21 @@ async def check_correct_responses_delete(question_ask_time, trivia_answer_list, 
 
             correct_responses.append((display_name, points, response_time, message_content, sender_id, message))
     
-            # Check if this is the fastest correct response so far
-            if fastest_correct_user is None or response_time < fastest_response_time:
-                fastest_correct_user_id = sender_id
-                fastest_correct_user = display_name
-                fastest_response_time = response_time
-                fastest_correct_message = message
+            # Check if this is the fastest/slowest correct response so far
+            if golf_mode:
+                # In golf mode, track the slowest responder
+                if fastest_correct_user is None or response_time > fastest_response_time:
+                    fastest_correct_user_id = sender_id
+                    fastest_correct_user = display_name
+                    fastest_response_time = response_time
+                    fastest_correct_message = message
+            else:
+                # Normal mode: track the fastest responder
+                if fastest_correct_user is None or response_time < fastest_response_time:
+                    fastest_correct_user_id = sender_id
+                    fastest_correct_user = display_name
+                    fastest_response_time = response_time
+                    fastest_correct_message = message
 
             if blitz_mode:
                 first_correct_found = True
@@ -14054,7 +14068,11 @@ async def check_correct_responses_delete(question_ask_time, trivia_answer_list, 
     # Construct a single message for all the responses
     message = ""
     if blind_mode == False:
-        message = f"\u200b\n✅ **Answer** ({len(question_responders)}) ✅\n{trivia_answer}\n\u200b"
+        if golf_mode:
+            message = f"\u200b\n⛳ **Answer** ({len(question_responders)}) ⛳\n{trivia_answer}\n\u200b"
+        else:
+            message = f"\u200b\n✅ **Answer** ({len(question_responders)}) ✅\n{trivia_answer}\n\u200b"
+            
             
     # Notify the chat
     if correct_responses and marx_mode == False:    
@@ -14253,10 +14271,12 @@ async def determine_round_winner():
         return None, None, None
 
     # Find the max score
-    if golf_mode:
-        target_score = min(user_data["score"] for user_data in scoreboard.values())
-    else:
-        target_score = max(user_data["score"] for user_data in scoreboard.values())
+    #if golf_mode:
+    #    target_score = min(user_data["score"] for user_data in scoreboard.values())
+    #else:
+    #    target_score = max(user_data["score"] for user_data in scoreboard.values())
+    
+    target_score = max(user_data["score"] for user_data in scoreboard.values())
 
     # Find all users with the max score
     potential_winners = [user_id for user_id, user_data in scoreboard.items() if user_data["score"] == target_score]
@@ -14275,7 +14295,7 @@ async def show_standings():
     """Show the current standings after each question."""
     if scoreboard:
         # Sort by score descending
-        standings = sorted(scoreboard.items(), key=lambda x: x[1]["score"], reverse=not golf_mode)
+        standings = sorted(scoreboard.items(), key=lambda x: x[1]["score"], reverse=True)
         if golf_mode:
             standing_message = f"\n⛳📉 **Scoreboard** ({len(round_responders)}) 📉⛳\n\u200b"
         else:
@@ -15572,7 +15592,7 @@ async def start_trivia():
                 await safe_send(channel, content="\u200b\n\u200b\n🎉🤹‍♂️ **Live Trivia & Games for Discord!**\n\u200b", embed=discord.Embed().set_image(url=selected_gif_url))
 
             # Wait for a player to be present before starting
-            await safe_send(channel, "\u200b\n👥 Send **any message** to start! 👥\n\u200b")
+            await safe_send(channel, "\u200b\n👥 ***Send any message to start!*** 👥\n\u200b")
 
             def check(m):
                 return m.author.id != bot.user.id and m.channel.id == channel.id
@@ -15584,8 +15604,7 @@ async def start_trivia():
 
             start_message = f"\u200b\n✨🧪 **NEW** from the **Okra Lab**! 🧪✨\n"
             
-            start_message += f"\n⛳📉 **Golf** [Game Mode]"
-            start_message += f"\n🤓🔍 **Poindexter** [Game Mode]"
+            start_message += f"\n⛳📉 **Golf** [Improved Game Mode]"
         
             start_message += "\n\u200b"
 
