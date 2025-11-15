@@ -15533,10 +15533,19 @@ async def start_trivia():
                 print(f"Magic number is {magic_number}")
                 send_magic_image(magic_number)
             elif image_questions == True:
-                selected_gif_url = await select_intro_image_url()         
+                selected_gif_url = await select_intro_image_url()
                 await safe_send(channel, content="\u200b\n\u200b\n🎉🤹‍♂️ **Live Trivia & Games for Discord!**\n\u200b", embed=discord.Embed().set_image(url=selected_gif_url))
 
-            await asyncio.sleep(5)
+            # Wait for a player to be present before starting
+            await safe_send(channel, "\u200b\n👥 **Send any message to start the game!** 👥\n\u200b")
+
+            def check(m):
+                return m.author.id != bot.user.id and m.channel.id == channel.id
+
+            msg = await bot.wait_for('message', check=check)
+            await msg.add_reaction("🥒")
+
+            #await asyncio.sleep(5)
 
             start_message = f"\u200b\n✨🧪 **NEW** from the **Okra Lab**! 🧪✨\n"
             
