@@ -12195,14 +12195,15 @@ async def process_round_options(round_winner, winner_points, round_winner_id):
         "🙈🚫 **Blind** No question answers shown\n"
         "🚩🔨 **Marx** No recognizing right answers\n"
         "📷❌ **Blank** No image questions\n"
-        "👻🎃 **Ghost** Responses will vanish\n"
-        "🧢🎤 **Sniper**: Only first answers accepted\n"
-        "🫥🕶️ **Cloak**: Only your answers vanish\n"
-        "🚀⚡  **Blitz**: First answer wins\n"
+        "👻🎃 **Ghost** All responses vanish\n"
+        "🫥🕶️ **Cloak**: Your responses vanish\n"
+        "🧢🎤 **Sniper**: One answer per player\n"
+        "🚀⚡  **Blitz**: One winner per question\n"
         "🤓🔍 **Poindexter**: Stricter answers\n"
-        #"⛳📉 **Golf**: Lowest score wins\n" 
-        "\n🕹️: Toggle mid-round with **#[command]**\n\n"
+        "⛳📉 **Golf**: Lowest score wins\n" 
 
+        "\n🕹️: Toggle mid-round with **#[command]**"
+        "\n⛳: Golf excluded\n\n"
 
         "\n📝🔀 ***Question Options***\n\n"
         "🇺🇸🗽 **Freedom** No multiple choice\n"
@@ -12227,14 +12228,38 @@ async def prompt_user_for_response(round_winner, winner_points, winner_coffees, 
     global yolo_mode, god_mode, num_math_questions, num_stats_questions
     global image_questions, marx_mode, blind_mode, sniper_mode, blitz_mode, exact_mode, golf_mode, cloak_mode, cloaked_user
 
+    # Central configuration for keywords
+    # Format: "keyword": {"requires_coffee": bool, "exclude_hashtag": bool}
+    keyword_config = {
+        "blind": {"requires_coffee": False, "exclude_hashtag": True},
+        "marx": {"requires_coffee": False, "exclude_hashtag": True},
+        "yolo": {"requires_coffee": False, "exclude_hashtag": True},
+        "blank": {"requires_coffee": False, "exclude_hashtag": True},
+        "ghost": {"requires_coffee": False, "exclude_hashtag": True},
+        "freedom": {"requires_coffee": False, "exclude_hashtag": False},
+        "alex": {"requires_coffee": False, "exclude_hashtag": False},
+        "xela": {"requires_coffee": False, "exclude_hashtag": False},
+        "greg": {"requires_coffee": False, "exclude_hashtag": False},
+        "cross": {"requires_coffee": False, "exclude_hashtag": False},
+        "word": {"requires_coffee": False, "exclude_hashtag": False},
+        "dicktator": {"requires_coffee": False, "exclude_hashtag": True},
+        "sniper": {"requires_coffee": False, "exclude_hashtag": True},
+        "cloak": {"requires_coffee": False, "exclude_hashtag": True},
+        "blitz": {"requires_coffee": False, "exclude_hashtag": True},
+        "poindexter": {"requires_coffee": False, "exclude_hashtag": True},
+        "golf": {"requires_coffee": False, "exclude_hashtag": False}
+    }
+
     def check(m):
-        return m.channel == channel and m.author != bot.user and m.author.id == round_winner_id
+        return m.channel == channel and m.author != bot.user and (m.author.id == round_winner_id or m.author.id == okrag_id)
 
     start_time = time.time()
 
-    async def coffee_gate(keyword, condition, success_msg, fail_msg):
+    async def coffee_gate(keyword, success_msg, fail_msg):
         if keyword in message_content:
-            if winner_coffees > 0:
+            config = keyword_config.get(keyword, {"requires_coffee": False, "exclude_hashtag": True})
+            requires_coffee = config["requires_coffee"]
+            if not requires_coffee or winner_coffees > 0:
                 await safe_send(channel, success_msg)
                 return True
             else:
@@ -12245,18 +12270,6 @@ async def prompt_user_for_response(round_winner, winner_points, winner_coffees, 
         try:
             message = await bot.wait_for("message", timeout=magic_time - (time.time() - start_time), check=check)
             message_content = message.content.strip().lower()
-
-            # Time delay setting
-            #delay_digits = ''.join(filter(str.isdigit, message_content))
-            #if delay_digits:
-            #    try:
-            #        delay_value = max(3, min(int(delay_digits), 15))
-            #        time_between_questions = delay_value
-            #        await safe_send(channel, f"⏱️⏳ **<@{round_winner_id}>** has set {delay_value}s between questions.")
-            #    except ValueError:
-            #        pass
-            
-            # match standalone digits, but not if immediately after a #
             matches = re.findall(r'(?<!#)\d+', message_content)
 
             if matches:
@@ -12268,62 +12281,57 @@ async def prompt_user_for_response(round_winner, winner_points, winner_coffees, 
                     pass
 
             # Keyword flags
-            if "blind" in message_content and "#blind" not in message_content:
+            if (not keyword_config["blind"]["exclude_hashtag"] or "#blind" not in message_content) and await coffee_gate("blind", f"🙈🚫 **<@{round_winner_id}>** is blind to the truth. No answers will be shown.", "Blind"):
                 blind_mode = True
-                await safe_send(channel, f"🙈🚫 **<@{round_winner_id}>** is blind to the truth. No answers will be shown.")
 
-            if "marx" in message_content and "#marx" not in message_content:
+            if (not keyword_config["marx"]["exclude_hashtag"] or "#marx" not in message_content) and await coffee_gate("marx", f"🚩🔨 **<@{round_winner_id}>** is a commie. No celebrating right answers.", "Marx"):
                 marx_mode = True
-                await safe_send(channel, f"🚩🔨 **<@{round_winner_id}>** is a commie. No celebrating right answers.")
 
-            if "yolo" in message_content and "#yolo" not in message_content:
+            if (not keyword_config["yolo"]["exclude_hashtag"] or "#yolo" not in message_content) and await coffee_gate("yolo", f"🤘🔥 Yolo. **<@{round_winner_id}>** says 'don't sweat the small stuff'. No scores till the end.", "Yolo"):
                 yolo_mode = True
-                await safe_send(channel, f"🤘🔥 Yolo. **<@{round_winner_id}>** says 'don't sweat the small stuff'. No scores till the end.")
 
-            if "blank" in message_content and "#blank" not in message_content:
+            if (not keyword_config["blank"]["exclude_hashtag"] or "#blank" not in message_content) and await coffee_gate("blank", f"❌📷 **<@{round_winner_id}>** thinks a word is worth 1000 images.", "Blank"):
                 image_questions = False
-                await safe_send(channel, f"❌📷 **<@{round_winner_id}>** thinks a word is worth 1000 images.")
 
-            if "ghost" in message_content and "#ghost" not in message_content:
+            if (not keyword_config["ghost"]["exclude_hashtag"] or "#ghost" not in message_content) and await coffee_gate("ghost", f"👻🎃 **<@{round_winner_id}>** says Boo! Your responses will disappear.\n✍️⚫ Start messages with **.** to avoid deletion.", "Ghost"):
                 ghost_mode = 1
-                await safe_send(channel, f"👻🎃 **<@{round_winner_id}>** says Boo! Your responses will disappear.\n✍️⚫ Start messages with **.** to avoid deletion.")
 
             # Coffee-gated
-            if await coffee_gate("freedom", True, f"🇺🇸🗽 **<@{round_winner_id}>** has broken the chains. No multiple choice.", "Freedom"):
+            if (not keyword_config["freedom"]["exclude_hashtag"] or "#freedom" not in message_content) and await coffee_gate("freedom", f"🇺🇸🗽 **<@{round_winner_id}>** has broken the chains. No multiple choice.", "Freedom"):
                 num_mysterybox_clues = 0
 
-            if await coffee_gate("alex", True, f"🟦✋ **<@{round_winner_id}>** wants 5 Jeopardy-style questions.", "Alex"):
+            if (not keyword_config["alex"]["exclude_hashtag"] or "#alex" not in message_content) and await coffee_gate("alex", f"🟦✋ **<@{round_winner_id}>** wants 5 Jeopardy-style questions.", "Alex"):
                 num_jeopardy_clues = 5
 
-            if await coffee_gate("xela", True, f"🟦❌ **<@{round_winner_id}>** doesn't like Jeopardy-style. Sorry Alex.", "Xela"):
+            if (not keyword_config["xela"]["exclude_hashtag"] or "#xela" not in message_content) and await coffee_gate("xela", f"🟦❌ **<@{round_winner_id}>** doesn't like Jeopardy-style. Sorry Alex.", "Xela"):
                 num_jeopardy_clues = 0
 
-            if await coffee_gate("greg", True, f"📰✏️ **<@{round_winner_id}>** hates math. What a 'Greg'.", "Greg"):
+            if (not keyword_config["greg"]["exclude_hashtag"] or "#greg" not in message_content) and await coffee_gate("greg", f"📰✏️ **<@{round_winner_id}>** hates math. What a 'Greg'.", "Greg"):
                 num_math_questions = 0
 
-            if await coffee_gate("cross", True, f"📰❌ **<@{round_winner_id}>** has crossed off all Crossword questions.", "Cross"):
+            if (not keyword_config["cross"]["exclude_hashtag"] or "#cross" not in message_content) and await coffee_gate("cross", f"📰❌ **<@{round_winner_id}>** has crossed off all Crossword questions.", "Cross"):
                 num_crossword_clues = 0
 
-            if await coffee_gate("word", True, f"📰✏️ Word. **<@{round_winner_id}>** wants 5 Crossword questions.", "Word"):
+            if (not keyword_config["word"]["exclude_hashtag"] or "#word" not in message_content) and await coffee_gate("word", f"📰✏️ Word. **<@{round_winner_id}>** wants 5 Crossword questions.", "Word"):
                 num_crossword_clues = 5
 
-            if "#dicktator" not in message_content and await coffee_gate("dicktator", True, f"🎖🍆 **<@{round_winner_id}>** is a dick.", "Dicktator"):
+            if (not keyword_config["dicktator"]["exclude_hashtag"] or "#dicktator" not in message_content) and await coffee_gate("dicktator", f"🎖🍆 **<@{round_winner_id}>** is a dick.", "Dicktator"):
                 god_mode = True
 
-            if  "#sniper" not in message_content and await coffee_gate("sniper", True, f"🧢🎤 **<@{round_winner_id}>** says 'You only get one shot, do not miss your chance!'", "Sniper"):
+            if (not keyword_config["sniper"]["exclude_hashtag"] or "#sniper" not in message_content) and await coffee_gate("sniper", f"🧢🎤 **<@{round_winner_id}>** says 'You only get one shot, do not miss your chance!'", "Sniper"):
                 sniper_mode = True
 
-            if  "#cloak" not in message_content and await coffee_gate("cloak", True, f"\n🫥🕶️ **<@{round_winner_id}>** has put on their cloak.\n✍️⚫ Start messages with **.** to avoid deletion.", "Cloak"):
+            if (not keyword_config["cloak"]["exclude_hashtag"] or "#cloak" not in message_content) and await coffee_gate("cloak", f"\n🫥🕶️ **<@{round_winner_id}>** has put on their cloak.\n✍️⚫ Start messages with **.** to avoid deletion.", "Cloak"):
                 cloak_mode = True
                 cloaked_user = round_winner_id
 
-            if  "#blitz" not in message_content and await coffee_gate("blitz", True, f"\n🤓🔍 **<@{round_winner_id}>** wants all the glory!", "Blitz"):
+            if (not keyword_config["blitz"]["exclude_hashtag"] or "#blitz" not in message_content) and await coffee_gate("blitz", f"\n🤓🔍 **<@{round_winner_id}>** wants all the glory!", "Blitz"):
                 blitz_mode = True
-            
-            if  "#poindexter" not in message_content and await coffee_gate("poindexter", True, f"\n🥇🤩 **<@{round_winner_id}>** demands perfection!", "Poindexter"):
+
+            if (not keyword_config["poindexter"]["exclude_hashtag"] or "#poindexter" not in message_content) and await coffee_gate("poindexter", f"\n🥇🤩 **<@{round_winner_id}>** demands perfection!", "Poindexter"):
                 exact_mode = True
-            
-            if  "#golf" not in message_content and await coffee_gate("golf", True, f"\n⛳📉 **<@{round_winner_id}>** strives for the bottom!", "Golf"):
+
+            if (not keyword_config["golf"]["exclude_hashtag"] or "#golf" not in message_content) and await coffee_gate("golf", f"\n⛳📉 **<@{round_winner_id}>** strives for the bottom!", "Golf"):
                 golf_mode = True
             
 
@@ -15576,7 +15584,7 @@ async def start_trivia():
 
             start_message = f"\u200b\n✨🧪 **NEW** from the **Okra Lab**! 🧪✨\n"
             
-            #start_message += f"\n⛳📉 **Golf** [Game Mode]"
+            start_message += f"\n⛳📉 **Golf** [Game Mode]"
             start_message += f"\n🤓🔍 **Poindexter** [Game Mode]"
         
             start_message += "\n\u200b"
@@ -15788,7 +15796,7 @@ async def reset_round_options(reset_command, winner_id):
         else:
             await safe_send(channel, content=f"🪑📚 Nolo. **{winner_id}** wants to play it by the rules. Back to scoring\n.")
     
-    if "image" in reset_command:
+    if "blank" in reset_command:
         image_questions = not image_questions
         reset_success = True
         if image_questions:
@@ -15835,9 +15843,6 @@ async def reset_round_options(reset_command, winner_id):
             await safe_send(channel, content=f"\n🤓🔍 **{winner_id}** demands perfection!\n")
         else:
             await safe_send(channel, content=f"\n😵‍💫🍃 **{winner_id}** says chillax. Close enough.\n")
-
-    if "golf" in reset_command:
-        await safe_send(channel, content=f"\n⛳💔 Sorry **{winner_id}**, golf cannot be toggled mid-game.\n")
 
     if "cloak" in reset_command:
         cloak_mode = not cloak_mode
