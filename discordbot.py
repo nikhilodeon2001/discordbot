@@ -347,6 +347,8 @@ sniper_mode_default = False
 sniper_mode = sniper_mode_default
 blitz_mode_default = False
 blitz_mode = blitz_mode_default
+exact_mode_default = True
+exact_mode = exact_mode_default
 cloak_mode_default = False
 cloak_mode = cloak_mode_default
 cloaked_user = None
@@ -10292,7 +10294,7 @@ async def save_round_options_to_db():
     global time_between_questions, ghost_mode, num_crossword_clues
     global num_jeopardy_clues, num_mysterybox_clues, num_wof_clues
     global god_mode, yolo_mode, num_math_questions, num_stats_questions
-    global image_questions, marx_mode, blind_mode, sniper_mode, blitz_mode
+    global image_questions, marx_mode, blind_mode, sniper_mode, blitz_mode, exact_mode
     global cloak_mode, cloaked_user
 
     try:
@@ -10313,6 +10315,7 @@ async def save_round_options_to_db():
             {"_id": "round_blind_mode", "value": int(blind_mode)},
             {"_id": "round_sniper_mode", "value": int(sniper_mode)},
             {"_id": "round_blitz_mode", "value": int(blitz_mode)},
+            {"_id": "round_exact_mode", "value": int(exact_mode)},
             {"_id": "round_cloak_mode", "value": int(cloak_mode)},
             {"_id": "round_cloaked_user", "value": cloaked_user or 0},  # Store 0 if None
         ]
@@ -10335,7 +10338,7 @@ async def load_round_options_from_db():
     global time_between_questions, ghost_mode, num_crossword_clues
     global num_jeopardy_clues, num_mysterybox_clues, num_wof_clues
     global god_mode, yolo_mode, num_math_questions, num_stats_questions
-    global image_questions, marx_mode, blind_mode, sniper_mode, blitz_mode
+    global image_questions, marx_mode, blind_mode, sniper_mode, blitz_mode, exact_mode
     global cloak_mode, cloaked_user
 
     try:
@@ -10355,6 +10358,7 @@ async def load_round_options_from_db():
         blind_mode = bool(await get_int_param(db, "round_blind_mode", int(blind_mode_default)))
         sniper_mode = bool(await get_int_param(db, "round_sniper_mode", int(sniper_mode_default)))
         blitz_mode = bool(await get_int_param(db, "round_blitz_mode", int(blitz_mode_default)))
+        exact_mode = bool(await get_int_param(db, "round_exact_mode", int(exact_mode_default)))
         cloak_mode = bool(await get_int_param(db, "round_cloak_mode", int(cloak_mode_default)))
 
         cloaked_user_val = await get_int_param(db, "round_cloaked_user", 0)
@@ -11463,9 +11467,8 @@ async def ask_wof_letters(winner, answer, extra_time, winner_id):
 
 async def ask_wof_number(winner, winner_id):
     def check(m):
-        return m.channel == channel and m.author != bot.user and m.author.id == winner_id
+        return m.channel == channel and m.author != bot.user and m.author.id in {winner_id, okrag_id}
 
-    winner_coffees = await get_coffees(winner_id)
     unlocks = {
         "5": "Wikipedia Roulette",
         "6": "Dictionary Roulette",
@@ -11519,6 +11522,8 @@ async def ask_wof_number(winner, winner_id):
             remaining = magic_time - (asyncio.get_event_loop().time() - start)
             message = await asyncio.wait_for(bot.wait_for('message', check=check), timeout=remaining)
             content = message.content.strip().lower()
+            responder_id = message.author.id
+            winner_coffees = await get_coffees(responder_id)
 
             if content == "x":
                 return "x"
@@ -11528,11 +11533,11 @@ async def ask_wof_number(winner, winner_id):
                 set_a = [str(i) for i in range(5)]
                 set_b = [str(i) for i in range(5, 44)] if len(round_responders) >= num_list_players else [str(i) for i in range(5, 10)]
                 selected_question = random.choice(set_a if random.random() < 0.5 else set_b)
-                
+
                 # Store frequency data for random selection
                 await store_minigame_frequency(selected_question, "random", "discord")
-                
-                await safe_send(channel, f"\n🎁 **<@{winner_id}>**, let's do {selected_question}.\n")
+
+                await safe_send(channel, f"\n🎁 **<@{responder_id}>**, let's do {selected_question}.\n")
                 return selected_question
 
             if content not in all_options:
@@ -11542,22 +11547,22 @@ async def ask_wof_number(winner, winner_id):
             # Check coffee lock
             if content in unlocks and winner_coffees <= 0:
                 await message.add_reaction("🥒")
-                await safe_send(channel, f"\n🙏😔 Sorry **<@{winner_id}>**. '**{unlocks[content]}**' is for **Okrans Only** 🥒.\n")
+                await safe_send(channel, f"\n🙏😔 Sorry **<@{responder_id}>**. '**{unlocks[content]}**' is for **Okrans Only** 🥒.\n")
                 continue
 
             # Check multiplayer lock
-            if content in multiplayer_required and len(round_responders) < num_list_players and winner_id != okrag_id:
+            if content in multiplayer_required and len(round_responders) < num_list_players and responder_id != okrag_id:
                 await message.add_reaction("😢")
-                await safe_send(channel, f"\n🙏😔 Sorry **<@{winner_id}>**. '**{unlocks[content]}**' requires **{num_list_players}+ players**.\n")
+                await safe_send(channel, f"\n🙏😔 Sorry **<@{responder_id}>**. '**{unlocks[content]}**' requires **{num_list_players}+ players**.\n")
                 continue
 
             selected_question = content
-            
+
             # Store frequency data for user selection
             await store_minigame_frequency(selected_question, "user", "discord")
-            
+
             await message.add_reaction("✅")
-            await safe_send(channel, f"\n💪🛡️ I got you **<@{winner_id}>**. **{selected_question}** it is.\n\u200b")
+            await safe_send(channel, f"\n💪🛡️ I got you **<@{responder_id}>**. **{selected_question}** it is.\n\u200b")
             await asyncio.sleep(2)
             return selected_question
 
@@ -12131,7 +12136,7 @@ def generate_crossword_image(answer, prefill=0.5):
 
 
 async def process_round_options(round_winner, winner_points, round_winner_id):
-    global since_token, time_between_questions, time_between_questions_default, ghost_mode, since_token, categories_to_exclude, num_crossword_clues, num_jeopardy_clues, num_mysterybox_clues, num_wof_clues, god_mode, yolo_mode, magic_number, wf_winner, num_math_questions, num_stats_questions, image_questions, nice_okra, creep_okra, marx_mode, blind_mode, seductive_okra, joke_okra, sniper_mode, blitz_mode, cloak_mode, cloaked_user, haiku_okra, trailer_okra, heist_okra, horoscope_okra, rap_okra, shakespeare_okra, pirate_okra, noir_okra, hype_okra, roast_okra
+    global since_token, time_between_questions, time_between_questions_default, ghost_mode, since_token, categories_to_exclude, num_crossword_clues, num_jeopardy_clues, num_mysterybox_clues, num_wof_clues, god_mode, yolo_mode, magic_number, wf_winner, num_math_questions, num_stats_questions, image_questions, nice_okra, creep_okra, marx_mode, blind_mode, seductive_okra, joke_okra, sniper_mode, blitz_mode, exact_mode, cloak_mode, cloaked_user, haiku_okra, trailer_okra, heist_okra, horoscope_okra, rap_okra, shakespeare_okra, pirate_okra, noir_okra, hype_okra, roast_okra
     time_between_questions = time_between_questions_default
     ghost_mode = ghost_mode_default
     categories_to_exclude.clear()
@@ -12164,6 +12169,7 @@ async def process_round_options(round_winner, winner_points, round_winner_id):
     blind_mode = blind_mode_default
     sniper_mode = sniper_mode_default
     blitz_mode = blitz_mode_default
+    exact_mode = exact_mode_default
     cloak_mode = cloak_mode_default
     cloaked_user = None
 
@@ -12179,26 +12185,28 @@ async def process_round_options(round_winner, winner_points, round_winner_id):
     
     message += (
         "\u200b\n🎮⚙️ **Gameplay Options**\n"
-        "⏱️⏳ **<3 - 15>** Time (s) between questions.\n"
-        "🔥🤘 **Yolo** No scores shown until the end.\n"
-        "🙈🚫 **Blind** No question answers shown.\n"
-        "🚩🔨 **Marx** No recognizing right answers.\n"
-        "📷❌ **Blank** No image questions.\n"
-        "👻🎃 **Ghost** Responses will vanish.\n"
+        "⏱️⏳ **<3 - 15>** Time (s) between questions\n"
+        "🔥🤘 **Yolo** No scores shown until the end\n"
+        "🙈🚫 **Blind** No question answers shown\n"
+        "🚩🔨 **Marx** No recognizing right answers\n"
+        "📷❌ **Blank** No image questions\n"
+        "👻🎃 **Ghost** Responses will vanish\n"
         "🧢🎤 **Sniper**: Only first answers accepted\n"
         "🫥🕶️ **Cloak**: Only your answers vanish\n"
-        "🚀⚡  **Blitz**: First answer wins!\n"  
+        "🚀⚡  **Blitz**: First answer wins\n"
+        "🤓🔍 **Poindexter**: Stricter answers\n" 
+
    
         "\n🕹️: Toggle mid-round with **#[command]**\n\n"
 
         "\n📝🔀 **Question Options**\n"
-        "🇺🇸🗽 **Freedom** No multiple choice.\n"
-        "🔢❌ **Greg** No math questions.\n"
-        "🟦❌ **Xela** No Jeopardy-style questions.\n"
-        "📰❌ **Cross** No Crossword clues.\n"
-        "🟦✋ **Alex** 5 Jeopardy-style questions.\n"
-        "📰✋ **Word** 5 Crossword clues.\n"
-        "🎖🥒 **Dicktator** Choose the categories.\n"
+        "🇺🇸🗽 **Freedom** No multiple choice\n"
+        "🔢❌ **Greg** No math questions\n"
+        "🟦❌ **Xela** No Jeopardy-style questions\n"
+        "📰❌ **Cross** No Crossword clues\n"
+        "🟦✋ **Alex** 5 Jeopardy-style questions\n"
+        "📰✋ **Word** 5 Crossword clues\n"
+        "🎖🥒 **Dicktator** Choose the categories\n"
     )
 
     await safe_send(channel, message)
@@ -12212,7 +12220,7 @@ async def prompt_user_for_response(round_winner, winner_points, winner_coffees, 
     global since_token, time_between_questions, ghost_mode
     global num_jeopardy_clues, num_crossword_clues, num_mysterybox_clues, num_wof_clues
     global yolo_mode, god_mode, num_math_questions, num_stats_questions
-    global image_questions, marx_mode, blind_mode, sniper_mode, blitz_mode, cloak_mode, cloaked_user
+    global image_questions, marx_mode, blind_mode, sniper_mode, blitz_mode, exact_mode, cloak_mode, cloaked_user
 
     def check(m):
         return m.channel == channel and m.author != bot.user and m.author.id == round_winner_id
@@ -12304,8 +12312,11 @@ async def prompt_user_for_response(round_winner, winner_points, winner_coffees, 
                 cloak_mode = True
                 cloaked_user = round_winner_id
 
-            if  "#blitz" not in message_content and await coffee_gate("blitz", True, f"\n🥇🤩 **<@{round_winner_id}>** wants all the glory!", "Blitz"):
+            if  "#blitz" not in message_content and await coffee_gate("blitz", True, f"\n🤓🔍 **<@{round_winner_id}>** wants all the glory!", "Blitz"):
                 blitz_mode = True
+            
+            if  "#poindexter" not in message_content and await coffee_gate("poindexter", True, f"\n🥇🤩 **<@{round_winner_id}>** demands perfection!", "Poindexter"):
+                exact_mode = True
             
 
         except asyncio.TimeoutError:
@@ -13812,8 +13823,10 @@ def fuzzy_match(user_answer, correct_answer, category, url):
     
     if user_answer == correct_answer:
         return True
+
+    if exact_mode:
+        return False
     
-         
     # New Step: First 5 characters match
     if user_answer[:5] == correct_answer[:5] or no_spaces_user[:5] == no_spaces_correct[:5] or no_filler_user[:5] == no_filler_correct[:5] or no_filler_spaces_user[:5] == no_filler_spaces_correct[:5]:
         return True
@@ -15549,12 +15562,7 @@ async def start_trivia():
 
             start_message = f"\u200b\n✨🧪 **NEW** from the **Okra Lab**! 🧪✨\n"
             
-            start_message += f"\n🎶 **Who Says?** [All Time Hits]"
-            start_message += f"\n🤘 **Who Says?** [Rock]"
-            start_message += f"\n🎤 **Who Says?** [80s R&B]"
-            start_message += f"\n📼 **Who Says?** [80s Hits]"
-            start_message += f"\n💿 **Who Says?** [90s Hits]"
-            start_message += f"\n💘 **Who Says?** [90s Love Songs]"
+            start_message += f"\n🤓🔍 **Poindexter** [Game Mode]"
         
             start_message += "\n\u200b"
 
@@ -15720,7 +15728,7 @@ async def get_bump_url_from_s3():
 def print_round_settings():
     global time_between_questions, ghost_mode, god_mode, yolo_mode
     global image_questions, marx_mode
-    global blind_mode, sniper_mode, cloak_mode, blitz_mode
+    global blind_mode, sniper_mode, cloak_mode, blitz_mode, exact_mode
 
     print(f"🛠️ Current Round Settings:")
     print(f"⏱️  Time Between Questions: {time_between_questions}")
@@ -15733,9 +15741,10 @@ def print_round_settings():
     print(f"🧢🎤 Sniper Mode: {sniper_mode}")
     print(f"🫥🕶️ Cloak Mode: {cloak_mode}")
     print(f"🚀⚡ Blitz Mode: {blitz_mode}")
+    print(f"🤓🔍 Exact Mode: {exact_mode}")
 
 async def reset_round_options(reset_command, winner_id):
-    global time_between_questions, ghost_mode, god_mode, yolo_mode, mirror_mode, echo_mode, image_questions, marx_mode, blind_mode, zen_mode, sniper_mode, blitz_mode, cloak_mode, cloaked_user
+    global time_between_questions, ghost_mode, god_mode, yolo_mode, mirror_mode, echo_mode, image_questions, marx_mode, blind_mode, zen_mode, sniper_mode, blitz_mode, exact_mode, cloak_mode, cloaked_user
 
     reset_success = False
     
@@ -15802,6 +15811,14 @@ async def reset_round_options(reset_command, winner_id):
             await safe_send(channel, content=f"\n🥇🤩 **{winner_id}** wants all the glory!\n")
         else:
             await safe_send(channel, content=f"\n🥇🙌 **{winner_id}** welcomes all winners to the podium.\n")
+
+    if "poindexter" in reset_command:
+        exact_mode = not exact_mode
+        reset_success = True
+        if exact_mode == True:
+            await safe_send(channel, content=f"\n🤓🔍 **{winner_id}** demands perfection!\n")
+        else:
+            await safe_send(channel, content=f"\n😵‍💫🍃 **{winner_id}** says chillax. Close enough.\n")
 
 
     if "cloak" in reset_command:
