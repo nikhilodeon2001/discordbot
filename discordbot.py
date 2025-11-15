@@ -15565,7 +15565,7 @@ async def start_trivia():
                 await safe_send(channel, content="\u200b\n\u200b\n🎉🤹‍♂️ **Live Trivia & Games for Discord!**\n\u200b", embed=discord.Embed().set_image(url=selected_gif_url))
 
             # Wait for a player to be present before starting
-            await safe_send(channel, "\u200b\n👥 **Send **any message** to start!** 👥\n\u200b")
+            await safe_send(channel, "\u200b\n👥 Send **any message** to start! 👥\n\u200b")
 
             def check(m):
                 return m.author.id != bot.user.id and m.channel.id == channel.id
