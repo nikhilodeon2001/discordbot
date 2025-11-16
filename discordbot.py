@@ -16004,7 +16004,7 @@ async def start_trivia():
             #await ask_lyric_challenge("TheOkraG",591861826690613248, 7)
             #await ask_soundfx_challenge("TheOkraG",591861826690613248, 2)
             #await ask_audio_music_challenge("TheOkraG",591861826690613248, 7)
-            await ask_audio_question_challenge("TheOkraG",591861826690613248, 7)
+            #await ask_audio_question_challenge("TheOkraG",591861826690613248, 7)
             
 
             round_responders.clear()  # Reset round responders
@@ -16031,7 +16031,7 @@ async def start_trivia():
 
             start_message = f"\u200b\n✨🧪 **NEW** from the **Okra Lab**! 🧪✨\n"
             
-            start_message += f"\n🎙️🗯️ **Let's Talk** [Mini-Game]"
+            start_message += f"\n🎙️🗯️ **Let's Talk** 🎧 [Mini-Game]"
             start_message += f"\n⛳📉 **Golf** [Improved Game Mode]"
 
             start_message += "\n\u200b"
