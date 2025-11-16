@@ -5203,7 +5203,8 @@ async def ask_chaos_challenge(winner, winner_id, num_of_games):
         ask_stock_challenge,
         ask_search_challenge,
         ask_soundfx_challenge,
-        ask_audio_music_challenge
+        ask_audio_music_challenge,
+        ask_audio_question_challenge
     ]
 
     num_of_games = min(num_of_games, len(challenge_functions))
@@ -6207,10 +6208,17 @@ async def ask_audio_question_challenge(winner, winner_id, num=7):
         recent_trivia_ids = await get_recent_question_ids_from_mongo("general")
         recent_jeopardy_ids = await get_recent_question_ids_from_mongo("jeopardy")
 
-        # Fetch 3 questions from trivia_questions
+        # Fetch 3 questions from trivia_questions (exclude image questions)
         trivia_collection = db["trivia_questions"]
         trivia_pipeline = [
-            {"$match": {"_id": {"$nin": list(recent_trivia_ids)}}},
+            {
+                "$match": {
+                    "_id": {"$nin": list(recent_trivia_ids)},
+                    "$or": [
+                        {"url": {"$not": {"$regex": "http"}}}
+                    ]
+                }
+            },
             {"$sample": {"size": 3}}
         ]
         trivia_questions_list = [doc async for doc in trivia_collection.aggregate(trivia_pipeline)]
