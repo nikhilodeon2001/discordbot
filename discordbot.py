@@ -6204,12 +6204,12 @@ async def ask_audio_question_challenge(winner, winner_id, num=7):
 
     # Pre-fetch all questions from both collections
     try:
-        # Fetch recent IDs separately for each collection
+        # Fetch recent IDs
         recent_trivia_ids = await get_recent_question_ids_from_mongo("general")
-        recent_jeopardy_ids = await get_recent_question_ids_from_mongo("jeopardy")
 
-        # Fetch 3 questions from trivia_questions (exclude image questions)
+        # Always fetch from trivia_questions (up to 3 or num, whichever is smaller)
         trivia_collection = db["trivia_questions"]
+        trivia_count = min(3, num)
         trivia_pipeline = [
             {
                 "$match": {
@@ -6219,30 +6219,34 @@ async def ask_audio_question_challenge(winner, winner_id, num=7):
                     ]
                 }
             },
-            {"$sample": {"size": 3}}
+            {"$sample": {"size": trivia_count}}
         ]
         trivia_questions_list = [doc async for doc in trivia_collection.aggregate(trivia_pipeline)]
+        questions = trivia_questions_list
 
-        # Fetch (num - 3) questions from jeopardy_questions
-        jeopardy_collection = db["jeopardy_questions"]
-        jeopardy_pipeline = [
-            {"$match": {"_id": {"$nin": list(recent_jeopardy_ids)}}},
-            {"$sample": {"size": num - 3}}
-        ]
-        jeopardy_questions_list = [doc async for doc in jeopardy_collection.aggregate(jeopardy_pipeline)]
-
-        # Combine both lists
-        questions = trivia_questions_list + jeopardy_questions_list
-        random.shuffle(questions)  # Mix question types
-
-        # Store question IDs separately
+        # Store trivia question IDs
         trivia_ids = [q["_id"] for q in trivia_questions_list]
-        jeopardy_ids = [q["_id"] for q in jeopardy_questions_list]
-
         if trivia_ids:
             await store_question_ids_in_mongo(trivia_ids, "general")
-        if jeopardy_ids:
-            await store_question_ids_in_mongo(jeopardy_ids, "jeopardy")
+
+        # If num > 3, fetch additional questions from jeopardy_questions
+        if num > 3:
+            recent_jeopardy_ids = await get_recent_question_ids_from_mongo("jeopardy")
+            jeopardy_collection = db["jeopardy_questions"]
+            jeopardy_pipeline = [
+                {"$match": {"_id": {"$nin": list(recent_jeopardy_ids)}}},
+                {"$sample": {"size": num - 3}}
+            ]
+            jeopardy_questions_list = [doc async for doc in jeopardy_collection.aggregate(jeopardy_pipeline)]
+
+            # Add jeopardy questions and shuffle
+            questions.extend(jeopardy_questions_list)
+            random.shuffle(questions)
+
+            # Store jeopardy question IDs
+            jeopardy_ids = [q["_id"] for q in jeopardy_questions_list]
+            if jeopardy_ids:
+                await store_question_ids_in_mongo(jeopardy_ids, "jeopardy")
 
     except Exception as e:
         sentry_sdk.capture_exception(e)
