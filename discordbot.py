@@ -1,6 +1,6 @@
 # Initialize all variables
 local_mode = False
-prod_or_stage = "prod"
+prod_or_stage = "stage"
 
 import sentry_sdk
 from sentry_sdk.integrations.logging import LoggingIntegration
