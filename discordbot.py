@@ -16157,7 +16157,7 @@ async def start_trivia():
             #await get_survey_results()
             scoreboard.clear()
             fastest_answers_count.clear()
-            await ask_feud_question("TheOkraG", "solo", 591861826690613248)
+            #await ask_feud_question("TheOkraG", "solo", 591861826690613248)
             #await ask_jigsaw_challenge("The Creator", 591861826690613248)
             #await ask_border_challenge("The Creator", 591861826690613248)
             #await ask_ranker_people_challenge("TheOkraG", 1)
