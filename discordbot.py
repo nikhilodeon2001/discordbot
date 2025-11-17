@@ -2739,7 +2739,7 @@ async def ask_polyglottery_challenge(winner, winner_id, num=7):
             print(f"Error fetching or translating:\n{traceback.format_exc()}")
             continue
 
-        await safe_send(channel, f"\u200b\n🗣💬❓ **({round_num}/7)** Name this language:\n\u200b", file=file, embed=embed)
+        await safe_send(channel, f"\u200b\n🗣💬❓ **({round_num}/{num})** Name this language:\n\u200b", file=file, embed=embed)
 
         start_time = asyncio.get_event_loop().time()
         answered = False
