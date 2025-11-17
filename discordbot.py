@@ -5306,10 +5306,13 @@ async def ask_chaos_challenge(winner, winner_id, num_of_games):
                 scoreboard[result] = (display_name, current_score + 1)
             else:
                 try:
-                    member = channel.guild.get_member(result) or await channel.guild.fetch_member(result)
+                    # Use active game channel or fallback to main channel
+                    target_channel = _active_game_channel or channel
+                    member = target_channel.guild.get_member(result) or await target_channel.guild.fetch_member(result)
                     display_name = member.display_name
-                except Exception:
-                    display_name = f"**{result}**"
+                except Exception as e:
+                    print(f"Failed to get member {result}: {e}")
+                    display_name = str(result)
 
                 scoreboard[result] = (display_name, 1)
 
