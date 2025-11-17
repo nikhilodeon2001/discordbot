@@ -68,12 +68,21 @@ from discord import Embed, File
 from typing import Optional, Tuple
 import chess
 from deepgram import DeepgramClient
+from contextvars import ContextVar
 
 # Tournament system import
 from tournament import setup_tournament_system, active_tournaments
 
 # Okra Hunt escape room import
 from okra_hunt import OkraHunt
+
+# Mini-games system import
+try:
+    import mini_games
+    MINI_GAMES_ENABLED = True
+except ImportError:
+    MINI_GAMES_ENABLED = False
+    print("⚠️ mini_games.py not found - mini-game arena disabled")
 
 embed_color_default = discord.Color.green()
 embed_color = embed_color_default
@@ -186,18 +195,19 @@ def text_to_speech(text, filename=None, model="aura-2-thalia-en"):
         model (str, optional): Deepgram voice model to use. Defaults to "aura-2-thalia-en".
 
     Returns:
-        str: Path to the generated MP3 file, or None if failed
+        tuple: (str: Path to the generated MP3 file or None if failed, str: model name used)
     """
+    # Generate filename if not provided
+    if filename is None:
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"audio_{timestamp}.mp3"
+
+    # Ensure .mp3 extension
+    if not filename.endswith('.mp3'):
+        filename += '.mp3'
+
+    # Try with the requested model first
     try:
-        # Generate filename if not provided
-        if filename is None:
-            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-            filename = f"audio_{timestamp}.mp3"
-
-        # Ensure .mp3 extension
-        if not filename.endswith('.mp3'):
-            filename += '.mp3'
-
         deepgram = DeepgramClient(api_key=deepgram_api_key)
 
         response = deepgram.speak.v1.audio.generate(
@@ -211,14 +221,37 @@ def text_to_speech(text, filename=None, model="aura-2-thalia-en"):
             for chunk in response:
                 f.write(chunk)
 
-        print(f"Audio saved to: {filename}")
-        return filename
+        print(f"Audio saved to: {filename} using model: {model}")
+        return (filename, model)
 
     except Exception as e:
-        print(f"Exception: {e}")
-        import traceback
-        print(traceback.format_exc())
-        return None
+        print(f"Error with model {model}: {e}")
+
+        # Fallback to OkraStrut (aura-2-draco-en - voice selection #32)
+        default_model = "aura-2-draco-en"
+        try:
+            print(f"Falling back to default model: {default_model}")
+            deepgram = DeepgramClient(api_key=deepgram_api_key)
+
+            response = deepgram.speak.v1.audio.generate(
+                text=text,
+                model=default_model,
+                encoding="mp3"
+            )
+
+            # Save the audio to file
+            with open(filename, "wb") as f:
+                for chunk in response:
+                    f.write(chunk)
+
+            print(f"Audio saved to: {filename} using fallback model: {default_model}")
+            return (filename, default_model)
+
+        except Exception as fallback_error:
+            print(f"Fallback model also failed: {fallback_error}")
+            import traceback
+            print(traceback.format_exc())
+            return (None, None)
 
 # Define global variables to store streaks and scores
 round_count = 0
@@ -311,6 +344,8 @@ if prod_or_stage == "stage":
     HUNT_LEADERBOARD_MESSAGE_ID = 1420281932566237244
     EVERYONE_ROLE_ID = 1375328358573015050
     TRIVIA_VOICE_CHANNEL_ID = 1432952256721850469
+    MINI_GAME_ARENA_CHANNEL_ID = 1439668337817944235
+    MINI_GAME_ARENA_VOICE_CHANNEL_ID = 1439699889302012165
 
 elif prod_or_stage == "prod":
     okrag_id = 591861826690613248
@@ -343,6 +378,8 @@ elif prod_or_stage == "prod":
     HUNT_LEADERBOARD_MESSAGE_ID = 1420292321370570844
     EVERYONE_ROLE_ID = 1367682586079395902
     TRIVIA_VOICE_CHANNEL_ID = 1432951778244038756
+    MINI_GAME_ARENA_CHANNEL_ID = 1439668550422757486
+    MINI_GAME_ARENA_VOICE_CHANNEL_ID = 1439699160092905604
 
 
 
@@ -405,6 +442,16 @@ cloaked_user = None
 
 channel = None
 
+# Context variables for multi-channel mini-games support
+game_channel = ContextVar('game_channel', default=None)
+game_voice_channel_id = ContextVar('game_voice_channel_id', default=None)
+game_bot = ContextVar('game_bot', default=None)
+
+# Module-level variables for bot instance and channel (set by mini_games, used by games)
+# This is needed because ContextVar doesn't propagate to Discord.py event handlers
+_active_game_bot = None
+_active_game_channel = None
+
 
 question_categories = [
     "Mystery Box or Boat", "Famous People", "Anatomy", "Characters", "Music", "Art & Literature", 
@@ -465,8 +512,16 @@ def clean_leading_trailing_junk(text: str) -> str:
     return re.sub(r'^[\s\u200b]+|[\s\u200b]+$', '', text)
 
 
+def get_bot():
+    """Get the bot instance - uses active game bot if available, otherwise global bot"""
+    global _active_game_bot
+    return _active_game_bot or globals()['bot']
 
-async def safe_send(channel, *args, max_retries=3, delay=2, use_embed=True, image_url=None, file=None, **kwargs):
+async def safe_send(channel=None, *args, max_retries=3, delay=2, use_embed=True, image_url=None, file=None, **kwargs):
+    # Use context channel if no explicit channel provided
+    if channel is None:
+        channel = game_channel.get() or globals()['channel']
+
     if use_embed:
         # Pull out content or first positional arg
         content = kwargs.pop("content", None)
@@ -832,7 +887,7 @@ async def ask_jigsaw_challenge(winner, winner_id, num=7):
 
     await safe_send(channel, f"\u200b\n🪚🔢 **<@{winner_id}>**, how many jigsaw pieces?\n\n👉 **4**, **9**, **16**, **25**, **36**, **49**, **64**, **81**, or **100**\n\u200b")
     try:
-        msg = await bot.wait_for("message", timeout=magic_time + 5, check=lambda m: m.author.id == winner_id and m.author != bot.user and m.channel == channel and m.content in {"4", "9", "16", "25", "36", "49", "64", "81", "100"})
+        msg = await get_bot().wait_for("message", timeout=magic_time + 5, check=lambda m: m.author.id == winner_id and m.author != get_bot().user and m.channel == (_active_game_channel or channel) and m.content in {"4", "9", "16", "25", "36", "49", "64", "81", "100"})
         num_pieces = int(msg.content)
         await msg.add_reaction("✅")
     except asyncio.TimeoutError:
@@ -908,12 +963,13 @@ async def ask_jigsaw_challenge(winner, winner_id, num=7):
             start_time = asyncio.get_event_loop().time()
 
             def check(m):
-                return m.channel == channel and m.author != bot.user
+                target_channel = _active_game_channel or channel
+                return m.channel == target_channel and m.author != get_bot().user
 
             while asyncio.get_event_loop().time() - start_time < 20 and not answered:
                 try:
                     timeout = 20 - (asyncio.get_event_loop().time() - start_time)
-                    msg = await bot.wait_for("message", timeout=timeout, check=check)
+                    msg = await get_bot().wait_for("message", timeout=timeout, check=check)
                     guess = normalize_text(msg.content).replace(" ", "")
                     user = msg.author.display_name
                     uid = msg.author.id
@@ -1025,7 +1081,7 @@ async def ask_faceoff_challenge(winner, winner_id, num=7):
 
     await safe_send(channel, f"\u200b\n🪚🔢 **<@{winner_id}>**, how many face pieces?\n👉 **4, 9, 16, 25, 36, 49, 64, 81, or 100**\n\u200b")
     try:
-        msg = await bot.wait_for("message", timeout=magic_time + 5, check=lambda m: m.author.id == winner_id and m.channel == channel and m.content in {"4", "9", "16", "25", "36", "49", "64", "81", "100"})
+        msg = await get_bot().wait_for("message", timeout=magic_time + 5, check=lambda m: m.author.id == winner_id and m.channel == (_active_game_channel or channel) and m.content in {"4", "9", "16", "25", "36", "49", "64", "81", "100"})
         num_pieces = int(msg.content)
         await msg.add_reaction("✅")
     except asyncio.TimeoutError:
@@ -1078,12 +1134,13 @@ async def ask_faceoff_challenge(winner, winner_id, num=7):
             start_time = asyncio.get_event_loop().time()
 
             def check(m):
-                return m.channel == channel and m.author != bot.user
+                target_channel = _active_game_channel or channel
+                return m.channel == target_channel and m.author != get_bot().user
 
             while asyncio.get_event_loop().time() - start_time < 20 and not answered:
                 try:
                     timeout = 20 - (asyncio.get_event_loop().time() - start_time)
-                    msg = await bot.wait_for("message", timeout=timeout, check=check)
+                    msg = await get_bot().wait_for("message", timeout=timeout, check=check)
                     content = normalize_text(msg.content).replace(" ", "")
                     key = (msg.author.id, content)
 
@@ -1432,11 +1489,11 @@ async def ask_search_challenge(winner, winner_id, num=1):
     start_time = asyncio.get_event_loop().time()
     
     def category_check(m):
-        return m.channel == channel and m.author != bot.user
+        return m.channel == (_active_game_channel or channel) and m.author != get_bot().user
     
     while asyncio.get_event_loop().time() - start_time < 30:
         try:
-            msg = await bot.wait_for("message", timeout=2, check=category_check)
+            msg = await get_bot().wait_for("message", timeout=2, check=category_check)
             content = msg.content.strip()
             
             if content.isdigit():
@@ -1677,7 +1734,7 @@ async def ask_search_challenge(winner, winner_id, num=1):
     last_update_time = game_start_time
     
     def game_check(m):
-        return m.channel == channel and m.author != bot.user
+        return m.channel == (_active_game_channel or channel) and m.author != get_bot().user
     
     while (asyncio.get_event_loop().time() - game_start_time < GAME_DURATION and 
            len(remaining_words) > 0):
@@ -1685,7 +1742,7 @@ async def ask_search_challenge(winner, winner_id, num=1):
             current_time = asyncio.get_event_loop().time()
             remaining_time = GAME_DURATION - (current_time - game_start_time)
             
-            msg = await bot.wait_for("message", timeout=2, check=game_check)
+            msg = await get_bot().wait_for("message", timeout=2, check=game_check)
             
             # Delete the user's guess message to keep chat clean
             try:
@@ -1941,7 +1998,7 @@ async def ask_okrace_challenge(winner, winner_id, num=1):
     
     def reaction_check(reaction, user):
         return (reaction.message.id == join_message.id and 
-                user != bot.user and 
+                user != get_bot().user and 
                 len(emoji_to_user) < MAX_RACERS)
     
     # Monitor reactions for join period
@@ -1949,7 +2006,7 @@ async def ask_okrace_challenge(winner, winner_id, num=1):
            len(emoji_to_user) < MAX_RACERS):
         try:
             timeout_remaining = JOIN_TIMEOUT - (asyncio.get_event_loop().time() - start_time)
-            reaction, user = await bot.wait_for('reaction_add', timeout=timeout_remaining, check=reaction_check)
+            reaction, user = await get_bot().wait_for('reaction_add', timeout=timeout_remaining, check=reaction_check)
             
             emoji_str = str(reaction.emoji)
             
@@ -2007,8 +2064,8 @@ async def ask_okrace_challenge(winner, winner_id, num=1):
         round_results = {}  # user_id: {"delta": float, "error": float, "name": str}
         
         def message_check(m):
-            return (m.channel == channel and 
-                    m.author != bot.user and 
+            return (m.channel == (_active_game_channel or channel) and 
+                    m.author != get_bot().user and 
                     m.content.strip().lower() == 'x' and 
                     m.author.id in user_to_emoji)
         
@@ -2016,7 +2073,7 @@ async def ask_okrace_challenge(winner, winner_id, num=1):
         while asyncio.get_event_loop().time() - start_round_time < 20:
             try:
                 timeout_remaining = 15 - (asyncio.get_event_loop().time() - start_round_time)
-                msg = await bot.wait_for('message', timeout=timeout_remaining, check=message_check)
+                msg = await get_bot().wait_for('message', timeout=timeout_remaining, check=message_check)
                 
                 user_id = msg.author.id
                 current_time = msg.created_at.timestamp()
@@ -2099,6 +2156,9 @@ async def ask_okrace_challenge(winner, winner_id, num=1):
             winner_name = user_names[winners[0]]
             winner_emoji = user_to_emoji[winners[0]]
             await safe_send(channel, f"\u200b\n🎉🏆 **WINNER!**\n\n{winner_emoji} **{winner_name}** wins OkRACE!\n\u200b")
+            wf_winner = True
+            await asyncio.sleep(3)
+            return winners[0]
         else:
             winners_text = "\u200b\n🎉🏆 **TIE! Winners:**\n"
             for winner_id in winners:
@@ -2107,10 +2167,9 @@ async def ask_okrace_challenge(winner, winner_id, num=1):
                 winners_text += f"{winner_emoji} **{winner_name}**\n"
             winners_text += "\u200b"
             await safe_send(channel, winners_text)
-        
-        wf_winner = True
-        await asyncio.sleep(3)
-        return winners[0]  # Return first winner for consistency
+            wf_winner = True
+            await asyncio.sleep(3)
+            return None
     elif round_count >= MAX_ROUNDS:
         # Reached max rounds without a winner - declare closest to finish as winner
         await safe_send(channel, f"\u200b\n⏰ **{MAX_ROUNDS} rounds completed!** Time to crown a winner based on position!\n\u200b")
@@ -2136,7 +2195,7 @@ async def ask_okrace_challenge(winner, winner_id, num=1):
             await safe_send(channel, leaders_text)
             wf_winner = True
             await asyncio.sleep(3)
-            return leaders[0]  # Return first leader for consistency
+            return None
     else:
         # This shouldn't happen, but just in case
         await safe_send(channel, "\u200b\n👎😢 **No winners**. Better luck next time!\n\u200b")
@@ -2285,7 +2344,7 @@ async def ask_element_challenge(winner, winner_id, num=7):
 
     await safe_send(channel, f"\u200b\n🕹️🚀 **<@{winner_id}>**, select the mode:\n\n🧸 **Normal** or 🧨 **Okrap**.\n\u200b")
     try:
-        msg = await bot.wait_for("message", timeout=magic_time + 5, check=lambda m: m.author.id == winner_id and m.author != bot.user and m.channel == channel and m.content.lower() in {"normal", "okrap"})
+        msg = await get_bot().wait_for("message", timeout=magic_time + 5, check=lambda m: m.author.id == winner_id and m.author != get_bot().user and m.channel == (_active_game_channel or channel) and m.content.lower() in {"normal", "okrap"})
         game_mode = msg.content.lower()
         await msg.add_reaction("✅")
     except asyncio.TimeoutError:
@@ -2434,11 +2493,12 @@ async def ask_element_challenge(winner, winner_id, num=7):
         start_time = asyncio.get_event_loop().time()
 
         def check(m):
-            return m.channel == channel and m.author != bot.user
+            target_channel = _active_game_channel or channel
+            return m.channel == target_channel and m.author != get_bot().user
 
         while asyncio.get_event_loop().time() - start_time < 20 and not answered:
             try:
-                msg = await bot.wait_for("message", timeout=20 - (asyncio.get_event_loop().time() - start_time), check=check)
+                msg = await get_bot().wait_for("message", timeout=20 - (asyncio.get_event_loop().time() - start_time), check=check)
                 guess = normalize_text(msg.content).replace(" ", "")
                 user = msg.author.display_name
                 uid = msg.author.id
@@ -2536,12 +2596,13 @@ async def collect_words_from_user(winner, winner_id):
     start_time = asyncio.get_event_loop().time()
 
     def check(m):
-        return m.author.id == winner_id and m.channel == channel and m.author != bot.user
+        target_channel = _active_game_channel or channel
+        return m.author.id == winner_id and m.channel == target_channel and m.author != get_bot().user
 
     while asyncio.get_event_loop().time() - start_time < timeout and len(collected_words) < 5:
         try:
             remaining = timeout - (asyncio.get_event_loop().time() - start_time)
-            message = await bot.wait_for("message", timeout=remaining, check=check)
+            message = await get_bot().wait_for("message", timeout=remaining, check=check)
             words = message.content.strip().split()
             for word in words:
                 if len(collected_words) < 5:
@@ -2682,12 +2743,13 @@ async def ask_polyglottery_challenge(winner, winner_id, num=7):
         processed_users = set()
 
         def check(m):
-            return m.channel == channel and m.author != bot.user
+            target_channel = _active_game_channel or channel
+            return m.channel == target_channel and m.author != get_bot().user
 
         while asyncio.get_event_loop().time() - start_time < 20 and not answered:
             try:
                 timeout = 20 - (asyncio.get_event_loop().time() - start_time)
-                message = await bot.wait_for("message", timeout=timeout, check=check)
+                message = await get_bot().wait_for("message", timeout=timeout, check=check)
                 content = message.content.strip()
                 user = message.author.display_name
                 user_id = message.author.id
@@ -2821,12 +2883,13 @@ async def ask_dictionary_challenge(winner, winner_id, num=7):
         best_guess_per_user = {}
 
         def check(m):
-            return m.channel == channel and m.author != bot.user
+            target_channel = _active_game_channel or channel
+            return m.channel == target_channel and m.author != get_bot().user
 
         while asyncio.get_event_loop().time() - start_time < 20 and not answered:
             try:
                 timeout = 20 - (asyncio.get_event_loop().time() - start_time)
-                message = await bot.wait_for("message", timeout=timeout, check=check)
+                message = await get_bot().wait_for("message", timeout=timeout, check=check)
                 content = message.content.strip()
                 user = message.author.display_name
                 user_id = message.author.id
@@ -3245,12 +3308,13 @@ async def ask_math_challenge(winner, winner_id, num=7):
     start_time = asyncio.get_event_loop().time()
 
     def check(m):
-        return m.author.id == winner_id and m.channel == channel and m.author != bot.user and m.content.strip() in {"2", "3"}
+        target_channel = _active_game_channel or channel
+        return m.author.id == winner_id and m.channel == target_channel and m.author != get_bot().user and m.content.strip() in {"2", "3"}
 
     while asyncio.get_event_loop().time() - start_time < magic_time + 5:
         try:
             timeout = magic_time + 5 - (asyncio.get_event_loop().time() - start_time)
-            msg = await bot.wait_for("message", timeout=timeout, check=check)
+            msg = await get_bot().wait_for("message", timeout=timeout, check=check)
             user_number = int(msg.content.strip())
             await msg.add_reaction("🧠")
             break
@@ -3298,12 +3362,13 @@ async def ask_math_challenge(winner, winner_id, num=7):
         processed_users = set()
 
         def check(m):
-            return m.channel == channel and m.author != bot.user
+            target_channel = _active_game_channel or channel
+            return m.channel == target_channel and m.author != get_bot().user
 
         while asyncio.get_event_loop().time() - start_time < 20 and not answered:
             try:
                 timeout = 20 - (asyncio.get_event_loop().time() - start_time)
-                msg = await bot.wait_for("message", timeout=timeout, check=check)
+                msg = await get_bot().wait_for("message", timeout=timeout, check=check)
                 content = msg.content.strip().replace(" ", "").replace("x", "*").replace("\\", "/").lower()
                 user = msg.author.display_name
                 user_id = msg.author.id
@@ -3394,12 +3459,13 @@ async def ask_music_challenge(winner, winner_id, num=7):
     start_time = asyncio.get_event_loop().time()
 
     def check(m):
-        return m.author.id == winner_id and m.channel == channel and m.author != bot.user and m.content.strip() in {"2", "3", "4", "5", "6", "7"}
+        target_channel = _active_game_channel or channel
+        return m.author.id == winner_id and m.channel == target_channel and m.author != get_bot().user and m.content.strip() in {"2", "3", "4", "5", "6", "7"}
 
     while asyncio.get_event_loop().time() - start_time < magic_time + 5:
         try:
             timeout = magic_time + 5 - (asyncio.get_event_loop().time() - start_time)
-            msg = await bot.wait_for("message", timeout=timeout, check=check)
+            msg = await get_bot().wait_for("message", timeout=timeout, check=check)
             user_number = int(msg.content.strip())
             await msg.add_reaction("🎵")
             break
@@ -3437,12 +3503,13 @@ async def ask_music_challenge(winner, winner_id, num=7):
         processed_users = set()
 
         def check(m):
-            return m.channel == channel and m.author != bot.user
+            target_channel = _active_game_channel or channel
+            return m.channel == target_channel and m.author != get_bot().user
 
         while asyncio.get_event_loop().time() - start_time < 20 and not answered:
             try:
                 timeout = 20 - (asyncio.get_event_loop().time() - start_time)
-                msg = await bot.wait_for("message", timeout=timeout, check=check)
+                msg = await get_bot().wait_for("message", timeout=timeout, check=check)
                 user = msg.author.display_name
                 user_id = msg.author.id
                 guess = msg.content.strip().replace(" ", "").replace(",", "").lower()
@@ -3654,10 +3721,10 @@ async def ask_lyric_challenge(winner, winner_id, num=7):
             if remaining_time <= 0:
                 break
 
-            msg = await bot.wait_for("message",
+            msg = await get_bot().wait_for("message",
                                    timeout=remaining_time,
                                    check=lambda m: (m.author.id == winner_id and
-                                                  m.channel == channel and
+                                                  m.channel == (_active_game_channel or channel) and
                                                   m.id not in processed_messages))
 
             processed_messages.add(msg.id)
@@ -3708,10 +3775,10 @@ async def ask_lyric_challenge(winner, winner_id, num=7):
             if remaining_time <= 0:
                 break
 
-            msg = await bot.wait_for("message",
+            msg = await get_bot().wait_for("message",
                                    timeout=remaining_time,
                                    check=lambda m: (m.author.id == winner_id and
-                                                  m.channel == channel and
+                                                  m.channel == (_active_game_channel or channel) and
                                                   m.id not in processed_messages))
 
             processed_messages.add(msg.id)
@@ -3855,12 +3922,13 @@ async def ask_lyric_challenge(winner, winner_id, num=7):
         processed_users = set()
 
         def check(m):
-            return m.channel == channel and m.author != bot.user
+            target_channel = _active_game_channel or channel
+            return m.channel == target_channel and m.author != get_bot().user
 
         while asyncio.get_event_loop().time() - start_time < 20 and not answered:
             try:
                 timeout = 20 - (asyncio.get_event_loop().time() - start_time)
-                message = await bot.wait_for("message", timeout=timeout, check=check)
+                message = await get_bot().wait_for("message", timeout=timeout, check=check)
                 content = message.content.strip()
                 user = message.author.display_name
                 user_id = message.author.id
@@ -4113,12 +4181,13 @@ async def ask_book_challenge(winner, winner_id, num=7):
         processed_users = set()
 
         def check(m):
-            return m.channel == channel and m.author != bot.user
+            target_channel = _active_game_channel or channel
+            return m.channel == target_channel and m.author != get_bot().user
 
         while asyncio.get_event_loop().time() - start_time < 20 and not answered:
             try:
                 timeout = 20 - (asyncio.get_event_loop().time() - start_time)
-                message = await bot.wait_for("message", timeout=timeout, check=check)
+                message = await get_bot().wait_for("message", timeout=timeout, check=check)
                 content = message.content.strip()
                 user = message.author.display_name
                 user_id = message.author.id
@@ -4255,12 +4324,13 @@ async def ask_riddle_challenge(winner, winner_id, num=7):
         processed_users = set()
 
         def check(m):
-            return m.channel == channel and m.author != bot.user
+            target_channel = _active_game_channel or channel
+            return m.channel == target_channel and m.author != get_bot().user
 
         while asyncio.get_event_loop().time() - start_time < 20 and not answered:
             try:
                 timeout = 20 - (asyncio.get_event_loop().time() - start_time)
-                message = await bot.wait_for("message", timeout=timeout, check=check)
+                message = await get_bot().wait_for("message", timeout=timeout, check=check)
                 content = message.content.strip()
                 user = message.author.display_name
                 user_id = message.author.id
@@ -4417,12 +4487,13 @@ async def ask_stock_challenge(winner, winner_id, num=7):
         processed_users = set()
 
         def check(m):
-            return m.channel == channel and m.author != bot.user
+            target_channel = _active_game_channel or channel
+            return m.channel == target_channel and m.author != get_bot().user
 
         while asyncio.get_event_loop().time() - start_time < 20 and not answered:
             try:
                 timeout = 20 - (asyncio.get_event_loop().time() - start_time)
-                message = await bot.wait_for("message", timeout=timeout, check=check)
+                message = await get_bot().wait_for("message", timeout=timeout, check=check)
                 content = message.content.strip()
                 user = message.author.display_name
                 user_id = message.author.id
@@ -4530,7 +4601,7 @@ async def ask_border_challenge(winner, winner_id, num=7):
 
     await safe_send(channel, f"\u200b\n🕹️🚀 **<@{winner_id}>**, select the mode:\n\n🧸 **Normal** or 🧨 **Okrap**.\n\u200b")
     try:
-        msg = await bot.wait_for("message", timeout=magic_time + 5, check=lambda m: m.author.id == winner_id and m.author != bot.user and m.channel == channel and m.content.lower() in {"normal", "okrap"})
+        msg = await get_bot().wait_for("message", timeout=magic_time + 5, check=lambda m: m.author.id == winner_id and m.author != get_bot().user and m.channel == (_active_game_channel or channel) and m.content.lower() in {"normal", "okrap"})
         game_mode = msg.content.lower()
         await msg.add_reaction("✅")
     except asyncio.TimeoutError:
@@ -4602,11 +4673,12 @@ async def ask_border_challenge(winner, winner_id, num=7):
             start_time = asyncio.get_event_loop().time()
 
             def check(m):
-                return m.channel == channel and m.author != bot.user
+                target_channel = _active_game_channel or channel
+                return m.channel == target_channel and m.author != get_bot().user
 
             while asyncio.get_event_loop().time() - start_time < 20 and not answered:
                 try:
-                    msg = await bot.wait_for("message", timeout=20 - (asyncio.get_event_loop().time() - start_time), check=check)
+                    msg = await get_bot().wait_for("message", timeout=20 - (asyncio.get_event_loop().time() - start_time), check=check)
                     guess = normalize_text(msg.content).replace(" ", "")
                     user = msg.author.display_name
                     uid = msg.author.id
@@ -4753,12 +4825,13 @@ async def ask_animal_challenge(winner, winner_id, num=7):
         right_answer = False
 
         def check(m):
-            return m.channel == channel and m.author != bot.user
+            target_channel = _active_game_channel or channel
+            return m.channel == target_channel and m.author != get_bot().user
 
         while asyncio.get_event_loop().time() - start_time < 15 and not right_answer:
             try:
                 remaining = 15 - (asyncio.get_event_loop().time() - start_time)
-                message = await bot.wait_for("message", timeout=remaining, check=check)
+                message = await get_bot().wait_for("message", timeout=remaining, check=check)
                 content = message.content.strip()
                 user = message.author.display_name
                 user_id = message.author.id
@@ -4912,12 +4985,13 @@ async def ask_ranker_people_challenge(winner, winner_id, num=7):
         right_answer = False
 
         def check(m):
-            return m.channel == channel and m.author != bot.user
+            target_channel = _active_game_channel or channel
+            return m.channel == target_channel and m.author != get_bot().user
 
         while asyncio.get_event_loop().time() - start_time < 15 and not right_answer:
             try:
                 remaining = 15 - (asyncio.get_event_loop().time() - start_time)
-                message = await bot.wait_for("message", timeout=remaining, check=check)
+                message = await get_bot().wait_for("message", timeout=remaining, check=check)
                 user = message.author.display_name
                 user_id = message.author.id
                 content = message.content.strip()
@@ -5067,12 +5141,13 @@ async def ask_flags_challenge(winner, winner_id, num=7):
         right_answer = False
 
         def check(m):
-            return m.channel == channel and m.author != bot.user
+            target_channel = _active_game_channel or channel
+            return m.channel == target_channel and m.author != get_bot().user
 
         while asyncio.get_event_loop().time() - start_time < 15 and not right_answer:
             try:
                 timeout = 15 - (asyncio.get_event_loop().time() - start_time)
-                message = await bot.wait_for("message", timeout=timeout, check=check)
+                message = await get_bot().wait_for("message", timeout=timeout, check=check)
                 content = message.content.strip()
                 user = message.author.display_name
                 user_id = message.author.id
@@ -5204,7 +5279,9 @@ async def ask_chaos_challenge(winner, winner_id, num_of_games):
         ask_search_challenge,
         ask_soundfx_challenge,
         ask_audio_music_challenge,
-        ask_audio_question_challenge
+        ask_audio_question_challenge,
+        ask_feud_question,
+        ask_okrace_challenge,
     ]
 
     num_of_games = min(num_of_games, len(challenge_functions))
@@ -5214,7 +5291,10 @@ async def ask_chaos_challenge(winner, winner_id, num_of_games):
         await safe_send(channel, f"\u200b\n🧠 **Mini-Game {i}** of {num_of_games} starting...\n\u200b")
         await asyncio.sleep(1)
 
-        result = await challenge_fn(winner, winner_id, num=1)
+        if challenge_fn == ask_feud_question:
+            result = await challenge_fn(winner, "cooperative", winner_id)
+        else:
+            result = await challenge_fn(winner, winner_id, num=1)
         if result:
             print(result)
             # Try to get display name (either from winner if same user, or via Discord lookup)
@@ -5280,7 +5360,16 @@ async def ask_soundfx_challenge(winner, winner_id, num=7):
 
     await safe_send(channel, content="\u200b\n👂➡️ **Hear Here 🎧**: Do You Hear What I Hear?\n\u200b", embed=discord.Embed().set_image(url=gif_url))
     
-    voice_channel = bot.get_channel(TRIVIA_VOICE_CHANNEL_ID)
+    # Check if a voice channel ID was set in context
+    voice_channel_id = game_voice_channel_id.get()
+
+    if voice_channel_id:
+        # Use context voice channel (for mini-games)
+        voice_channel = get_bot().get_channel(voice_channel_id)
+    else:
+        # Use main trivia voice channel (default)
+        voice_channel = get_bot().get_channel(TRIVIA_VOICE_CHANNEL_ID)
+
     if voice_channel:
         try:
             voice_client = voice_channel.guild.voice_client
@@ -5410,12 +5499,13 @@ async def ask_soundfx_challenge(winner, winner_id, num=7):
             start_time = asyncio.get_event_loop().time()
 
             def check(m):
-                return m.channel == channel and m.author != bot.user
+                target_channel = _active_game_channel or channel
+                return m.channel == target_channel and m.author != get_bot().user
 
             while asyncio.get_event_loop().time() - start_time < 20 and not answered:
                 try:
                     timeout = 20 - (asyncio.get_event_loop().time() - start_time)
-                    msg = await bot.wait_for("message", timeout=timeout, check=check)
+                    msg = await get_bot().wait_for("message", timeout=timeout, check=check)
                     guess = msg.content.strip()
                     uid = msg.author.id
                     display = msg.author.display_name
@@ -5579,7 +5669,16 @@ async def ask_audio_music_challenge(winner, winner_id, num=7):
 
     await safe_send(channel, content="\u200b\n🎶🤔 **Who Says? 🎧**: Do you remember this song?\n\u200b", embed=discord.Embed().set_image(url=gif_url))
 
-    voice_channel = bot.get_channel(TRIVIA_VOICE_CHANNEL_ID)
+    # Check if a voice channel ID was set in context
+    voice_channel_id = game_voice_channel_id.get()
+
+    if voice_channel_id:
+        # Use context voice channel (for mini-games)
+        voice_channel = get_bot().get_channel(voice_channel_id)
+    else:
+        # Use main trivia voice channel (default)
+        voice_channel = get_bot().get_channel(TRIVIA_VOICE_CHANNEL_ID)
+
     if voice_channel:
         try:
             voice_client = voice_channel.guild.voice_client
@@ -5694,12 +5793,12 @@ async def ask_audio_music_challenge(winner, winner_id, num=7):
     start_time = asyncio.get_event_loop().time()
 
     def check_category(m):
-        return m.author.id == winner_id and m.channel == channel and m.author != bot.user
+        return m.author.id == winner_id and m.channel == (_active_game_channel or channel) and m.author != get_bot().user
 
     while asyncio.get_event_loop().time() - start_time < magic_time + 5:
         try:
             timeout = magic_time + 5 - (asyncio.get_event_loop().time() - start_time)
-            msg = await bot.wait_for("message", timeout=timeout, check=check_category)
+            msg = await get_bot().wait_for("message", timeout=timeout, check=check_category)
 
             # Extract first number from message
             numbers = re.findall(r'\d+', msg.content.strip())
@@ -5731,12 +5830,12 @@ async def ask_audio_music_challenge(winner, winner_id, num=7):
     start_time = asyncio.get_event_loop().time()
 
     def check_pct(m):
-        return m.author.id == winner_id and m.channel == channel and m.author != bot.user
+        return m.author.id == winner_id and m.channel == (_active_game_channel or channel) and m.author != get_bot().user
 
     while asyncio.get_event_loop().time() - start_time < magic_time + 5:
         try:
             timeout = magic_time + 5 - (asyncio.get_event_loop().time() - start_time)
-            msg = await bot.wait_for("message", timeout=timeout, check=check_pct)
+            msg = await get_bot().wait_for("message", timeout=timeout, check=check_pct)
 
             # Extract first number from message
             numbers = re.findall(r'\d+', msg.content.strip())
@@ -5863,12 +5962,13 @@ async def ask_audio_music_challenge(winner, winner_id, num=7):
             start_time = asyncio.get_event_loop().time()
 
             def check(m):
-                return m.channel == channel and m.author != bot.user
+                target_channel = _active_game_channel or channel
+                return m.channel == target_channel and m.author != get_bot().user
 
             while asyncio.get_event_loop().time() - start_time < 20 and not answered:
                 try:
                     timeout = 20 - (asyncio.get_event_loop().time() - start_time)
-                    msg = await bot.wait_for("message", timeout=timeout, check=check)
+                    msg = await get_bot().wait_for("message", timeout=timeout, check=check)
                     guess = msg.content.strip()
                     uid = msg.author.id
                     display = msg.author.display_name
@@ -6030,7 +6130,16 @@ async def ask_audio_question_challenge(winner, winner_id, num=7):
 
     await safe_send(channel, content="\u200b\n🎙️🗯️ **Let's Talk 🎧**: Listen. Don't read.\n\u200b", embed=discord.Embed().set_image(url=gif_url))
 
-    voice_channel = bot.get_channel(TRIVIA_VOICE_CHANNEL_ID)
+    # Check if a voice channel ID was set in context
+    voice_channel_id = game_voice_channel_id.get()
+
+    if voice_channel_id:
+        # Use context voice channel (for mini-games)
+        voice_channel = get_bot().get_channel(voice_channel_id)
+    else:
+        # Use main trivia voice channel (default)
+        voice_channel = get_bot().get_channel(TRIVIA_VOICE_CHANNEL_ID)
+
     if voice_channel:
         try:
             voice_client = voice_channel.guild.voice_client
@@ -6169,12 +6278,12 @@ async def ask_audio_question_challenge(winner, winner_id, num=7):
     start_time = asyncio.get_event_loop().time()
 
     def check_voice(m):
-        return m.author.id == winner_id and m.channel == channel and m.author != bot.user
+        return m.author.id == winner_id and m.channel == (_active_game_channel or channel) and m.author != get_bot().user
 
     while asyncio.get_event_loop().time() - start_time < magic_time + 5:
         try:
             timeout = magic_time + 5 - (asyncio.get_event_loop().time() - start_time)
-            msg = await bot.wait_for("message", timeout=timeout, check=check_voice)
+            msg = await get_bot().wait_for("message", timeout=timeout, check=check_voice)
 
             # Extract first number from message
             numbers = re.findall(r'\d+', msg.content.strip())
@@ -6270,27 +6379,35 @@ async def ask_audio_question_challenge(winner, winner_id, num=7):
             await safe_send(channel, message)
 
             full_question = f"The category is {category}... {question}"
-            question_mp3 = text_to_speech(full_question, model=selected_voice_model)
+            question_mp3, actual_model = text_to_speech(full_question, model=selected_voice_model)
+
+            # Notify if fallback model was used
+            if actual_model != selected_voice_model and actual_model:
+                await safe_send(channel, f"\u200b\n😏💋 That voice ain't available... but don't worry, we'll use my **sexy OkraStrut voice** instead.\n\u200b")
 
             answered = False
 
             # Play the audio once in the voice channel
             try:
-                if voice_client:
+                if voice_client and question_mp3:
                     audio_source = discord.FFmpegPCMAudio(question_mp3)
                     voice_client.play(audio_source)
+                elif not question_mp3:
+                    await safe_send(channel, "\u200b\n❌ Error generating audio. Skipping this question.\n\u200b")
+                    continue
             except Exception as e:
                 print(f"Error playing audio: {e}")
 
             start_time = asyncio.get_event_loop().time()
 
             def check(m):
-                return m.channel == channel and m.author != bot.user
+                target_channel = _active_game_channel or channel
+                return m.channel == target_channel and m.author != get_bot().user
 
             while asyncio.get_event_loop().time() - start_time < 20 and not answered:
                 try:
                     timeout = 20 - (asyncio.get_event_loop().time() - start_time)
-                    msg = await bot.wait_for("message", timeout=timeout, check=check)
+                    msg = await get_bot().wait_for("message", timeout=timeout, check=check)
                     guess = msg.content.strip()
                     uid = msg.author.id
                     display = msg.author.display_name
@@ -6525,12 +6642,13 @@ async def ask_president_challenge(winner, winner_id, num=7):
             start_time = asyncio.get_event_loop().time()
 
             def check(m):
-                return m.channel == channel and m.author != bot.user
+                target_channel = _active_game_channel or channel
+                return m.channel == target_channel and m.author != get_bot().user
 
             while asyncio.get_event_loop().time() - start_time < 20 and not answered:
                 try:
                     timeout = 20 - (asyncio.get_event_loop().time() - start_time)
-                    msg = await bot.wait_for("message", timeout=timeout, check=check)
+                    msg = await get_bot().wait_for("message", timeout=timeout, check=check)
                     guess = msg.content.strip()
                     uid = msg.author.id
                     display = msg.author.display_name
@@ -6688,12 +6806,13 @@ async def ask_poster_challenge(winner, winner_id, num=7):
         right_answer = False
 
         def check(m):
-            return m.channel == channel and m.author != bot.user
+            target_channel = _active_game_channel or channel
+            return m.channel == target_channel and m.author != get_bot().user
 
         while asyncio.get_event_loop().time() - start_time < 15 and not right_answer:
             try:
                 remaining = 15 - (asyncio.get_event_loop().time() - start_time)
-                message = await bot.wait_for("message", timeout=remaining, check=check)
+                message = await get_bot().wait_for("message", timeout=remaining, check=check)
                 user = message.author.display_name
                 user_id = message.author.id
                 content = message.content.strip()
@@ -6953,12 +7072,13 @@ async def ask_wordle_challenge(winner, winner_id, num=1):
             top_word = ""
 
             def check(m):
-                return m.channel == channel and m.author != bot.user
+                target_channel = _active_game_channel or channel
+                return m.channel == target_channel and m.author != get_bot().user
 
             while asyncio.get_event_loop().time() - start_time < 20 and not right_answer:
                 try:
                     timeout = 20 - (asyncio.get_event_loop().time() - start_time)
-                    msg = await bot.wait_for("message", timeout=timeout, check=check)
+                    msg = await get_bot().wait_for("message", timeout=timeout, check=check)
                     guess = msg.content.strip().lower()
                     user = msg.author.display_name
                     uid = msg.author.id
@@ -7416,7 +7536,7 @@ async def ask_chess_challenge(winner, winner_id, num=5):
     
     chess_mode = None
     try:
-        msg = await bot.wait_for("message", timeout=magic_time + 5, check=lambda m: m.author.id == winner_id and m.author != bot.user and m.channel == channel and m.content.lower() in {"normal", "okrap"})
+        msg = await get_bot().wait_for("message", timeout=magic_time + 5, check=lambda m: m.author.id == winner_id and m.author != get_bot().user and m.channel == (_active_game_channel or channel) and m.content.lower() in {"normal", "okrap"})
         game_mode = msg.content.lower()
         await msg.add_reaction("✅")
     except asyncio.TimeoutError:
@@ -7486,12 +7606,13 @@ async def ask_chess_challenge(winner, winner_id, num=5):
             start_time = asyncio.get_event_loop().time()
 
             def check(m):
-                return m.channel == channel and m.author != bot.user
+                target_channel = _active_game_channel or channel
+                return m.channel == target_channel and m.author != get_bot().user
 
             while asyncio.get_event_loop().time() - start_time < 30 and not right_answer:
                 try:
                     timeout = 20 - (asyncio.get_event_loop().time() - start_time)
-                    msg = await bot.wait_for("message", timeout=timeout, check=check)
+                    msg = await get_bot().wait_for("message", timeout=timeout, check=check)
                     guess = msg.content.strip().lower().replace(" ", "")
                     user = msg.author.display_name
                     uid = msg.author.id
@@ -7657,11 +7778,12 @@ async def ask_microscopic_challenge(winner, winner_id, num=3):
             start_time = asyncio.get_event_loop().time()
 
             def check(m):
-                return m.channel == channel and m.author != bot.user
+                target_channel = _active_game_channel or channel
+                return m.channel == target_channel and m.author != get_bot().user
 
             while asyncio.get_event_loop().time() - start_time < 20 and right_answer == False:
                 try:
-                    msg = await bot.wait_for("message", timeout=1, check=check)
+                    msg = await get_bot().wait_for("message", timeout=1, check=check)
                     
                     sender_display_name = msg.author.display_name
                     sender_user_id = msg.author.id
@@ -7767,7 +7889,7 @@ async def ask_fusion_challenge(winner, winner_id, num=3):
     
     num_images = None
     try:
-        msg = await bot.wait_for("message", timeout=magic_time + 5, check=lambda m: m.author.id == winner_id and m.author != bot.user and m.channel == channel and m.content in {"2", "3", "4", "5"})
+        msg = await get_bot().wait_for("message", timeout=magic_time + 5, check=lambda m: m.author.id == winner_id and m.author != get_bot().user and m.channel == (_active_game_channel or channel) and m.content in {"2", "3", "4", "5"})
         num_images = msg.content
         await msg.add_reaction("✅")
     except asyncio.TimeoutError:
@@ -7880,11 +8002,12 @@ async def ask_fusion_challenge(winner, winner_id, num=3):
             start_time = asyncio.get_event_loop().time()
 
             def check(m):
-                return m.channel == channel and m.author != bot.user
+                target_channel = _active_game_channel or channel
+                return m.channel == target_channel and m.author != get_bot().user
 
             while asyncio.get_event_loop().time() - start_time < 30 and len(images_found) < num_images_int:
                 try:
-                    msg = await bot.wait_for("message", timeout=1, check=check)
+                    msg = await get_bot().wait_for("message", timeout=1, check=check)
                     
                     sender_display_name = msg.author.display_name
                     sender_user_id = msg.author.id
@@ -8231,11 +8354,12 @@ async def ask_tally_challenge(winner, winner_id, num=3):
         start_time = asyncio.get_event_loop().time()
 
         def check(m):
-            return m.channel == channel and m.author != bot.user
+            target_channel = _active_game_channel or channel
+            return m.channel == target_channel and m.author != get_bot().user
 
         while asyncio.get_event_loop().time() - start_time < 30:
             try:
-                msg = await bot.wait_for("message", timeout=1, check=check)
+                msg = await get_bot().wait_for("message", timeout=1, check=check)
                 
                 sender_display_name = msg.author.display_name
                 sender_user_id = msg.author.id
@@ -8411,10 +8535,10 @@ async def ask_currency_challenge(winner, winner_id, num=7):
             if remaining_time <= 0:
                 break
                 
-            msg = await bot.wait_for("message", 
+            msg = await get_bot().wait_for("message", 
                                    timeout=remaining_time, 
                                    check=lambda m: (m.author.id == winner_id and 
-                                                  m.channel == channel and 
+                                                  m.channel == (_active_game_channel or channel) and 
                                                   m.id not in processed_messages))
             
             processed_messages.add(msg.id)
@@ -8455,10 +8579,10 @@ async def ask_currency_challenge(winner, winner_id, num=7):
             if remaining_time <= 0:
                 break
                 
-            msg = await bot.wait_for("message", 
+            msg = await get_bot().wait_for("message", 
                                    timeout=remaining_time, 
                                    check=lambda m: (m.author.id == winner_id and 
-                                                  m.channel == channel and 
+                                                  m.channel == (_active_game_channel or channel) and 
                                                   m.id not in processed_messages))
             
             processed_messages.add(msg.id)
@@ -8561,8 +8685,8 @@ async def ask_currency_challenge(winner, winner_id, num=7):
         processed_users = set()
         
         def check(m):
-            return (m.channel == channel and 
-                    m.author != bot.user and 
+            return (m.channel == (_active_game_channel or channel) and 
+                    m.author != get_bot().user and 
                     m.author.id not in processed_users)
         
         while asyncio.get_event_loop().time() - start_time < 20:
@@ -8570,7 +8694,7 @@ async def ask_currency_challenge(winner, winner_id, num=7):
                 timeout = 20 - (asyncio.get_event_loop().time() - start_time)
                 if timeout <= 0:
                     break
-                msg = await bot.wait_for("message", timeout=timeout, check=check)
+                msg = await get_bot().wait_for("message", timeout=timeout, check=check)
                 try:
                     guess = float(msg.content.strip().replace(',', ''))
                     if guess < 0:
@@ -8769,12 +8893,13 @@ async def ask_myopic_challenge(winner, winner_id, num=3):
             processed_users = set()
 
             def check(m):
-                return m.channel == channel and m.author != bot.user
+                target_channel = _active_game_channel or channel
+                return m.channel == target_channel and m.author != get_bot().user
 
             while asyncio.get_event_loop().time() - start_time < 20 and not right_answer:
                 try:
                     timeout = 20 - (asyncio.get_event_loop().time() - start_time)
-                    msg = await bot.wait_for("message", timeout=timeout, check=check)
+                    msg = await get_bot().wait_for("message", timeout=timeout, check=check)
                     guess = normalize_text(msg.content).replace(" ", "")
                     user = msg.author.display_name
                     uid = msg.author.id
@@ -8967,12 +9092,13 @@ async def ask_missing_link(winner, winner_id, num=7):
         right_answer = False
 
         def check(m):
-            return m.channel == channel and m.author != bot.user
+            target_channel = _active_game_channel or channel
+            return m.channel == target_channel and m.author != get_bot().user
 
         while asyncio.get_event_loop().time() - start_time < 15 and not right_answer:
             try:
                 remaining = 15 - (asyncio.get_event_loop().time() - start_time)
-                message = await bot.wait_for("message", timeout=remaining, check=check)
+                message = await get_bot().wait_for("message", timeout=remaining, check=check)
                 user = message.author.display_name
                 user_id = message.author.id
                 content = message.content.strip()
@@ -9110,12 +9236,13 @@ async def ask_movie_scenes_challenge(winner, winner_id, num=7):
         right_answer = False
 
         def check(m):
-            return m.channel == channel and m.author != bot.user
+            target_channel = _active_game_channel or channel
+            return m.channel == target_channel and m.author != get_bot().user
 
         while asyncio.get_event_loop().time() - start_time < 15 and not right_answer:
             try:
                 remaining = 15 - (asyncio.get_event_loop().time() - start_time)
-                message = await bot.wait_for("message", timeout=remaining, check=check)
+                message = await get_bot().wait_for("message", timeout=remaining, check=check)
                 user = message.author.display_name
                 user_id = message.author.id
                 content = message.content.strip()
@@ -9207,7 +9334,7 @@ async def ask_feud_question(winner, mode, winner_id):
 
     await safe_send(channel, content=message, embed=discord.Embed().set_image(url=feud_gif_url))
     await asyncio.sleep(3)
-    await safe_send(channel, f"\u200b\n3️⃣🥇 Let's do a round of 3...\n\u200b")
+    await safe_send(channel, f"\u200b\n3️⃣❌ Three rounds to get them all!\n\u200b")
     await asyncio.sleep(3)
 
     try:
@@ -9292,8 +9419,8 @@ async def ask_feud_question(winner, mode, winner_id):
 
         def check(m):
             if mode == "solo":
-                return m.author.id == winner_id and m.channel == channel
-            return m.channel == channel and m.author != bot.user
+                return m.author.id == winner_id and m.channel == (_active_game_channel or channel)
+            return m.channel == (_active_game_channel or channel) and m.author != get_bot().user
 
         try:
             end_time = asyncio.get_event_loop().time() + guess_time
@@ -9301,11 +9428,9 @@ async def ask_feud_question(winner, mode, winner_id):
             while asyncio.get_event_loop().time() < end_time and not answered_correctly:
                 timeout = end_time - asyncio.get_event_loop().time()
 
-                response = await bot.wait_for("message", timeout=timeout, check=check)
+                response = await get_bot().wait_for("message", timeout=timeout, check=check)
 
-                if response.author.id in user_correct_answers:
-                    continue
-
+                matched_any = False
                 for answer in feud_answers:
                     if answer in user_progress:
                         continue
@@ -9313,14 +9438,16 @@ async def ask_feud_question(winner, mode, winner_id):
                     if fuzzy_match(response.content, answer, "", ""):
                         user_progress.append(answer)
                         correct_guesses += 1
-                        await response.add_reaction("✅")
+                        matched_any = True
 
-                        user_correct_answers.setdefault(response.author.display_name, 0)
-                        user_correct_answers[response.author.display_name] += 1
+                        user_correct_answers.setdefault(response.author.id, {"name": response.author.display_name, "count": 0})
+                        user_correct_answers[response.author.id]["count"] += 1
 
                         if len(user_progress) == num_answers:
                             answered_correctly = True
-                            break
+
+                if matched_any:
+                    await response.add_reaction("✅")
 
         except asyncio.TimeoutError:
             pass
@@ -9340,14 +9467,16 @@ async def ask_feud_question(winner, mode, winner_id):
             message = f"{correct_guesses} out of {num_answers}\n"
             if user_correct_answers and mode == "cooperative":
                 message += "\n**🏆 Commendable Okrans**\n"
-                sorted_users = sorted(user_correct_answers.items(), key=lambda x: x[1], reverse=True)
-                for i, (user, count) in enumerate(sorted_users, 1):
-                    message += f"{i}. **{user}**: {count}\n"
+                sorted_users = sorted(user_correct_answers.items(), key=lambda x: x[1]["count"], reverse=True)
+                for i, (user_id, data) in enumerate(sorted_users, 1):
+                    message += f"{i}. **{data['name']}**: {data['count']}\n"
             message += "\u200b"
             await safe_send(channel, message)
             await asyncio.sleep(2)
 
     result_message = ""
+    feud_winner_id = None
+
     if mode == "cooperative":
         if not user_progress:
             result_message = f"\n👎😢 No right answers out of {num_answers}. **I'm ashamed to call you Okrans**.\n"
@@ -9358,9 +9487,17 @@ async def ask_feud_question(winner, mode, winner_id):
 
         if user_correct_answers and mode == "cooperative":
             result_message += "\n**🏆 Commendable Okrans**\n"
-            sorted_users = sorted(user_correct_answers.items(), key=lambda x: x[1], reverse=True)
-            for i, (user, count) in enumerate(sorted_users, 1):
-                result_message += f"{i}. **{user}**: {count}\n"
+            sorted_users = sorted(user_correct_answers.items(), key=lambda x: x[1]["count"], reverse=True)
+            for i, (user_id, data) in enumerate(sorted_users, 1):
+                result_message += f"{i}. **{data['name']}**: {data['count']}\n"
+
+            # Determine winner - check for ties
+            if sorted_users:
+                max_score = sorted_users[0][1]["count"]
+                winners = [uid for uid, data in sorted_users if data["count"] == max_score]
+                if len(winners) == 1:
+                    feud_winner_id = winners[0]
+    
     elif mode == "solo":
         if not user_progress:
             result_message = f"\n👎😢 **No right answers** out of {num_answers}. **<@{winner_id}>, you're no Okran**.\n"
@@ -9397,7 +9534,7 @@ async def ask_feud_question(winner, mode, winner_id):
     board_embed.set_image(url="attachment://image.png")
     await safe_send(channel, embed=board_embed, file=image_file)
     await asyncio.sleep(5)
-    return
+    return feud_winner_id
 
 
 async def fetch_random_word_thes(min_length=5, max_length=12, max_retries=20, max_related=5):
@@ -9631,10 +9768,11 @@ async def load_previous_question():
 
 async def ask_ranker_list_number(winner, winner_id, num=7):
     def check(m):
-        return m.channel == channel and m.author != bot.user and m.author.id == winner_id and m.content.strip() in {"1", "2", "3", "4", "5"}
+        target_channel = _active_game_channel or channel
+        return m.channel == target_channel and m.author != get_bot().user and m.author.id == winner_id and m.content.strip() in {"1", "2", "3", "4", "5"}
 
     try:
-        message = await bot.wait_for("message", timeout=20, check=check)
+        message = await get_bot().wait_for("message", timeout=20, check=check)
         await message.add_reaction("💪")  # Acknowledge with a muscle emoji
         await safe_send(channel, f"\u200b\n💪🛡️ I got you **<@{winner_id}>**. **{message.content}** it is.\n\u200b")
         return int(message.content)
@@ -9703,13 +9841,14 @@ async def ask_ranker_list_question(winner, winner_id, num=7):
     await safe_send(channel, f"\u200b\n👉👉 **{clue}**\n\n🟢🚀 **GO!**\n\u200b")
 
     def check(m):
-        return m.channel == channel and m.author != bot.user
+        target_channel = _active_game_channel or channel
+        return m.channel == target_channel and m.author != get_bot().user
 
     start_time = asyncio.get_event_loop().time()
 
     while asyncio.get_event_loop().time() - start_time < 30:
         try:
-            message = await bot.wait_for("message", timeout=30, check=check)
+            message = await get_bot().wait_for("message", timeout=30, check=check)
             content = message.content.strip()
             user = message.author.display_name
             user_id = message.author.id
@@ -9718,13 +9857,17 @@ async def ask_ranker_list_question(winner, winner_id, num=7):
                 user_progress[user_id] = (user, set())
             display_name, answer_set = user_progress[user_id]
 
+            matched_any = False
             for answer in answers:
                 if answer in total_progress or answer in answer_set:
                     continue
                 if fuzzy_match(content, answer, category, url):
                     answer_set.add(answer)
                     total_progress.add(answer)
-                    await message.add_reaction("✅")
+                    matched_any = True
+
+            if matched_any:
+                await message.add_reaction("✅")
 
             if len(total_progress) >= num_answers:
                 break
@@ -9824,14 +9967,15 @@ async def ask_list_question(winner, winner_id, num=7):
     await safe_send(channel, f"\u200b\n\u200b\n👉👉 **{clue}**\n\n🟢🚀 **GO!**\n\u200b")
 
     def check(m):
-        return m.channel == channel and m.author != bot.user
+        target_channel = _active_game_channel or channel
+        return m.channel == target_channel and m.author != get_bot().user
 
     start_time = asyncio.get_event_loop().time()
 
     while asyncio.get_event_loop().time() - start_time < 30:
         remaining = 30 - (asyncio.get_event_loop().time() - start_time)
         try:
-            message = await bot.wait_for("message", timeout=remaining, check=check)
+            message = await get_bot().wait_for("message", timeout=remaining, check=check)
             content = message.content.strip()
             user = message.author.display_name
             user_id = message.author.id
@@ -9939,7 +10083,8 @@ async def ask_survey_question():
     await safe_send(channel, f"\n{emojis} {prompt_text}\n\n❓ {question_text}\n\u200b\n\u200b")
 
     def check(m):
-        return m.channel == channel and m.author != bot.user
+        target_channel = _active_game_channel or channel
+        return m.channel == target_channel and m.author != get_bot().user
 
     end_time = asyncio.get_event_loop().time() + 15
     while True:
@@ -9948,7 +10093,7 @@ async def ask_survey_question():
             break
 
         try:
-            msg = await asyncio.wait_for(bot.wait_for('message', check=check), timeout=timeout)
+            msg = await asyncio.wait_for(get_bot().wait_for('message', check=check), timeout=timeout)
             username = msg.author.display_name
             content = msg.content.strip()
 
@@ -10914,7 +11059,7 @@ async def nice_creep_okra_option(winner, winner_id):
     
     try:
         response = await asyncio.wait_for(
-            bot.wait_for('message', check=check),
+            get_bot().wait_for('message', check=check),
             timeout=magic_time  # time in seconds
         )
 
@@ -11144,7 +11289,8 @@ async def ask_category(winner, categories, winner_coffees, winner_id):
     await safe_send(channel, category_message)
 
     def check(m):
-        return m.channel == channel and m.author != bot.user and m.author.id == winner_id
+        target_channel = _active_game_channel or channel
+        return m.channel == target_channel and m.author != get_bot().user and m.author.id == winner_id
 
     end_time = asyncio.get_event_loop().time() + magic_time
 
@@ -11155,7 +11301,7 @@ async def ask_category(winner, categories, winner_coffees, winner_id):
             return None, additional_prompt
 
         try:
-            response = await asyncio.wait_for(bot.wait_for('message', check=check), timeout=remaining_time)
+            response = await asyncio.wait_for(get_bot().wait_for('message', check=check), timeout=remaining_time)
             message_content = response.content.strip()
 
             # Case 1: Invalid choice (not in categories)
@@ -11194,12 +11340,13 @@ async def request_prompt(winner, winner_id):
     await safe_send(channel, message)
 
     def check(m):
-        return m.channel == channel and m.author != bot.user and m.author.id == winner_id
+        target_channel = _active_game_channel or channel
+        return m.channel == target_channel and m.author != get_bot().user and m.author.id == winner_id
 
     try:
         while len(collected_words) < 10 and asyncio.get_event_loop().time() - start_time < (magic_time + 5):
             try:
-                response = await asyncio.wait_for(bot.wait_for('message', check=check), timeout=magic_time)
+                response = await asyncio.wait_for(get_bot().wait_for('message', check=check), timeout=magic_time)
                 words = response.content.strip().split()
 
                 for word in words:
@@ -11229,7 +11376,7 @@ async def request_prompt(winner, winner_id):
 async def get_coffees(user_id):
     #if local_mode == True:
     #    return 5
-    guild = bot.get_guild(OKRAN_GUILD_ID)
+    guild = get_bot().get_guild(OKRAN_GUILD_ID)
     if not guild:
         print(f"⚠️ Bot is not in guild with ID {OKRAN_GUILD_ID}")
         return 0
@@ -11818,7 +11965,8 @@ async def process_wof_guesses(winner, answer, extra_time, winner_id):
     await safe_send(channel, f"\u200b\n\u200b\n**<@{winner_id}>** ❓**Your Answer**❓\n\u200b")
 
     def check(m):
-        return m.channel == channel and m.author != bot.user and m.author.id == winner_id
+        target_channel = _active_game_channel or channel
+        return m.channel == target_channel and m.author != get_bot().user and m.author.id == winner_id
 
     start_time = time.time()  # Track when the question starts
 
@@ -11826,7 +11974,7 @@ async def process_wof_guesses(winner, answer, extra_time, winner_id):
         try:
             remaining = (magic_time + extra_time) - (time.time() - start_time)
             timeout = min(remaining, 30)
-            message = await bot.wait_for('message', timeout=timeout, check=check)
+            message = await get_bot().wait_for('message', timeout=timeout, check=check)
             message_content = message.content.upper().strip()
 
             if message_content == answer:
@@ -11862,7 +12010,8 @@ async def ask_wof_letters(winner, answer, extra_time, winner_id):
     wf_letters = []
 
     def check(m):
-        return m.channel == channel and m.author != bot.user and m.author.id == winner_id
+        target_channel = _active_game_channel or channel
+        return m.channel == target_channel and m.author != get_bot().user and m.author.id == winner_id
 
     while time.time() - start_time < (magic_time + extra_time):
         try:
@@ -11871,7 +12020,7 @@ async def ask_wof_letters(winner, answer, extra_time, winner_id):
 
             remaining_time = (magic_time + extra_time) - (time.time() - start_time)
             timeout = min(remaining_time, 30)
-            message = await bot.wait_for('message', timeout=timeout, check=check)
+            message = await get_bot().wait_for('message', timeout=timeout, check=check)
             message_content = message.content.upper()
 
             if message_content == answer:
@@ -11908,7 +12057,8 @@ async def ask_wof_letters(winner, answer, extra_time, winner_id):
 
 async def ask_wof_number(winner, winner_id):
     def check(m):
-        return m.channel == channel and m.author != bot.user and m.author.id in {winner_id, okrag_id}
+        target_channel = _active_game_channel or channel
+        return m.channel == target_channel and m.author != get_bot().user and m.author.id in {winner_id, okrag_id}
 
     unlocks = {
         "5": "Wikipedia Roulette",
@@ -11962,7 +12112,7 @@ async def ask_wof_number(winner, winner_id):
     try:
         while asyncio.get_event_loop().time() - start < magic_time:
             remaining = magic_time - (asyncio.get_event_loop().time() - start)
-            message = await asyncio.wait_for(bot.wait_for('message', check=check), timeout=remaining)
+            message = await asyncio.wait_for(get_bot().wait_for('message', check=check), timeout=remaining)
             content = message.content.strip().lower()
             responder_id = message.author.id
             winner_coffees = await get_coffees(responder_id)
@@ -12294,12 +12444,13 @@ async def ask_magic_challenge(winner, winner_id, num=5):
         magic_number_correct = False
 
         def check(m):
-            return m.channel == channel and m.author != bot.user
+            target_channel = _active_game_channel or channel
+            return m.channel == target_channel and m.author != get_bot().user
 
         while asyncio.get_event_loop().time() - start_time < 15 and not magic_number_correct:
             try:
                 remaining = 15 - (asyncio.get_event_loop().time() - start_time)
-                message = await bot.wait_for("message", timeout=remaining, check=check)
+                message = await get_bot().wait_for("message", timeout=remaining, check=check)
                 content = message.content.strip()
                 user = message.author.display_name
                 user_id = message.author.id
@@ -12689,7 +12840,8 @@ async def prompt_user_for_response(round_winner, winner_points, winner_coffees, 
     }
 
     def check(m):
-        return m.channel == channel and m.author != bot.user and (m.author.id == round_winner_id or m.author.id == okrag_id)
+        target_channel = _active_game_channel or channel
+        return m.channel == target_channel and m.author != get_bot().user and (m.author.id == round_winner_id or m.author.id == okrag_id)
 
     start_time = time.time()
 
@@ -12706,7 +12858,7 @@ async def prompt_user_for_response(round_winner, winner_points, winner_coffees, 
 
     while time.time() - start_time < magic_time:
         try:
-            message = await bot.wait_for("message", timeout=magic_time - (time.time() - start_time), check=check)
+            message = await get_bot().wait_for("message", timeout=magic_time - (time.time() - start_time), check=check)
             message_content = message.content.strip().lower()
             matches = re.findall(r'(?<!#)\d+', message_content)
 
@@ -13556,10 +13708,10 @@ async def check_bump_status():
 async def sync_bumper_king_with_role():
     """Sync the global bump data with who actually has the Bumper King role in Discord"""
     global bumped_status, bumper_king_id, bumper_king_name, last_bump_time
-    
+
     try:
         # Get the guild
-        guild = bot.get_guild(OKRAN_GUILD_ID)
+        guild = get_bot().get_guild(OKRAN_GUILD_ID)
         if not guild:
             print("Could not find guild for bumper king sync")
             return
@@ -13783,7 +13935,7 @@ async def change_bumper_king_role_color(color_input):
             return "No bumper king currently set."
         
         # Get the guild (server)
-        guild = bot.get_guild(OKRAN_GUILD_ID)
+        guild = get_bot().get_guild(OKRAN_GUILD_ID)
         if not guild:
             return "Server not found."
         
@@ -14369,7 +14521,7 @@ async def check_correct_responses_delete(question_ask_time, trivia_answer_list, 
         display_name = message.author.display_name
         timestamp = message.created_at.timestamp()
         message_id = message.id
-        bot_user_id = bot.user.id
+        bot_user_id = get_bot().user.id
         
         message_content = message_content.replace("\uFFFC", "")  # Remove U+FFFC
 
@@ -15855,7 +16007,7 @@ async def get_player_selected_question(questions, round_winner, winner_id):
     await safe_send(channel, message)
 
     def check(m):
-        return m.author.id == winner_id and m.channel == channel
+        return m.author.id == winner_id and m.channel == (_active_game_channel or channel)
 
     end_time = asyncio.get_event_loop().time() + magic_time
     while True:
@@ -15864,7 +16016,7 @@ async def get_player_selected_question(questions, round_winner, winner_id):
             break
 
         try:
-            response = await asyncio.wait_for(bot.wait_for("message", check=check), timeout=timeout)
+            response = await asyncio.wait_for(get_bot().wait_for("message", check=check), timeout=timeout)
             content = response.content.strip()
             digits = ''.join(filter(str.isdigit, content))
 
@@ -16002,7 +16154,7 @@ async def start_trivia():
             #await get_survey_results()
             scoreboard.clear()
             fastest_answers_count.clear()
-            #await ask_feud_question("TheOkraG", "cooperative", 591861826690613248)
+            await ask_feud_question("TheOkraG", "solo", 591861826690613248)
             #await ask_jigsaw_challenge("The Creator", 591861826690613248)
             #await ask_border_challenge("The Creator", 591861826690613248)
             #await ask_ranker_people_challenge("TheOkraG", 1)
@@ -16034,9 +16186,9 @@ async def start_trivia():
             await safe_send(channel, "\u200b\n👥 ***Send any message to start!*** 👥\n\u200b")
 
             def check(m):
-                return m.author.id != bot.user.id and m.channel.id == channel.id
+                return m.author.id != get_bot().user.id and m.channel.id == channel.id
 
-            msg = await bot.wait_for('message', check=check)
+            msg = await get_bot().wait_for('message', check=check)
             await msg.add_reaction("🥒")
 
             #await asyncio.sleep(5)
@@ -16404,15 +16556,15 @@ def extract_bumper_from_message(message: discord.Message) -> tuple[int | None, s
 async def on_message(message):
     global collected_responses, question_asked_start, question_asked_end, bumped_status, bumper_king_id, bumper_king_name
 
-    #if message.author == bot.user:
+    #if message.author == get_bot().user:
     #    return
-    
-    is_self = (message.author.id == bot.user.id)
+
+    is_self = (message.author.id == get_bot().user.id)
 
     if is_self:
         return
     
-    if "okra" in message.content.strip().lower() and emoji_mode == True and message.author.id != bot.user.id:
+    if "okra" in message.content.strip().lower() and emoji_mode == True and message.author.id != get_bot().user.id:
         if emoji_mode == True:
             await message.add_reaction("🥒")
 
@@ -16488,7 +16640,7 @@ async def on_message(message):
 
 
 
-    if "#perks" in message.content.strip().lower() and message.author.id != bot.user.id:
+    if "#perks" in message.content.strip().lower() and message.author.id != get_bot().user.id:
         try:
             dm_channel = await message.author.create_dm()
     
@@ -16503,7 +16655,7 @@ async def on_message(message):
             print(f"Error sending DM: {e}")
             return
 
-    if "#flag" in message.content.strip().lower() and collect_feedback_mode == True and message.author.id != bot.user.id and message.channel.id == channel_id:
+    if "#flag" in message.content.strip().lower() and collect_feedback_mode == True and message.author.id != get_bot().user.id and message.channel.id == channel_id:
         if emoji_mode == True:
             await message.add_reaction("🚩")
         await update_audit_question(current_question, message.content.strip(), message.author.display_name)
@@ -16523,36 +16675,36 @@ async def on_message(message):
             await message.add_reaction("😩")
         return
     
-    if question_asked_start is None or question_asked_end is None or message.channel.id != channel_id:
-        return
+    # Only collect trivia responses if in the main trivia channel during an active question
+    if message.channel.id == channel_id and question_asked_start is not None and question_asked_end is not None:
+        # Check if the message is during the active question window
+        now = message.created_at.timestamp()
+        if question_asked_start <= now <= question_asked_end:
+            collected_responses.append({
+                "user_id": message.author.id,
+                "display_name": message.author.display_name,
+                "message_content": message.content,
+                "response_time": now,
+                "message": message  # Save the original message object for deletion if needed
+            })
 
-    # Check if the message is during the active question window
-    now = message.created_at.timestamp()
-    if question_asked_start <= now <= question_asked_end:
-        collected_responses.append({
-            "user_id": message.author.id,
-            "display_name": message.author.display_name,
-            "message_content": message.content,
-            "response_time": now,
-            "message": message  # Save the original message object for deletion if needed
-        })
-        
-        ESCAPE_PREFIXES = (".", ",", "~")
+            ESCAPE_PREFIXES = (".", ",", "~")
 
-        if (ghost_mode or (cloaked_user is not None and message.author.id == cloaked_user)) and not message.content.lstrip().startswith(ESCAPE_PREFIXES):
-            try:
-                await message.delete()
-            except discord.Forbidden:
-                print("Bot lacks permission to delete messages.")
-            except discord.HTTPException as e:
-                print(f"Failed to delete message: {e}")
+            if (ghost_mode or (cloaked_user is not None and message.author.id == cloaked_user)) and not message.content.lstrip().startswith(ESCAPE_PREFIXES):
+                try:
+                    await message.delete()
+                except discord.Forbidden:
+                    print("Bot lacks permission to delete messages.")
+                except discord.HTTPException as e:
+                    print(f"Failed to delete message: {e}")
 
+    # Always process commands regardless of channel
     await bot.process_commands(message)
 
 
 @bot.event
 async def on_message_edit(before, after):
-    if after.author == bot.user:
+    if after.author == get_bot().user:
         return
 
     # Only react to edits in this specific channel
@@ -16948,6 +17100,57 @@ async def sync_global(ctx):
     except Exception as e:
         await ctx.send(f"❌ Failed to sync commands: {e}")
 
+@bot.command()
+async def arena(ctx, game_name: str = None, num: int = 1):
+    """
+    Run a mini-game in the Mini-Game Arena
+
+    Examples:
+        !arena flags
+        !arena flags 5
+        !arena random
+        !arena chaos 10
+    """
+    print(f"🎮 Arena command triggered! game_name={game_name}, num={num}, MINI_GAMES_ENABLED={MINI_GAMES_ENABLED}")
+
+    if not MINI_GAMES_ENABLED:
+        await ctx.send("❌ Mini-games system not available")
+        return
+
+    try:
+        if game_name is None or game_name.lower() == "random":
+            print(f"🎲 Running random mini-game for {ctx.author.display_name} in channel {ctx.channel.id}")
+            await mini_games.run_random_mini_game(
+                bot,
+                ctx.author.display_name,
+                ctx.author.id,
+                channel_override=ctx.channel
+            )
+        elif game_name.lower() == "chaos":
+            print(f"🌀 Running chaos mode with {num} games in channel {ctx.channel.id}")
+            await mini_games.run_mini_game_chaos(
+                bot,
+                ctx.author.display_name,
+                ctx.author.id,
+                num_games=num,
+                channel_override=ctx.channel
+            )
+        else:
+            print(f"🎯 Running specific game: {game_name} in channel {ctx.channel.id}")
+            await mini_games.run_mini_game(
+                bot,
+                game_name,
+                ctx.author.display_name,
+                ctx.author.id,
+                num=num,
+                channel_override=ctx.channel
+            )
+    except Exception as e:
+        print(f"❌ Error in arena command: {e}")
+        import traceback
+        traceback.print_exc()
+        await ctx.send(f"❌ Error running mini-game: {e}")
+
 @bot.event
 async def on_raw_reaction_add(payload):
     """
@@ -16956,7 +17159,7 @@ async def on_raw_reaction_add(payload):
     # Only process reactions in RULES_CHANNEL_ID to the specific message
     if payload.channel_id == RULES_CHANNEL_ID and payload.message_id == RULES_MESSAGE_ID:
         # Get the guild, user, and roles
-        guild = bot.get_guild(payload.guild_id)
+        guild = get_bot().get_guild(payload.guild_id)
         if not guild:
             return
 
@@ -17003,7 +17206,7 @@ async def _remove_user_reaction(channel_id, message_id, emoji, user_id):
     Helper function to remove a specific user's reaction from a message
     """
     try:
-        channel = bot.get_channel(channel_id)
+        channel = get_bot().get_channel(channel_id)
         if not channel:
             return
 
@@ -17011,7 +17214,7 @@ async def _remove_user_reaction(channel_id, message_id, emoji, user_id):
         if not message:
             return
 
-        user = bot.get_user(user_id)
+        user = get_bot().get_user(user_id)
         if not user:
             return
 
