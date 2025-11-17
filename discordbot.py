@@ -262,6 +262,9 @@ round_data = {
     "questions": []  # Collect questions asked with their answers and responses
 }
 
+# Lock to prevent concurrent arena games
+arena_game_lock = asyncio.Lock()
+
 fastest_answers_count = {}
 current_longest_answer_streak = {"user": None, "user_id": None, "streak": 0}
 current_longest_round_streak = {"user": None, "user_id": None, "streak": 0}
@@ -17113,43 +17116,53 @@ async def arena(ctx, game_name: str = None, num: int = 1):
     """
     print(f"🎮 Arena command triggered! game_name={game_name}, num={num}, MINI_GAMES_ENABLED={MINI_GAMES_ENABLED}")
 
+    # Restrict to Mini-Game Arena channel only - silently ignore if wrong channel
+    if ctx.channel.id != MINI_GAME_ARENA_CHANNEL_ID:
+        return
+
     if not MINI_GAMES_ENABLED:
         await ctx.send("❌ Mini-games system not available")
         return
 
-    try:
-        if game_name is None or game_name.lower() == "random":
-            print(f"🎲 Running random mini-game for {ctx.author.display_name} in channel {ctx.channel.id}")
-            await mini_games.run_random_mini_game(
-                bot,
-                ctx.author.display_name,
-                ctx.author.id,
-                channel_override=ctx.channel
-            )
-        elif game_name.lower() == "chaos":
-            print(f"🌀 Running chaos mode with {num} games in channel {ctx.channel.id}")
-            await mini_games.run_mini_game_chaos(
-                bot,
-                ctx.author.display_name,
-                ctx.author.id,
-                num_games=num,
-                channel_override=ctx.channel
-            )
-        else:
-            print(f"🎯 Running specific game: {game_name} in channel {ctx.channel.id}")
-            await mini_games.run_mini_game(
-                bot,
-                game_name,
-                ctx.author.display_name,
-                ctx.author.id,
-                num=num,
-                channel_override=ctx.channel
-            )
-    except Exception as e:
-        print(f"❌ Error in arena command: {e}")
-        import traceback
-        traceback.print_exc()
-        await ctx.send(f"❌ Error running mini-game: {e}")
+    # Check if a game is already running
+    if arena_game_lock.locked():
+        await ctx.send("❌ A mini-game is already running! Please wait for it to finish.")
+        return
+
+    async with arena_game_lock:
+        try:
+            if game_name is None or game_name.lower() == "random":
+                print(f"🎲 Running random mini-game for {ctx.author.display_name} in channel {ctx.channel.id}")
+                await mini_games.run_random_mini_game(
+                    bot,
+                    ctx.author.display_name,
+                    ctx.author.id,
+                    channel_override=ctx.channel
+                )
+            elif game_name.lower() == "chaos":
+                print(f"🌀 Running chaos mode with {num} games in channel {ctx.channel.id}")
+                await mini_games.run_mini_game_chaos(
+                    bot,
+                    ctx.author.display_name,
+                    ctx.author.id,
+                    num_games=num,
+                    channel_override=ctx.channel
+                )
+            else:
+                print(f"🎯 Running specific game: {game_name} in channel {ctx.channel.id}")
+                await mini_games.run_mini_game(
+                    bot,
+                    game_name,
+                    ctx.author.display_name,
+                    ctx.author.id,
+                    num=num,
+                    channel_override=ctx.channel
+                )
+        except Exception as e:
+            print(f"❌ Error in arena command: {e}")
+            import traceback
+            traceback.print_exc()
+            await ctx.send(f"❌ Error running mini-game: {e}")
 
 @bot.event
 async def on_raw_reaction_add(payload):
