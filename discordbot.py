@@ -17162,7 +17162,6 @@ async def arena(ctx, game_name: str = None, num: int = 1):
         return
 
     async with arena_game_lock:
-        global arena_game_task
         try:
             # Store current task for cancellation support
             arena_game_task = asyncio.current_task()
