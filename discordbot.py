@@ -264,6 +264,7 @@ round_data = {
 
 # Lock to prevent concurrent arena games
 arena_game_lock = asyncio.Lock()
+arena_game_task = None  # Store reference to running arena game task for cancellation
 
 fastest_answers_count = {}
 current_longest_answer_streak = {"user": None, "user_id": None, "streak": 0}
@@ -17116,8 +17117,32 @@ async def arena(ctx, game_name: str = None, num: int = 1):
         !arena flags 5
         !arena random
         !arena chaos 10
+        !arena cancel (okrag_id only)
     """
     print(f"🎮 Arena command triggered! game_name={game_name}, num={num}, MINI_GAMES_ENABLED={MINI_GAMES_ENABLED}")
+
+    # Handle cancel subcommand (okrag_id only)
+    if game_name and game_name.lower() == "cancel":
+        global arena_game_task
+
+        # Only okrag_id can cancel games - silently ignore others
+        if ctx.author.id != okrag_id:
+            return
+
+        # Check if a game is running
+        if not arena_game_lock.locked() or arena_game_task is None:
+            await ctx.send("❌ No arena game is currently running")
+            return
+
+        # Cancel the running task
+        try:
+            arena_game_task.cancel()
+            await ctx.send("✅ **Arena game cancelled**")
+            print(f"🛑 Arena game cancelled by {ctx.author.display_name}")
+        except Exception as e:
+            print(f"Error cancelling arena game: {e}")
+            await ctx.send(f"❌ Error cancelling game: {e}")
+        return
 
     # Restrict to Mini-Game Arena channel only - silently ignore if wrong channel
     if ctx.channel.id != MINI_GAME_ARENA_CHANNEL_ID:
@@ -17127,13 +17152,21 @@ async def arena(ctx, game_name: str = None, num: int = 1):
         await ctx.send("❌ Mini-games system not available")
         return
 
+    # Cap num at 7 for regular users (okrag_id has no limit) - applies to both specific games and chaos mode
+    if ctx.author.id != okrag_id and num > 7:
+        num = 7
+
     # Check if a game is already running
     if arena_game_lock.locked():
         await ctx.send("❌ A mini-game is already running! Please wait for it to finish.")
         return
 
     async with arena_game_lock:
+        global arena_game_task
         try:
+            # Store current task for cancellation support
+            arena_game_task = asyncio.current_task()
+
             if game_name is None or game_name.lower() == "random":
                 print(f"🎲 Running random mini-game for {ctx.author.display_name} in channel {ctx.channel.id}")
                 await mini_games.run_random_mini_game(
@@ -17161,11 +17194,17 @@ async def arena(ctx, game_name: str = None, num: int = 1):
                     num=num,
                     channel_override=ctx.channel
                 )
+        except asyncio.CancelledError:
+            print(f"🛑 Arena game cancelled by admin")
+            await ctx.send("🛑 **Game cancelled by admin**")
+            raise  # Re-raise to properly clean up the task
         except Exception as e:
             print(f"❌ Error in arena command: {e}")
             import traceback
             traceback.print_exc()
             await ctx.send(f"❌ Error running mini-game: {e}")
+        finally:
+            arena_game_task = None
 
 @bot.event
 async def on_raw_reaction_add(payload):
