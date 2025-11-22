@@ -5534,11 +5534,25 @@ async def ask_soundfx_challenge(winner, winner_id, num=7):
                 except asyncio.TimeoutError:
                     break
 
+            # Save whether someone actually answered before stopping audio
+            was_answered = answered
+
+            # Set answered flag to stop audio loop (needed for timeout case)
+            answered = True
+
+            # Cancel audio task if it exists
+            if audio_task and not audio_task.done():
+                audio_task.cancel()
+                try:
+                    await audio_task
+                except asyncio.CancelledError:
+                    pass
+
             # Stop any playing audio
             if voice_client and voice_client.is_playing():
                 voice_client.stop()
 
-            if not answered:
+            if not was_answered:
                 await safe_send(channel, f"\u200b\n❌😢 No one got it.\n\n📝🧠 Answer: **{description.upper()}**\n\u200b")
 
 
@@ -5997,11 +6011,25 @@ async def ask_audio_music_challenge(winner, winner_id, num=7):
                 except asyncio.TimeoutError:
                     break
 
+            # Save whether someone actually answered before stopping audio
+            was_answered = answered
+
+            # Set answered flag to stop audio loop (needed for timeout case)
+            answered = True
+
+            # Cancel audio task if it exists
+            if audio_task and not audio_task.done():
+                audio_task.cancel()
+                try:
+                    await audio_task
+                except asyncio.CancelledError:
+                    pass
+
             # Stop any playing audio
             if voice_client and voice_client.is_playing():
                 voice_client.stop()
 
-            if not answered:
+            if not was_answered:
                 await safe_send(channel, f"\u200b\n❌😢 No one got it.\n\n📝🧠 Answer: **{artist.upper()} - {title.upper()}**\n\u200b")
 
 
@@ -16207,8 +16235,8 @@ async def start_trivia():
 
             start_message += "\n\u200b"
 
-            await safe_send(channel, start_message)
-            await asyncio.sleep(5)
+            #await safe_send(channel, start_message)
+            #await asyncio.sleep(5)
             
             
             start_message = f"\u200b\n\u200b\n⏩ Starting a **{questions_per_round} question** round! ⏩\n\u200b"
