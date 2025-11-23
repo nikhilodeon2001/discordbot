@@ -16228,6 +16228,7 @@ async def start_trivia():
         if selected_questions is None or len(selected_questions) == 0:
             selected_questions = await select_trivia_questions(questions_per_round)  #Pick the initial question set
 
+        
         while True:  # Endless loop     
             reset_embed_color()  
             current_time = time.time()
@@ -16256,6 +16257,11 @@ async def start_trivia():
             #await ask_flags_challenge("The Creator", 591861826690613248)
             
 
+            if len(round_responders) == 0:
+                no_players = True
+            else:
+                no_players = False
+                
             round_responders.clear()  # Reset round responders
             round_data["questions"] = []
 
@@ -16268,15 +16274,16 @@ async def start_trivia():
                 await safe_send(channel, content="\u200b\n\u200b\n🎉🤹‍♂️ **Live Trivia & Games for Discord!**\n\u200b", embed=discord.Embed().set_image(url=selected_gif_url))
 
             # Wait for a player to be present before starting
-            await safe_send(channel, "\u200b\n👥 ***Send any message to start!*** 👥\n\u200b")
+            if no_players:
+                await safe_send(channel, "\u200b\n👥 ***Send any message to start!*** 👥\n\u200b")
 
-            def check(m):
-                return m.author.id != get_bot().user.id and m.channel.id == channel.id
+                def check(m):
+                    return m.author.id != get_bot().user.id and m.channel.id == channel.id
 
-            msg = await get_bot().wait_for('message', check=check)
-            await msg.add_reaction("🥒")
-
-            #await asyncio.sleep(5)
+                msg = await get_bot().wait_for('message', check=check)
+                await msg.add_reaction("🥒")
+            else:
+                await asyncio.sleep(5)
 
             start_message = f"\u200b\n✨🧪 **NEW** from the **Okra Lab**! 🧪✨\n"
             
