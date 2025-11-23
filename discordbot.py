@@ -5076,7 +5076,45 @@ async def ask_ranker_people_challenge(winner, winner_id, num=7):
         return people_winner_id
     else:
         return None
-    
+
+
+
+async def add_white_background_to_flag(image_url):
+    """Download a flag image and add a white background to fix transparency issues in dark mode."""
+    try:
+        # Download the image
+        response = requests.get(image_url, timeout=10)
+        if response.status_code != 200:
+            print(f"Failed to download flag image. Status code: {response.status_code}")
+            return None
+
+        # Open the image
+        flag_image = Image.open(io.BytesIO(response.content))
+
+        # Convert to RGBA if not already
+        if flag_image.mode != 'RGBA':
+            flag_image = flag_image.convert('RGBA')
+
+        # Create a white background image
+        white_background = Image.new('RGBA', flag_image.size, (255, 255, 255, 255))
+
+        # Composite the flag over the white background
+        final_image = Image.alpha_composite(white_background, flag_image)
+
+        # Convert back to RGB (remove alpha channel)
+        final_image = final_image.convert('RGB')
+
+        # Save to a BytesIO buffer
+        buffer = io.BytesIO()
+        final_image.save(buffer, format='PNG')
+        buffer.seek(0)
+
+        return buffer
+
+    except Exception as e:
+        sentry_sdk.capture_exception(e)
+        print(f"Error adding white background to flag: {e}")
+        return None
 
 
 async def ask_flags_challenge(winner, winner_id, num=7):
@@ -5139,7 +5177,18 @@ async def ask_flags_challenge(winner, winner_id, num=7):
         else:
             prompt = "\u200b\n🏳️ What does this flag represent?\n\u200b"
 
-        await safe_send(channel, content=prompt, embed=discord.Embed().set_image(url=image_url))
+        # Add white background to flag image to fix transparency in dark mode
+        flag_buffer = await add_white_background_to_flag(image_url)
+
+        if flag_buffer:
+            # Send flag as file attachment with white background
+            flag_file = discord.File(flag_buffer, filename="flag.png")
+            embed = discord.Embed()
+            embed.set_image(url="attachment://flag.png")
+            await safe_send(channel, content=prompt, embed=embed, file=flag_file)
+        else:
+            # Fallback to original URL if processing failed
+            await safe_send(channel, content=prompt, embed=discord.Embed().set_image(url=image_url))
 
         start_time = asyncio.get_event_loop().time()
         right_answer = False
@@ -16189,7 +16238,7 @@ async def start_trivia():
             #await get_survey_results()
             scoreboard.clear()
             fastest_answers_count.clear()
-            #await ask_feud_question("TheOkraG", "solo", 591861826690613248)
+            #await ask_feud_question("TheOkraG", "cooperative", 591861826690613248)
             #await ask_jigsaw_challenge("The Creator", 591861826690613248)
             #await ask_border_challenge("The Creator", 591861826690613248)
             #await ask_ranker_people_challenge("TheOkraG", 1)
@@ -16204,6 +16253,7 @@ async def start_trivia():
             #await ask_soundfx_challenge("TheOkraG",591861826690613248, 2)
             #await ask_audio_music_challenge("TheOkraG",591861826690613248, 7)
             #await ask_audio_question_challenge("TheOkraG",591861826690613248, 7)
+            await ask_flags_challenge("The Creator", 591861826690613248)
             
 
             round_responders.clear()  # Reset round responders
