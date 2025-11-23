@@ -16253,7 +16253,7 @@ async def start_trivia():
             #await ask_soundfx_challenge("TheOkraG",591861826690613248, 2)
             #await ask_audio_music_challenge("TheOkraG",591861826690613248, 7)
             #await ask_audio_question_challenge("TheOkraG",591861826690613248, 7)
-            await ask_flags_challenge("The Creator", 591861826690613248)
+            #await ask_flags_challenge("The Creator", 591861826690613248)
             
 
             round_responders.clear()  # Reset round responders
