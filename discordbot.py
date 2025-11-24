@@ -10791,7 +10791,7 @@ async def get_image_url_from_s3():
         # Remove the time from the date string
         date_only = ' '.join(full_date.split()[:-1])
         message = "\u200b\n🖼️✨ A memory from the **Okra Museum**"
-        message += "\n🥒🏛️ [Visit the Okra Museum](https://94mes.com/okra-museum)\n\u200b"
+        message += "\n🥒🏛️ [Visit the Okra Museum](https://clubokra.com/okra-museum)\n\u200b"
         await safe_send(channel, content=message, embed=discord.Embed().set_image(url=public_url))
 
         #message = f"\u200b\n**Masterpiece:** '{title}'\n"
@@ -11343,7 +11343,7 @@ async def generate_round_summary_image(round_data, winner, winner_id):
         
         message = f"\n**I call it**...*{image_description}*\n"
         message += f"\n🏛️👋 **Welcome to the Okra Museum**"
-        message += "\n🌐➡️ [Visit the Museum](https://94mes.com/okra-museum)\n"
+        message += "\n🌐➡️ [Visit the Museum](https://clubokra.com/okra-museum)\n"
         await safe_send(channel, message)
 
         async with aiohttp.ClientSession() as session:
@@ -11392,7 +11392,7 @@ async def generate_round_summary_image(round_data, winner, winner_id):
                 await safe_send(channel, content=message, embed=discord.Embed().set_image(url=image_url))
                 message = f"\nI call it: '{image_description}'\n"
                 message += f"\n🏛️👋 Welcome to the Okra Museum"
-                message += "\n🌐➡️ [Visit the Museum](https://94mes.com/okra-museum)\n"
+                message += "\n🌐➡️ [Visit the Museum](https://clubokra.com/okra-museum)\n"
                 await safe_send(channel, message)
         
                 async with aiohttp.ClientSession() as session:
@@ -14933,9 +14933,9 @@ async def update_round_streaks(user, user_id):
                 discount_fraction = min((streak // discount_streak_amount) * discount_step_amount, 90)
                 message += f"\n⚖️ Going forward **<@{user_id}>** will incur a **-{discount_fraction}%** handicap.\n"
                 
-            message += f"\n▶️ **[Discord Stats](https://94mes.com/discord)**\n\u200b\n\u200b"
+            message += f"\n▶️ **[Discord Stats](https://clubokra.com/discord)**\n\u200b\n\u200b"
         else:
-            message = f"\u200b\n\u200b\n🏆 **Winner**: **<@{user_id}>**!\n\n▶️ **[Discord Stats](https://94mes.com/discord)**\n\u200b\n\u200b"
+            message = f"\u200b\n\u200b\n🏆 **Winner**: **<@{user_id}>**!\n\n▶️ **[Discord Stats](https://clubokra.com/discord)**\n\u200b\n\u200b"
 
         await safe_send(channel, message)
         await asyncio.sleep(2)
@@ -15499,15 +15499,15 @@ async def round_start_messages():
         # If the user is in the Hall of Sovereigns, only show the message if top_count == 6
         if username in sovereigns:
             if top_count == 6:
-                await safe_send(channel, f"👑  {username} is #1 across the board. We bow to you.\n\n▶️ [Live trivia stats available](https://94mes.com)\n")
+                await safe_send(channel, f"👑  {username} is #1 across the board. We bow to you.\n\n▶️ [Live trivia stats available](https://clubokra.com)\n")
         else:
             # For users not in the Hall of Sovereigns, show all applicable messages
             if top_count == 6:
-                await safe_send(channel, f"👑  {username} is #1 across the board. We bow to you.\n\n▶️ [Live trivia stats available](https://94mes.com)\n")
+                await safe_send(channel, f"👑  {username} is #1 across the board. We bow to you.\n\n▶️ [Live trivia stats available](https://clubokra.com)\n")
             elif top_count == 5:
-                await safe_send(channel, f"🔥​  {username} is on fire! Only 1 leaderboard left.\n\n▶️ [Live trivia stats available](https://94mes.com)\n")
+                await safe_send(channel, f"🔥​  {username} is on fire! Only 1 leaderboard left.\n\n▶️ [Live trivia stats available](https://clubokra.com)\n")
             elif top_count == 4:
-                await safe_send(channel, f"🌡️  {username} is heating up! Only 2 leaderboards left.\n\n▶️ [Live trivia stats available](https://94mes.com)\n")
+                await safe_send(channel, f"🌡️  {username} is heating up! Only 2 leaderboards left.\n\n▶️ [Live trivia stats available](https://clubokra.com)\n")
     return None
 
 
@@ -16454,7 +16454,7 @@ async def start_trivia():
                 await asyncio.sleep(20)
 
             message = f"\u200b\n\u200b\n🥒 **Unlock perks? Become an Okran!**\n💚 [Join Role Subscriptions](https://discord.com/channels/1367682586079395902/role-subscriptions)\n"
-            message += f"\n🛒 **Score Live Trivia merch!**\n👕 [Shop Merch](https://merch.94mes.com)\n\u200b"
+            message += f"\n🛒 **Score Live Trivia merch!**\n👕 [Shop Merch](https://merch.clubokra.com)\n\u200b"
             await safe_send(channel, message)
             
             selected_questions = await select_trivia_questions(questions_per_round)  #Pick the next question set
