@@ -43,6 +43,10 @@ from collections import Counter, defaultdict
 import math
 import sys
 import signal
+
+# Check if this is a re-import by seeing if our sentinel is already in sys.modules
+_IS_REIMPORT = '__mini_game_audio_bot__' in sys.modules
+
 from ebooklib import epub
 from html.parser import HTMLParser
 import warnings
@@ -292,7 +296,8 @@ last_bump_time = None
 
 
 if local_mode == True:
-    discord_token = "REMOVED_DISCORD_TOKEN" 
+    discord_token = "REMOVED_DISCORD_TOKEN"
+    discord_mini_game_audio_bot_token = "REMOVED_DISCORD_AUDIO_TOKEN" 
     mongo_db_string = "mongodb+srv://nsharma2:REMOVED_MONGO_PASSWORD@staging.oxez2.mongodb.net/?retryWrites=true&w=majority&appName=staging"
     openai_api_key = "REMOVED_OPENAI_KEY"
     openweather_api_key = "REMOVED_OPENWEATHER_KEY"
@@ -305,6 +310,7 @@ if local_mode == True:
     channel_id = 1375328414151610458
 else:
     discord_token = os.getenv("discord_token")
+    discord_mini_game_audio_bot_token = os.getenv("DISCORD_MINI_GAME_AUDIO_BOT_TOKEN")
     mongo_db_string = os.getenv("mongo_db_string")
     openai_api_key = os.getenv("openai_api_key")
     openweather_api_key = os.getenv("openweather_api_key")
@@ -390,6 +396,29 @@ elif prod_or_stage == "prod":
 
 intents = discord.Intents.all()
 bot = commands.Bot(command_prefix="!", intents=intents)
+
+# Create second bot instance for mini-game audio to allow simultaneous voice streams
+# Store in sys.modules to persist across re-imports
+if not _IS_REIMPORT:
+    # First import - create the bot
+    mini_game_audio_bot = None
+    if discord_mini_game_audio_bot_token:
+        mini_game_audio_bot = commands.Bot(command_prefix="!", intents=intents)
+        print("🎵 Mini-game audio bot instance created")
+
+        # Add ready event handler for audio bot
+        @mini_game_audio_bot.event
+        async def on_ready():
+            print(f"🎵✅ Mini-game audio bot is ready! Logged in as {mini_game_audio_bot.user}")
+    else:
+        print("⚠️ DISCORD_MINI_GAME_AUDIO_BOT_TOKEN not set - mini-game audio will use main bot")
+
+    # Store in sys.modules for persistence
+    sys.modules['__mini_game_audio_bot__'] = mini_game_audio_bot
+else:
+    # Re-import - retrieve from sys.modules
+    mini_game_audio_bot = sys.modules.get('__mini_game_audio_bot__')
+
 openai_client = AsyncOpenAI(api_key=openai_api_key)
 id_limits = {"general": 2000, "mysterybox": 2000, "crossword": 5000, "jeopardy": 5000, "wof": 1500, "list": 20, "feud": 1000, "posters": 2000, "movie_scenes": 5000, "missing_link": 2500, "people": 2500, "ranker_list": 4000, "animal": 2000, "riddle": 2500, "dictionary": 5000, "flags": 800, "lyric": 500, "polyglottery": 80, "book": 80, "element": 100, "jigsaw": 5000, "border": 100, "faceoff": 5000, "president": 80, "wordle": 1400, "myopic": 5000, "fusion": 5000, "microscopic": 5000, "chess": 5000, "stock": 800, "currency": 100, "search": 10, "billboard": 40, "soundfx": 500, "audio_music":100, "audio_question": 2000}
 max_retries = 3
@@ -449,6 +478,7 @@ channel = None
 # Context variables for multi-channel mini-games support
 game_channel = ContextVar('game_channel', default=None)
 game_voice_channel_id = ContextVar('game_voice_channel_id', default=None)
+game_bot_instance = ContextVar('game_bot_instance', default=None)
 game_bot = ContextVar('game_bot', default=None)
 
 # Module-level variables for bot instance and channel (set by mini_games, used by games)
@@ -517,9 +547,33 @@ def clean_leading_trailing_junk(text: str) -> str:
 
 
 def get_bot():
-    """Get the bot instance - uses active game bot if available, otherwise global bot"""
+    """
+    Get the bot instance for general operations (messages, events, wait_for).
+    Uses active game bot if available, otherwise global bot.
+    Does NOT check game_bot_instance (that's for voice only).
+    """
     global _active_game_bot
     return _active_game_bot or globals()['bot']
+
+def get_voice_bot():
+    """
+    Get the bot instance specifically for voice operations.
+    Checks game_bot_instance first (for separate audio bot), otherwise uses get_bot().
+
+    Use this ONLY for voice client operations to allow separate voice streams.
+    Use get_bot() for all other operations (messages, events, wait_for, etc.)
+    """
+    context_bot = game_bot_instance.get()
+    if context_bot is not None:
+        # Check if the audio bot is ready (has connected and cached guild data)
+        # Also check if it has guilds cached (means it's truly ready)
+        if context_bot.is_ready() and len(context_bot.guilds) > 0:
+            return context_bot
+        else:
+            print(f"⚠️ Audio bot not fully ready yet (ready={context_bot.is_ready()}, guilds={len(context_bot.guilds)}), falling back to main bot")
+            # Fall back to main bot if audio bot isn't ready
+            return get_bot()
+    return get_bot()
 
 async def safe_send(channel=None, *args, max_retries=3, delay=2, use_embed=True, image_url=None, file=None, **kwargs):
     # Use context channel if no explicit channel provided
@@ -5421,14 +5475,16 @@ async def ask_soundfx_challenge(winner, winner_id, num=7):
 
     if voice_channel_id:
         # Use context voice channel (for mini-games)
-        voice_channel = get_bot().get_channel(voice_channel_id)
+        voice_channel = get_voice_bot().get_channel(voice_channel_id)
     else:
         # Use main trivia voice channel (default)
-        voice_channel = get_bot().get_channel(TRIVIA_VOICE_CHANNEL_ID)
+        voice_channel = get_voice_bot().get_channel(TRIVIA_VOICE_CHANNEL_ID)
 
     if voice_channel:
         try:
-            voice_client = voice_channel.guild.voice_client
+            # Get voice client for the voice bot (uses game_bot_instance if set for separate audio streams)
+            voice_bot = get_voice_bot()
+            voice_client = discord.utils.get(voice_bot.voice_clients, guild=voice_channel.guild)
 
             # If connected to a different channel, move to the correct one
             if voice_client and voice_client.channel != voice_channel:
@@ -5744,14 +5800,16 @@ async def ask_audio_music_challenge(winner, winner_id, num=7):
 
     if voice_channel_id:
         # Use context voice channel (for mini-games)
-        voice_channel = get_bot().get_channel(voice_channel_id)
+        voice_channel = get_voice_bot().get_channel(voice_channel_id)
     else:
         # Use main trivia voice channel (default)
-        voice_channel = get_bot().get_channel(TRIVIA_VOICE_CHANNEL_ID)
+        voice_channel = get_voice_bot().get_channel(TRIVIA_VOICE_CHANNEL_ID)
 
     if voice_channel:
         try:
-            voice_client = voice_channel.guild.voice_client
+            # Get voice client for the voice bot (uses game_bot_instance if set for separate audio streams)
+            voice_bot = get_voice_bot()
+            voice_client = discord.utils.get(voice_bot.voice_clients, guild=voice_channel.guild)
 
             # If connected to a different channel, move to the correct one
             if voice_client and voice_client.channel != voice_channel:
@@ -6219,14 +6277,16 @@ async def ask_audio_question_challenge(winner, winner_id, num=7):
 
     if voice_channel_id:
         # Use context voice channel (for mini-games)
-        voice_channel = get_bot().get_channel(voice_channel_id)
+        voice_channel = get_voice_bot().get_channel(voice_channel_id)
     else:
         # Use main trivia voice channel (default)
-        voice_channel = get_bot().get_channel(TRIVIA_VOICE_CHANNEL_ID)
+        voice_channel = get_voice_bot().get_channel(TRIVIA_VOICE_CHANNEL_ID)
 
     if voice_channel:
         try:
-            voice_client = voice_channel.guild.voice_client
+            # Get voice client for the voice bot (uses game_bot_instance if set for separate audio streams)
+            voice_bot = get_voice_bot()
+            voice_client = discord.utils.get(voice_bot.voice_clients, guild=voice_channel.guild)
 
             # If connected to a different channel, move to the correct one
             if voice_client and voice_client.channel != voice_channel:
@@ -17379,4 +17439,16 @@ async def on_reaction_add(reaction, user):
         print(f"❌ Error handling reaction: {e}")
 
 if __name__ == "__main__":
-    bot.run(discord_token)
+    async def main():
+        """Run both bot instances concurrently"""
+        tasks = [bot.start(discord_token)]
+
+        # Add mini-game audio bot if token is available
+        if mini_game_audio_bot and discord_mini_game_audio_bot_token:
+            print("🎵 Starting mini-game audio bot...")
+            tasks.append(mini_game_audio_bot.start(discord_mini_game_audio_bot_token))
+
+        await asyncio.gather(*tasks)
+
+    # Run the async main function
+    asyncio.run(main())
