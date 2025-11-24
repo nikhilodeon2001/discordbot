@@ -127,6 +127,7 @@ async def run_mini_game(bot, game_name: str, player_name: str, player_id: int,
     from discordbot import (
         game_channel,
         game_voice_channel_id,
+        game_bot_instance,
         game_bot,
         MINI_GAME_ARENA_CHANNEL_ID,
         MINI_GAME_ARENA_VOICE_CHANNEL_ID,
@@ -153,6 +154,12 @@ async def run_mini_game(bot, game_name: str, player_name: str, player_id: int,
     # Set voice channel ID from configuration (if provided)
     if MINI_GAME_ARENA_VOICE_CHANNEL_ID:
         game_voice_channel_id.set(MINI_GAME_ARENA_VOICE_CHANNEL_ID)
+
+    # For audio games, use the mini-game audio bot if available (to avoid voice conflicts)
+    audio_games = ["soundfx", "audio_music", "audio_question"]
+    if game_name.lower() in audio_games and discordbot.mini_game_audio_bot:
+        print(f"🎵 Using mini-game audio bot for {game_name}")
+        game_bot_instance.set(discordbot.mini_game_audio_bot)
 
     # Get the game function
     game_fn = _get_game_function(game_name)
@@ -199,6 +206,7 @@ async def run_mini_game_chaos(bot, player_name: str, player_id: int, num_games: 
     from discordbot import (
         game_channel,
         game_voice_channel_id,
+        game_bot_instance,
         game_bot,
         MINI_GAME_ARENA_CHANNEL_ID,
         MINI_GAME_ARENA_VOICE_CHANNEL_ID,
@@ -225,6 +233,11 @@ async def run_mini_game_chaos(bot, player_name: str, player_id: int, num_games: 
     # Set voice channel ID from configuration (if provided)
     if MINI_GAME_ARENA_VOICE_CHANNEL_ID:
         game_voice_channel_id.set(MINI_GAME_ARENA_VOICE_CHANNEL_ID)
+
+    # Use mini-game audio bot if available (chaos mode may include audio challenges)
+    if discordbot.mini_game_audio_bot:
+        print(f"🎵 Using mini-game audio bot for chaos mode")
+        game_bot_instance.set(discordbot.mini_game_audio_bot)
 
     # Call the regular chaos challenge - it will use the context!
     try:
