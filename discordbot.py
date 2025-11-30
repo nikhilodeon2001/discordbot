@@ -6077,6 +6077,12 @@ async def ask_audio_music_challenge(winner, winner_id, num=7):
             # Convert MongoDB category to display category for routing
             display_category = get_display_category(category)
 
+            # Format answer string based on category
+            if display_category == "TV Themes":
+                answer_string = title.upper()
+            else:
+                answer_string = f"{artist.upper()} - {title.upper()}"
+
             if display_category == "Christmas":
                 message = f"\u200b\n🎧➡️ Song **{round_num}** of **{num}**\n\n👂 Name the **ARTIST** or **TITLE**.\n\n🎅 ***Christmas*** will **NOT** be accepted!.\n\u200b"
             elif display_category == "TV Themes":
@@ -6144,7 +6150,7 @@ async def ask_audio_music_challenge(winner, winner_id, num=7):
 
                         await msg.add_reaction("✅")
                         user_data[uid] = (display, user_data.get(uid, (display, 0))[1] + 1)
-                        await safe_send(channel, f"\u200b\n✅🎉 **{display}** got it! **{artist.upper()} - {title.upper()}**\n\u200b")
+                        await safe_send(channel, f"\u200b\n✅🎉 **{display}** got it! **{answer_string}**\n\u200b")
                         break
 
                 except asyncio.TimeoutError:
@@ -6169,7 +6175,7 @@ async def ask_audio_music_challenge(winner, winner_id, num=7):
                 voice_client.stop()
 
             if not was_answered:
-                await safe_send(channel, f"\u200b\n❌😢 No one got it.\n\n📝🧠 Answer: **{artist.upper()} - {title.upper()}**\n\u200b")
+                await safe_send(channel, f"\u200b\n❌😢 No one got it.\n\n📝🧠 Answer: **{answer_string}**\n\u200b")
 
 
             await asyncio.sleep(5)
