@@ -5862,45 +5862,68 @@ async def ask_audio_music_challenge(winner, winner_id, num=7):
 
 
     category_map = {
-        1: "All Time Hits",
-        2: "Alternative",
-        3: "Rock",
-        4: "80s Pop",
-        5: "80s R&B",
-        6: "80s Hits",
-        7: "90s Hits",
-        8: "90s Love Songs",
-        9: "Christmas",
-        10: "Variety"
+        1: "All Time",
+        2: "1980s Pop",
+        3: "1980s R&B",
+        4: "1980s",
+        5: "1990s",
+        6: "1990s Love Songs",
+        7: "2000s",
+        8: "2010s",
+        9: "Alternative",
+        10: "Rock",
+        11: "Rap",
+        12: "Christmas",
+        13: "TV Themes",
+        14: "Variety"
     }
 
     emoji_map = {
-        1: "🏆",  # All Time Hits
-        2: "🎸",  # Alternative
-        3: "🤘",  # Rock
-        4: "🕺",  # 80s Pop
-        5: "🎤",  # 80s R&B
-        6: "📼",  # 80s Hits
-        7: "💿",  # 90s Hits
-        8: "💘",  # 90s Love Songs
-        9: "🎄", # Christmas
-        10: "🌈"  # A Little Bit of Everything
+        1: "🏆",  # All Time
+        2: "🕺",  # 1980s Pop
+        3: "🎷",  # 1980s R&B
+        4: "📼",  # 1980s
+        5: "💿",  # 1990s
+        6: "💘",  # 1990s Love Songs
+        7: "💻",  # 2000s
+        8: "📱",  # 2010s
+        9: "🎸",  # Alternative
+        10: "🤘", # Rock
+        11: "🎤", # Rap
+        12: "🎅", # Christmas
+        13: "📺", # TV Themes
+        14: "🌈"  # Variety
     }
 
     # Map display names to MongoDB category field values
     # Option 1 maps to a list to query both Billboard Greatest and Rolling Stone
     category_to_mongo_map = {
-        "All Time Hits": ["Billboard Greatest", "rs_500"],
+        "All Time": ["Billboard Greatest", "rs_500"],
+        "1980s Pop": "Billboard 80s Pop",
+        "1980s R&B": "bill_80s_rb",
+        "1980s": "bill_80s",
+        "1990s": "bill_90s",
+        "1990s Love Songs": "bill_90s_love",
+        "2000s": ["2000s Hits", "2000s Hits (Party)"],
+        "2010s": "2010s Hits",
         "Alternative": "Billboard Alternative",
         "Rock": "bill_mainstream_rock",
-        "80s Pop": "Billboard 80s Pop",
-        "80s R&B": "bill_80s_rb",
-        "80s Hits": "bill_80s",
-        "90s Hits": "bill_90s",
-        "90s Love Songs": "bill_90s_love",
-        "Christmas": "Christmas Music",
+        "Rap": "Rap Hits",
+        "Christmas": "Christmas Songs",
+        "TV Themes": ["TV Themes 1", "TV Themes 2", "TV Themes 3", "TV Themes 4"],
         "Variety": None  # No category filter for this option
     }
+
+    # Helper function to reverse map MongoDB category to display category
+    def get_display_category(mongo_cat):
+        """Convert MongoDB category value to display category name."""
+        for display_name, mongo_value in category_to_mongo_map.items():
+            if isinstance(mongo_value, list):
+                if mongo_cat in mongo_value:
+                    return display_name
+            elif mongo_value == mongo_cat:
+                return display_name
+        return None  # If not found, return None
 
     # Ask winner for category selection
     await safe_send(
@@ -5915,7 +5938,11 @@ async def ask_audio_music_challenge(winner, winner_id, num=7):
         f"**7.** {emoji_map[7]} {category_map[7]}\n"
         f"**8.** {emoji_map[8]} {category_map[8]}\n"
         f"**9.** {emoji_map[9]} {category_map[9]}\n"
-        f"**10.** {emoji_map[10]} {category_map[10]}\n\u200b"
+        f"**10.** {emoji_map[10]} {category_map[10]}\n"
+        f"**11.** {emoji_map[11]} {category_map[11]}\n"
+        f"**12.** {emoji_map[12]} {category_map[12]}\n"
+        f"**13.** {emoji_map[13]} {category_map[13]}\n"
+        f"**14.** {emoji_map[14]} {category_map[14]}\n\u200b"
     )
     
     start_time = asyncio.get_event_loop().time()
@@ -6047,10 +6074,15 @@ async def ask_audio_music_challenge(winner, winner_id, num=7):
 
             print(f"{artist.upper()} - {title.upper()}")
 
-            if category == "Christmas Music":
-                message = f"\u200b\n🎧➡️ Song **{round_num}** of **{num}**\n\n👂 Name the **TITLE**.\n\n🎅 **Christmas** will ***NOT*** be accepted!.\n\u200b"
+            # Convert MongoDB category to display category for routing
+            display_category = get_display_category(category)
+
+            if display_category == "Christmas":
+                message = f"\u200b\n🎧➡️ Song **{round_num}** of **{num}**\n\n👂 Name the **ARTIST** or **TITLE**.\n\n🎅 ***Christmas*** will **NOT** be accepted!.\n\u200b"
+            elif display_category == "TV Themes":
+                message = f"\u200b\n🎧➡️ Song **{round_num}** of **{num}**\n\n👂 Name the **TV THEME**.\n\n📺 ***Theme*** or ***Song*** will **NOT** be accepted!.\n\u200b"
             else:
-                message = f"\u200b\n🎧➡️ Song **{round_num}** of **{num}**\n\n👂 Name the **Artist** or **Title**\n\u200b"
+                message = f"\u200b\n🎧➡️ Song **{round_num}** of **{num}**\n\n👂 Name the **ARTIST** or **TITLE**\n\u200b"
             await safe_send(channel, message)
 
             answered = False
@@ -6102,7 +6134,7 @@ async def ask_audio_music_challenge(winner, winner_id, num=7):
                     display = msg.author.display_name
 
                     # Check if guess matches either artist or title
-                    if (category == "Christmas Music" and fuzzy_match(guess, sanitized_title, category, url)) or (category != "Christmas Music" and (fuzzy_match(guess, artist, category, url) or fuzzy_match(guess, title, category, url))):
+                    if (display_category == "TV Themes" and fuzzy_match(guess, sanitized_title, category, url)) or (display_category != "TV Themes" and (fuzzy_match(guess, artist, category, url) or fuzzy_match(guess, sanitized_title, category, url))):
                         # Set flag first so loop stops immediately
                         answered = True
 
@@ -16005,7 +16037,7 @@ def get_category_title(trivia_category, trivia_url):
         "Authors": "🖋️📚",
         "2010s": "📱💻",
         "Horror Movie": "🔪😱",
-        "Christmas  For Kids": "🎄🧸",
+        "Christmas For Kids": "🎄🧸",
         "Riddle": "❓🧩",
         "Christmas": "🎄🎅",
         "Sitcom": "😂📺",
@@ -16347,13 +16379,16 @@ async def start_trivia():
 
             start_message = f"\u200b\n✨🧪 **NEW** from the **Okra Lab**! 🧪✨\n"
             
-            start_message += f"\n🎙️🗯️ **Let's Talk** 🎧 [Mini-Game]"
-            start_message += f"\n⛳📉 **Golf** [Improved Game Mode]"
-
+            start_message += f"\n🎶🤔 **Who Says?** 🎧 [Updates Below]\n"
+            start_message += f"\n💻 **2000s** [New Category]"
+            start_message += f"\n📱 **2010s** [New Category]"
+            start_message += f"\n🎤 **Rap** [New Category]"
+            start_message += f"\n📺 **TV Themes** [New Category]"
+            start_message += f"\n🎅 **Christmas** [Remastered]"
             start_message += "\n\u200b"
 
-            #await safe_send(channel, start_message)
-            #await asyncio.sleep(5)
+            await safe_send(channel, start_message)
+            await asyncio.sleep(5)
             
             
             start_message = f"\u200b\n\u200b\n⏩ Starting a **{questions_per_round} question** round! ⏩\n\u200b"
