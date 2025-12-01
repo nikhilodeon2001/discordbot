@@ -14544,19 +14544,52 @@ def trig_checker(response, answer):
         return False
 
 
-def fuzzy_match(user_answer, correct_answer, category, url):
-    threshold = 0.90   
-    
+def fuzzy_match(user_answer, correct_answer, category, url, _skip_alias_check=False):
+    threshold = 0.90
+
     if not isinstance(user_answer, str) or not isinstance(correct_answer, str):
         return False
     if not user_answer.strip() or not correct_answer.strip():
         return False
     if not user_answer or not correct_answer:
         return False
- 
+
 
     if user_answer == correct_answer:
         return True
+
+    # Define alias groups for common answers with multiple valid forms
+    # Only check aliases if not already in a recursive alias check
+    if not _skip_alias_check:
+        alias_groups = {
+            # Countries
+            "usa": ["united states", "united states of america", "us", "usa", "america"],
+            "uk": ["united kingdom", "great britain", "uk", "britain", "england"],
+            "netherlands": ["netherlands", "holland", "the netherlands"],
+            "uae": ["united arab emirates", "uae", "emirates"],
+            "south_korea": ["south korea", "republic of korea", "rok"],
+            "north_korea": ["north korea", "democratic people's republic of korea", "dprk"],
+
+            # Cities
+            "nyc": ["new york city", "nyc"],
+            "la": ["los angeles", "la"],
+            "sf": ["san francisco", "sf"]
+        }
+
+        # Check if correct_answer is in any alias group
+        normalized_correct = normalize_text(correct_answer)
+        for variants in alias_groups.values():
+            # Normalize all variants once
+            normalized_variants = [normalize_text(v) for v in variants]
+
+            # If correct_answer matches any variant in this group
+            if normalized_correct in normalized_variants:
+                # Check if user_answer fuzzy-matches ANY variant in the same group
+                for variant in variants:
+                    # Recursively call fuzzy_match with alias checking disabled
+                    if fuzzy_match(user_answer, variant, category, url, _skip_alias_check=True):
+                        return True
+                break  # Don't check other alias groups
 
     no_spaces_user = user_answer.replace(" ", "")      
     no_spaces_correct = correct_answer.replace(" ", "") 
