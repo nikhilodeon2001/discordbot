@@ -1078,8 +1078,12 @@ async def ask_jigsaw_challenge(winner, winner_id, num=7):
 
         if num == 1:
             if sorted_users:
-                jigsaw_winner_id, (display_name, final_score) = sorted_users[0]
-                return jigsaw_winner_id
+                top_score = sorted_users[0][1][1]
+                top_winners = [uid for uid, (name, score) in sorted_users if score == top_score]
+                if len(top_winners) == 1:
+                    return top_winners[0]
+                else:
+                    return None  # Tie
             else:
                 return None
             
@@ -1099,21 +1103,28 @@ async def ask_jigsaw_challenge(winner, winner_id, num=7):
         await asyncio.sleep(3)
 
     await asyncio.sleep(2)
+    jigsaw_winner_id = None
     if sorted_users:
-        jigsaw_winner_id, (display_name, final_score) = sorted_users[0]
-        message = f"\u200b\n🎉🥇 The winner is **{display_name}**!\n\u200b"
+        top_score = sorted_users[0][1][1]
+        top_winners = [(uid, name) for uid, (name, score) in sorted_users if score == top_score]
+
+        if len(top_winners) == 1:
+            jigsaw_winner_id, display_name = top_winners[0]
+            message = f"\u200b\n🎉🥇 The winner is **{display_name}**!\n\u200b"
+        else:
+            message = f"\u200b\n🤝 It's a tie! **Winners:**\n\u200b"
+            for uid, name in top_winners:
+                message += f"• **{name}** ({top_score} pts)\n"
+            message += "\u200b"
     else:
         message = f"\u200b\n👎😢 **No right answers**. I'm ashamed to call you Okrans.\n\u200b"
-    
+
     await safe_send(channel, message)
-    
+
     wf_winner = True
     await asyncio.sleep(3)
-    
-    if sorted_users:
-        return jigsaw_winner_id
-    else:
-        return None
+
+    return jigsaw_winner_id
 
 
     
@@ -1264,19 +1275,27 @@ async def ask_faceoff_challenge(winner, winner_id, num=7):
 
     await asyncio.sleep(2)
 
+    faceoff_winner_id = None
     if sorted_scores:
-        faceoff_winner_id, (display_name, final_score) = sorted_scores[0]
-        await safe_send(channel, f"\u200b\n🎉🥇 The winner is **{display_name}**!\n\u200b")
+        top_score = sorted_scores[0][1][1]
+        top_winners = [(uid, name) for uid, (name, score) in sorted_scores if score == top_score]
+
+        if len(top_winners) == 1:
+            faceoff_winner_id, display_name = top_winners[0]
+            await safe_send(channel, f"\u200b\n🎉🥇 The winner is **{display_name}**!\n\u200b")
+        else:
+            message = f"\u200b\n🤝 It's a tie! **Winners:**\n\u200b"
+            for uid, name in top_winners:
+                message += f"• **{name}** ({top_score} pts)\n"
+            message += "\u200b"
+            await safe_send(channel, message)
     else:
         await safe_send(channel, "\u200b\n👎😢 **No right answers**. I'm ashamed to call you Okrans.\n\u200b")
 
     wf_winner = True
     await asyncio.sleep(3)
-    
-    if sorted_scores:
-        return faceoff_winner_id
-    else:
-        return None
+
+    return faceoff_winner_id
 
 
 def find_word_positions(grid_lines, word):
@@ -1953,14 +1972,22 @@ async def ask_search_challenge(winner, winner_id, num=1):
         
         await safe_send(channel, embed=scores_embed)
         
-        # Announce the winner
-        winner_id, winner_data = sorted_users[0]
-        winner_name = winner_data["name"]
-        words_found_count = len(winner_data["words"])
-        await safe_send(channel, f"\u200b\n🎉🥇 The winner is **{winner_name}** with **{words_found_count}** words found!\n\u200b")
+        # Check for ties at the top
+        top_count = len(sorted_users[0][1]["words"])
+        top_winners = [(uid, data["name"]) for uid, data in sorted_users if len(data["words"]) == top_count]
+
+        if len(top_winners) == 1:
+            winner_name = sorted_users[0][1]["name"]
+            await safe_send(channel, f"\u200b\n🎉🥇 The winner is **{winner_name}** with **{top_count}** words found!\n\u200b")
+        else:
+            message = f"\u200b\n🤝 It's a tie! **Winners:**\n\u200b"
+            for uid, name in top_winners:
+                message += f"• **{name}** ({top_count} words)\n"
+            message += "\u200b"
+            await safe_send(channel, message)
     else:
         await safe_send(channel, "\u200b\n😢 **No words were found!**\n\u200b")
-    
+
     await asyncio.sleep(2)
     
     # Show solution
@@ -2012,11 +2039,15 @@ async def ask_search_challenge(winner, winner_id, num=1):
     
     wf_winner = True
     await asyncio.sleep(3)
-    
-    # Return winner (user who found the most words)
+
+    # Return winner (user who found the most words), or None if there's a tie
     if user_scores:
-        winner_id = max(user_scores.items(), key=lambda x: len(x[1]["words"]))[0]
-        return winner_id    
+        max_words = max(len(data["words"]) for data in user_scores.values())
+        winners = [uid for uid, data in user_scores.items() if len(data["words"]) == max_words]
+        if len(winners) == 1:
+            return winners[0]
+        else:
+            return None  # Tie
     else:
         return None
 
@@ -2598,39 +2629,50 @@ async def ask_element_challenge(winner, winner_id, num=7):
 
         if num == 1:
             if sorted_users:
-                element_winner_id, (display_name, final_score) = sorted_users[0]
-                return element_winner_id
+                top_score = sorted_users[0][1][1]
+                top_winners = [uid for uid, (name, score) in sorted_users if score == top_score]
+                if len(top_winners) == 1:
+                    return top_winners[0]
+                else:
+                    return None  # Tie
             else:
                 return None
-            
+
         if sorted_users:
             if round_num > num:
                 message += "\u200b\n🏁🏆 Final Standings\n\u200b"
-            else:   
+            else:
                 message += "\u200b\n📊🏆 Current Standings\n\u200b"
 
         for counter, (user_id, (display_name, count)) in enumerate(sorted_users, start=1):
             message += f"{counter}. **{display_name}**: {count}\n"
             message += "\u200b"
-            
+
         await safe_send(channel, message)
         await asyncio.sleep(3)
 
     await asyncio.sleep(2)
+    element_winner_id = None
     if sorted_users:
-        element_winner_id, (display_name, final_score) = sorted_users[0]
-        message = f"\u200b\n🎉🥇 The winner is **{display_name}**!\n\u200b"
+        top_score = sorted_users[0][1][1]
+        top_winners = [(uid, name) for uid, (name, score) in sorted_users if score == top_score]
+
+        if len(top_winners) == 1:
+            element_winner_id, display_name = top_winners[0]
+            message = f"\u200b\n🎉🥇 The winner is **{display_name}**!\n\u200b"
+        else:
+            message = f"\u200b\n🤝 It's a tie! **Winners:**\n\u200b"
+            for uid, name in top_winners:
+                message += f"• **{name}** ({top_score} pts)\n"
+            message += "\u200b"
     else:
         message = f"\u200b\n👎😢 **No right answers**. I'm ashamed to call you Okrans.\n\u200b"
     await safe_send(channel, message)
     
     wf_winner = True
     await asyncio.sleep(3)
-    
-    if sorted_users:
-        return element_winner_id
-    else:
-        return None
+
+    return element_winner_id
 
 
 
@@ -2840,30 +2882,44 @@ async def ask_polyglottery_challenge(winner, winner_id, num=7):
 
         if num == 1:
             if sorted_users:
-                polyglottery_winner_id, (display_name, final_score) = sorted_users[0]
-                return polyglottery_winner_id
+                top_score = sorted_users[0][1][1]
+                top_winners = [uid for uid, (name, score) in sorted_users if score == top_score]
+                if len(top_winners) == 1:
+                    return top_winners[0]
+                else:
+                    return None  # Tie
             else:
                 return None
-            
+
         if sorted_users:
             if round_num > num:
                 message += "\u200b\n🏁🏆 Final Standings\n\u200b"
-            else:   
+            else:
                 message += "\u200b\n📊🏆 Current Standings\n\u200b"
 
         for counter, (user_id, (display_name, count)) in enumerate(sorted_users, start=1):
             message += f"{counter}. **{display_name}**: {count}\n"
             message += "\u200b"
-            
+
         if message:
             await safe_send(channel, message)
-        
+
         await asyncio.sleep(3)
 
     await asyncio.sleep(2)
+    polyglottery_winner_id = None
     if sorted_users:
-        polyglottery_winner_id, (display_name, final_score) = sorted_users[0]
-        message = f"\u200b\n🎉🥇 The winner is **{display_name}**!\n\u200b"
+        top_score = sorted_users[0][1][1]
+        top_winners = [(uid, name) for uid, (name, score) in sorted_users if score == top_score]
+
+        if len(top_winners) == 1:
+            polyglottery_winner_id, display_name = top_winners[0]
+            message = f"\u200b\n🎉🥇 The winner is **{display_name}**!\n\u200b"
+        else:
+            message = f"\u200b\n🤝 It's a tie! **Winners:**\n\u200b"
+            for uid, name in top_winners:
+                message += f"• **{name}** ({top_score} pts)\n"
+            message += "\u200b"
     else:
         message = f"\u200b\n👎😢 **No right answers**. I'm ashamed to call you Okrans.\n\u200b"
     await safe_send(channel, message)
@@ -2871,10 +2927,7 @@ async def ask_polyglottery_challenge(winner, winner_id, num=7):
     wf_winner = True
     await asyncio.sleep(3)
 
-    if sorted_users:
-        return polyglottery_winner_id
-    else:
-        return None
+    return polyglottery_winner_id
 
 
 
@@ -2990,41 +3043,52 @@ async def ask_dictionary_challenge(winner, winner_id, num=7):
 
         if num == 1:
             if sorted_users:
-                winner_user_id, _ = sorted_users[0]
-                return winner_user_id
+                top_score = sorted_users[0][1][1]
+                top_winners = [uid for uid, (name, score) in sorted_users if score == top_score]
+                if len(top_winners) == 1:
+                    return top_winners[0]
+                else:
+                    return None  # Tie
             else:
                 return None
-            
+
         if sorted_users:
             if round_num > num:
                 message += "\u200b\n🏁🏆 Final Standings\n\u200b"
-            else:   
+            else:
                 message += "\u200b\n📊🏆 Current Standings\n\u200b"
 
         for counter, (user_id, (display_name, count)) in enumerate(sorted_users, start=1):
             message += f"{counter}. **{display_name}**: {count}\n"
             message += "\u200b"
-            
+
         if message:
             await safe_send(channel, message)
-        
+
         await asyncio.sleep(3)
 
     await asyncio.sleep(2)
+    winning_user_id = None
     if sorted_users:
-        winning_user_id, (winner_name, winner_score) = sorted_users[0]
-        message = f"\u200b\n🎉🥇 The winner is **{winner_name}**!\n\u200b"
+        top_score = sorted_users[0][1][1]
+        top_winners = [(uid, name) for uid, (name, score) in sorted_users if score == top_score]
+
+        if len(top_winners) == 1:
+            winning_user_id, winner_name = top_winners[0]
+            message = f"\u200b\n🎉🥇 The winner is **{winner_name}**!\n\u200b"
+        else:
+            message = f"\u200b\n🤝 It's a tie! **Winners:**\n\u200b"
+            for uid, name in top_winners:
+                message += f"• **{name}** ({top_score} pts)\n"
+            message += "\u200b"
     else:
         message = f"\u200b\n👎😢 **No right answers**. I'm ashamed to call you Okrans.\n\u200b"
     await safe_send(channel, message)
-    
+
     wf_winner = True
     await asyncio.sleep(3)
-    
-    if sorted_users:
-        return winning_user_id
-    else:
-        return None
+
+    return winning_user_id
 
 
 def generate_text_image(question_text, red_value_bk, green_value_bk, blue_value_bk, red_value_f, green_value_f, blue_value_f, add_okra, okra_path, lang_code="en", font_size=60, highlight_missing_operator=False):
@@ -3459,42 +3523,53 @@ async def ask_math_challenge(winner, winner_id, num=7):
 
         if num == 1:
             if sorted_users:
-                math_winner_id, (display_name, final_score) = sorted_users[0]
-                return math_winner_id
+                top_score = sorted_users[0][1][1]
+                top_winners = [uid for uid, (name, score) in sorted_users if score == top_score]
+                if len(top_winners) == 1:
+                    return top_winners[0]
+                else:
+                    return None  # Tie
             else:
                 return None
-            
+
         if sorted_users:
             if round_num > num:
                 message += "\u200b\n🏁🏆 Final Standings\n\u200b"
-            else:   
+            else:
                 message += "\u200b\n📊🏆 Current Standings\n\u200b"
 
         for counter, (user_id, (display_name, count)) in enumerate(sorted_users, start=1):
             message += f"{counter}. **{display_name}**: {count}\n"
             message += "\u200b"
-            
+
         if message:
             await safe_send(channel, message)
-        
+
         await asyncio.sleep(3)
 
     await asyncio.sleep(2)
+    math_winner_id = None
     if sorted_users:
-        math_winner_id, (display_name, final_score) = sorted_users[0]
-        message = f"\u200b\n🎉🥇 The winner is **{display_name}**!\n\u200b"
+        top_score = sorted_users[0][1][1]
+        top_winners = [(uid, name) for uid, (name, score) in sorted_users if score == top_score]
+
+        if len(top_winners) == 1:
+            math_winner_id, display_name = top_winners[0]
+            message = f"\u200b\n🎉🥇 The winner is **{display_name}**!\n\u200b"
+        else:
+            message = f"\u200b\n🤝 It's a tie! **Winners:**\n\u200b"
+            for uid, name in top_winners:
+                message += f"• **{name}** ({top_score} pts)\n"
+            message += "\u200b"
     else:
         message = f"\u200b\n👎😢 **No right answers**. I'm ashamed to call you Okrans.\n\u200b"
-    
+
     await safe_send(channel, message)
-    
+
     wf_winner = True
     await asyncio.sleep(3)
-    
-    if sorted_users:
-        return math_winner_id
-    else:
-        return None
+
+    return math_winner_id
 
 
 async def ask_music_challenge(winner, winner_id, num=7):
@@ -3599,8 +3674,12 @@ async def ask_music_challenge(winner, winner_id, num=7):
 
         if num == 1:
             if sorted_users:
-                music_winner_id, (display_name, final_score) = sorted_users[0]
-                return music_winner_id
+                top_score = sorted_users[0][1][1]
+                top_winners = [uid for uid, (name, score) in sorted_users if score == top_score]
+                if len(top_winners) == 1:
+                    return top_winners[0]
+                else:
+                    return None  # Tie
             else:
                 return None
 
@@ -3617,18 +3696,26 @@ async def ask_music_challenge(winner, winner_id, num=7):
             await safe_send(channel, message)
         await asyncio.sleep(2)
 
+    music_winner_id = None
     if sorted_users:
-        music_winner_id, (display_name, final_score) = sorted_users[0]
-        await safe_send(channel, f"\u200b\n🎉🥇 The winner is **{display_name}**!\n\u200b")
+        top_score = sorted_users[0][1][1]
+        top_winners = [(uid, name) for uid, (name, score) in sorted_users if score == top_score]
+
+        if len(top_winners) == 1:
+            music_winner_id, display_name = top_winners[0]
+            await safe_send(channel, f"\u200b\n🎉🥇 The winner is **{display_name}**!\n\u200b")
+        else:
+            message = f"\u200b\n🤝 It's a tie! **Winners:**\n\u200b"
+            for uid, name in top_winners:
+                message += f"• **{name}** ({top_score} pts)\n"
+            message += "\u200b"
+            await safe_send(channel, message)
     else:
         await safe_send(channel, f"\u200b\n👎😢 No right answers. **I'm ashamed to call you Okrans**.\n\u200b")
 
     await asyncio.sleep(3)
-    
-    if sorted_users:
-        return music_winner_id
-    else:
-        return None
+
+    return music_winner_id
 
 
 
@@ -4022,41 +4109,52 @@ async def ask_lyric_challenge(winner, winner_id, num=7):
 
         if num == 1:
             if sorted_users:
-                lyric_winner_id, (display_name, final_score) = sorted_users[0]
-                return lyric_winner_id
+                top_score = sorted_users[0][1][1]
+                top_winners = [uid for uid, (name, score) in sorted_users if score == top_score]
+                if len(top_winners) == 1:
+                    return top_winners[0]
+                else:
+                    return None  # Tie
             else:
                 return None
-            
+
         if sorted_users:
             if round_num > num:
                 message += "\u200b\n🏁🏆 Final Standings\n\u200b"
-            else:   
+            else:
                 message += "\u200b\n📊🏆 Current Standings\n\u200b"
 
         for counter, (user_id, (display_name, count)) in enumerate(sorted_users, start=1):
             message += f"{counter}. **{display_name}**: {count}\n"
             message += "\u200b"
-            
+
         if message:
             await safe_send(channel, message)
-        
+
         await asyncio.sleep(3)
 
     await asyncio.sleep(2)
+    lyric_winner_id = None
     if sorted_users:
-        lyric_winner_id, (display_name, final_score) = sorted_users[0]
-        message = f"\u200b\n🎉🥇 The winner is **{display_name}**!\n\u200b"
+        top_score = sorted_users[0][1][1]
+        top_winners = [(uid, name) for uid, (name, score) in sorted_users if score == top_score]
+
+        if len(top_winners) == 1:
+            lyric_winner_id, display_name = top_winners[0]
+            message = f"\u200b\n🎉🥇 The winner is **{display_name}**!\n\u200b"
+        else:
+            message = f"\u200b\n🤝 It's a tie! **Winners:**\n\u200b"
+            for uid, name in top_winners:
+                message += f"• **{name}** ({top_score} pts)\n"
+            message += "\u200b"
     else:
         message = f"\u200b\n👎😢 **No right answers**. I'm ashamed to call you Okrans.\n\u200b"
     await safe_send(channel, message)
-    
+
     wf_winner = True
     await asyncio.sleep(3)
-    
-    if sorted_users:
-        return lyric_winner_id
-    else:
-        return None
+
+    return lyric_winner_id
 
 
 class VoiceChannelJoinView(discord.ui.View):
@@ -4280,41 +4378,52 @@ async def ask_book_challenge(winner, winner_id, num=7):
 
         if num == 1:
             if sorted_users:
-                book_winner_id, (display_name, final_score) = sorted_users[0]
-                return book_winner_id
+                top_score = sorted_users[0][1][1]
+                top_winners = [uid for uid, (name, score) in sorted_users if score == top_score]
+                if len(top_winners) == 1:
+                    return top_winners[0]
+                else:
+                    return None  # Tie
             else:
                 return None
-            
+
         if sorted_users:
             if round_num > num:
                 message += "\u200b\n🏁🏆 Final Standings\n\u200b"
-            else:   
+            else:
                 message += "\u200b\n📊🏆 Current Standings\n\u200b"
 
         for counter, (user_id, (display_name, count)) in enumerate(sorted_users, start=1):
             message += f"{counter}. **{display_name}**: {count}\n"
             message += "\u200b"
-            
+
         if message:
             await safe_send(channel, message)
 
         await asyncio.sleep(3)
 
     await asyncio.sleep(2)
+    book_winner_id = None
     if sorted_users:
-        book_winner_id, (display_name, final_score) = sorted_users[0]
-        message = f"\u200b\n🎉🥇 The winner is **{display_name}**!\n\u200b"
+        top_score = sorted_users[0][1][1]
+        top_winners = [(uid, name) for uid, (name, score) in sorted_users if score == top_score]
+
+        if len(top_winners) == 1:
+            book_winner_id, display_name = top_winners[0]
+            message = f"\u200b\n🎉🥇 The winner is **{display_name}**!\n\u200b"
+        else:
+            message = f"\u200b\n🤝 It's a tie! **Winners:**\n\u200b"
+            for uid, name in top_winners:
+                message += f"• **{name}** ({top_score} pts)\n"
+            message += "\u200b"
     else:
         message = f"\u200b\n👎😢 **No right answers**. I'm ashamed to call you Okrans.\n\u200b"
     await safe_send(channel, message)
-    
+
     wf_winner = True
     await asyncio.sleep(3)
-    
-    if sorted_users:
-        return book_winner_id
-    else:
-        return None
+
+    return book_winner_id
 
 
 async def ask_riddle_challenge(winner, winner_id, num=7):
@@ -4423,41 +4532,52 @@ async def ask_riddle_challenge(winner, winner_id, num=7):
 
         if num == 1:
             if sorted_users:
-                riddle_winner_id, (winner_name, winner_score) = sorted_users[0]
-                return riddle_winner_id if winner_name is not None else None
+                top_score = sorted_users[0][1][1]
+                top_winners = [uid for uid, (name, score) in sorted_users if score == top_score]
+                if len(top_winners) == 1:
+                    return top_winners[0]
+                else:
+                    return None  # Tie
             else:
                 return None
-            
+
         if sorted_users:
             if round_num > num:
                 message += "\u200b\n🏁🏆 Final Standings\n\u200b"
-            else:   
+            else:
                 message += "\u200b\n📊🏆 Current Standings\n\u200b"
 
         for counter, (user_id, (display_name, count)) in enumerate(sorted_users, start=1):
             message += f"{counter}. **{display_name}**: {count}\n"
             message += "\u200b"
-            
+
         if message:
             await safe_send(channel, message)
-        
+
         await asyncio.sleep(3)
 
     await asyncio.sleep(2)
+    riddle_winner_id = None
     if sorted_users:
-        riddle_winner_id, (winner_name, winner_score) = sorted_users[0]
-        message = f"\u200b\n🎉🥇 The winner is **{winner_name}**!\n\u200b"
+        top_score = sorted_users[0][1][1]
+        top_winners = [(uid, name) for uid, (name, score) in sorted_users if score == top_score]
+
+        if len(top_winners) == 1:
+            riddle_winner_id, winner_name = top_winners[0]
+            message = f"\u200b\n🎉🥇 The winner is **{winner_name}**!\n\u200b"
+        else:
+            message = f"\u200b\n🤝 It's a tie! **Winners:**\n\u200b"
+            for uid, name in top_winners:
+                message += f"• **{name}** ({top_score} pts)\n"
+            message += "\u200b"
     else:
         message = f"\u200b\n👎😢 **No right answers**. I'm ashamed to call you Okrans.\n\u200b"
     await safe_send(channel, message)
-    
+
     wf_winner = True
     await asyncio.sleep(3)
-    
-    if sorted_users:
-        return riddle_winner_id
-    else:
-        return None
+
+    return riddle_winner_id
     
 
 
@@ -4591,41 +4711,52 @@ async def ask_stock_challenge(winner, winner_id, num=7):
 
         if num == 1:
             if sorted_users:
-                stock_winner_id, (winner_name, winner_score) = sorted_users[0]
-                return stock_winner_id if winner_name is not None else None
+                top_score = sorted_users[0][1][1]
+                top_winners = [uid for uid, (name, score) in sorted_users if score == top_score]
+                if len(top_winners) == 1:
+                    return top_winners[0]
+                else:
+                    return None  # Tie
             else:
                 return None
-            
+
         if sorted_users:
             if round_num > num:
                 message += "\u200b\n🏁🏆 Final Standings\n\u200b"
-            else:   
+            else:
                 message += "\u200b\n📊🏆 Current Standings\n\u200b"
 
         for counter, (user_id, (display_name, count)) in enumerate(sorted_users, start=1):
             message += f"{counter}. **{display_name}**: {count}\n"
             message += "\u200b"
-            
+
         if message:
             await safe_send(channel, message)
-        
+
         await asyncio.sleep(3)
 
     await asyncio.sleep(2)
+    stock_winner_id = None
     if sorted_users:
-        stock_winner_id, (winner_name, winner_score) = sorted_users[0]
-        message = f"\u200b\n🎉🥇 The winner is **{winner_name}**!\n\u200b"
+        top_score = sorted_users[0][1][1]
+        top_winners = [(uid, name) for uid, (name, score) in sorted_users if score == top_score]
+
+        if len(top_winners) == 1:
+            stock_winner_id, winner_name = top_winners[0]
+            message = f"\u200b\n🎉🥇 The winner is **{winner_name}**!\n\u200b"
+        else:
+            message = f"\u200b\n🤝 It's a tie! **Winners:**\n\u200b"
+            for uid, name in top_winners:
+                message += f"• **{name}** ({top_score} pts)\n"
+            message += "\u200b"
     else:
         message = f"\u200b\n👎😢 **No right answers**. I'm ashamed to call you Okrans.\n\u200b"
     await safe_send(channel, message)
-    
+
     wf_winner = True
     await asyncio.sleep(3)
-    
-    if sorted_users:
-        return stock_winner_id
-    else:
-        return None
+
+    return stock_winner_id
 
 # Normalize helpers
 def norm_symbol(s: str) -> str:
@@ -4770,42 +4901,53 @@ async def ask_border_challenge(winner, winner_id, num=7):
 
         if num == 1:
             if sorted_users:
-                border_winner_id, (display_name, final_score) = sorted_users[0]
-                return border_winner_id
+                top_score = sorted_users[0][1][1]
+                top_winners = [uid for uid, (name, score) in sorted_users if score == top_score]
+                if len(top_winners) == 1:
+                    return top_winners[0]
+                else:
+                    return None  # Tie
             else:
                 return None
-            
+
         if sorted_users:
             if round_num > num:
                 message += "\u200b\n🏁🏆 Final Standings\n\u200b"
-            else:   
+            else:
                 message += "\u200b\n📊🏆 Current Standings\n\u200b"
 
         for counter, (user_id, (display_name, count)) in enumerate(sorted_users, start=1):
             message += f"{counter}. **{display_name}**: {count}\n"
             message += "\u200b"
-            
+
         if message:
             await safe_send(channel, message)
-        
+
         await asyncio.sleep(3)
 
     await asyncio.sleep(2)
+    border_winner_id = None
     if sorted_users:
-        border_winner_id, (display_name, final_score) = sorted_users[0]
-        message = f"\u200b\n🎉🥇 The winner is **{display_name}**!\n\u200b"
+        top_score = sorted_users[0][1][1]
+        top_winners = [(uid, name) for uid, (name, score) in sorted_users if score == top_score]
+
+        if len(top_winners) == 1:
+            border_winner_id, display_name = top_winners[0]
+            message = f"\u200b\n🎉🥇 The winner is **{display_name}**!\n\u200b"
+        else:
+            message = f"\u200b\n🤝 It's a tie! **Winners:**\n\u200b"
+            for uid, name in top_winners:
+                message += f"• **{name}** ({top_score} pts)\n"
+            message += "\u200b"
     else:
         message = f"\u200b\n👎😢 **No right answers**. I'm ashamed to call you Okrans.\n\u200b"
-    
+
     await safe_send(channel, message)
-    
+
     wf_winner = True
     await asyncio.sleep(3)
-    
-    if sorted_users:
-        return border_winner_id
-    else:
-        return None
+
+    return border_winner_id
 
 
 
@@ -4922,46 +5064,57 @@ async def ask_animal_challenge(winner, winner_id, num=7):
 
         if num == 1:
             if sorted_users:
-                animal_winner_id, (winner_name, winner_score) = sorted_users[0]
-                return animal_winner_id if winner_name is not None else None
+                top_score = sorted_users[0][1][1]
+                top_winners = [uid for uid, (name, score) in sorted_users if score == top_score]
+                if len(top_winners) == 1:
+                    return top_winners[0]
+                else:
+                    return None  # Tie
             else:
                 return None
-            
+
         if sorted_users:
             if animal_num > num:
                 message += "\u200b\n🏁🏆 Final Standings\n\u200b"
-            else:   
+            else:
                 message += "\u200b\n📊🏆 Current Standings\n\u200b"
 
         for counter, (uid, (name, score)) in enumerate(sorted_users, start=1):
             message += f"{counter}. **{name}**: {score}\n"
             message += "\u200b"
-            
+
         if message:
             await safe_send(channel, message)
-        
+
         await asyncio.sleep(3)
 
     await asyncio.sleep(2)
+    animal_winner_id = None
     if sorted_users:
-        aniaml_winner_id, (winner_name, winner_score) = sorted_users[0]
-        message = f"\u200b\n🎉🥇 The winner is **{winner_name}**!\n\u200b"
+        top_score = sorted_users[0][1][1]
+        top_winners = [(uid, name) for uid, (name, score) in sorted_users if score == top_score]
+
+        if len(top_winners) == 1:
+            animal_winner_id, winner_name = top_winners[0]
+            message = f"\u200b\n🎉🥇 The winner is **{winner_name}**!\n\u200b"
+        else:
+            message = f"\u200b\n🤝 It's a tie! **Winners:**\n\u200b"
+            for uid, name in top_winners:
+                message += f"• **{name}** ({top_score} pts)\n"
+            message += "\u200b"
     else:
         message = f"\u200b\n👎😢 **No right answers**. I'm ashamed to call you Okrans.\n\u200b"
     await safe_send(channel, message)
-    
+
     wf_winner = True
     await asyncio.sleep(2)
-        
+
     summary = f"\nSee more cute animals at:\n{animal_main_url}\n\u200b"
     await safe_send(channel, summary)
 
     await asyncio.sleep(3)
 
-    if sorted_users:
-        return animal_winner_id
-    else:
-        return None
+    return animal_winner_id
 
 
 async def ask_ranker_people_challenge(winner, winner_id, num=7):
@@ -5090,30 +5243,44 @@ async def ask_ranker_people_challenge(winner, winner_id, num=7):
 
         if num == 1:
             if sorted_users:
-                people_winner_id, (winner_name, winner_score) = sorted_users[0]
-                return people_winner_id if winner_name is not None else None
+                top_score = sorted_users[0][1][1]
+                top_winners = [uid for uid, (name, score) in sorted_users if score == top_score]
+                if len(top_winners) == 1:
+                    return top_winners[0]
+                else:
+                    return None  # Tie
             else:
                 return None
-            
+
         if sorted_users:
             if people_num > num:
                 message += "\u200b\n🏁🏆 Final Standings\n\u200b"
-            else:   
+            else:
                 message += "\u200b\n📊🏆 Current Standings\n\u200b"
 
         for counter, (uid, (name, score)) in enumerate(sorted_users, start=1):
             message += f"{counter}. **{name}**: {score}\n"
             message += "\u200b"
-            
+
         if message:
             await safe_send(channel, message)
-        
+
         await asyncio.sleep(3)
 
     await asyncio.sleep(2)
+    people_winner_id = None
     if sorted_users:
-        people_winner_id, (winner_name, winner_score) = sorted_users[0]
-        message = f"\u200b\n🎉🥇 The winner is **{winner_name}**!\n\u200b"
+        top_score = sorted_users[0][1][1]
+        top_winners = [(uid, name) for uid, (name, score) in sorted_users if score == top_score]
+
+        if len(top_winners) == 1:
+            people_winner_id, winner_name = top_winners[0]
+            message = f"\u200b\n🎉🥇 The winner is **{winner_name}**!\n\u200b"
+        else:
+            message = f"\u200b\n🤝 It's a tie! **Winners:**\n\u200b"
+            for uid, name in top_winners:
+                message += f"• **{name}** ({top_score} pts)\n"
+            message += "\u200b"
     else:
         message = f"\u200b\n👎😢 **No right answers**. I'm ashamed to call you Okrans.\n\u200b"
     await safe_send(channel, message)
@@ -5125,11 +5292,8 @@ async def ask_ranker_people_challenge(winner, winner_id, num=7):
     
     wf_winner = True
     await asyncio.sleep(3)
-    
-    if sorted_users:
-        return people_winner_id
-    else:
-        return None
+
+    return people_winner_id
 
 
 
@@ -5287,49 +5451,60 @@ async def ask_flags_challenge(winner, winner_id, num=7):
 
         if num == 1:
             if sorted_users:
-                flag_winner_id, (winner_name, winner_score) = sorted_users[0]
-                return flag_winner_id
+                top_score = sorted_users[0][1][1]
+                top_winners = [uid for uid, (name, score) in sorted_users if score == top_score]
+                if len(top_winners) == 1:
+                    return top_winners[0]
+                else:
+                    return None  # Tie
             else:
                 return None
-            
+
         if sorted_users:
             if flag_num > num:
                 message += "\u200b\n🏁🏆 Final Standings\n\u200b"
-            else:   
+            else:
                 message += "\u200b\n📊🏆 Current Standings\n\u200b"
 
         for counter, (uid, (name, score)) in enumerate(sorted_users, start=1):
             message += f"{counter}. **{name}**: {score}\n"
             message += "\u200b"
-            
+
         if message:
             await safe_send(channel, message)
-        
+
         await asyncio.sleep(3)
 
     await asyncio.sleep(2)
+    flag_winner_id = None
     if sorted_users:
-        flag_winner_id, (winner_name, winner_score) = sorted_users[0]
-        message = f"\u200b\n🎉🥇 The winner is **{winner_name}**!\n\u200b"
+        top_score = sorted_users[0][1][1]
+        top_winners = [(uid, name) for uid, (name, score) in sorted_users if score == top_score]
+
+        if len(top_winners) == 1:
+            flag_winner_id, winner_name = top_winners[0]
+            message = f"\u200b\n🎉🥇 The winner is **{winner_name}**!\n\u200b"
+        else:
+            message = f"\u200b\n🤝 It's a tie! **Winners:**\n\u200b"
+            for uid, name in top_winners:
+                message += f"• **{name}** ({top_score} pts)\n"
+            message += "\u200b"
     else:
         message = f"\u200b\n👎😢 **No right answers**. I'm ashamed to call you Okrans.\n\u200b"
-    
+
     await safe_send(channel, message)
 
     await asyncio.sleep(2)
-    
+
     summary = f"\n👀➡️ See more flags at:\n{flag_reference_url}\n\u200b"
-    
+
     await safe_send(channel, summary)
-    
+
     wf_winner = True
     await asyncio.sleep(3)
-    
-    if sorted_users:
-        return flag_winner_id
-    else:
-        return None
-        
+
+    return flag_winner_id
+
 
 async def ask_chaos_challenge(winner, winner_id, num_of_games):
     global wf_winner
@@ -5710,8 +5885,12 @@ async def ask_soundfx_challenge(winner, winner_id, num=7):
                 print(f"Error hiding voice channel: {e}")
 
             if sorted_users:
-                soundfx_winner_id, (display_name, final_score) = sorted_users[0]
-                return soundfx_winner_id
+                top_score = sorted_users[0][1][1]
+                top_winners = [uid for uid, (name, score) in sorted_users if score == top_score]
+                if len(top_winners) == 1:
+                    return top_winners[0]
+                else:
+                    return None  # Tie
             else:
                 return None
 
@@ -5729,9 +5908,21 @@ async def ask_soundfx_challenge(winner, winner_id, num=7):
         await asyncio.sleep(3)
 
     await asyncio.sleep(2)
+
+    soundfx_winner_id = None
     if sorted_users:
-        soundfx_winner_id, (display_name, final_score) = sorted_users[0]
-        await safe_send(channel, f"\u200b\n🎉🥇 The winner is **{display_name}**!\n\u200b")
+        top_score = sorted_users[0][1][1]
+        top_winners = [(uid, name) for uid, (name, score) in sorted_users if score == top_score]
+
+        if len(top_winners) == 1:
+            soundfx_winner_id, display_name = top_winners[0]
+            await safe_send(channel, f"\u200b\n🎉🥇 The winner is **{display_name}**!\n\u200b")
+        else:
+            message = f"\u200b\n🤝 It's a tie! **Winners:**\n\u200b"
+            for uid, name in top_winners:
+                message += f"• **{name}** ({top_score} pts)\n"
+            message += "\u200b"
+            await safe_send(channel, message)
     else:
         await safe_send(channel, f"\u200b\n👎😢 **No right answers**. I'm ashamed to call you Okrans.\n\u200b")
 
@@ -5770,10 +5961,7 @@ async def ask_soundfx_challenge(winner, winner_id, num=7):
     except Exception as e:
         print(f"Error hiding voice channel: {e}")
 
-    if sorted_users:
-        return soundfx_winner_id
-    else:
-        return None
+    return soundfx_winner_id
 
 
 
@@ -6227,8 +6415,12 @@ async def ask_audio_music_challenge(winner, winner_id, num=7):
                 print(f"Error hiding voice channel: {e}")
 
             if sorted_users:
-                audio_music_winner_id, (display_name, final_score) = sorted_users[0]
-                return audio_music_winner_id
+                top_score = sorted_users[0][1][1]
+                top_winners = [uid for uid, (name, score) in sorted_users if score == top_score]
+                if len(top_winners) == 1:
+                    return top_winners[0]
+                else:
+                    return None  # Tie
             else:
                 return None
 
@@ -6246,9 +6438,21 @@ async def ask_audio_music_challenge(winner, winner_id, num=7):
         await asyncio.sleep(3)
 
     await asyncio.sleep(2)
+
+    audio_music_winner_id = None
     if sorted_users:
-        audio_music_winner_id, (display_name, final_score) = sorted_users[0]
-        await safe_send(channel, f"\u200b\n🎉🥇 The winner is **{display_name}**!\n\u200b")
+        top_score = sorted_users[0][1][1]
+        top_winners = [(uid, name) for uid, (name, score) in sorted_users if score == top_score]
+
+        if len(top_winners) == 1:
+            audio_music_winner_id, display_name = top_winners[0]
+            await safe_send(channel, f"\u200b\n🎉🥇 The winner is **{display_name}**!\n\u200b")
+        else:
+            message = f"\u200b\n🤝 It's a tie! **Winners:**\n\u200b"
+            for uid, name in top_winners:
+                message += f"• **{name}** ({top_score} pts)\n"
+            message += "\u200b"
+            await safe_send(channel, message)
     else:
         await safe_send(channel, f"\u200b\n👎😢 **No right answers**. I'm ashamed to call you Okrans.\n\u200b")
 
@@ -6287,10 +6491,7 @@ async def ask_audio_music_challenge(winner, winner_id, num=7):
     except Exception as e:
         print(f"Error hiding voice channel: {e}")
 
-    if sorted_users:
-        return audio_music_winner_id
-    else:
-        return None
+    return audio_music_winner_id
 
 
 async def ask_audio_question_challenge(winner, winner_id, num=7):
@@ -6668,8 +6869,12 @@ async def ask_audio_question_challenge(winner, winner_id, num=7):
                 print(f"Error hiding voice channel: {e}")
 
             if sorted_users:
-                audio_question_winner_id, (display_name, final_score) = sorted_users[0]
-                return audio_question_winner_id
+                top_score = sorted_users[0][1][1]
+                top_winners = [uid for uid, (name, score) in sorted_users if score == top_score]
+                if len(top_winners) == 1:
+                    return top_winners[0]
+                else:
+                    return None  # Tie
             else:
                 return None
 
@@ -6687,9 +6892,21 @@ async def ask_audio_question_challenge(winner, winner_id, num=7):
         await asyncio.sleep(3)
 
     await asyncio.sleep(2)
+
+    audio_question_winner_id = None
     if sorted_users:
-        audio_question_winner_id, (display_name, final_score) = sorted_users[0]
-        await safe_send(channel, f"\u200b\n🎉🥇 The winner is **{display_name}**!\n\u200b")
+        top_score = sorted_users[0][1][1]
+        top_winners = [(uid, name) for uid, (name, score) in sorted_users if score == top_score]
+
+        if len(top_winners) == 1:
+            audio_question_winner_id, display_name = top_winners[0]
+            await safe_send(channel, f"\u200b\n🎉🥇 The winner is **{display_name}**!\n\u200b")
+        else:
+            message = f"\u200b\n🤝 It's a tie! **Winners:**\n\u200b"
+            for uid, name in top_winners:
+                message += f"• **{name}** ({top_score} pts)\n"
+            message += "\u200b"
+            await safe_send(channel, message)
     else:
         await safe_send(channel, f"\u200b\n👎😢 **No right answers**. I'm ashamed to call you Okrans.\n\u200b")
 
@@ -6728,10 +6945,7 @@ async def ask_audio_question_challenge(winner, winner_id, num=7):
     except Exception as e:
         print(f"Error hiding voice channel: {e}")
 
-    if sorted_users:
-        return audio_question_winner_id
-    else:
-        return None
+    return audio_question_winner_id
 
 
 
@@ -6887,8 +7101,12 @@ async def ask_president_challenge(winner, winner_id, num=7):
 
         if num == 1:
             if sorted_users:
-                president_winner_id, (display_name, final_score) = sorted_users[0]
-                return president_winner_id
+                top_score = sorted_users[0][1][1]
+                top_winners = [uid for uid, (name, score) in sorted_users if score == top_score]
+                if len(top_winners) == 1:
+                    return top_winners[0]
+                else:
+                    return None  # Tie
             else:
                 return None
 
@@ -6906,19 +7124,27 @@ async def ask_president_challenge(winner, winner_id, num=7):
         await asyncio.sleep(3)
 
     await asyncio.sleep(2)
+    president_winner_id = None
     if sorted_users:
-        president_winner_id, (display_name, final_score) = sorted_users[0]
-        await safe_send(channel, f"\u200b\n🎉🥇 The winner is **{display_name}**!\n\u200b")
+        top_score = sorted_users[0][1][1]
+        top_winners = [(uid, name) for uid, (name, score) in sorted_users if score == top_score]
+
+        if len(top_winners) == 1:
+            president_winner_id, display_name = top_winners[0]
+            await safe_send(channel, f"\u200b\n🎉🥇 The winner is **{display_name}**!\n\u200b")
+        else:
+            message = f"\u200b\n🤝 It's a tie! **Winners:**\n\u200b"
+            for uid, name in top_winners:
+                message += f"• **{name}** ({top_score} pts)\n"
+            message += "\u200b"
+            await safe_send(channel, message)
     else:
         await safe_send(channel, f"\u200b\n👎😢 **No right answers**. I'm ashamed to call you Okrans.\n\u200b")
 
     wf_winner = True
     await asyncio.sleep(3)
-    
-    if sorted_users:
-        return president_winner_id
-    else:
-        return None
+
+    return president_winner_id
 
 
 
@@ -7030,8 +7256,12 @@ async def ask_poster_challenge(winner, winner_id, num=7):
 
         if num == 1:
             if sorted_users:
-                poster_winner_id, (winner_name, winner_score) = sorted_users[0]
-                return poster_winner_id if winner_name is not None else None
+                top_score = sorted_users[0][1][1]
+                top_winners = [uid for uid, (name, score) in sorted_users if score == top_score]
+                if len(top_winners) == 1:
+                    return top_winners[0]
+                else:
+                    return None  # Tie
             else:
                 return None
             
@@ -7052,19 +7282,30 @@ async def ask_poster_challenge(winner, winner_id, num=7):
 
     await asyncio.sleep(2)
     if sorted_users:
-        poster_winner_id, (winner_name, winner_score) = sorted_users[0]
-        message = f"\u200b\n🎉🥇 The winner is **{winner_name}**!\n\u200b"
+        top_score = sorted_users[0][1][1]
+        top_winners = [(uid, name) for uid, (name, score) in sorted_users if score == top_score]
+
+        if len(top_winners) == 1:
+            poster_winner_id, winner_name = top_winners[0]
+            message = f"\u200b\n🎉🥇 The winner is **{winner_name}**!\n\u200b"
+            await safe_send(channel, message)
+            wf_winner = True
+            await asyncio.sleep(3)
+            return poster_winner_id
+        else:
+            message = f"\u200b\n🤝 It's a tie! **Winners:**\n\u200b"
+            for uid, name in top_winners:
+                message += f"• **{name}** ({top_score} pts)\n"
+            message += "\u200b"
+            await safe_send(channel, message)
+            wf_winner = True
+            await asyncio.sleep(3)
+            return None
     else:
         message = f"\u200b\n👎😢 **No right answers**. I'm ashamed to call you Okrans.\n\u200b"
-    
-    await safe_send(channel, message)
-    
-    wf_winner = True
-    await asyncio.sleep(3)
-    
-    if sorted_users:
-        return poster_winner_id
-    else:
+        await safe_send(channel, message)
+        wf_winner = True
+        await asyncio.sleep(3)
         return None
 
 
@@ -7342,42 +7583,53 @@ async def ask_wordle_challenge(winner, winner_id, num=1):
 
         if num == 1:
             if sorted_users:
-                wordle_winner_id, (winner_name, winner_score) = sorted_users[0]
-                return wordle_winner_id
+                top_score = sorted_users[0][1][1]
+                top_winners = [uid for uid, (name, score) in sorted_users if score == top_score]
+                if len(top_winners) == 1:
+                    return top_winners[0]
+                else:
+                    return None  # Tie
             else:
                 return None
-            
+
         #if sorted_users:
         #    if wordle_num > num:
         #        message += "\u200b\n🏁🏆 Final Standings\n\u200b"
-        #    else:   
+        #    else:
         #        message += "\u200b\n📊🏆 Current Standings\n\u200b"
 
         #for counter, (user_id, (display_name, score)) in enumerate(sorted_users, start=1):
         #    message += f"{counter}. **{display_name}**: {score}\n"
-            
+
         #if message:
         #    message += "\u200b"
         #    await safe_send(channel, message)
-        
+
         await asyncio.sleep(3)
 
     #await asyncio.sleep(2)
+    wordle_winner_id = None
     if sorted_users:
-        wordle_winner_id, (winner_name, winner_score) = sorted_users[0]
-        message = f"\u200b\n🎉🥇 The winner is **{winner_name}**!\n\u200b"
+        top_score = sorted_users[0][1][1]
+        top_winners = [(uid, name) for uid, (name, score) in sorted_users if score == top_score]
+
+        if len(top_winners) == 1:
+            wordle_winner_id, winner_name = top_winners[0]
+            message = f"\u200b\n🎉🥇 The winner is **{winner_name}**!\n\u200b"
+        else:
+            message = f"\u200b\n🤝 It's a tie! **Winners:**\n\u200b"
+            for uid, name in top_winners:
+                message += f"• **{name}** ({top_score} pts)\n"
+            message += "\u200b"
     else:
         message = f"\u200b\n👎😢 **No points**. I'm ashamed to call you Okrans.\n\u200b"
-    
+
     await safe_send(channel, message)
-    
+
     wf_winner = True
     await asyncio.sleep(3)
-    
-    if sorted_users:
-        return wordle_winner_id
-    else:
-        return None
+
+    return wordle_winner_id
     
 
 
@@ -7851,29 +8103,40 @@ async def ask_chess_challenge(winner, winner_id, num=5):
 
         if num == 1:
             if sorted_users:
-                chess_winner_id, (winner_name, winner_score) = sorted_users[0]
-                return chess_winner_id
+                top_score = sorted_users[0][1][1]
+                top_winners = [uid for uid, (name, score) in sorted_users if score == top_score]
+                if len(top_winners) == 1:
+                    return top_winners[0]
+                else:
+                    return None  # Tie
             else:
                 return None
-        
+
         await asyncio.sleep(3)
 
     #await asyncio.sleep(2)
+    chess_winner_id = None
     if sorted_users:
-        chess_winner_id, (winner_name, winner_score) = sorted_users[0]
-        message = f"\u200b\n🎉🥇 The winner is **{winner_name}**!\n\u200b"
+        top_score = sorted_users[0][1][1]
+        top_winners = [(uid, name) for uid, (name, score) in sorted_users if score == top_score]
+
+        if len(top_winners) == 1:
+            chess_winner_id, winner_name = top_winners[0]
+            message = f"\u200b\n🎉🥇 The winner is **{winner_name}**!\n\u200b"
+        else:
+            message = f"\u200b\n🤝 It's a tie! **Winners:**\n\u200b"
+            for uid, name in top_winners:
+                message += f"• **{name}** ({top_score} pts)\n"
+            message += "\u200b"
     else:
         message = f"\u200b\n👎😢 **No points**. I'm ashamed to call you Okrans.\n\u200b"
-    
+
     await safe_send(channel, message)
-    
+
     wf_winner = True
     await asyncio.sleep(3)
-    
-    if sorted_users:
-        return chess_winner_id
-    else:
-        return None
+
+    return chess_winner_id
 
 
 
@@ -8017,8 +8280,12 @@ async def ask_microscopic_challenge(winner, winner_id, num=3):
 
         if num == 1:
             if sorted_users:
-                microscopic_winner_id, (display_name, final_score) = sorted_users[0]
-                return microscopic_winner_id
+                top_score = sorted_users[0][1][1]
+                top_winners = [uid for uid, (name, score) in sorted_users if score == top_score]
+                if len(top_winners) == 1:
+                    return top_winners[0]
+                else:
+                    return None  # Tie
             else:
                 return None
 
@@ -8033,22 +8300,30 @@ async def ask_microscopic_challenge(winner, winner_id, num=3):
 
             if message:
                 await safe_send(channel, message)
-        
+
         await asyncio.sleep(2)
 
     # Final winner announcement
+    microscopic_winner_id = None
     if sorted_users:
-        microscopic_winner_id, (display_name, final_score) = sorted_users[0]
-        await safe_send(channel, f"\u200b\n🎉🥇 The winner is **{display_name}**!\n\u200b")
+        top_score = sorted_users[0][1][1]
+        top_winners = [(uid, name) for uid, (name, score) in sorted_users if score == top_score]
+
+        if len(top_winners) == 1:
+            microscopic_winner_id, display_name = top_winners[0]
+            await safe_send(channel, f"\u200b\n🎉🥇 The winner is **{display_name}**!\n\u200b")
+        else:
+            message = f"\u200b\n🤝 It's a tie! **Winners:**\n\u200b"
+            for uid, name in top_winners:
+                message += f"• **{name}** ({top_score} pts)\n"
+            message += "\u200b"
+            await safe_send(channel, message)
     else:
         await safe_send(channel, f"\u200b\n👎😢 **No right answers**. I'm ashamed to call you Okrans.\n\u200b")
 
     await asyncio.sleep(3)
-    
-    if sorted_users:
-        return microscopic_winner_id
-    else:
-        return None
+
+    return microscopic_winner_id
 
 async def ask_fusion_challenge(winner, winner_id, num=3):
     global wf_winner
@@ -8270,8 +8545,12 @@ async def ask_fusion_challenge(winner, winner_id, num=3):
         
         if num == 1:
             if sorted_users:
-                winner_id, (winner_name, _) = sorted_users[0]
-                return winner_id
+                top_score = sorted_users[0][1][1]
+                top_winners = [uid for uid, (name, score) in sorted_users if score == top_score]
+                if len(top_winners) == 1:
+                    return top_winners[0]
+                else:
+                    return None  # Tie
             else:
                 return None
         
@@ -8292,16 +8571,26 @@ async def ask_fusion_challenge(winner, winner_id, num=3):
         await asyncio.sleep(2)
 
     # Final winner announcement and return
+    winner_id = None
     if user_data:
         sorted_users = sorted(user_data.items(), key=lambda x: x[1][1], reverse=True)
-        winner_id, (winner_name, winner_score) = sorted_users[0]
-        await safe_send(channel, f"\u200b\n🎉🥇 The winner is **{winner_name}** with {winner_score} points!\n\u200b")
-        await asyncio.sleep(3)
-        return winner_id
+        top_score = sorted_users[0][1][1]
+        top_winners = [(uid, name) for uid, (name, score) in sorted_users if score == top_score]
+
+        if len(top_winners) == 1:
+            winner_id, display_name = top_winners[0]
+            message = f"\u200b\n🎉🥇 The winner is **{display_name}** with {top_score} points!\n\u200b"
+        else:
+            message = f"\u200b\n🤝 It's a tie! **Winners:**\n\u200b"
+            for uid, name in top_winners:
+                message += f"• **{name}** ({top_score} pts)\n"
+            message += "\u200b"
     else:
-        await safe_send(channel, f"\u200b\n👎😢 **No right answers**. I'm ashamed to call you Okrans.\n\u200b")
-        await asyncio.sleep(3)
-        return None
+        message = f"\u200b\n👎😢 **No right answers**. I'm ashamed to call you Okrans.\n\u200b"
+
+    await safe_send(channel, message)
+    await asyncio.sleep(3)
+    return winner_id
     
     
         
@@ -8640,41 +8929,51 @@ async def ask_tally_challenge(winner, winner_id, num=3):
 
         if num == 1:
             if sorted_users:
-                tally_winner_id, (display_name, total_distance, participated_rounds) = sorted_users[0]
-                return tally_winner_id
+                top_distance = sorted_users[0][1][1]
+                top_winners = [uid for uid, (name, distance, rounds) in sorted_users if distance == top_distance]
+                if len(top_winners) == 1:
+                    return top_winners[0]
+                else:
+                    return None  # Tie
             else:
                 return None
-            
+
         if sorted_users:
             if estimation_num > num:
                 message += "\u200b\n🏁🏆 **Final Standings (Distance)**\n"
-            else:   
+            else:
                 message += "\u200b\n📊🏆 **Current Standings (Distance)**\n"
 
             for counter, (user_id, (display_name, total_distance, participated_rounds)) in enumerate(sorted_users, start=1):
                 rounds_count = len(participated_rounds)
                 message += f"{counter}. **{display_name}**: {total_distance}\n"
             message += "\u200b"
-            
+
             await safe_send(channel, message)
             await asyncio.sleep(2)
-        
+
     await asyncio.sleep(2)
-    
+
+    tally_winner_id = None
     if sorted_users:
-        tally_winner_id, (winner_name, total_distance, participated_rounds) = sorted_users[0]
-        rounds_count = len(participated_rounds)
-        message = f"\u200b\n🎉🥇 The winner is **{winner_name}** with a total distance of **{total_distance}**!\n\u200b"
+        top_distance = sorted_users[0][1][1]
+        top_winners = [(uid, name) for uid, (name, distance, rounds) in sorted_users if distance == top_distance]
+
+        if len(top_winners) == 1:
+            tally_winner_id, winner_name = top_winners[0]
+            message = f"\u200b\n🎉🥇 The winner is **{winner_name}** with a total distance of **{top_distance}**!\n\u200b"
+        else:
+            message = f"\u200b\n🤝 It's a tie! **Winners:**\n\u200b"
+            for uid, name in top_winners:
+                message += f"• **{name}** ({top_distance} distance)\n"
+            message += "\u200b"
     else:
         message = f"\u200b\n👎😢 **No guesses made**. I'm ashamed to call you Okrans.\n\u200b"
     await safe_send(channel, message)
-    
+
     await asyncio.sleep(3)
-    
-    if sorted_users:
-        return tally_winner_id
-    else:
-        return None
+
+    return tally_winner_id
 
 async def ask_currency_challenge(winner, winner_id, num=7):
     global wf_winner
@@ -8956,45 +9255,55 @@ async def ask_currency_challenge(winner, winner_id, num=7):
             sorted_users = sorted(user_data.items(), key=lambda x: x[1][1], reverse=False)
             if num == 1:
                 if sorted_users:
-                    currency_winner_id, (display_name, total_distance, participated_rounds) = sorted_users[0]
-                    return currency_winner_id
+                    top_distance = sorted_users[0][1][1]
+                    top_winners = [uid for uid, (name, distance, rounds) in sorted_users if distance == top_distance]
+                    if len(top_winners) == 1:
+                        return top_winners[0]
+                    else:
+                        return None  # Tie
                 else:
                     return None
-            
+
             message = ""
             if currency_round > num:
                 message += "\u200b\n🏁🏆 **Final Standings (Distance)**\n"
-            else:   
+            else:
                 message += "\u200b\n📊🏆 **Current Standings (Distance)**\n"
             for counter, (user_id, (display_name, total_distance, participated_rounds)) in enumerate(sorted_users, start=1):
                 message += f"{counter}. **{display_name}**: {total_distance:.2f}\n"
             message += "\u200b"
-            
+
             await safe_send(channel, message)
             await asyncio.sleep(2)
-    
+
     await asyncio.sleep(2)
-    
+
     # Final results
     if user_data:
         sorted_users = sorted(user_data.items(), key=lambda x: x[1][1], reverse=False)
     else:
         sorted_users = []
-    
+
+    currency_winner_id = None
     if sorted_users:
-        currency_winner_id, (winner_name, total_distance, participated_rounds) = sorted_users[0]
-        rounds_count = len(participated_rounds)
-        message = f"\u200b\n🎉🥇 The winner is **{winner_name}** with a total distance of **{total_distance:.2f}**!\n\u200b"
+        top_distance = sorted_users[0][1][1]
+        top_winners = [(uid, name) for uid, (name, distance, rounds) in sorted_users if distance == top_distance]
+
+        if len(top_winners) == 1:
+            currency_winner_id, winner_name = top_winners[0]
+            message = f"\u200b\n🎉🥇 The winner is **{winner_name}** with a total distance of **{top_distance:.2f}**!\n\u200b"
+        else:
+            message = f"\u200b\n🤝 It's a tie! **Winners:**\n\u200b"
+            for uid, name in top_winners:
+                message += f"• **{name}** ({top_distance:.2f} distance)\n"
+            message += "\u200b"
     else:
         message = f"\u200b\n👎😢 **No guesses made**. I'm ashamed to call you Okrans.\n\u200b"
     await safe_send(channel, message)
-    
+
     await asyncio.sleep(3)
-    
-    if sorted_users:
-        return currency_winner_id
-    else:
-        return None
+
+    return currency_winner_id
 
 
 
@@ -9128,8 +9437,12 @@ async def ask_myopic_challenge(winner, winner_id, num=3):
 
         if num == 1:
             if sorted_users:
-                myopic_winner_id, (winner_name, winner_score) = sorted_users[0]
-                return myopic_winner_id
+                top_score = sorted_users[0][1][1]
+                top_winners = [uid for uid, (name, score) in sorted_users if score == top_score]
+                if len(top_winners) == 1:
+                    return top_winners[0]
+                else:
+                    return None  # Tie
             else:
                 return None
 
@@ -9148,19 +9461,26 @@ async def ask_myopic_challenge(winner, winner_id, num=3):
     # final winner
     sorted_users = sorted(user_correct_answers.items(), key=lambda x: x[1][1], reverse=True)
 
+    myopic_winner_id = None
     if sorted_users:
-        myopic_winner_id, (winner_name, winner_score) = sorted_users[0]
-        message = f"\u200b\n🎉🥇 The winner is **{winner_name}**!\n\u200b"
+        top_score = sorted_users[0][1][1]
+        top_winners = [(uid, name) for uid, (name, score) in sorted_users if score == top_score]
+
+        if len(top_winners) == 1:
+            myopic_winner_id, winner_name = top_winners[0]
+            message = f"\u200b\n🎉🥇 The winner is **{winner_name}**!\n\u200b"
+        else:
+            message = f"\u200b\n🤝 It's a tie! **Winners:**\n\u200b"
+            for uid, name in top_winners:
+                message += f"• **{name}** ({top_score} pts)\n"
+            message += "\u200b"
     else:
         message = f"\u200b\n👎😢 No right answers. **I'm ashamed to call you Okrans**.\n\u200b"
 
     await safe_send(channel, message)
     await asyncio.sleep(3)
-    
-    if sorted_users:
-        return myopic_winner_id
-    else:
-        return None
+
+    return myopic_winner_id
 
 
 
@@ -9315,42 +9635,53 @@ async def ask_missing_link(winner, winner_id, num=7):
 
         if num == 1:
             if sorted_users:
-                link_winner_id, (winner_name, winner_score) = sorted_users[0]
-                return link_winner_id if winner_name is not None else None
+                top_score = sorted_users[0][1][1]
+                top_winners = [uid for uid, (name, score) in sorted_users if score == top_score]
+                if len(top_winners) == 1:
+                    return top_winners[0]
+                else:
+                    return None  # Tie
             else:
                 return None
-            
+
         if sorted_users:
             if link_num > num:
                 message += "\u200b\n🏁🏆 Final Standings\n\u200b"
-            else:   
+            else:
                 message += "\u200b\n📊🏆 Current Standings\n\u200b"
 
         for counter, (uid, (name, score)) in enumerate(sorted_users, start=1):
             message += f"{counter}. **{name}**: {score}\n"
             message += "\u200b"
-            
+
         if message:
             await safe_send(channel, message)
-        
+
         await asyncio.sleep(3)
 
     await asyncio.sleep(2)
+    link_winner_id = None
     if sorted_users:
-        link_winner_id, (winner_name, winner_score) = sorted_users[0]
-        message = f"\u200b\n🎉🥇 The winner is **{winner_name}**!\n\u200b"
+        top_score = sorted_users[0][1][1]
+        top_winners = [(uid, name) for uid, (name, score) in sorted_users if score == top_score]
+
+        if len(top_winners) == 1:
+            link_winner_id, winner_name = top_winners[0]
+            message = f"\u200b\n🎉🥇 The winner is **{winner_name}**!\n\u200b"
+        else:
+            message = f"\u200b\n🤝 It's a tie! **Winners:**\n\u200b"
+            for uid, name in top_winners:
+                message += f"• **{name}** ({top_score} pts)\n"
+            message += "\u200b"
     else:
         message = f"\u200b\n👎😢 **No right answers**. I'm ashamed to call you Okrans.\n\u200b"
-    
+
     await safe_send(channel, message)
-    
+
     wf_winner = True
     await asyncio.sleep(3)
 
-    if sorted_users:
-        return link_winner_id
-    else:
-        return None
+    return link_winner_id
 
 
 async def ask_movie_scenes_challenge(winner, winner_id, num=7):
@@ -9459,42 +9790,53 @@ async def ask_movie_scenes_challenge(winner, winner_id, num=7):
 
         if num == 1:
             if sorted_users:
-                movie_winner_id, (winner_name, winner_score) = sorted_users[0]
-                return movie_winner_id if winner_name is not None else None
+                top_score = sorted_users[0][1][1]
+                top_winners = [uid for uid, (name, score) in sorted_users if score == top_score]
+                if len(top_winners) == 1:
+                    return top_winners[0]
+                else:
+                    return None  # Tie
             else:
                 return None
-            
+
         if sorted_users:
             if movie_num > num:
                 message += "\u200b\n🏁🏆 Final Standings\n\u200b"
-            else:   
+            else:
                 message += "\u200b\n📊🏆 Current Standings\n\u200b"
 
         for counter, (uid, (name, score)) in enumerate(sorted_users, start=1):
             message += f"{counter}. **{name}**: {score}\n"
             message += "\u200b"
-            
+
         if message:
             await safe_send(channel, message)
 
         await asyncio.sleep(3)
 
     await asyncio.sleep(2)
+    movie_winner_id = None
     if sorted_users:
-        movie_winner_id, (winner_name, winner_score) = sorted_users[0]
-        message = f"\u200b\n🎉🥇 The winner is **{winner_name}**!\n\u200b"
+        top_score = sorted_users[0][1][1]
+        top_winners = [(uid, name) for uid, (name, score) in sorted_users if score == top_score]
+
+        if len(top_winners) == 1:
+            movie_winner_id, winner_name = top_winners[0]
+            message = f"\u200b\n🎉🥇 The winner is **{winner_name}**!\n\u200b"
+        else:
+            message = f"\u200b\n🤝 It's a tie! **Winners:**\n\u200b"
+            for uid, name in top_winners:
+                message += f"• **{name}** ({top_score} pts)\n"
+            message += "\u200b"
     else:
         message = f"\u200b\n👎😢 **No right answers**. I'm ashamed to call you Okrans.\n\u200b"
-    
+
     await safe_send(channel, message)
-    
+
     wf_winner = True
     await asyncio.sleep(3)
 
-    if sorted_users:
-        return movie_winner_id
-    else:
-        return None
+    return movie_winner_id
 
 
 
@@ -9676,9 +10018,11 @@ async def ask_feud_question(winner, mode, winner_id):
             # Determine winner - check for ties
             if sorted_users:
                 max_score = sorted_users[0][1]["count"]
-                winners = [uid for uid, data in sorted_users if data["count"] == max_score]
+                winners = [(uid, data["name"]) for uid, data in sorted_users if data["count"] == max_score]
                 if len(winners) == 1:
-                    feud_winner_id = winners[0]
+                    feud_winner_id = winners[0][0]
+                else:
+                    result_message += f"\n🤝 It's a tie at the top!\n"
     
     elif mode == "solo":
         if not user_progress:
@@ -10198,35 +10542,42 @@ async def ask_list_question(winner, winner_id, num=7):
 
     if not scores:
         await safe_send(channel, "\u200b\n\u200b\n😬🤦 Wow. No one got a single one right. **Embarassing**.\n\u200b")
-        return
+        return None
 
-    msg = f"\u200b\n\u200b\n🥇🏆 1st place: **{scores[0][1][0]}** with {len(scores[0][1][1])}/{num_answers}!"
-    if len(scores) > 1:
-        msg += f"\n🥈🎊 2nd: **{scores[1][1][0]}** with {len(scores[1][1][1])}/{num_answers}"
-    if len(scores) > 2:
-        msg += f"\n🥉🎉 3rd: **{scores[2][1][0]}** with {len(scores[2][1][1])}/{num_answers}\n\u200b"
-    await safe_send(channel, msg)
+    # Check for ties at the top
+    top_count = len(scores[0][1][1])
+    top_winners = [(uid, name) for uid, (name, answer_set) in scores if len(answer_set) == top_count]
 
-    
-    # Show winner's results with ✅ or ❌
-    if scores:
+    if len(top_winners) == 1:
+        msg = f"\u200b\n\u200b\n🥇🏆 1st place: **{scores[0][1][0]}** with {len(scores[0][1][1])}/{num_answers}!"
+        if len(scores) > 1:
+            msg += f"\n🥈🎊 2nd: **{scores[1][1][0]}** with {len(scores[1][1][1])}/{num_answers}"
+        if len(scores) > 2:
+            msg += f"\n🥉🎉 3rd: **{scores[2][1][0]}** with {len(scores[2][1][1])}/{num_answers}\n\u200b"
+        await safe_send(channel, msg)
+
+        # Show winner's results with ✅ or ❌
         await asyncio.sleep(2)
-        # Find the winner's answer set
-        list_winner_id = next((uid for uid, (name, _) in user_progress.items() if name == winner), None)
-        if list_winner_id is not None:
-            winner_answers = user_progress[list_winner_id][1]
-            result_lines = []
-            for ans in answers:
-                mark = "✅" if ans in winner_answers else "❌"
-                result_lines.append(f"{mark} {ans}")
-            result_text = "\n".join(result_lines)
-            await safe_send(channel, f"\u200b\n📋 **<@{winner_id}>'s Answers:**\n\n{result_text}\n\u200b")
-            
+        list_winner_id = top_winners[0][0]
+        winner_answers = user_progress[list_winner_id][1]
+        result_lines = []
+        for ans in answers:
+            mark = "✅" if ans in winner_answers else "❌"
+            result_lines.append(f"{mark} {ans}")
+        result_text = "\n".join(result_lines)
+        await safe_send(channel, f"\u200b\n📋 **<@{winner_id}>'s Answers:**\n\n{result_text}\n\u200b")
 
-    await asyncio.sleep(5)
-
-    if scores:
+        await asyncio.sleep(5)
         return list_winner_id
+    else:
+        # Multiple tied winners
+        msg = f"\u200b\n🤝 It's a tie! **Winners:**\n\u200b"
+        for uid, name in top_winners:
+            msg += f"• **{name}** ({top_count}/{num_answers})\n"
+        msg += "\u200b"
+        await safe_send(channel, msg)
+        await asyncio.sleep(5)
+        return None
 
 
 async def ask_survey_question():
@@ -11210,25 +11561,26 @@ async def nice_creep_okra_option(winner, winner_id):
     
     message = f"\u200b\n🥒🤝 Thank you **<@{winner_id}>** for your support.\n\u200b\n" 
     message += f"🥒😊 Say **okra** and I'll be nice.\n"
-    message += f"👀🔭 Say **creep** for a roast from inside your house.\n"
+    message += f"👀🔭 Say **creep** for a uncomfortable roast.\n"
     message += f"💋👠 Say **love me** and I'll seduce you.\n"
     message += f"🤡🤣 Say **joke** and I'll write you a dad joke.\n"
     message += f"🧘‍♂️🗻 Say **haiku** for a 5‑7‑5 tribute.\n"
-    message += f"🎬📽️ Say **trailer** for a movie trailer voiceover.\n"
+    message += f"🎬📽️ Say **trailer** for your own movie trailer.\n"
     message += f"🧤🕶️ Say **heist** for a suave caper recap.\n"    
     message += f"🔮✨ Say **horoscope** for your trivia future.\n"
     message += f"🎤🎶 Say **rap** for two quick bars.\n"
     message += f"📜🪶 Say **shakespeare** for bardic praise.\n"
     message += f"🏴‍☠️⚓ Say **pirate** for a captain's salute.\n"
     message += f"🕵️‍♂️🌧️ Say **noir** for a hardboiled line.\n"
-    message += f"📣🔥 Say **hype** for a stadium-sized celebration.\n"
-    message += f"🔥🍗 Say **roast** and I'll roast you.\n\u200b"
+    message += f"📣🔥 Say **hype** for a stadium-sized roar.\n"
+    message += f"🔥🍗 Say **roast** and I'll just roast you.\n"
+    message += f"🤫🕊️ Say **nada** and I'll leave you alone.\n\u200b"
     await safe_send(channel, message)
 
     TRIGGERS = [
         "okra", "creep", "love me", "joke", "haiku", "trailer",
         "heist", "horoscope", "rap", "shakespeare", "pirate",
-        "noir", "hype", "roast"
+        "noir", "hype", "roast", "nada"
     ]
     
     def check(m):
@@ -11290,6 +11642,8 @@ async def nice_creep_okra_option(winner, winner_id):
         elif "roast" in content:
             await response.add_reaction("🍗")
             roast_okra = True
+        elif "nada" in content:
+            await response.add_reaction("🕊️")
 
     except asyncio.TimeoutError:
         pass
@@ -12662,43 +13016,54 @@ async def ask_magic_challenge(winner, winner_id, num=5):
 
         if num == 1:
             if sorted_users:
-                magic_winner_id, (display_name, final_score) = sorted_users[0]
-                return magic_winner_id
+                top_score = sorted_users[0][1][1]
+                top_winners = [uid for uid, (name, score) in sorted_users if score == top_score]
+                if len(top_winners) == 1:
+                    return top_winners[0]
+                else:
+                    return None  # Tie
             else:
                 return None
-            
+
         if sorted_users:
             if round_num > num:
                 message += "\u200b\n🏁🏆 Final Standings\n\u200b"
-            else:   
+            else:
                 message += "\u200b\n📊🏆 Current Standings\n\u200b"
 
         for counter, (user_id, (display_name, count)) in enumerate(sorted_users, start=1):
             message += f"{counter}. **{display_name}**: {count}\n"
             message += "\u200b"
-            
+
         if message:
             await safe_send(channel, message)
-        
+
         await asyncio.sleep(3)
 
     await asyncio.sleep(2)
-    
+
+    magic_winner_id = None
     if sorted_users:
-        magic_winner_id, (display_name, final_score) = sorted_users[0]
-        message = f"\u200b\n🎉🥇 The winner is **{display_name}**!\n\u200b"
+        top_score = sorted_users[0][1][1]
+        top_winners = [(uid, name) for uid, (name, score) in sorted_users if score == top_score]
+
+        if len(top_winners) == 1:
+            magic_winner_id, display_name = top_winners[0]
+            message = f"\u200b\n🎉🥇 The winner is **{display_name}**!\n\u200b"
+        else:
+            message = f"\u200b\n🤝 It's a tie! **Winners:**\n\u200b"
+            for uid, name in top_winners:
+                message += f"• **{name}** ({top_score} pts)\n"
+            message += "\u200b"
     else:
         message = f"\u200b\n👎😢 **No right answers**. I'm ashamed to call you Okrans.\n\u200b"
-    
+
     await safe_send(channel, message)
-    
+
     wf_winner = True
     await asyncio.sleep(3)
-    
-    if sorted_users:
-        return magic_winner_id
-    else:
-        return None
+
+    return magic_winner_id
 
 
 def generate_jeopardy_image(question_text):
@@ -16426,8 +16791,8 @@ async def start_trivia():
             start_message += f"\n🎅 **Christmas** [Remastered]"
             start_message += "\n\u200b"
 
-            await safe_send(channel, start_message)
-            await asyncio.sleep(5)
+            #await safe_send(channel, start_message)
+            #await asyncio.sleep(5)
             
             
             start_message = f"\u200b\n\u200b\n⏩ Starting a **{questions_per_round} question** round! ⏩\n\u200b"
