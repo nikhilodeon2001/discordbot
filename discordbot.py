@@ -420,7 +420,7 @@ else:
     mini_game_audio_bot = sys.modules.get('__mini_game_audio_bot__')
 
 openai_client = AsyncOpenAI(api_key=openai_api_key)
-id_limits = {"general": 2000, "mysterybox": 2000, "crossword": 5000, "jeopardy": 5000, "wof": 1500, "list": 20, "feud": 1000, "posters": 2000, "movie_scenes": 5000, "missing_link": 2500, "people": 2500, "ranker_list": 4000, "animal": 2000, "riddle": 2500, "dictionary": 5000, "flags": 800, "lyric": 500, "polyglottery": 80, "book": 80, "element": 100, "jigsaw": 5000, "border": 100, "faceoff": 5000, "president": 80, "wordle": 1400, "myopic": 5000, "fusion": 5000, "microscopic": 5000, "chess": 5000, "stock": 800, "currency": 100, "search": 10, "billboard": 40, "soundfx": 500, "audio_music":100, "audio_question": 2000}
+id_limits = {"general": 2000, "mysterybox": 2000, "crossword": 5000, "jeopardy": 5000, "wof": 1500, "list": 20, "feud": 1000, "posters": 2000, "movie_scenes": 5000, "missing_link": 2500, "people": 2500, "ranker_list": 4000, "animal": 2000, "riddle": 2500, "dictionary": 5000, "flags": 800, "lyric": 500, "polyglottery": 80, "book": 80, "element": 100, "jigsaw": 5000, "border": 100, "faceoff": 5000, "president": 80, "wordle": 1400, "myopic": 5000, "fusion": 5000, "microscopic": 5000, "chess": 5000, "stock": 800, "currency": 100, "search": 10, "billboard": 40, "soundfx": 500, "audio_music":100, "audio_question": 2000, "sports_logos": 20}
 max_retries = 3
 delay_between_retries = 3
 first_place_bonus = 0
@@ -5564,7 +5564,9 @@ async def ask_chaos_challenge(winner, winner_id, num_of_games):
         ask_audio_question_challenge,
         ask_feud_question,
         ask_okrace_challenge,
+        ask_sports_logos_challenge
     ]
+
 
     num_of_games = min(num_of_games, len(challenge_functions))
     selected_challenges = random.sample(challenge_functions, k=num_of_games)
@@ -7148,6 +7150,501 @@ async def ask_president_challenge(winner, winner_id, num=7):
 
 
 
+async def ask_sports_logos_challenge(winner, winner_id, num=7):
+    global wf_winner
+    wf_winner = True
+
+    user_data = {}
+
+    gifs = [
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/sports_logos1.gif",
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/sports_logos2.gif",
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/sports_logos3.gif",
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/sports_logos4.gif",
+    ]
+    gif_url = random.choice(gifs)
+
+    await safe_send(channel, content="\u200b\n🏈🏀 **Jock Talk**: Who's Dat Team?!?\n\u200b", embed=discord.Embed().set_image(url=gif_url))
+    await asyncio.sleep(3)
+
+    # League selection
+    await safe_send(channel, "\u200b\n🏈🏀⚾🏒 Pick your leagues!\n\u200b\n1️⃣ ⚾ MLB \n2️⃣ 🏈 NFL \n3️⃣ 🏀 NBA \n4️⃣ 🎓 NCAA \n5️⃣ 🏆 Everything \n\u200b\n(Reply with numbers, e.g., '1 3 4' for MLB, NBA, and NCAA)\n\u200b")
+
+    selected_leagues = []
+    league_map = {1: "MLB", 2: "NFL", 3: "NBA", 4: "NCAA", 5: "all"}
+    league_display_map = {1: "⚾ MLB", 2: "🏈 NFL", 3: "🏀 NBA", 4: "🎓 NCAA"}
+
+    def check_league_selection(m):
+        target_channel = _active_game_channel or channel
+        return m.channel == target_channel and m.author.id == winner_id and any(char.isdigit() for char in m.content)
+
+    try:
+        league_msg = await get_bot().wait_for("message", timeout=20, check=check_league_selection)
+        # Extract all numbers from the message
+        import re
+        numbers = [int(n) for n in re.findall(r'\d+', league_msg.content) if 1 <= int(n) <= 5]
+
+        if not numbers:
+            # Default to everything if no valid numbers
+            selected_leagues = ["MLB", "NFL", "NBA", "NCAA"]
+            await safe_send(channel, "\u200b\n🤷 No valid selection, using **everything**!\n\u200b")
+        elif 5 in numbers:
+            selected_leagues = ["MLB", "NFL", "NBA", "NCAA"]
+            await safe_send(channel, "\u200b\n🌟 **Everything** selected!\n\u200b")
+        else:
+            # Remove duplicates and map to league names (plain names for DB queries)
+            selected_leagues = [league_map[n] for n in sorted(set(numbers)) if n in league_map]
+            # Use display map with emojis for user-facing message
+            league_display = ", ".join([league_display_map[n] for n in sorted(set(numbers)) if n in league_display_map])
+            await safe_send(channel, f"\u200b\n✅ Selected leagues: **{league_display}**\n\u200b")
+    except asyncio.TimeoutError:
+        selected_leagues = ["MLB", "NFL", "NBA", "NCAA"]
+        await safe_send(channel, "\u200b\n⏰ Time's up! Using **everything**!\n\u200b")
+
+    await asyncio.sleep(2)
+
+    # Check if user selected all leagues (either via "5" or "1 2 3 4")
+    everything_selected = set(selected_leagues) == {"MLB", "NFL", "NBA", "NCAA"}
+
+    # Build round-robin question pool
+    recent_ids = await get_recent_question_ids_from_mongo("sports_logos")
+    collection = db["sports_logos_questions"]
+    question_pool = []
+
+    # Calculate exact number of questions needed from each league
+    # Build round-robin order: for 7 rounds, 4 leagues -> [MLB, NFL, NBA, NCAA, MLB, NFL, NBA]
+    league_order = []
+    for i in range(num):
+        league_order.append(selected_leagues[i % len(selected_leagues)])
+
+    # Count how many questions needed per league
+    from collections import Counter
+    questions_needed = Counter(league_order)
+
+    # Fetch exact number of questions from each league
+    league_questions = {}
+    for league, count in questions_needed.items():
+        pipeline = [
+            {"$match": {"_id": {"$nin": list(recent_ids)}, "league": league}},
+            {"$sample": {"size": count}}
+        ]
+        league_questions[league] = [doc async for doc in collection.aggregate(pipeline)]
+
+    # Build question pool in predetermined round-robin order
+    for league_name in league_order:
+        if league_questions[league_name]:
+            question_pool.append(league_questions[league_name].pop(0))
+
+    if num > 1:
+        await safe_send(channel, f"\u200b\n5️⃣🥇 Let's do a best of **{num}**...\n\u200b")
+        await asyncio.sleep(3)
+
+    round_num = 1
+    while round_num <= num:
+        try:
+            # Check if we have questions left in the pool
+            if not question_pool:
+                await safe_send(channel, "\u200b\n⚠️ Ran out of questions!\n\u200b")
+                break
+
+            # Get next question from the pool
+            q = question_pool.pop(0)
+
+            qid = q["_id"]
+            league = q["league"]
+            image_url = q["image_url"]
+            team_location = q.get("team_location_college", "")
+            team_nickname = q["team_nickname"]
+            team_alt_name = q.get("team_alternative_name", "")
+            category = "Sports Logos"
+
+            # Build full team name (location + nickname)
+            if team_location:
+                full_team_name = f"{team_location} {team_nickname}"
+            else:
+                full_team_name = team_nickname
+
+            # Randomly select game mode
+            if everything_selected:
+                game_mode = random.choice([1, 2, 3, 4])
+            else:
+                game_mode = random.choice([1, 2, 3])
+
+            # Randomly select game type (0=none, 1=jigsaw, 2=myopic, 3=microscopic, 4=fusion)
+            #game_type = random.choice([0, 1, 2, 3, 4])
+            game_type = random.choice([0, 1, 2, 4])
+
+            # Set mode-specific variables
+            if game_mode == 1:
+                # Mode 1: Guess team_location_college or team_alternative_name
+                if league == "NCAA":
+                    mode_prompt = "🎓 Name the **COLLEGE or UNIVERSITY**!"
+                else:
+                    mode_prompt = "📍 Name the **TEAM'S LOCATION**!"
+                valid_answers = [team_location, team_alt_name] if team_alt_name else [team_location]
+                valid_answers = [ans for ans in valid_answers if ans]  # Remove empty strings
+            elif game_mode == 2:
+                # Mode 2: Guess team_nickname
+                mode_prompt = "🦅 Name the **TEAM NICKNAME**!"
+                valid_answers = [team_nickname]
+            elif game_mode == 3:
+                # Mode 3: Guess any part
+                mode_prompt = "🏆 Name the **TEAM** (Location OR Nickname)!"
+                valid_answers = [team_location, team_nickname, team_alt_name, full_team_name]
+                valid_answers = [ans for ans in valid_answers if ans]  # Remove empty strings
+            else:  # game_mode == 4
+                # Mode 4: Guess the league (one guess per person)
+                mode_prompt = "🏆 What **LEAGUE** is this team from?"
+                valid_answers = [league]  # Only the actual league is correct
+
+            # Always display full team name as the answer
+            answer_display = full_team_name
+
+            # If fusion mode, fetch 2 additional logos from the same league
+            fusion_logos = []
+            fusion_teams_data = []
+
+            if game_type == 4:  # Fusion
+                # Fetch 2 more logos from the same league (excluding current question)
+                fusion_pipeline = [
+                    {"$match": {"_id": {"$nin": list(recent_ids) + [qid]}, "league": league}},
+                    {"$sample": {"size": 2}}
+                ]
+                fusion_logos = [doc async for doc in collection.aggregate(fusion_pipeline)]
+
+                # If we don't have enough logos, fallback to game_type = 0 (none)
+                if len(fusion_logos) < 2:
+                    game_type = 0
+                    fusion_logos = []
+                else:
+                    # Build fusion_teams_data with all 3 teams (main + 2 fusion)
+                    # Team 1: Current question
+                    fusion_teams_data.append({
+                        "location": team_location,
+                        "nickname": team_nickname,
+                        "alt_name": team_alt_name,
+                        "full_name": full_team_name,
+                        "league": league
+                    })
+
+                    # Teams 2 & 3: Fusion logos
+                    for fusion_logo in fusion_logos:
+                        f_loc = fusion_logo.get("team_location_college", "")
+                        f_nick = fusion_logo["team_nickname"]
+                        f_alt = fusion_logo.get("team_alternative_name", "")
+                        f_full = f"{f_loc} {f_nick}" if f_loc else f_nick
+
+                        fusion_teams_data.append({
+                            "location": f_loc,
+                            "nickname": f_nick,
+                            "alt_name": f_alt,
+                            "full_name": f_full,
+                            "league": fusion_logo["league"]
+                        })
+
+            print(f"{league}: {full_team_name} - Mode {game_mode}, Type {game_type}")
+
+            # Store question IDs (including fusion logos if applicable)
+            if qid:
+                ids_to_store = [qid]
+                if game_type == 4 and fusion_logos:
+                    ids_to_store.extend([logo["_id"] for logo in fusion_logos])
+                await store_question_ids_in_mongo(ids_to_store, "sports_logos")
+
+            embed = discord.Embed()
+            image_file = None  # Will be set if we generate a modified image
+
+            # Generate image based on game_type
+            if game_type == 0:
+                # None: Use original image
+                embed.set_image(url=image_url)
+                game_type_description = ""
+
+            elif game_type == 1:
+                # Jigsaw: Shuffle into pieces
+                num_pieces = random.choice([16, 25, 36, 49])
+                random_colors = [
+                    (255, 150, 150), (150, 255, 150), (150, 150, 255),
+                    (255, 255, 150), (150, 255, 255), (255, 150, 255),
+                    (255, 200, 150), (200, 150, 255), (150, 255, 200)
+                ]
+                jigsaw_buffer = await shuffle_image_pieces(
+                    image_url, num_pieces=num_pieces,
+                    tint_mode="random", tint_colors=random_colors, tint_strength=0.2
+                )
+                image_file = discord.File(fp=jigsaw_buffer, filename="jigsaw.png")
+                embed.set_image(url="attachment://jigsaw.png")
+                game_type_description = f"\n\n🧩 **Jigsawed** ({num_pieces} pieces)"
+
+            elif game_type == 2:
+                # Myopic: Blurred image
+                blur_strength = random.choice([20.0])
+                blurred_buffer = await blur_image(image_url, blur_strength=blur_strength)
+                image_file = discord.File(blurred_buffer, filename="blurred.png")
+                embed.set_image(url="attachment://blurred.png")
+                game_type_description = f"\n\n👓 **Myopic** (Blur: {blur_strength})"
+
+            elif game_type == 3:
+                # Microscopic: Zoomed/blurred
+                zoom_level = random.choice([4.0, 3.0, 2.5])
+                zoomed_buffer = await blur_image(image_url, blur_strength=zoom_level)
+                image_file = discord.File(zoomed_buffer, filename="zoomed.png")
+                embed.set_image(url="attachment://zoomed.png")
+                game_type_description = f"\n\n🔬 **Microscopic** (Zoom: {zoom_level}x)"
+
+            elif game_type == 4:
+                # Fusion: Blend 3 logos together
+                fusion_image_urls = [image_url] + [logo["image_url"] for logo in fusion_logos]
+                fused_buffer = await blend_multiple_images(fusion_image_urls, blend_ratio=0.8)
+                image_file = discord.File(fused_buffer, filename="fused.png")
+                embed.set_image(url="attachment://fused.png")
+                game_type_description = "\n\n🧬 **Fusion** (3 logos blended)"
+
+            # Send messages
+            await safe_send(channel, f"\u200b\n⚠️🚨 Everyone's in!\n\u200b\n🏈🏀 Team Logo **{round_num}** of **{num}**{game_type_description}\n\u200b")
+            await safe_send(channel, content=f"\u200b\n{mode_prompt}\n\u200b")
+
+            # Special messaging for fusion mode
+            if game_type == 4:
+                await safe_send(channel, "\u200b\n🧬 **Fusion Mode**: 3 teams blended! Each team correctly identified = 1 point. Up to 3 points available!\n\u200b")
+                await asyncio.sleep(2)
+            elif game_mode == 4:
+                await safe_send(channel, "\u200b\n⚠️ **One guess per player** - Mention any league to lock in your guess!\n\u200b")
+                await asyncio.sleep(2)
+
+            if image_file:
+                await safe_send(channel, file=image_file, embed=embed)
+            else:
+                await safe_send(channel, embed=embed)
+
+            answered = False
+            processed_users = set()
+            guessed_users = set() if game_mode == 4 else None
+
+            # Fusion mode tracking
+            if game_type == 4:
+                fusion_found_teams = set()  # Track which team indices have been found (0, 1, 2)
+                fusion_user_finds = {}  # Track which user found which team: {user_id: [team_indices]}
+
+            start_time = asyncio.get_event_loop().time()
+
+            def check(m):
+                target_channel = _active_game_channel or channel
+                return m.channel == target_channel and m.author != get_bot().user
+
+            while asyncio.get_event_loop().time() - start_time < 20 and not answered:
+                try:
+                    timeout = 20 - (asyncio.get_event_loop().time() - start_time)
+                    msg = await get_bot().wait_for("message", timeout=timeout, check=check)
+                    guess = msg.content.strip()
+                    uid = msg.author.id
+                    display = msg.author.display_name
+                    key = (uid, guess)
+
+                    if game_type == 4:
+                        # Fusion mode: Check if guess matches ANY unfound team
+                        if len(fusion_found_teams) >= 3:
+                            # All 3 teams found
+                            answered = True
+                            break
+
+                        # Check which team (if any) this guess matches
+                        for team_idx, team_data in enumerate(fusion_teams_data):
+                            if team_idx in fusion_found_teams:
+                                continue  # Skip already found teams
+
+                            # Build valid answers for this team based on game_mode
+                            team_valid_answers = []
+                            if game_mode == 1:
+                                team_valid_answers = [team_data["location"], team_data["alt_name"]]
+                            elif game_mode == 2:
+                                team_valid_answers = [team_data["nickname"]]
+                            elif game_mode == 3:
+                                team_valid_answers = [team_data["location"], team_data["nickname"],
+                                                     team_data["alt_name"], team_data["full_name"]]
+                            elif game_mode == 4:
+                                team_valid_answers = [team_data["league"]]
+
+                            # Remove empty strings
+                            team_valid_answers = [ans for ans in team_valid_answers if ans]
+
+                            # Check if guess matches this team
+                            is_correct = False
+                            for valid_answer in team_valid_answers:
+                                if fuzzy_match(guess, valid_answer, category, image_url):
+                                    is_correct = True
+                                    break
+
+                            if is_correct:
+                                # Mark this team as found
+                                fusion_found_teams.add(team_idx)
+
+                                # Track user's find
+                                if uid not in fusion_user_finds:
+                                    fusion_user_finds[uid] = []
+                                fusion_user_finds[uid].append(team_idx)
+
+                                # Award point
+                                await msg.add_reaction("✅")
+                                user_data[uid] = (display, user_data.get(uid, (display, 0))[1] + 1)
+
+                                # Announce
+                                team_name = team_data["full_name"].upper()
+                                teams_remaining = 3 - len(fusion_found_teams)
+                                await safe_send(channel,
+                                    f"\u200b\n✅🎉 **{display}** found one! **{team_name}** ({team_data['league']})\n"
+                                    f"🧬 {teams_remaining} team(s) remaining!\n\u200b")
+
+                                # Check if all found
+                                if len(fusion_found_teams) >= 3:
+                                    answered = True
+                                break  # User found a team, stop checking
+
+                    elif game_mode == 4:
+                        # Mode 4: One guess per person, check for league mentions
+                        if uid in guessed_users:
+                            continue
+
+                        # Check if message contains any league mention
+                        guess_upper = guess.upper()
+                        league_mentioned = None
+                        for league_name in ["NFL", "NBA", "MLB", "NCAA"]:
+                            if league_name in guess_upper:
+                                league_mentioned = league_name
+                                break
+
+                        if league_mentioned:
+                            guessed_users.add(uid)  # Lock out this user
+
+                            # Check if correct
+                            if league_mentioned == league:
+                                await msg.add_reaction("✅")
+                                user_data[uid] = (display, user_data.get(uid, (display, 0))[1] + 1)
+                                await safe_send(channel, f"\u200b\n✅🎉 **{display}** got it! **{league}** - {answer_display.upper()}\n\u200b")
+                                answered = True
+                                break
+                    else:
+                        # Modes 1, 2, 3: Use existing logic
+                        if key in processed_users:
+                            continue
+                        processed_users.add(key)
+
+                        # Check if guess matches any valid answer for the current mode
+                        is_correct = False
+                        for valid_answer in valid_answers:
+                            if fuzzy_match(guess, valid_answer, category, image_url):
+                                is_correct = True
+                                break
+
+                        if is_correct:
+                            await msg.add_reaction("✅")
+                            user_data[uid] = (display, user_data.get(uid, (display, 0))[1] + 1)
+                            await safe_send(channel, f"\u200b\n✅🎉 **{display}** got it! **{answer_display.upper()}** ({league})\n\u200b")
+                            answered = True
+                            break
+
+                except asyncio.TimeoutError:
+                    break
+
+            if not answered:
+                if game_type == 4:
+                    # Fusion: Show all 3 teams that weren't found
+                    unfound_teams = []
+                    for idx, team_data in enumerate(fusion_teams_data):
+                        if idx not in fusion_found_teams:
+                            unfound_teams.append(f"**{team_data['full_name'].upper()}** ({team_data['league']})")
+
+                    if unfound_teams:
+                        unfound_str = ", ".join(unfound_teams)
+                        await safe_send(channel, f"\u200b\n❌😢 Time's up!\n\n📝🧠 Remaining team(s): {unfound_str}\n\u200b")
+                    # else: All teams were found (shouldn't reach here)
+                else:
+                    # Regular modes
+                    await safe_send(channel, f"\u200b\n❌😢 No one got it.\n\n📝🧠 Answer: **{answer_display.upper()}** ({league})\n\u200b")
+
+            # Display original logo(s) after jigsaw, myopic, microscopic, or fusion
+            if game_type in [1, 2, 3, 4]:
+                try:
+                    reveal_embed = discord.Embed()
+                    reveal_file = None
+
+                    if game_type == 4:  # Fusion: combine all 3 logos
+                        fusion_image_urls = [image_url] + [logo["image_url"] for logo in fusion_logos]
+                        combined_buffer = await combine_images_horizontally(fusion_image_urls, max_height=400)
+                        if combined_buffer:
+                            reveal_file = discord.File(fp=combined_buffer, filename="original_logos.png")
+                            reveal_embed.set_image(url="attachment://original_logos.png")
+                            await safe_send(channel, content="\u200b\n🖼️ **Original Logos:**\n\u200b", embed=reveal_embed, file=reveal_file)
+                    else:  # Jigsaw, Myopic, Microscopic: show single original logo
+                        reveal_embed.set_image(url=image_url)
+                        await safe_send(channel, content="\u200b\n🖼️ **Original Logo:**\n\u200b", embed=reveal_embed)
+                except Exception as e:
+                    print(f"Error displaying original logo(s): {e}")
+
+            await asyncio.sleep(5)
+
+        except Exception as e:
+            sentry_sdk.capture_exception(e)
+            print(traceback.format_exc())
+            await safe_send(channel, "\u200b\n⚠️ Error during round, skipping.\n\u200b")
+            continue
+
+        await asyncio.sleep(1)
+
+        round_num += 1
+
+        message = ""
+        sorted_users = sorted(user_data.items(), key=lambda x: x[1][1], reverse=True)
+
+        if num == 1:
+            if sorted_users:
+                top_score = sorted_users[0][1][1]
+                top_winners = [uid for uid, (name, score) in sorted_users if score == top_score]
+                if len(top_winners) == 1:
+                    return top_winners[0]
+                else:
+                    return None  # Tie
+            else:
+                return None
+
+        if sorted_users:
+            if round_num > num:
+                message += "\u200b\n🏁🏆 Final Standings\n\u200b"
+            else:
+                message += "\u200b\n📊🏆 Current Standings\n\u200b"
+
+            for counter, (uid, (name, score)) in enumerate(sorted_users, start=1):
+                message += f"{counter}. **{name}**: {score}\n\u200b"
+
+        if message:
+            await safe_send(channel, message)
+        await asyncio.sleep(3)
+
+    await asyncio.sleep(2)
+    sports_logos_winner_id = None
+    if sorted_users:
+        top_score = sorted_users[0][1][1]
+        top_winners = [(uid, name) for uid, (name, score) in sorted_users if score == top_score]
+
+        if len(top_winners) == 1:
+            sports_logos_winner_id, display_name = top_winners[0]
+            await safe_send(channel, f"\u200b\n🎉🥇 The winner is **{display_name}**!\n\u200b")
+        else:
+            message = f"\u200b\n🤝 It's a tie! **Winners:**\n\u200b"
+            for uid, name in top_winners:
+                message += f"• **{name}** ({top_score} pts)\n"
+            message += "\u200b"
+            await safe_send(channel, message)
+    else:
+        await safe_send(channel, f"\u200b\n👎😢 **No right answers**. I'm ashamed to call you Okrans.\n\u200b")
+
+    wf_winner = True
+    await asyncio.sleep(3)
+
+    return sports_logos_winner_id
+
+
+
 
 async def ask_poster_challenge(winner, winner_id, num=7):
     global wf_winner
@@ -8651,6 +9148,55 @@ async def blend_multiple_images(image_urls, blend_ratio=0.5):
             
     except Exception as e:
         print(f"Error blending multiple images: {e}")
+        return None
+
+async def combine_images_horizontally(image_urls, max_height=400):
+    """
+    Combines multiple images side-by-side horizontally for Discord
+    """
+    try:
+        images = []
+
+        # Download all images
+        for image_url in image_urls:
+            response = requests.get(image_url)
+            if response.status_code != 200:
+                raise Exception(f"Failed to download image from {image_url}")
+
+            image = Image.open(io.BytesIO(response.content)).convert("RGBA")
+            images.append(image)
+
+        # Resize all images to same height while maintaining aspect ratio
+        resized_images = []
+        for img in images:
+            width, height = img.size
+            aspect_ratio = width / height
+            new_height = max_height
+            new_width = int(max_height * aspect_ratio)
+            resized_img = img.resize((new_width, new_height), Image.LANCZOS)
+            resized_images.append(resized_img)
+
+        # Calculate total width needed
+        total_width = sum(img.size[0] for img in resized_images)
+
+        # Create new image with combined width
+        combined_image = Image.new("RGBA", (total_width, max_height), (255, 255, 255, 255))
+
+        # Paste images side by side
+        x_offset = 0
+        for img in resized_images:
+            combined_image.paste(img, (x_offset, 0))
+            x_offset += img.size[0]
+
+        # Save to memory buffer
+        image_buffer = io.BytesIO()
+        combined_image.save(image_buffer, format="PNG")
+        image_buffer.seek(0)
+
+        return image_buffer
+
+    except Exception as e:
+        print(f"Error combining images horizontally: {e}")
         return None
 
 async def generate_estimation_puzzle_unique(target_count, target_shape, target_color, available_combinations):
@@ -12142,11 +12688,13 @@ async def select_wof_questions(winner, winner_id):
         counter = counter + 1
         message += f"{counter}.\u200b 🔍🔤 Spotlight\n"
         counter = counter + 1
-        message += f"{counter}.\u200b 👂➡️ Hear Here 🎧 \n"
+        message += f"{counter}.\u200b 👂➡️ Hear Here 🎧\n"
         counter = counter + 1
-        message += f"{counter}.\u200b 🎶🤔 Who Says? 🎧 \n"
+        message += f"{counter}.\u200b 🎶🤔 Who Says? 🎧\n"
         counter = counter + 1
-        message += f"{counter}.\u200b 🎙️🗯️ Let's Talk 🎧 \n"
+        message += f"{counter}.\u200b 🎙️🗯️ Let's Talk 🎧\n"
+        counter = counter + 1
+        message += f"{counter}.\u200b 🏈🏀 Jock Talk\n"
         message += f"99.\u200b 🌀🤯 CHAOS\n"
 
         message += f"\n⚙️ **Other Options**\n"
@@ -12368,6 +12916,11 @@ async def select_wof_questions(winner, winner_id):
         
         elif selected_wof_category == "44":
             await ask_audio_question_challenge(winner, winner_id, 5)
+            await asyncio.sleep(3)
+            return None
+        
+        elif selected_wof_category == "45":
+            await ask_sports_logos_challenge(winner, winner_id, 5)
             await asyncio.sleep(3)
             return None
         
@@ -12637,10 +13190,11 @@ async def ask_wof_number(winner, winner_id):
         "42": "Hear Here",
         "43": "Who Says?",
         "44": "Let's Talk",
+        "45": "Jock Talk",
         "99": "CHAOS"
     }
     multiplayer_required = {k for k in unlocks if k not in {"5", "6", "7", "8", "9"}}
-    all_options = {str(i) for i in range(45)} | {"00", "x", "99"}
+    all_options = {str(i) for i in range(46)} | {"00", "x", "99"}
 
     start = asyncio.get_event_loop().time()
     selected_question = None
@@ -12659,7 +13213,7 @@ async def ask_wof_number(winner, winner_id):
             if content == "00":
                 await message.add_reaction("👍")
                 set_a = [str(i) for i in range(5)]
-                set_b = [str(i) for i in range(5, 45)] if len(round_responders) >= num_list_players else [str(i) for i in range(5, 10)]
+                set_b = [str(i) for i in range(5, 46)] if len(round_responders) >= num_list_players else [str(i) for i in range(5, 10)]
                 selected_question = random.choice(set_a if random.random() < 0.5 else set_b)
 
                 # Store frequency data for random selection
@@ -12700,7 +13254,7 @@ async def ask_wof_number(winner, winner_id):
     # Fallback random selection
     return "x"
     set_a = [str(i) for i in range(5)]
-    set_b = [str(i) for i in range(5, 45)] if len(round_responders) >= num_list_players else [str(i) for i in range(5, 10)]
+    set_b = [str(i) for i in range(5, 46)] if len(round_responders) >= num_list_players else [str(i) for i in range(5, 10)]
     selected_question = random.choice(set_a if random.random() < 0.5 else set_b)
     
     # Store frequency data for random selection
@@ -16751,6 +17305,7 @@ async def start_trivia():
             #await ask_audio_music_challenge("TheOkraG",591861826690613248, 7)
             #await ask_audio_question_challenge("TheOkraG",591861826690613248, 7)
             #await ask_flags_challenge("The Creator", 591861826690613248)
+            await ask_sports_logos_challenge("TheOkraG", 591861826690613248, 7)
             
 
             if len(round_responders) == 0:
@@ -16783,16 +17338,11 @@ async def start_trivia():
 
             start_message = f"\u200b\n✨🧪 **NEW** from the **Okra Lab**! 🧪✨\n"
             
-            start_message += f"\n🎶🤔 **Who Says?** 🎧 [Updates Below]\n"
-            start_message += f"\n💻 **2000s** [New Category]"
-            start_message += f"\n📱 **2010s** [New Category]"
-            start_message += f"\n🎤 **Rap** [New Category]"
-            start_message += f"\n📺 **TV Themes** [New Category]"
-            start_message += f"\n🎅 **Christmas** [Remastered]"
+            start_message += f"\n🏈🏀 **Jock Talk?** [Mini-Game]\n"
             start_message += "\n\u200b"
 
-            #await safe_send(channel, start_message)
-            #await asyncio.sleep(5)
+            await safe_send(channel, start_message)
+            await asyncio.sleep(5)
             
             
             start_message = f"\u200b\n\u200b\n⏩ Starting a **{questions_per_round} question** round! ⏩\n\u200b"
@@ -17367,6 +17917,7 @@ def get_minigame_name(number):
         "42": "Hear Here",
         "43": "Who Says?",
         "44": "Let's Talk",
+        "45": "Jock Talk",
         "99": "CHAOS",
         "x": "Skip Mini Game"
     }
