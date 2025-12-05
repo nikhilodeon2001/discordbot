@@ -9,7 +9,7 @@ from sentry_sdk.integrations.logging import LoggingIntegration
 sentry_sdk.init(
     dsn="https://REMOVED_SENTRY_KEY@o4507935419400192.ingest.us.sentry.io/4507935424839680",  # Replace with your DSN from Sentry
     integrations=[LoggingIntegration(level=None, event_level='ERROR')]
-)
+) 
 
 import requests
 import json
@@ -17305,7 +17305,7 @@ async def start_trivia():
             #await ask_audio_music_challenge("TheOkraG",591861826690613248, 7)
             #await ask_audio_question_challenge("TheOkraG",591861826690613248, 7)
             #await ask_flags_challenge("The Creator", 591861826690613248)
-            await ask_sports_logos_challenge("TheOkraG", 591861826690613248, 7)
+            #await ask_sports_logos_challenge("TheOkraG", 591861826690613248, 7)
             
 
             if len(round_responders) == 0:
