@@ -9,7 +9,7 @@ from sentry_sdk.integrations.logging import LoggingIntegration
 sentry_sdk.init(
     dsn="https://REMOVED_SENTRY_KEY@o4507935419400192.ingest.us.sentry.io/4507935424839680",  # Replace with your DSN from Sentry
     integrations=[LoggingIntegration(level=None, event_level='ERROR')]
-) 
+)
 
 import requests
 import json
@@ -881,7 +881,7 @@ async def shuffle_image_pieces(image_url, num_pieces=9, tint_mode="none", tint_c
                 raise Exception(f"Failed to download image from {image_url}")
             image_data = await response.read()
 
-    img = Image.open(io.BytesIO(image_data)).convert("RGB")
+    img = Image.open(io.BytesIO(image_data)).convert("RGBA")
     width, height = img.size
 
     grid_size = int(num_pieces ** 0.5)
@@ -903,18 +903,18 @@ async def shuffle_image_pieces(image_url, num_pieces=9, tint_mode="none", tint_c
 
     random.shuffle(pieces)
 
-    shuffled_img = Image.new("RGB", (width, height))
+    shuffled_img = Image.new("RGBA", (width, height), (255, 255, 255, 0))
     idx = 0
     for i in range(grid_size):
         for j in range(grid_size):
             piece = pieces[idx]
 
             if tint_mode == "fixed" and fixed_tint:
-                overlay = Image.new("RGB", piece.size, fixed_tint)
+                overlay = Image.new("RGBA", piece.size, fixed_tint + (255,))
                 piece = Image.blend(piece, overlay, alpha=tint_strength)
             elif tint_mode == "random" and tint_colors:
                 random_tint = random.choice(tint_colors)
-                overlay = Image.new("RGB", piece.size, random_tint)
+                overlay = Image.new("RGBA", piece.size, random_tint + (255,))
                 piece = Image.blend(piece, overlay, alpha=tint_strength)
 
             shuffled_img.paste(piece, (j * piece_width, i * piece_height))
@@ -7167,12 +7167,41 @@ async def ask_sports_logos_challenge(winner, winner_id, num=7):
     await safe_send(channel, content="\u200b\n🏈🏀 **Jock Talk**: Who's Dat Team?!?\n\u200b", embed=discord.Embed().set_image(url=gif_url))
     await asyncio.sleep(3)
 
-    # League selection
-    await safe_send(channel, "\u200b\n🏈🏀⚾🏒 Pick your leagues!\n\u200b\n1️⃣ ⚾ MLB \n2️⃣ 🏈 NFL \n3️⃣ 🏀 NBA \n4️⃣ 🎓 NCAA \n5️⃣ 🏆 Everything \n\u200b\n(Reply with numbers, e.g., '1 3 4' for MLB, NBA, and NCAA)\n\u200b")
+    # LEAGUE CONFIGURATION - Single source of truth for all leagues
+    # To add/remove leagues, just edit this list!
+    LEAGUES = [
+        {"name": "MLB", "emoji": "⚾", "display": "MLB"},
+        {"name": "NFL", "emoji": "🏈", "display": "NFL"},
+        {"name": "NBA", "emoji": "🏀", "display": "NBA"},
+        {"name": "NCAA", "emoji": "🎓", "display": "NCAA"},
+        # To add more leagues, uncomment or add lines like:
+        # {"name": "EPL", "emoji": "⚽", "display": "EPL"},
+        # {"name": "WNBA", "emoji": "🏀", "display": "WNBA"},
+        # {"name": "MLS", "emoji": "⚽", "display": "MLS"},
+        # {"name": "NHL", "emoji": "🏒", "display": "NHL"},
+        # {"name": "CFL", "emoji": "🏈", "display": "CFL"},
+    ]
 
+    # Auto-generate league selection prompt
+    prompt_lines = ["🏈🏀⚾🏒 Pick your leagues!", ""]
+    for i, league in enumerate(LEAGUES, start=1):
+        prompt_lines.append(f"{i}️⃣ {league['emoji']} {league['display']}")
+    everything_option_num = len(LEAGUES) + 1
+    prompt_lines.append(f"{everything_option_num}️⃣ 🏆 Everything")
+    prompt_lines.append("")
+    example_nums = " ".join(str(i) for i in [1, min(3, len(LEAGUES)), min(4, len(LEAGUES))] if i <= len(LEAGUES))
+    example_names = ", ".join([LEAGUES[i-1]["display"] for i in [1, min(3, len(LEAGUES)), min(4, len(LEAGUES))] if i <= len(LEAGUES)])
+    prompt_lines.append(f"(Reply with numbers, e.g., '{example_nums}' for {example_names})")
+    prompt_text = "\n".join(prompt_lines)
+
+    await safe_send(channel, f"\u200b\n{prompt_text}\n\u200b")
+
+    # Auto-generate league mappings from LEAGUES configuration
     selected_leagues = []
-    league_map = {1: "MLB", 2: "NFL", 3: "NBA", 4: "NCAA", 5: "all"}
-    league_display_map = {1: "⚾ MLB", 2: "🏈 NFL", 3: "🏀 NBA", 4: "🎓 NCAA"}
+    all_leagues = [league["name"] for league in LEAGUES]
+    league_map = {i+1: league["name"] for i, league in enumerate(LEAGUES)}
+    league_map[everything_option_num] = "all"
+    league_display_map = {i+1: f"{league['emoji']} {league['display']}" for i, league in enumerate(LEAGUES)}
 
     def check_league_selection(m):
         target_channel = _active_game_channel or channel
@@ -7180,16 +7209,17 @@ async def ask_sports_logos_challenge(winner, winner_id, num=7):
 
     try:
         league_msg = await get_bot().wait_for("message", timeout=20, check=check_league_selection)
-        # Extract all numbers from the message
+        # Extract all numbers from the message (dynamically check up to everything_option_num)
         import re
-        numbers = [int(n) for n in re.findall(r'\d+', league_msg.content) if 1 <= int(n) <= 5]
+        numbers = [int(n) for n in re.findall(r'\d+', league_msg.content) if 1 <= int(n) <= everything_option_num]
 
         if not numbers:
             # Default to everything if no valid numbers
-            selected_leagues = ["MLB", "NFL", "NBA", "NCAA"]
+            selected_leagues = all_leagues.copy()
             await safe_send(channel, "\u200b\n🤷 No valid selection, using **everything**!\n\u200b")
-        elif 5 in numbers:
-            selected_leagues = ["MLB", "NFL", "NBA", "NCAA"]
+        elif everything_option_num in numbers:
+            # "Everything" option selected
+            selected_leagues = all_leagues.copy()
             await safe_send(channel, "\u200b\n🌟 **Everything** selected!\n\u200b")
         else:
             # Remove duplicates and map to league names (plain names for DB queries)
@@ -7198,13 +7228,14 @@ async def ask_sports_logos_challenge(winner, winner_id, num=7):
             league_display = ", ".join([league_display_map[n] for n in sorted(set(numbers)) if n in league_display_map])
             await safe_send(channel, f"\u200b\n✅ Selected leagues: **{league_display}**\n\u200b")
     except asyncio.TimeoutError:
-        selected_leagues = ["MLB", "NFL", "NBA", "NCAA"]
+        # Default to everything on timeout
+        selected_leagues = all_leagues.copy()
         await safe_send(channel, "\u200b\n⏰ Time's up! Using **everything**!\n\u200b")
 
     await asyncio.sleep(2)
 
-    # Check if user selected all leagues (either via "5" or "1 2 3 4")
-    everything_selected = set(selected_leagues) == {"MLB", "NFL", "NBA", "NCAA"}
+    # Check if user selected all leagues (dynamically compares to all_leagues)
+    everything_selected = set(selected_leagues) == set(all_leagues)
 
     # Build round-robin question pool
     recent_ids = await get_recent_question_ids_from_mongo("sports_logos")
@@ -7258,6 +7289,10 @@ async def ask_sports_logos_challenge(winner, winner_id, num=7):
             team_alt_name = q.get("team_alternative_name", "")
             category = "Sports Logos"
 
+            # League emoji mapping (auto-generated from LEAGUES configuration)
+            league_emoji_map = {l["name"]: l["emoji"] for l in LEAGUES}
+            league_emoji = league_emoji_map.get(league, "🏈🏀")
+
             # Build full team name (location + nickname)
             if team_location:
                 full_team_name = f"{team_location} {team_nickname}"
@@ -7271,8 +7306,11 @@ async def ask_sports_logos_challenge(winner, winner_id, num=7):
                 game_mode = random.choice([1, 2, 3])
 
             # Randomly select game type (0=none, 1=jigsaw, 2=myopic, 3=microscopic, 4=fusion)
-            #game_type = random.choice([0, 1, 2, 3, 4])
-            game_type = random.choice([0, 1, 2, 4])
+            # Don't allow fusion when game_mode is 4 (league guessing) - too easy since all logos from same league
+            if game_mode == 4:
+                game_type = random.choice([1, 2, 3])
+            else:
+                game_type = random.choice([1, 2, 3, 4])
 
             # Set mode-specific variables
             if game_mode == 1:
@@ -7300,24 +7338,40 @@ async def ask_sports_logos_challenge(winner, winner_id, num=7):
             # Always display full team name as the answer
             answer_display = full_team_name
 
-            # If fusion mode, fetch 2 additional logos from the same league
+            # If fusion mode, fetch 4 additional logos using round-robin across all selected leagues
             fusion_logos = []
             fusion_teams_data = []
 
             if game_type == 4:  # Fusion
-                # Fetch 2 more logos from the same league (excluding current question)
-                fusion_pipeline = [
-                    {"$match": {"_id": {"$nin": list(recent_ids) + [qid]}, "league": league}},
-                    {"$sample": {"size": 2}}
-                ]
-                fusion_logos = [doc async for doc in collection.aggregate(fusion_pipeline)]
+                # Fetch 4 more logos using round-robin distribution across selected leagues
+                # This ensures no league dominates even if it has more entries
+                fusion_league_order = []
+                for i in range(4):
+                    fusion_league_order.append(selected_leagues[i % len(selected_leagues)])
 
-                # If we don't have enough logos, fallback to game_type = 0 (none)
-                if len(fusion_logos) < 2:
+                # Count how many logos needed per league
+                fusion_questions_needed = Counter(fusion_league_order)
+
+                # Fetch exact number of logos from each league (excluding current question and recent IDs)
+                fusion_league_logos = {}
+                for fusion_league, fusion_count in fusion_questions_needed.items():
+                    fusion_pipeline = [
+                        {"$match": {"_id": {"$nin": list(recent_ids) + [qid]}, "league": fusion_league}},
+                        {"$sample": {"size": fusion_count}}
+                    ]
+                    fusion_league_logos[fusion_league] = [doc async for doc in collection.aggregate(fusion_pipeline)]
+
+                # Build fusion_logos list in round-robin order
+                for fusion_league_name in fusion_league_order:
+                    if fusion_league_logos[fusion_league_name]:
+                        fusion_logos.append(fusion_league_logos[fusion_league_name].pop(0))
+
+                # If we don't have enough logos (need 4), fallback to game_type = 0 (none)
+                if len(fusion_logos) < 4:
                     game_type = 0
                     fusion_logos = []
                 else:
-                    # Build fusion_teams_data with all 3 teams (main + 2 fusion)
+                    # Build fusion_teams_data with all 5 teams (main + 4 fusion)
                     # Team 1: Current question
                     fusion_teams_data.append({
                         "location": team_location,
@@ -7327,7 +7381,7 @@ async def ask_sports_logos_challenge(winner, winner_id, num=7):
                         "league": league
                     })
 
-                    # Teams 2 & 3: Fusion logos
+                    # Teams 2-5: Fusion logos
                     for fusion_logo in fusion_logos:
                         f_loc = fusion_logo.get("team_location_college", "")
                         f_nick = fusion_logo["team_nickname"]
@@ -7385,37 +7439,51 @@ async def ask_sports_logos_challenge(winner, winner_id, num=7):
                 game_type_description = f"\n\n👓 **Myopic** (Blur: {blur_strength})"
 
             elif game_type == 3:
-                # Microscopic: Zoomed/blurred
+                # Microscopic: Zoomed/magnified
                 zoom_level = random.choice([4.0, 3.0, 2.5])
-                zoomed_buffer = await blur_image(image_url, blur_strength=zoom_level)
+                zoomed_buffer = await zoom_image(image_url, zoom_level=zoom_level)
                 image_file = discord.File(zoomed_buffer, filename="zoomed.png")
                 embed.set_image(url="attachment://zoomed.png")
                 game_type_description = f"\n\n🔬 **Microscopic** (Zoom: {zoom_level}x)"
 
             elif game_type == 4:
-                # Fusion: Blend 3 logos together
+                # Fusion: Blend 5 logos together
                 fusion_image_urls = [image_url] + [logo["image_url"] for logo in fusion_logos]
                 fused_buffer = await blend_multiple_images(fusion_image_urls, blend_ratio=0.8)
                 image_file = discord.File(fused_buffer, filename="fused.png")
                 embed.set_image(url="attachment://fused.png")
-                game_type_description = "\n\n🧬 **Fusion** (3 logos blended)"
+                game_type_description = "\n\n🧬 **Fusion** (5 logos blended)"
 
-            # Send messages
-            await safe_send(channel, f"\u200b\n⚠️🚨 Everyone's in!\n\u200b\n🏈🏀 Team Logo **{round_num}** of **{num}**{game_type_description}\n\u200b")
-            await safe_send(channel, content=f"\u200b\n{mode_prompt}\n\u200b")
+            # Create combined question embed
+            # Use generic sports emoji for fusion (multiple leagues blended), otherwise use specific league emoji
+            display_emoji = "🏆" if game_type == 4 else league_emoji
 
-            # Special messaging for fusion mode
+            # Build description combining all info
+            description = f"{display_emoji} **Team Logo {round_num} of {num}**{game_type_description}\n\n{mode_prompt}"
+
+            # Add special instructions to footer if needed
+            footer_text = None
             if game_type == 4:
-                await safe_send(channel, "\u200b\n🧬 **Fusion Mode**: 3 teams blended! Each team correctly identified = 1 point. Up to 3 points available!\n\u200b")
-                await asyncio.sleep(2)
+                footer_text = "🧬 5 teams blended! Up to 5 points available!"
             elif game_mode == 4:
-                await safe_send(channel, "\u200b\n⚠️ **One guess per player** - Mention any league to lock in your guess!\n\u200b")
-                await asyncio.sleep(2)
+                footer_text = "⚠️ One league guess per player!"
 
+            # Create the embed
+            question_embed = discord.Embed(
+                description=description,
+                color=discord.Color.blue()
+            )
+
+            if footer_text:
+                question_embed.set_footer(text=footer_text)
+
+            # Set the image
             if image_file:
-                await safe_send(channel, file=image_file, embed=embed)
+                question_embed.set_image(url=f"attachment://{image_file.filename}")
+                await safe_send(channel, file=image_file, embed=question_embed)
             else:
-                await safe_send(channel, embed=embed)
+                question_embed.set_image(url=image_url)
+                await safe_send(channel, embed=question_embed)
 
             answered = False
             processed_users = set()
@@ -7443,8 +7511,8 @@ async def ask_sports_logos_challenge(winner, winner_id, num=7):
 
                     if game_type == 4:
                         # Fusion mode: Check if guess matches ANY unfound team
-                        if len(fusion_found_teams) >= 3:
-                            # All 3 teams found
+                        if len(fusion_found_teams) >= 5:
+                            # All 5 teams found
                             answered = True
                             break
 
@@ -7490,13 +7558,13 @@ async def ask_sports_logos_challenge(winner, winner_id, num=7):
 
                                 # Announce
                                 team_name = team_data["full_name"].upper()
-                                teams_remaining = 3 - len(fusion_found_teams)
+                                teams_remaining = 5 - len(fusion_found_teams)
                                 await safe_send(channel,
                                     f"\u200b\n✅🎉 **{display}** found one! **{team_name}** ({team_data['league']})\n"
                                     f"🧬 {teams_remaining} team(s) remaining!\n\u200b")
 
                                 # Check if all found
-                                if len(fusion_found_teams) >= 3:
+                                if len(fusion_found_teams) >= 5:
                                     answered = True
                                 break  # User found a team, stop checking
 
@@ -7505,10 +7573,10 @@ async def ask_sports_logos_challenge(winner, winner_id, num=7):
                         if uid in guessed_users:
                             continue
 
-                        # Check if message contains any league mention
+                        # Check if message contains any league mention (auto-generated from all_leagues)
                         guess_upper = guess.upper()
                         league_mentioned = None
-                        for league_name in ["NFL", "NBA", "MLB", "NCAA"]:
+                        for league_name in all_leagues:
                             if league_name in guess_upper:
                                 league_mentioned = league_name
                                 break
@@ -7520,7 +7588,21 @@ async def ask_sports_logos_challenge(winner, winner_id, num=7):
                             if league_mentioned == league:
                                 await msg.add_reaction("✅")
                                 user_data[uid] = (display, user_data.get(uid, (display, 0))[1] + 1)
-                                await safe_send(channel, f"\u200b\n✅🎉 **{display}** got it! **{league}** - {answer_display.upper()}\n\u200b")
+
+                                # Create answer reveal embed for mode 4
+                                mode4_description = f"**{display}** got it!\n\n**{league}** - {answer_display.upper()}"
+                                mode4_embed = discord.Embed(
+                                    title="✅🎉 Correct!",
+                                    description=mode4_description,
+                                    color=discord.Color.green()
+                                )
+
+                                # For game types 1-4, add original logo to the embed
+                                if game_type in [1, 2, 3]:
+                                    mode4_embed.set_image(url=image_url)
+                                    mode4_embed.set_footer(text="🖼️ Original Logo")
+
+                                await safe_send(channel, embed=mode4_embed)
                                 answered = True
                                 break
                     else:
@@ -7539,7 +7621,36 @@ async def ask_sports_logos_challenge(winner, winner_id, num=7):
                         if is_correct:
                             await msg.add_reaction("✅")
                             user_data[uid] = (display, user_data.get(uid, (display, 0))[1] + 1)
-                            await safe_send(channel, f"\u200b\n✅🎉 **{display}** got it! **{answer_display.upper()}** ({league})\n\u200b")
+
+                            # Create answer reveal embed (will include original logo later if needed)
+                            answer_description = f"**{display}** got it!\n\n**{answer_display.upper()}** ({league})"
+                            answer_embed = discord.Embed(
+                                title="✅🎉 Correct!",
+                                description=answer_description,
+                                color=discord.Color.green()
+                            )
+
+                            # For game types 1-4, add original logo to the embed
+                            if game_type in [1, 2, 3, 4]:
+                                if game_type == 4:  # Fusion: combine all 5 logos
+                                    fusion_image_urls = [image_url] + [logo["image_url"] for logo in fusion_logos]
+                                    combined_buffer = await combine_images_horizontally(fusion_image_urls, max_height=400)
+                                    if combined_buffer:
+                                        reveal_file = discord.File(fp=combined_buffer, filename="original_logos.png")
+                                        answer_embed.set_image(url="attachment://original_logos.png")
+                                        answer_embed.set_footer(text="🖼️ Original Logos")
+                                        await safe_send(channel, file=reveal_file, embed=answer_embed)
+                                    else:
+                                        # Fallback if combining fails
+                                        await safe_send(channel, embed=answer_embed)
+                                else:  # Jigsaw, Myopic, Microscopic: show single original logo
+                                    answer_embed.set_image(url=image_url)
+                                    answer_embed.set_footer(text="🖼️ Original Logo")
+                                    await safe_send(channel, embed=answer_embed)
+                            else:
+                                # Game type 0 (None): just send the answer
+                                await safe_send(channel, embed=answer_embed)
+
                             answered = True
                             break
 
@@ -7547,39 +7658,43 @@ async def ask_sports_logos_challenge(winner, winner_id, num=7):
                     break
 
             if not answered:
+                # Create "time's up" embed with answer
+                timesup_embed = discord.Embed(
+                    title="❌😢 Time's up!",
+                    color=discord.Color.red()
+                )
+
                 if game_type == 4:
-                    # Fusion: Show all 3 teams that weren't found
+                    # Fusion: Show all 5 teams that weren't found
                     unfound_teams = []
                     for idx, team_data in enumerate(fusion_teams_data):
                         if idx not in fusion_found_teams:
                             unfound_teams.append(f"**{team_data['full_name'].upper()}** ({team_data['league']})")
 
                     if unfound_teams:
-                        unfound_str = ", ".join(unfound_teams)
-                        await safe_send(channel, f"\u200b\n❌😢 Time's up!\n\n📝🧠 Remaining team(s): {unfound_str}\n\u200b")
-                    # else: All teams were found (shouldn't reach here)
-                else:
-                    # Regular modes
-                    await safe_send(channel, f"\u200b\n❌😢 No one got it.\n\n📝🧠 Answer: **{answer_display.upper()}** ({league})\n\u200b")
+                        unfound_str = "\n".join(unfound_teams)
+                        timesup_embed.description = f"📝🧠 Remaining team(s):\n\n{unfound_str}"
 
-            # Display original logo(s) after jigsaw, myopic, microscopic, or fusion
-            if game_type in [1, 2, 3, 4]:
-                try:
-                    reveal_embed = discord.Embed()
-                    reveal_file = None
-
-                    if game_type == 4:  # Fusion: combine all 3 logos
+                        # Add combined logos
                         fusion_image_urls = [image_url] + [logo["image_url"] for logo in fusion_logos]
                         combined_buffer = await combine_images_horizontally(fusion_image_urls, max_height=400)
                         if combined_buffer:
                             reveal_file = discord.File(fp=combined_buffer, filename="original_logos.png")
-                            reveal_embed.set_image(url="attachment://original_logos.png")
-                            await safe_send(channel, content="\u200b\n🖼️ **Original Logos:**\n\u200b", embed=reveal_embed, file=reveal_file)
-                    else:  # Jigsaw, Myopic, Microscopic: show single original logo
-                        reveal_embed.set_image(url=image_url)
-                        await safe_send(channel, content="\u200b\n🖼️ **Original Logo:**\n\u200b", embed=reveal_embed)
-                except Exception as e:
-                    print(f"Error displaying original logo(s): {e}")
+                            timesup_embed.set_image(url="attachment://original_logos.png")
+                            timesup_embed.set_footer(text="🖼️ Original Logos")
+                            await safe_send(channel, file=reveal_file, embed=timesup_embed)
+                        else:
+                            await safe_send(channel, embed=timesup_embed)
+                else:
+                    # Regular modes
+                    timesup_embed.description = f"📝🧠 Answer: **{answer_display.upper()}** ({league})"
+
+                    # For game types 1-4, add original logo to the embed
+                    if game_type in [1, 2, 3]:
+                        timesup_embed.set_image(url=image_url)
+                        timesup_embed.set_footer(text="🖼️ Original Logo")
+
+                    await safe_send(channel, embed=timesup_embed)
 
             await asyncio.sleep(5)
 
@@ -9106,8 +9221,8 @@ async def blend_multiple_images(image_urls, blend_ratio=0.5):
             response = requests.get(image_url)
             if response.status_code != 200:
                 raise Exception(f"Failed to download image from {image_url}")
-            
-            image = Image.open(io.BytesIO(response.content)).convert("RGB")
+
+            image = Image.open(io.BytesIO(response.content)).convert("RGBA")
             images.append(image)
             
             min_width = min(min_width, image.size[0])
@@ -10047,7 +10162,7 @@ async def blur_image(image_url, blur_strength=2.0):
                 raise Exception(f"Failed to download image from {image_url}")
             data = await resp.read()
 
-    img = Image.open(io.BytesIO(data)).convert("RGB")
+    img = Image.open(io.BytesIO(data)).convert("RGBA")
 
     blurred_img = img.filter(ImageFilter.GaussianBlur(radius=blur_strength))
 
@@ -10056,7 +10171,48 @@ async def blur_image(image_url, blur_strength=2.0):
     image_buffer.seek(0)
 
     return image_buffer
-        
+
+async def zoom_image(image_url, zoom_level=2.0):
+    """
+    Downloads an image from a URL, zooms into the center, and returns a Discord-ready image buffer.
+
+    Args:
+        image_url (str): URL of the image to process.
+        zoom_level (float): Zoom multiplier (2.0 = 2x zoom, 3.0 = 3x zoom, etc.)
+
+    Returns:
+        BytesIO: Image buffer with zoomed/cropped center
+    """
+    async with aiohttp.ClientSession() as session:
+        async with session.get(image_url) as resp:
+            if resp.status != 200:
+                raise Exception(f"Failed to download image from {image_url}")
+            data = await resp.read()
+
+    img = Image.open(io.BytesIO(data)).convert("RGBA")
+    original_width, original_height = img.size
+
+    # Calculate new dimensions (zoom in by scaling up)
+    new_width = int(original_width * zoom_level)
+    new_height = int(original_height * zoom_level)
+
+    # Resize image to be larger
+    zoomed_img = img.resize((new_width, new_height), Image.LANCZOS)
+
+    # Calculate center crop coordinates to get back to original dimensions
+    left = (new_width - original_width) // 2
+    top = (new_height - original_height) // 2
+    right = left + original_width
+    bottom = top + original_height
+
+    # Crop to center
+    cropped_img = zoomed_img.crop((left, top, right, bottom))
+
+    image_buffer = io.BytesIO()
+    cropped_img.save(image_buffer, format="PNG")
+    image_buffer.seek(0)
+
+    return image_buffer
 
 
 async def ask_missing_link(winner, winner_id, num=7):
@@ -17338,7 +17494,7 @@ async def start_trivia():
 
             start_message = f"\u200b\n✨🧪 **NEW** from the **Okra Lab**! 🧪✨\n"
             
-            start_message += f"\n🏈🏀 **Jock Talk?** [Mini-Game]\n"
+            start_message += f"\n🏈🏀 **Jock Talk** [Mini-Game]\n"
             start_message += "\n\u200b"
 
             await safe_send(channel, start_message)
