@@ -148,31 +148,42 @@ async def end_of_round():
         from self_update import check_for_new_commit, deploy_new_build_and_wait, wait_for_sigterm
 
         if await check_for_new_commit():
-            print("New commit found! Notifying all active channels...")
+            print("New commit found! Notifying all channels...")
 
-            # Collect all active channels
-            channels_to_notify = []
-
-            # Add main channel
+            # Send update notification to main channel
             if channel:
-                channels_to_notify.append(channel)
-
-            # Add all active tournament channels
-            for tournament_channel_id in active_tournaments.keys():
-                tournament_channel = bot.get_channel(tournament_channel_id)
-                if tournament_channel and tournament_channel not in channels_to_notify:
-                    channels_to_notify.append(tournament_channel)
-
-            # Add active mini-game channel
-            if _active_game_channel and _active_game_channel not in channels_to_notify:
-                channels_to_notify.append(_active_game_channel)
-
-            # Send update notification to all channels
-            for notify_channel in channels_to_notify:
                 try:
-                    await safe_send(notify_channel, "🔄 **Update detected!** I'll be back shortly...")
+                    await safe_send(channel, "🔄 **Update detected!** I'll be back shortly...")
+                    print(f"✅ Sent update notification to main channel {channel.id}")
                 except Exception as e:
-                    print(f"Failed to send update notification to channel {notify_channel.id}: {e}")
+                    print(f"❌ Failed to send update notification to main channel: {e}")
+
+            # Send to tournament channel
+            tournament_channel = bot.get_channel(TOURNAMENT_GUILD_ID)
+            if tournament_channel:
+                try:
+                    await safe_send(tournament_channel, "🔄 **Update detected!** I'll be back shortly...")
+                    print(f"✅ Sent update notification to tournament channel {TOURNAMENT_GUILD_ID}")
+                except Exception as e:
+                    print(f"❌ Failed to send update notification to tournament channel: {e}")
+
+            # Send to mini-game lobby (The Lodge)
+            mini_game_lobby = bot.get_channel(THE_LODGE_CHANNEL_ID)
+            if mini_game_lobby:
+                try:
+                    await safe_send(mini_game_lobby, "🔄 **Update detected!** I'll be back shortly...")
+                    print(f"✅ Sent update notification to The Lodge {THE_LODGE_CHANNEL_ID}")
+                except Exception as e:
+                    print(f"❌ Failed to send update notification to The Lodge: {e}")
+
+            # Send to mini-game arena
+            mini_game_arena = bot.get_channel(MINI_GAME_ARENA_CHANNEL_ID)
+            if mini_game_arena:
+                try:
+                    await safe_send(mini_game_arena, "🔄 **Update detected!** I'll be back shortly...")
+                    print(f"✅ Sent update notification to Mini-Game Arena {MINI_GAME_ARENA_CHANNEL_ID}")
+                except Exception as e:
+                    print(f"❌ Failed to send update notification to Mini-Game Arena: {e}")
 
             # Now deploy and wait (this blocks until SIGTERM)
             print("Deploying new build...")
@@ -18427,7 +18438,7 @@ async def on_ready():
         # Always notify main channel
         if channel:
             try:
-                await safe_send(channel, "✅ **Bot is back online!** Ready to continue.")
+                await safe_send(channel, "✅ **I'm back online!** Ready to continue.")
                 print(f"✅ Sent startup notification to main channel {channel.id}")
             except Exception as e:
                 print(f"❌ Failed to send notification to main channel: {e}")
@@ -18436,19 +18447,28 @@ async def on_ready():
         tournament_channel = bot.get_channel(TOURNAMENT_GUILD_ID)
         if tournament_channel:
             try:
-                await safe_send(tournament_channel, "✅ **Bot is back online!** Ready to continue.")
+                await safe_send(tournament_channel, "✅ **I'm back online!** Ready to continue.")
                 print(f"✅ Sent startup notification to tournament channel {TOURNAMENT_GUILD_ID}")
             except Exception as e:
                 print(f"❌ Failed to send notification to tournament channel: {e}")
 
-        # Always notify mini-game channel (The Lodge)
-        mini_game_channel = bot.get_channel(THE_LODGE_CHANNEL_ID)
-        if mini_game_channel:
+        # Always notify mini-game lobby (The Lodge)
+        mini_game_lobby = bot.get_channel(THE_LODGE_CHANNEL_ID)
+        if mini_game_lobby:
             try:
-                await safe_send(mini_game_channel, "✅ **Bot is back online!** Ready to continue.")
-                print(f"✅ Sent startup notification to mini-game channel {THE_LODGE_CHANNEL_ID}")
+                await safe_send(mini_game_lobby, "✅ **I'm back online!** Ready to continue.")
+                print(f"✅ Sent startup notification to The Lodge (lobby) {THE_LODGE_CHANNEL_ID}")
             except Exception as e:
-                print(f"❌ Failed to send notification to mini-game channel: {e}")
+                print(f"❌ Failed to send notification to The Lodge: {e}")
+
+        # Always notify mini-game arena (where games are played)
+        mini_game_arena = bot.get_channel(MINI_GAME_ARENA_CHANNEL_ID)
+        if mini_game_arena:
+            try:
+                await safe_send(mini_game_arena, "✅ **I'm back online!** Ready to continue.")
+                print(f"✅ Sent startup notification to Mini-Game Arena {MINI_GAME_ARENA_CHANNEL_ID}")
+            except Exception as e:
+                print(f"❌ Failed to send notification to Mini-Game Arena: {e}")
     except Exception as notify_error:
         print(f"❌ Error sending startup notifications: {notify_error}")
 
