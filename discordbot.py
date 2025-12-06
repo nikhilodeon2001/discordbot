@@ -144,10 +144,45 @@ def generate_presigned_url(s3_url, expiration=3600):
 async def end_of_round():
     print("Round ended. Checking for updates...")
     try:
-        updated = await self_update()
-        if not updated:
-            print("No update performed, continuing game as usual.")
-        return updated
+        # Check if there's a new commit first (don't notify yet)
+        from self_update import check_for_new_commit, deploy_new_build_and_wait, wait_for_sigterm
+
+        if await check_for_new_commit():
+            print("New commit found! Notifying all active channels...")
+
+            # Collect all active channels
+            channels_to_notify = []
+
+            # Add main channel
+            if channel:
+                channels_to_notify.append(channel)
+
+            # Add all active tournament channels
+            for tournament_channel_id in active_tournaments.keys():
+                tournament_channel = bot.get_channel(tournament_channel_id)
+                if tournament_channel and tournament_channel not in channels_to_notify:
+                    channels_to_notify.append(tournament_channel)
+
+            # Add active mini-game channel
+            if _active_game_channel and _active_game_channel not in channels_to_notify:
+                channels_to_notify.append(_active_game_channel)
+
+            # Send update notification to all channels
+            for notify_channel in channels_to_notify:
+                try:
+                    await safe_send(notify_channel, "🔄 **Update detected!** I'll be back shortly...")
+                except Exception as e:
+                    print(f"Failed to send update notification to channel {notify_channel.id}: {e}")
+
+            # Now deploy and wait (this blocks until SIGTERM)
+            print("Deploying new build...")
+            await deploy_new_build_and_wait()
+            await wait_for_sigterm()
+            # Never reaches here - SIGTERM will kill the process
+            return True
+        else:
+            print("No update found, continuing game as usual.")
+            return False
     except Exception as e:
         print(f"Self-update failed: {e}")
         return False
@@ -6708,9 +6743,7 @@ async def ask_audio_question_challenge(winner, winner_id, num=7):
             {
                 "$match": {
                     "_id": {"$nin": list(recent_trivia_ids)},
-                    "$or": [
-                        {"url": {"$not": {"$regex": "http"}}}
-                    ]
+                    "url": {"$not": {"$regex": "http", "$options": "i"}}  # Exclude URLs containing "http" (case-insensitive)
                 }
             },
             {"$sample": {"size": trivia_count}}
@@ -7359,10 +7392,10 @@ async def ask_sports_logos_challenge(winner, winner_id, num=7):
             fusion_teams_data = []
 
             if game_type == 4:  # Fusion
-                # Fetch 4 more logos using round-robin distribution across selected leagues
+                # Fetch 3 more logos using round-robin distribution across selected leagues
                 # This ensures no league dominates even if it has more entries
                 fusion_league_order = []
-                for i in range(4):
+                for i in range(3):
                     fusion_league_order.append(selected_leagues[i % len(selected_leagues)])
 
                 # Count how many logos needed per league
@@ -7382,12 +7415,12 @@ async def ask_sports_logos_challenge(winner, winner_id, num=7):
                     if fusion_league_logos[fusion_league_name]:
                         fusion_logos.append(fusion_league_logos[fusion_league_name].pop(0))
 
-                # If we don't have enough logos (need 4), fallback to game_type = 0 (none)
-                if len(fusion_logos) < 4:
+                # If we don't have enough logos (need 3), fallback to game_type = 0 (none)
+                if len(fusion_logos) < 3:
                     game_type = 0
                     fusion_logos = []
                 else:
-                    # Build fusion_teams_data with all 5 teams (main + 4 fusion)
+                    # Build fusion_teams_data with all 4 teams (main + 3 fusion)
                     # Team 1: Current question
                     fusion_teams_data.append({
                         "location": team_location,
@@ -7397,7 +7430,7 @@ async def ask_sports_logos_challenge(winner, winner_id, num=7):
                         "league": league
                     })
 
-                    # Teams 2-5: Fusion logos
+                    # Teams 2-4: Fusion logos
                     for fusion_logo in fusion_logos:
                         f_loc = fusion_logo.get("team_location_college", "")
                         f_nick = fusion_logo["team_nickname"]
@@ -7463,12 +7496,12 @@ async def ask_sports_logos_challenge(winner, winner_id, num=7):
                 game_type_description = f"\n\n🔬 **Microscopic** (Zoom: {zoom_level}x)"
 
             elif game_type == 4:
-                # Fusion: Blend 5 logos together
+                # Fusion: Blend 4 logos together
                 fusion_image_urls = [image_url] + [logo["image_url"] for logo in fusion_logos]
                 fused_buffer = await blend_multiple_images(fusion_image_urls, blend_ratio=0.8)
                 image_file = discord.File(fused_buffer, filename="fused.png")
                 embed.set_image(url="attachment://fused.png")
-                game_type_description = "\n\n🧬 **Fusion** (5 logos blended)"
+                game_type_description = "\n\n🧬 **Fusion** (4 logos blended)"
 
             # Create combined question embed
             # Use generic sports emoji for fusion (multiple leagues blended), otherwise use specific league emoji
@@ -7480,7 +7513,7 @@ async def ask_sports_logos_challenge(winner, winner_id, num=7):
             # Add special instructions to footer if needed
             footer_text = None
             if game_type == 4:
-                footer_text = "🧬 5 teams blended! Up to 5 points available!"
+                footer_text = "🧬 4 teams blended! Up to 4 points available!"
             elif game_mode == 4:
                 footer_text = "⚠️ One league guess per player!"
 
@@ -7507,7 +7540,7 @@ async def ask_sports_logos_challenge(winner, winner_id, num=7):
 
             # Fusion mode tracking
             if game_type == 4:
-                fusion_found_teams = set()  # Track which team indices have been found (0, 1, 2)
+                fusion_found_teams = set()  # Track which team indices have been found (0, 1, 2, 3)
                 fusion_user_finds = {}  # Track which user found which team: {user_id: [team_indices]}
 
             start_time = asyncio.get_event_loop().time()
@@ -7527,8 +7560,8 @@ async def ask_sports_logos_challenge(winner, winner_id, num=7):
 
                     if game_type == 4:
                         # Fusion mode: Check if guess matches ANY unfound team
-                        if len(fusion_found_teams) >= 5:
-                            # All 5 teams found
+                        if len(fusion_found_teams) >= 4:
+                            # All 4 teams found
                             answered = True
                             break
 
@@ -7574,13 +7607,13 @@ async def ask_sports_logos_challenge(winner, winner_id, num=7):
 
                                 # Announce
                                 team_name = team_data["full_name"].upper()
-                                teams_remaining = 5 - len(fusion_found_teams)
+                                teams_remaining = 4 - len(fusion_found_teams)
                                 await safe_send(channel,
                                     f"\u200b\n✅🎉 **{display}** found one! **{team_name}** ({team_data['league']})\n"
                                     f"🧬 {teams_remaining} team(s) remaining!\n\u200b")
 
                                 # Check if all found
-                                if len(fusion_found_teams) >= 5:
+                                if len(fusion_found_teams) >= 4:
                                     answered = True
                                 break  # User found a team, stop checking
 
@@ -15677,9 +15710,19 @@ def fuzzy_match(user_answer, correct_answer, category, url, _skip_alias_check=Fa
             if normalized_correct in normalized_variants:
                 # Check if user_answer fuzzy-matches ANY variant in the same group
                 for variant in variants:
-                    # Recursively call fuzzy_match with alias checking disabled
-                    if fuzzy_match(user_answer, variant, category, url, _skip_alias_check=True):
-                        return True
+                    # For short aliases (≤3 chars), require exact match to prevent false positives
+                    # e.g., "la" shouldn't match "las vegas"
+                    normalized_variant = normalize_text(variant)
+                    normalized_user = normalize_text(user_answer)
+
+                    if len(normalized_variant) <= 3:
+                        # Short alias: exact match only
+                        if normalized_user == normalized_variant:
+                            return True
+                    else:
+                        # Long alias: use normal fuzzy matching
+                        if fuzzy_match(user_answer, variant, category, url, _skip_alias_check=True):
+                            return True
                 break  # Don't check other alias groups
 
     no_spaces_user = user_answer.replace(" ", "")      
@@ -17630,7 +17673,7 @@ async def start_trivia():
             #if len(scoreboard) >= 1000:
             #    await ask_survey_question()
 
-            if len(active_tournaments) == 0: 
+            if len(active_tournaments) == 0 and _active_game_bot is None and _active_game_channel is None:
                 await end_of_round()
             
             await asyncio.sleep(10)  # Adjust this time to whatever delay you need between rounds
@@ -18377,7 +18420,36 @@ async def on_ready():
             except Exception as guild_e:
                 print(f"❌ Guild sync also failed: {guild_e}")
                 traceback.print_exc()
-    
+
+    # Send startup notifications to all active channels
+    print("📢 Sending startup notifications to active channels...")
+    try:
+        channels_to_notify = []
+
+        # Always notify main channel
+        if channel:
+            channels_to_notify.append(channel)
+
+        # Check for active tournament channels
+        for tournament_channel_id in active_tournaments.keys():
+            tournament_channel = bot.get_channel(tournament_channel_id)
+            if tournament_channel and tournament_channel not in channels_to_notify:
+                channels_to_notify.append(tournament_channel)
+
+        # Check for active mini-game channel
+        if _active_game_channel and _active_game_channel not in channels_to_notify:
+            channels_to_notify.append(_active_game_channel)
+
+        # Send startup notification to all active channels
+        for notify_channel in channels_to_notify:
+            try:
+                await safe_send(notify_channel, "✅ **I'm back online!** Ready to continue.")
+                print(f"✅ Sent startup notification to channel {notify_channel.id}")
+            except Exception as e:
+                print(f"❌ Failed to send startup notification to channel {notify_channel.id}: {e}")
+    except Exception as notify_error:
+        print(f"❌ Error sending startup notifications: {notify_error}")
+
     await start_trivia()
 
 
