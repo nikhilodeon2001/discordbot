@@ -7169,17 +7169,18 @@ async def ask_sports_logos_challenge(winner, winner_id, num=7):
 
     # LEAGUE CONFIGURATION - Single source of truth for all leagues
     # To add/remove leagues, just edit this list!
+    # allowed_modes: which game modes are allowed for this league
+    #   Mode 1 = Location, Mode 2 = Nickname, Mode 3 = Any part, Mode 4 = League guessing
     LEAGUES = [
-        {"name": "MLB", "emoji": "⚾", "display": "MLB"},
-        {"name": "NFL", "emoji": "🏈", "display": "NFL"},
-        {"name": "NBA", "emoji": "🏀", "display": "NBA"},
-        {"name": "NCAA", "emoji": "🎓", "display": "NCAA"},
-        # To add more leagues, uncomment or add lines like:
-        # {"name": "EPL", "emoji": "⚽", "display": "EPL"},
-        # {"name": "WNBA", "emoji": "🏀", "display": "WNBA"},
-        # {"name": "MLS", "emoji": "⚽", "display": "MLS"},
-        # {"name": "NHL", "emoji": "🏒", "display": "NHL"},
-        # {"name": "CFL", "emoji": "🏈", "display": "CFL"},
+        {"name": "MLB", "emoji": "⚾", "display": "MLB", "allowed_modes": [1, 2, 3, 4]},
+        {"name": "NFL", "emoji": "🏈", "display": "NFL", "allowed_modes": [1, 2, 3, 4]},
+        {"name": "NBA", "emoji": "🏀", "display": "NBA", "allowed_modes": [1, 2, 3, 4]},
+        {"name": "NCAA", "emoji": "🎓", "display": "NCAA", "allowed_modes": [1, 2, 3, 4]},
+        {"name": "EPL", "emoji": "🇪🇺⚽", "display": "EPL", "allowed_modes": [1, 2, 3, 4]},
+        # {"name": "WNBA", "emoji": "🏀", "display": "WNBA", "allowed_modes": [1, 2, 3, 4]},
+        {"name": "MLS", "emoji": "🇺🇸⚽", "display": "MLS", "allowed_modes": [1, 4]},  # Only location or league (no nickname)
+        {"name": "NHL", "emoji": "🏒", "display": "NHL", "allowed_modes": [1, 2, 3, 4]},
+        # {"name": "CFL", "emoji": "🏈", "display": "CFL", "allowed_modes": [1, 2, 3, 4]},
     ]
 
     # Auto-generate league selection prompt
@@ -7202,6 +7203,7 @@ async def ask_sports_logos_challenge(winner, winner_id, num=7):
     league_map = {i+1: league["name"] for i, league in enumerate(LEAGUES)}
     league_map[everything_option_num] = "all"
     league_display_map = {i+1: f"{league['emoji']} {league['display']}" for i, league in enumerate(LEAGUES)}
+    league_allowed_modes = {league["name"]: league.get("allowed_modes", [1, 2, 3, 4]) for league in LEAGUES}
 
     def check_league_selection(m):
         target_channel = _active_game_channel or channel
@@ -7299,11 +7301,25 @@ async def ask_sports_logos_challenge(winner, winner_id, num=7):
             else:
                 full_team_name = team_nickname
 
-            # Randomly select game mode
+            # Randomly select game mode based on league restrictions
+            # Get league-specific allowed modes
+            allowed = league_allowed_modes.get(league, [1, 2, 3, 4])
+
             if everything_selected:
-                game_mode = random.choice([1, 2, 3, 4])
+                # When everything selected, mode 4 is available
+                base_modes = [1, 2, 3, 4]
             else:
-                game_mode = random.choice([1, 2, 3])
+                # When not everything, only modes 1-3 possible
+                base_modes = [1, 2, 3]
+
+            # Filter to modes allowed for this league
+            available_modes = [mode for mode in base_modes if mode in allowed]
+
+            # Fallback to mode 1 if nothing available (shouldn't happen)
+            if not available_modes:
+                game_mode = 1
+            else:
+                game_mode = random.choice(available_modes)
 
             # Randomly select game type (0=none, 1=jigsaw, 2=myopic, 3=microscopic, 4=fusion)
             # Don't allow fusion when game_mode is 4 (league guessing) - too easy since all logos from same league
@@ -17494,12 +17510,13 @@ async def start_trivia():
 
             start_message = f"\u200b\n✨🧪 **NEW** from the **Okra Lab**! 🧪✨\n"
             
-            start_message += f"\n🏈🏀 **Jock Talk** [Mini-Game]\n"
-            start_message += "\n\u200b"
-
+            start_message += f"\n🏈🏀 **Jock Talk** [New Leagues]\n"
+            start_message += f"\n🏒🥅 **NHL**"
+            start_message += f"\n🇺🇸⚽ **MLS**"
+            start_message += f"\n🇪🇺⚽ **EPL**"
+            start_message += "\n\n\u200b"
             await safe_send(channel, start_message)
             await asyncio.sleep(5)
-            
             
             start_message = f"\u200b\n\u200b\n⏩ Starting a **{questions_per_round} question** round! ⏩\n\u200b"
 
