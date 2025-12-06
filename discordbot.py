@@ -18421,32 +18421,34 @@ async def on_ready():
                 print(f"❌ Guild sync also failed: {guild_e}")
                 traceback.print_exc()
 
-    # Send startup notifications to all active channels
-    print("📢 Sending startup notifications to active channels...")
+    # Send startup notifications to configured channels
+    print("📢 Sending startup notifications...")
     try:
-        channels_to_notify = []
-
         # Always notify main channel
         if channel:
-            channels_to_notify.append(channel)
-
-        # Check for active tournament channels
-        for tournament_channel_id in active_tournaments.keys():
-            tournament_channel = bot.get_channel(tournament_channel_id)
-            if tournament_channel and tournament_channel not in channels_to_notify:
-                channels_to_notify.append(tournament_channel)
-
-        # Check for active mini-game channel
-        if _active_game_channel and _active_game_channel not in channels_to_notify:
-            channels_to_notify.append(_active_game_channel)
-
-        # Send startup notification to all active channels
-        for notify_channel in channels_to_notify:
             try:
-                await safe_send(notify_channel, "✅ **I'm back online!** Ready to continue.")
-                print(f"✅ Sent startup notification to channel {notify_channel.id}")
+                await safe_send(channel, "✅ **Bot is back online!** Ready to continue.")
+                print(f"✅ Sent startup notification to main channel {channel.id}")
             except Exception as e:
-                print(f"❌ Failed to send startup notification to channel {notify_channel.id}: {e}")
+                print(f"❌ Failed to send notification to main channel: {e}")
+
+        # Always notify tournament channel (if it exists)
+        tournament_channel = bot.get_channel(TOURNAMENT_GUILD_ID)
+        if tournament_channel:
+            try:
+                await safe_send(tournament_channel, "✅ **Bot is back online!** Ready to continue.")
+                print(f"✅ Sent startup notification to tournament channel {TOURNAMENT_GUILD_ID}")
+            except Exception as e:
+                print(f"❌ Failed to send notification to tournament channel: {e}")
+
+        # Always notify mini-game channel (The Lodge)
+        mini_game_channel = bot.get_channel(THE_LODGE_CHANNEL_ID)
+        if mini_game_channel:
+            try:
+                await safe_send(mini_game_channel, "✅ **Bot is back online!** Ready to continue.")
+                print(f"✅ Sent startup notification to mini-game channel {THE_LODGE_CHANNEL_ID}")
+            except Exception as e:
+                print(f"❌ Failed to send notification to mini-game channel: {e}")
     except Exception as notify_error:
         print(f"❌ Error sending startup notifications: {notify_error}")
 
