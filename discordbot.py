@@ -18281,6 +18281,38 @@ async def cleanup_tournament_roles():
     except Exception as e:
         print(f"❌ Error cleaning tournament roles: {e}")
 
+async def cleanup_lodge_messages():
+    """Delete all bot messages from The Lodge channel on startup"""
+    try:
+        print("🧹 Cleaning up bot messages from The Lodge...")
+        lodge_channel = bot.get_channel(THE_LODGE_CHANNEL_ID)
+
+        if not lodge_channel:
+            print("⚠️ The Lodge channel not found")
+            return
+
+        deleted_count = 0
+        # Fetch recent messages (limit 100 to avoid rate limits)
+        async for message in lodge_channel.history(limit=100):
+            if message.author == bot.user:
+                try:
+                    await message.delete()
+                    deleted_count += 1
+                except discord.errors.NotFound:
+                    pass  # Message already deleted
+                except discord.errors.Forbidden:
+                    print("❌ Missing permissions to delete messages in The Lodge")
+                    break
+                except Exception as e:
+                    print(f"❌ Failed to delete message: {e}")
+
+        if deleted_count > 0:
+            print(f"✅ Deleted {deleted_count} bot message(s) from The Lodge")
+        else:
+            print("✅ No bot messages to clean in The Lodge")
+    except Exception as e:
+        print(f"❌ Error cleaning Lodge messages: {e}")
+
 @bot.event
 async def on_ready():
     global channel, db
@@ -18292,6 +18324,9 @@ async def on_ready():
 
     # Clean up tournament roles from previous sessions
     await cleanup_tournament_roles()
+
+    # Clean up bot messages from The Lodge
+    await cleanup_lodge_messages()
 
     # Setup tournament system
     try:
