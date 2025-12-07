@@ -18667,7 +18667,6 @@ async def arena(ctx, game_name: str = None, num: int = 1):
     async with arena_game_lock:
         try:
             # Store current task and starter for cancellation support
-            global arena_game_starter_id
             arena_game_task = asyncio.current_task()
             arena_game_starter_id = ctx.author.id
 
