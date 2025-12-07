@@ -17583,10 +17583,9 @@ async def start_trivia():
 
             start_message = f"\u200b\n✨🧪 **NEW** from the **Okra Lab**! 🧪✨\n"
             
-            start_message += f"\n🏈🏀 **Jock Talk** [New Leagues]\n"
-            start_message += f"\n🏒🥅 **NHL**"
-            start_message += f"\n🇺🇸⚽ **MLS**"
-            start_message += f"\n🇪🇺⚽ **EPL**"
+            start_message += f"\n🍦 **Simply Trivia** [New Channel]\n"
+            start_message += f"\nNo frills. No bells & whistles. Just trivia.\n"
+
             start_message += "\n\n\u200b"
             await safe_send(channel, start_message)
             await asyncio.sleep(5)
