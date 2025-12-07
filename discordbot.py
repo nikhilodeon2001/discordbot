@@ -332,6 +332,7 @@ round_data = {
 # Lock to prevent concurrent arena games
 arena_game_lock = asyncio.Lock()
 arena_game_task = None  # Store reference to running arena game task for cancellation
+arena_game_starter_id = None  # Store user ID of who started the current arena game
 
 fastest_answers_count = {}
 current_longest_answer_streak = {"user": None, "user_id": None, "streak": 0}
@@ -18603,16 +18604,32 @@ async def arena(ctx, game_name: str = None, num: int = 1):
         !arena flags 5
         !arena random
         !arena chaos 10
-        !arena cancel (okrag_id only)
+        !arena cancel (game starter, host, or admin only)
     """
     print(f"🎮 Arena command triggered! game_name={game_name}, num={num}, MINI_GAMES_ENABLED={MINI_GAMES_ENABLED}")
 
-    # Handle cancel subcommand (okrag_id only)
+    # Handle cancel subcommand (okrag_id, host role, or game starter)
     if game_name and game_name.lower() == "cancel":
-        global arena_game_task
+        global arena_game_task, arena_game_starter_id
 
-        # Only okrag_id can cancel games - silently ignore others
-        if ctx.author.id != okrag_id:
+        # Check permissions: must be admin (okrag_id), have host role, or be the game starter
+        is_admin = ctx.author.id == okrag_id
+
+        # Check for host role
+        has_host_role = False
+        if hasattr(ctx.author, 'roles'):
+            host_role = ctx.guild.get_role(HOST_ROLE_ID)
+            if host_role and host_role in ctx.author.roles:
+                has_host_role = True
+
+        # Check if they started the current game
+        is_game_starter = arena_game_starter_id and ctx.author.id == arena_game_starter_id
+
+        # If none of the above, deny with message
+        if not (is_admin or has_host_role or is_game_starter):
+            # Show username via Discord mention (e.g., "@PlayerName")
+            starter_mention = f"<@{arena_game_starter_id}>" if arena_game_starter_id else "the player who started it"
+            await ctx.send(f"❌ Only {starter_mention} or a host/admin can cancel this game")
             return
 
         # Check if a game is running
@@ -18649,8 +18666,10 @@ async def arena(ctx, game_name: str = None, num: int = 1):
 
     async with arena_game_lock:
         try:
-            # Store current task for cancellation support
+            # Store current task and starter for cancellation support
+            global arena_game_starter_id
             arena_game_task = asyncio.current_task()
+            arena_game_starter_id = ctx.author.id
 
             if game_name is None or game_name.lower() == "random":
                 print(f"🎲 Running random mini-game for {ctx.author.display_name} in channel {ctx.channel.id}")
@@ -18690,6 +18709,7 @@ async def arena(ctx, game_name: str = None, num: int = 1):
             await ctx.send(f"❌ Error running mini-game: {e}")
         finally:
             arena_game_task = None
+            arena_game_starter_id = None
 
 @bot.event
 async def on_raw_reaction_add(payload):
