@@ -18487,14 +18487,8 @@ async def on_ready():
             except Exception as e:
                 print(f"❌ Failed to send notification to tournament channel: {e}")
 
-        # Always notify mini-game lobby (The Lodge)
-        mini_game_lobby = bot.get_channel(THE_LODGE_CHANNEL_ID)
-        if mini_game_lobby:
-            try:
-                await safe_send(mini_game_lobby, "✅ **I'm back online!** Ready to continue.")
-                print(f"✅ Sent startup notification to The Lodge (lobby) {THE_LODGE_CHANNEL_ID}")
-            except Exception as e:
-                print(f"❌ Failed to send notification to The Lodge: {e}")
+        # Don't send startup message to The Lodge - cleanup_lodge_messages() already handled it
+        # The Lodge only gets the update message before restart, which gets deleted on startup
 
         # Always notify mini-game arena (where games are played)
         mini_game_arena = bot.get_channel(MINI_GAME_ARENA_CHANNEL_ID)
