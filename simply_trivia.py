@@ -99,6 +99,70 @@ async def update_streak(db, user_id, user_name, correct):
         return 0
 
 
+async def check_and_record_top_streak(db, user_id, user_name, streak_count):
+    """
+    Check if a streak qualifies for top 100 and record it if so
+
+    Args:
+        db: MongoDB database instance
+        user_id: Discord user ID
+        user_name: Discord user display name
+        streak_count: The streak count to check
+    """
+    if streak_count == 0:
+        return  # Don't record zero streaks
+
+    collection = db["simply_trivia_top_streaks"]
+
+    # Get current count of top streaks
+    count = await collection.count_documents({})
+
+    if count < 100:
+        # Less than 100 entries, always add
+        await collection.insert_one({
+            "user_id": user_id,
+            "user_name": user_name,
+            "streak_count": streak_count,
+            "ended_at": datetime.now(timezone.utc)
+        })
+    else:
+        # Find the 100th place streak (smallest in top 100)
+        top_100 = await collection.find().sort("streak_count", 1).limit(1).to_list(1)
+
+        if top_100 and streak_count > top_100[0]["streak_count"]:
+            # This streak is better than 100th place
+            # Insert new record
+            await collection.insert_one({
+                "user_id": user_id,
+                "user_name": user_name,
+                "streak_count": streak_count,
+                "ended_at": datetime.now(timezone.utc)
+            })
+
+            # Remove the now-101st entry (the old 100th place)
+            await collection.delete_one({"_id": top_100[0]["_id"]})
+
+
+async def record_correct_answer(db, user_id, user_name, question_id):
+    """
+    Record a correct answer to the stats collection
+
+    Args:
+        db: MongoDB database instance
+        user_id: Discord user ID
+        user_name: Discord user display name
+        question_id: Question ObjectId that was answered
+    """
+    collection = db["simply_trivia_stats"]
+
+    await collection.insert_one({
+        "user_id": user_id,
+        "user_name": user_name,
+        "timestamp": datetime.now(timezone.utc),
+        "question_id": question_id
+    })
+
+
 async def handle_answer(message, bot, db, fuzzy_match_func):
     """
     Handle incoming answers in Simply Trivia channel
@@ -256,6 +320,14 @@ async def start_simply_trivia(bot, db, channel_id, fuzzy_match_func):
                     correct=True
                 )
 
+                # Record correct answer for stats
+                await record_correct_answer(
+                    db,
+                    first_answerer.id,
+                    first_answerer.display_name,
+                    question.get("_id")
+                )
+
                 answer_text = f"**Answer:** {main_answer}\n\n"
                 if streak > 1:
                     answer_text += f"🏆 {first_answerer.mention} got it first! 🔥 Streak: {streak}"
@@ -269,10 +341,23 @@ async def start_simply_trivia(bot, db, channel_id, fuzzy_match_func):
 
                 embed = discord.Embed(description=answer_text, color=discord.Color.green())
             else:
-                # No one got it - reset all active streaks
+                # No one got it - check and record streak before resetting
                 try:
                     collection = db["simply_trivia_streaks"]
-                    # Reset all users with active streaks (streak > 0) back to 0
+
+                    # Find the user with active streak (should only be one)
+                    active_streak_user = await collection.find_one({"streak": {"$gt": 0}})
+
+                    if active_streak_user:
+                        # Check if this streak qualifies for top 100
+                        await check_and_record_top_streak(
+                            db,
+                            active_streak_user["user_id"],
+                            active_streak_user["user_name"],
+                            active_streak_user["streak"]
+                        )
+
+                    # Now reset all users with active streaks (streak > 0) back to 0
                     await collection.update_many(
                         {"streak": {"$gt": 0}},
                         {"$set": {"streak": 0, "updated_at": datetime.now(timezone.utc)}}
@@ -298,3 +383,129 @@ async def start_simply_trivia(bot, db, channel_id, fuzzy_match_func):
             traceback.print_exc()
             # Wait before retrying
             await asyncio.sleep(5)
+
+
+# Statistics query functions
+
+async def get_longest_streaks(db, limit=100):
+    """
+    Get the top longest streaks ever recorded
+
+    Args:
+        db: MongoDB database instance
+        limit: Number of results to return (default 100)
+
+    Returns:
+        List of dicts with user_id, user_name, streak_count, ended_at
+    """
+    collection = db["simply_trivia_top_streaks"]
+
+    # Sort by streak_count descending, limit to requested amount
+    results = await collection.find().sort("streak_count", -1).limit(limit).to_list(limit)
+
+    return results
+
+
+async def get_top_users_alltime(db, limit=100):
+    """
+    Get top users by total correct answers (all time)
+
+    Args:
+        db: MongoDB database instance
+        limit: Number of results to return (default 100)
+
+    Returns:
+        List of dicts with user_id, user_name, total_correct
+    """
+    collection = db["simply_trivia_stats"]
+
+    # Aggregate: group by user, count answers, sort descending
+    pipeline = [
+        {
+            "$group": {
+                "_id": "$user_id",
+                "user_name": {"$first": "$user_name"},
+                "total_correct": {"$sum": 1}
+            }
+        },
+        {"$sort": {"total_correct": -1}},
+        {"$limit": limit}
+    ]
+
+    results = await collection.aggregate(pipeline).to_list(limit)
+
+    return results
+
+
+async def get_top_users_24h(db, limit=100):
+    """
+    Get top users by correct answers in last 24 hours
+
+    Args:
+        db: MongoDB database instance
+        limit: Number of results to return (default 100)
+
+    Returns:
+        List of dicts with user_id, user_name, total_correct
+    """
+    from datetime import timedelta
+
+    collection = db["simply_trivia_stats"]
+
+    # Calculate 24 hours ago
+    time_threshold = datetime.now(timezone.utc) - timedelta(hours=24)
+
+    # Aggregate: filter by time, group by user, count, sort
+    pipeline = [
+        {"$match": {"timestamp": {"$gte": time_threshold}}},
+        {
+            "$group": {
+                "_id": "$user_id",
+                "user_name": {"$first": "$user_name"},
+                "total_correct": {"$sum": 1}
+            }
+        },
+        {"$sort": {"total_correct": -1}},
+        {"$limit": limit}
+    ]
+
+    results = await collection.aggregate(pipeline).to_list(limit)
+
+    return results
+
+
+async def get_top_users_7d(db, limit=100):
+    """
+    Get top users by correct answers in last 7 days
+
+    Args:
+        db: MongoDB database instance
+        limit: Number of results to return (default 100)
+
+    Returns:
+        List of dicts with user_id, user_name, total_correct
+    """
+    from datetime import timedelta
+
+    collection = db["simply_trivia_stats"]
+
+    # Calculate 7 days ago
+    time_threshold = datetime.now(timezone.utc) - timedelta(days=7)
+
+    # Aggregate: filter by time, group by user, count, sort
+    pipeline = [
+        {"$match": {"timestamp": {"$gte": time_threshold}}},
+        {
+            "$group": {
+                "_id": "$user_id",
+                "user_name": {"$first": "$user_name"},
+                "total_correct": {"$sum": 1}
+            }
+        },
+        {"$sort": {"total_correct": -1}},
+        {"$limit": limit}
+    ]
+
+    results = await collection.aggregate(pipeline).to_list(limit)
+
+    return results
