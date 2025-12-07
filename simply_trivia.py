@@ -43,62 +43,6 @@ async def get_trivia_question(db):
     return None
 
 
-async def load_streak(db, user_id):
-    """
-    Load user's current streak from MongoDB
-
-    Args:
-        db: MongoDB database instance
-        user_id: Discord user ID
-
-    Returns:
-        Current streak count (0 if not found)
-    """
-    collection = db["simply_trivia_streaks"]
-    doc = await collection.find_one({"user_id": user_id})
-
-    if doc:
-        return doc.get("streak", 0)
-    return 0
-
-
-async def update_streak(db, user_id, user_name, correct):
-    """
-    Update streak (increment if correct, reset if wrong)
-
-    Args:
-        db: MongoDB database instance
-        user_id: Discord user ID
-        user_name: Discord user display name
-        correct: True if answer was correct, False otherwise
-
-    Returns:
-        Updated streak count
-    """
-    collection = db["simply_trivia_streaks"]
-
-    if correct:
-        # Increment streak
-        result = await collection.find_one_and_update(
-            {"user_id": user_id},
-            {
-                "$inc": {"streak": 1},
-                "$set": {"user_name": user_name, "updated_at": datetime.now(timezone.utc)}
-            },
-            upsert=True,
-            return_document=True
-        )
-        return result["streak"]
-    else:
-        # Reset streak
-        await collection.update_one(
-            {"user_id": user_id},
-            {"$set": {"streak": 0, "updated_at": datetime.now(timezone.utc)}},
-            upsert=True
-        )
-        return 0
-
-
 async def check_and_record_top_streak(db, user_id, user_name, streak_count):
     """
     Check if a streak qualifies for top 100 and record it if so
@@ -313,12 +257,36 @@ async def start_simply_trivia(bot, db, channel_id, fuzzy_match_func):
                     print(f"❌ Failed to react to answerers: {e}")
 
                 # Someone got it - update first answerer's streak
-                streak = await update_streak(
-                    db,
-                    first_answerer.id,
-                    first_answerer.display_name,
-                    correct=True
+                # Get current streak document (single document with _id="current")
+                current = await db["simply_trivia_streaks"].find_one({"_id": "current"})
+
+                if current and current.get("user_id") == first_answerer.id:
+                    # Same person - increment streak
+                    new_streak = current.get("streak", 0) + 1
+                else:
+                    # Different person - start new streak at 1
+                    new_streak = 1
+                    # Also check and record previous person's streak if it ended
+                    if current and current.get("streak", 0) > 0:
+                        await check_and_record_top_streak(
+                            db,
+                            current["user_id"],
+                            current["user_name"],
+                            current["streak"]
+                        )
+
+                # Update/insert the single document
+                await db["simply_trivia_streaks"].update_one(
+                    {"_id": "current"},
+                    {"$set": {
+                        "user_id": first_answerer.id,
+                        "user_name": first_answerer.display_name,
+                        "streak": new_streak,
+                        "updated_at": datetime.now(timezone.utc)
+                    }},
+                    upsert=True
                 )
+                streak = new_streak
 
                 # Record correct answer for stats
                 await record_correct_answer(
@@ -343,24 +311,28 @@ async def start_simply_trivia(bot, db, channel_id, fuzzy_match_func):
             else:
                 # No one got it - check and record streak before resetting
                 try:
-                    collection = db["simply_trivia_streaks"]
+                    # Get current streak holder (single document with _id="current")
+                    current = await db["simply_trivia_streaks"].find_one({"_id": "current"})
 
-                    # Find the user with active streak (should only be one)
-                    active_streak_user = await collection.find_one({"streak": {"$gt": 0}})
-
-                    if active_streak_user:
-                        # Check if this streak qualifies for top 100
+                    # Check if qualifies for top 100
+                    if current and current.get("streak", 0) > 0:
                         await check_and_record_top_streak(
                             db,
-                            active_streak_user["user_id"],
-                            active_streak_user["user_name"],
-                            active_streak_user["streak"]
+                            current["user_id"],
+                            current["user_name"],
+                            current["streak"]
                         )
 
-                    # Now reset all users with active streaks (streak > 0) back to 0
-                    await collection.update_many(
-                        {"streak": {"$gt": 0}},
-                        {"$set": {"streak": 0, "updated_at": datetime.now(timezone.utc)}}
+                    # Reset to no holder
+                    await db["simply_trivia_streaks"].update_one(
+                        {"_id": "current"},
+                        {"$set": {
+                            "user_id": None,
+                            "user_name": None,
+                            "streak": 0,
+                            "updated_at": datetime.now(timezone.utc)
+                        }},
+                        upsert=True
                     )
                 except Exception as e:
                     print(f"❌ Failed to reset streaks: {e}")
