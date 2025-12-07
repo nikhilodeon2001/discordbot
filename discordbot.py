@@ -88,6 +88,14 @@ except ImportError:
     MINI_GAMES_ENABLED = False
     print("⚠️ mini_games.py not found - mini-game arena disabled")
 
+# Simply Trivia system import
+try:
+    import simply_trivia
+    SIMPLY_TRIVIA_ENABLED = True
+except ImportError:
+    SIMPLY_TRIVIA_ENABLED = False
+    print("⚠️ simply_trivia.py not found - Simply Trivia disabled")
+
 embed_color_default = discord.Color.green()
 embed_color = embed_color_default
 
@@ -184,6 +192,15 @@ async def end_of_round():
                     print(f"✅ Sent update notification to Mini-Game Arena {MINI_GAME_ARENA_CHANNEL_ID}")
                 except Exception as e:
                     print(f"❌ Failed to send update notification to Mini-Game Arena: {e}")
+
+            # Send to Simply Trivia channel
+            simply_trivia_channel = bot.get_channel(SIMPLY_TRIVIA_CHANNEL_ID)
+            if simply_trivia_channel:
+                try:
+                    await safe_send(simply_trivia_channel, "🔄 **Update detected!** I'll be back shortly...")
+                    print(f"✅ Sent update notification to Simply Trivia {SIMPLY_TRIVIA_CHANNEL_ID}")
+                except Exception as e:
+                    print(f"❌ Failed to send update notification to Simply Trivia: {e}")
 
             # Now deploy and wait (this blocks until SIGTERM)
             print("Deploying new build...")
@@ -402,6 +419,7 @@ if prod_or_stage == "stage":
     TRIVIA_VOICE_CHANNEL_ID = 1432952256721850469
     MINI_GAME_ARENA_CHANNEL_ID = 1439668337817944235
     MINI_GAME_ARENA_VOICE_CHANNEL_ID = 1439699889302012165
+    SIMPLY_TRIVIA_CHANNEL_ID = 1447070553646174258
 
 elif prod_or_stage == "prod":
     okrag_id = 591861826690613248
@@ -436,6 +454,7 @@ elif prod_or_stage == "prod":
     TRIVIA_VOICE_CHANNEL_ID = 1432951778244038756
     MINI_GAME_ARENA_CHANNEL_ID = 1439668550422757486
     MINI_GAME_ARENA_VOICE_CHANNEL_ID = 1439699160092905604
+    SIMPLY_TRIVIA_CHANNEL_ID = 1447071058443370577
 
 
 
@@ -17953,6 +17972,14 @@ async def on_message(message):
         except Exception as e:
             print(f"Error in tournament handler: {e}")
 
+    # Route Simply Trivia messages
+    if SIMPLY_TRIVIA_ENABLED and message.channel.id == SIMPLY_TRIVIA_CHANNEL_ID:
+        try:
+            await simply_trivia.handle_answer(message, bot, db, fuzzy_match)
+        except Exception as e:
+            print(f"Error in Simply Trivia handler: {e}")
+        return  # Don't process in main trivia
+
     if message.author.id == DISBOARD_BOT_ID:
         # Detect “Bump done!” (Disboard uses embeds; content is usually empty)
         bump_hit = False
@@ -18420,7 +18447,23 @@ async def on_ready():
 
         # Tournament testing: Use add_fake_players.py script for adding test players
         print("🧪 For testing: Use add_fake_players.py script to add fake players")
-        
+
+        # Start Simply Trivia system
+        if SIMPLY_TRIVIA_ENABLED:
+            try:
+                print("🎯 Starting Simply Trivia system...")
+                asyncio.create_task(simply_trivia.start_simply_trivia(
+                    bot=bot,
+                    db=db,
+                    channel_id=SIMPLY_TRIVIA_CHANNEL_ID,
+                    fuzzy_match_func=fuzzy_match
+                ))
+                print("✅ Simply Trivia system started!")
+            except Exception as st_error:
+                print(f"❌ Failed to start Simply Trivia: {st_error}")
+                import traceback
+                traceback.print_exc()
+
     except Exception as tournament_error:
         print(f"❌ Failed to setup tournament system: {tournament_error}")
         traceback.print_exc()
@@ -18498,6 +18541,15 @@ async def on_ready():
                 print(f"✅ Sent startup notification to Mini-Game Arena {MINI_GAME_ARENA_CHANNEL_ID}")
             except Exception as e:
                 print(f"❌ Failed to send notification to Mini-Game Arena: {e}")
+
+        # Always notify Simply Trivia channel
+        simply_trivia_channel = bot.get_channel(SIMPLY_TRIVIA_CHANNEL_ID)
+        if simply_trivia_channel:
+            try:
+                await safe_send(simply_trivia_channel, "✅ **I'm back online!** Ready to continue.")
+                print(f"✅ Sent startup notification to Simply Trivia {SIMPLY_TRIVIA_CHANNEL_ID}")
+            except Exception as e:
+                print(f"❌ Failed to send notification to Simply Trivia: {e}")
     except Exception as notify_error:
         print(f"❌ Error sending startup notifications: {notify_error}")
 
