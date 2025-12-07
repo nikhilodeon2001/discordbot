@@ -576,7 +576,7 @@ def create_streaks_alltime_embed(all_time):
         medal = medals[i-1] if i <= 3 else f"{i}."
         user_name = entry.get("user_name", "Unknown")
         streak = entry.get("streak_count", 0)
-        description += f"{medal} **{user_name}** - {streak} streak\n"
+        description += f"{medal} **{user_name}** - {streak}\n"
 
     if not description:
         description = "*No streaks recorded yet*"
@@ -610,7 +610,7 @@ def create_streaks_24h_embed(past_24h):
         medal = medals[i-1] if i <= 3 else f"{i}."
         user_name = entry.get("user_name", "Unknown")
         streak = entry.get("streak_count", 0)
-        description += f"{medal} **{user_name}** - {streak} streak\n"
+        description += f"{medal} **{user_name}** - {streak}\n"
 
     if not description:
         description = "*No streaks in the last 24 hours*"
@@ -644,7 +644,7 @@ def create_streaks_7d_embed(past_7d):
         medal = medals[i-1] if i <= 3 else f"{i}."
         user_name = entry.get("user_name", "Unknown")
         streak = entry.get("streak_count", 0)
-        description += f"{medal} **{user_name}** - {streak} streak\n"
+        description += f"{medal} **{user_name}** - {streak}\n"
 
     if not description:
         description = "*No streaks in the last 7 days*"
@@ -678,7 +678,7 @@ def create_answers_alltime_embed(all_time):
         medal = medals[i-1] if i <= 3 else f"{i}."
         user_name = entry.get("user_name", "Unknown")
         total = entry.get("total_correct", 0)
-        description += f"{medal} **{user_name}** - {total} answers\n"
+        description += f"{medal} **{user_name}** - {total}\n"
 
     if not description:
         description = "*No answers recorded yet*"
@@ -712,7 +712,7 @@ def create_answers_24h_embed(past_24h):
         medal = medals[i-1] if i <= 3 else f"{i}."
         user_name = entry.get("user_name", "Unknown")
         total = entry.get("total_correct", 0)
-        description += f"{medal} **{user_name}** - {total} answers\n"
+        description += f"{medal} **{user_name}** - {total}\n"
 
     if not description:
         description = "*No answers in the last 24 hours*"
@@ -746,7 +746,7 @@ def create_answers_7d_embed(past_7d):
         medal = medals[i-1] if i <= 3 else f"{i}."
         user_name = entry.get("user_name", "Unknown")
         total = entry.get("total_correct", 0)
-        description += f"{medal} **{user_name}** - {total} answers\n"
+        description += f"{medal} **{user_name}** - {total}\n"
 
     if not description:
         description = "*No answers in the last 7 days*"
