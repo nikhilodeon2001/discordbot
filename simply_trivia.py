@@ -8,11 +8,18 @@ import asyncio
 import discord
 from datetime import datetime, timezone
 
+# Configuration
+LEADERBOARD_UPDATE_FREQUENCY = 5  # Update leaderboards every N questions
+QUESTION_DELAY_SECONDS = 5  # Delay between questions in seconds
+
 # Storage for active game state
 active_question = None
 first_answer_time = None
 first_answerer = None
 additional_answerers = []
+
+# Leaderboard tracking
+questions_count = 0  # Counter for questions asked since bot started
 
 
 async def get_trivia_question(db):
@@ -346,8 +353,17 @@ async def start_simply_trivia(bot, db, channel_id, fuzzy_match_func):
             if question.get("_id"):
                 await store_question_ids_in_mongo([question["_id"]], "general")
 
-            # Clear active question (no delay - immediately start next question)
+            # Increment question counter and check if leaderboard update needed
+            global questions_count
+            questions_count += 1
+            if questions_count % LEADERBOARD_UPDATE_FREQUENCY == 0:
+                await update_leaderboards(bot, db)
+
+            # Clear active question
             active_question = None
+
+            # Wait before asking next question
+            await asyncio.sleep(QUESTION_DELAY_SECONDS)
 
         except Exception as e:
             print(f"❌ Error in Simply Trivia loop: {e}")
@@ -374,6 +390,58 @@ async def get_longest_streaks(db, limit=100):
 
     # Sort by streak_count descending, limit to requested amount
     results = await collection.find().sort("streak_count", -1).limit(limit).to_list(limit)
+
+    return results
+
+
+async def get_longest_streaks_24h(db, limit=25):
+    """
+    Get the top longest streaks that ended in the last 24 hours
+
+    Args:
+        db: MongoDB database instance
+        limit: Number of results to return (default 25)
+
+    Returns:
+        List of dicts with user_id, user_name, streak_count, ended_at
+    """
+    from datetime import timedelta
+
+    collection = db["simply_trivia_top_streaks"]
+
+    # Calculate 24 hours ago
+    time_threshold = datetime.now(timezone.utc) - timedelta(hours=24)
+
+    # Filter by time, sort by streak_count descending
+    results = await collection.find(
+        {"ended_at": {"$gte": time_threshold}}
+    ).sort("streak_count", -1).limit(limit).to_list(limit)
+
+    return results
+
+
+async def get_longest_streaks_7d(db, limit=25):
+    """
+    Get the top longest streaks that ended in the last 7 days
+
+    Args:
+        db: MongoDB database instance
+        limit: Number of results to return (default 25)
+
+    Returns:
+        List of dicts with user_id, user_name, streak_count, ended_at
+    """
+    from datetime import timedelta
+
+    collection = db["simply_trivia_top_streaks"]
+
+    # Calculate 7 days ago
+    time_threshold = datetime.now(timezone.utc) - timedelta(days=7)
+
+    # Filter by time, sort by streak_count descending
+    results = await collection.find(
+        {"ended_at": {"$gte": time_threshold}}
+    ).sort("streak_count", -1).limit(limit).to_list(limit)
 
     return results
 
@@ -481,3 +549,301 @@ async def get_top_users_7d(db, limit=100):
     results = await collection.aggregate(pipeline).to_list(limit)
 
     return results
+
+
+# Leaderboard formatting functions
+
+def create_streaks_alltime_embed(all_time):
+    """
+    Create Discord embed for all-time longest streaks
+
+    Args:
+        all_time: List of top streaks all time
+
+    Returns:
+        Discord embed for all-time streaks
+    """
+    embed = discord.Embed(
+        title="🏆 Longest Streaks - ALL TIME",
+        color=discord.Color.gold(),
+        timestamp=datetime.now(timezone.utc)
+    )
+
+    medals = ["🥇", "🥈", "🥉"]
+
+    description = ""
+    for i, entry in enumerate(all_time[:25], 1):
+        medal = medals[i-1] if i <= 3 else f"{i}."
+        user_name = entry.get("user_name", "Unknown")
+        streak = entry.get("streak_count", 0)
+        description += f"{medal} **{user_name}** - {streak} streak\n"
+
+    if not description:
+        description = "*No streaks recorded yet*"
+
+    embed.description = description
+    embed.set_footer(text=f"Updates every {LEADERBOARD_UPDATE_FREQUENCY} questions")
+
+    return embed
+
+
+def create_streaks_24h_embed(past_24h):
+    """
+    Create Discord embed for 24-hour longest streaks
+
+    Args:
+        past_24h: List of top streaks in last 24 hours
+
+    Returns:
+        Discord embed for 24-hour streaks
+    """
+    embed = discord.Embed(
+        title="⏰ Longest Streaks - PAST 24 HOURS",
+        color=discord.Color.gold(),
+        timestamp=datetime.now(timezone.utc)
+    )
+
+    medals = ["🥇", "🥈", "🥉"]
+
+    description = ""
+    for i, entry in enumerate(past_24h[:25], 1):
+        medal = medals[i-1] if i <= 3 else f"{i}."
+        user_name = entry.get("user_name", "Unknown")
+        streak = entry.get("streak_count", 0)
+        description += f"{medal} **{user_name}** - {streak} streak\n"
+
+    if not description:
+        description = "*No streaks in the last 24 hours*"
+
+    embed.description = description
+    embed.set_footer(text=f"Updates every {LEADERBOARD_UPDATE_FREQUENCY} questions")
+
+    return embed
+
+
+def create_streaks_7d_embed(past_7d):
+    """
+    Create Discord embed for 7-day longest streaks
+
+    Args:
+        past_7d: List of top streaks in last 7 days
+
+    Returns:
+        Discord embed for 7-day streaks
+    """
+    embed = discord.Embed(
+        title="📅 Longest Streaks - PAST 7 DAYS",
+        color=discord.Color.gold(),
+        timestamp=datetime.now(timezone.utc)
+    )
+
+    medals = ["🥇", "🥈", "🥉"]
+
+    description = ""
+    for i, entry in enumerate(past_7d[:25], 1):
+        medal = medals[i-1] if i <= 3 else f"{i}."
+        user_name = entry.get("user_name", "Unknown")
+        streak = entry.get("streak_count", 0)
+        description += f"{medal} **{user_name}** - {streak} streak\n"
+
+    if not description:
+        description = "*No streaks in the last 7 days*"
+
+    embed.description = description
+    embed.set_footer(text=f"Updates every {LEADERBOARD_UPDATE_FREQUENCY} questions")
+
+    return embed
+
+
+def create_answers_alltime_embed(all_time):
+    """
+    Create Discord embed for all-time most correct answers
+
+    Args:
+        all_time: List of top users by answers all time
+
+    Returns:
+        Discord embed for all-time answers
+    """
+    embed = discord.Embed(
+        title="🏆 Most Correct Answers - ALL TIME",
+        color=discord.Color.blue(),
+        timestamp=datetime.now(timezone.utc)
+    )
+
+    medals = ["🥇", "🥈", "🥉"]
+
+    description = ""
+    for i, entry in enumerate(all_time[:25], 1):
+        medal = medals[i-1] if i <= 3 else f"{i}."
+        user_name = entry.get("user_name", "Unknown")
+        total = entry.get("total_correct", 0)
+        description += f"{medal} **{user_name}** - {total} answers\n"
+
+    if not description:
+        description = "*No answers recorded yet*"
+
+    embed.description = description
+    embed.set_footer(text=f"Updates every {LEADERBOARD_UPDATE_FREQUENCY} questions")
+
+    return embed
+
+
+def create_answers_24h_embed(past_24h):
+    """
+    Create Discord embed for 24-hour most correct answers
+
+    Args:
+        past_24h: List of top users by answers in last 24 hours
+
+    Returns:
+        Discord embed for 24-hour answers
+    """
+    embed = discord.Embed(
+        title="⏰ Most Correct Answers - PAST 24 HOURS",
+        color=discord.Color.blue(),
+        timestamp=datetime.now(timezone.utc)
+    )
+
+    medals = ["🥇", "🥈", "🥉"]
+
+    description = ""
+    for i, entry in enumerate(past_24h[:25], 1):
+        medal = medals[i-1] if i <= 3 else f"{i}."
+        user_name = entry.get("user_name", "Unknown")
+        total = entry.get("total_correct", 0)
+        description += f"{medal} **{user_name}** - {total} answers\n"
+
+    if not description:
+        description = "*No answers in the last 24 hours*"
+
+    embed.description = description
+    embed.set_footer(text=f"Updates every {LEADERBOARD_UPDATE_FREQUENCY} questions")
+
+    return embed
+
+
+def create_answers_7d_embed(past_7d):
+    """
+    Create Discord embed for 7-day most correct answers
+
+    Args:
+        past_7d: List of top users by answers in last 7 days
+
+    Returns:
+        Discord embed for 7-day answers
+    """
+    embed = discord.Embed(
+        title="📅 Most Correct Answers - PAST 7 DAYS",
+        color=discord.Color.blue(),
+        timestamp=datetime.now(timezone.utc)
+    )
+
+    medals = ["🥇", "🥈", "🥉"]
+
+    description = ""
+    for i, entry in enumerate(past_7d[:25], 1):
+        medal = medals[i-1] if i <= 3 else f"{i}."
+        user_name = entry.get("user_name", "Unknown")
+        total = entry.get("total_correct", 0)
+        description += f"{medal} **{user_name}** - {total} answers\n"
+
+    if not description:
+        description = "*No answers in the last 7 days*"
+
+    embed.description = description
+    embed.set_footer(text=f"Updates every {LEADERBOARD_UPDATE_FREQUENCY} questions")
+
+    return embed
+
+
+async def update_leaderboards(bot, db):
+    """
+    Update both leaderboards (streaks and answers) in their respective channels
+    Posts 3 separate messages per channel (ALL TIME, PAST 24H, PAST 7D)
+
+    Args:
+        bot: Discord bot instance
+        db: MongoDB database instance
+    """
+    from discordbot import SIMPLY_STREAKS_CHANNEL_ID, SIMPLY_ANSWERS_CHANNEL_ID
+
+    try:
+        # Fetch all data for streaks
+        streaks_all_time = await get_longest_streaks(db, limit=25)
+        streaks_24h = await get_longest_streaks_24h(db, limit=25)
+        streaks_7d = await get_longest_streaks_7d(db, limit=25)
+
+        # Fetch all data for answers
+        answers_all_time = await get_top_users_alltime(db, limit=25)
+        answers_24h = await get_top_users_24h(db, limit=25)
+        answers_7d = await get_top_users_7d(db, limit=25)
+
+        # Create embeds for streaks
+        streaks_embeds = [
+            create_streaks_alltime_embed(streaks_all_time),
+            create_streaks_24h_embed(streaks_24h),
+            create_streaks_7d_embed(streaks_7d)
+        ]
+
+        # Create embeds for answers
+        answers_embeds = [
+            create_answers_alltime_embed(answers_all_time),
+            create_answers_24h_embed(answers_24h),
+            create_answers_7d_embed(answers_7d)
+        ]
+
+        # Update streaks channel
+        streaks_channel = bot.get_channel(SIMPLY_STREAKS_CHANNEL_ID)
+        if streaks_channel:
+            try:
+                # Get last 3 messages in channel
+                messages = []
+                async for msg in streaks_channel.history(limit=3):
+                    messages.insert(0, msg)  # Insert at beginning to reverse order
+
+                # Check if all 3 messages are from bot
+                if len(messages) == 3 and all(m.author == bot.user for m in messages):
+                    # Edit existing messages in order
+                    await messages[0].edit(embed=streaks_embeds[0])
+                    await messages[1].edit(embed=streaks_embeds[1])
+                    await messages[2].edit(embed=streaks_embeds[2])
+                else:
+                    # Post 3 new messages in order
+                    await streaks_channel.send(embed=streaks_embeds[0])
+                    await streaks_channel.send(embed=streaks_embeds[1])
+                    await streaks_channel.send(embed=streaks_embeds[2])
+            except Exception as e:
+                print(f"❌ Failed to update streaks leaderboard: {e}")
+        else:
+            print(f"⚠️ Streaks channel {SIMPLY_STREAKS_CHANNEL_ID} not found")
+
+        # Update answers channel
+        answers_channel = bot.get_channel(SIMPLY_ANSWERS_CHANNEL_ID)
+        if answers_channel:
+            try:
+                # Get last 3 messages in channel
+                messages = []
+                async for msg in answers_channel.history(limit=3):
+                    messages.insert(0, msg)  # Insert at beginning to reverse order
+
+                # Check if all 3 messages are from bot
+                if len(messages) == 3 and all(m.author == bot.user for m in messages):
+                    # Edit existing messages in order
+                    await messages[0].edit(embed=answers_embeds[0])
+                    await messages[1].edit(embed=answers_embeds[1])
+                    await messages[2].edit(embed=answers_embeds[2])
+                else:
+                    # Post 3 new messages in order
+                    await answers_channel.send(embed=answers_embeds[0])
+                    await answers_channel.send(embed=answers_embeds[1])
+                    await answers_channel.send(embed=answers_embeds[2])
+            except Exception as e:
+                print(f"❌ Failed to update answers leaderboard: {e}")
+        else:
+            print(f"⚠️ Answers channel {SIMPLY_ANSWERS_CHANNEL_ID} not found")
+
+    except Exception as e:
+        print(f"❌ Error updating leaderboards: {e}")
+        import traceback
+        traceback.print_exc()
