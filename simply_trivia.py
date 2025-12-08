@@ -7,6 +7,7 @@ Tracks first-to-answer and streaks
 import asyncio
 import discord
 from datetime import datetime, timezone
+from discordbot import update_audit_question
 
 # Configuration
 LEADERBOARD_UPDATE_FREQUENCY = 5  # Update leaderboards every N questions
@@ -129,6 +130,21 @@ async def handle_answer(message, bot, db, fuzzy_match_func):
 
     # Ignore if no active question or message is from bot
     if not active_question or message.author.bot:
+        return
+
+    # Handle #flag command for reporting questions
+    if "#flag" in message.content.strip().lower():
+        try:
+            await message.add_reaction("🚩")
+        except Exception as e:
+            print(f"❌ Failed to react with flag emoji: {e}")
+
+        # Create question dict in the format expected by update_audit_question
+        question_data = {
+            "trivia_db": "trivia_questions",
+            "trivia_id": active_question.get("_id")
+        }
+        await update_audit_question(question_data, message.content.strip(), message.author.display_name)
         return
 
     # Check if answer is correct against any valid answer
