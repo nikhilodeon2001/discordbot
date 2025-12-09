@@ -4648,8 +4648,263 @@ async def ask_riddle_challenge(winner, winner_id, num=7):
     await asyncio.sleep(3)
 
     return riddle_winner_id
-    
 
+
+
+async def ask_rapidfire_challenge(winner, winner_id, num=1):
+    """
+    Rapid Fire Challenge: Show 30 questions in 30 seconds (1 per second)
+    Questions auto-delete after 1 second
+    Wait 3 more seconds for answers (total 33s)
+    Players can answer any question shown - winner has most points
+    """
+    global wf_winner
+    wf_winner = True
+
+    gifs = [
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/speed1.gif",
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/rapid-fire.gif",
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/lightning.gif"
+    ]
+    gif_url = random.choice(gifs)
+
+    await safe_send(channel, content="\u200b\n\u200b\n⏱️⚡ **30 for 30**: 30 Questions, 30 Seconds\n\u200b", embed=discord.Embed().set_image(url=gif_url))
+    await asyncio.sleep(5)
+
+    total_questions = 30 * num
+
+    await safe_send(channel, f"\u200b\n💨 Get ready for **{total_questions} questions** at lightning speed!\n\u200b")
+    await asyncio.sleep(3)
+
+    # Fetch questions from trivia, jeopardy, and crossword collections
+    try:
+        questions_per_collection = total_questions // 3
+        remainder = total_questions % 3
+
+        recent_ids = await get_all_recent_question_ids()
+        all_questions = []
+
+        # Fetch from trivia_questions
+        trivia_count = questions_per_collection + (1 if remainder > 0 else 0)
+        if trivia_count > 0:
+            trivia_collection = db["trivia_questions"]
+            pipeline_trivia = [
+                {"$match": {"_id": {"$nin": list(recent_ids["general"])}}},
+                {"$sample": {"size": trivia_count}}
+            ]
+            trivia_questions = await trivia_collection.aggregate(pipeline_trivia).to_list(length=trivia_count)
+            for doc in trivia_questions:
+                doc["db"] = "trivia_questions"
+            all_questions.extend(trivia_questions)
+
+        # Fetch from jeopardy_questions
+        jeopardy_count = questions_per_collection + (1 if remainder > 1 else 0)
+        if jeopardy_count > 0:
+            jeopardy_collection = db["jeopardy_questions"]
+            pipeline_jeopardy = [
+                {"$match": {"_id": {"$nin": list(recent_ids["jeopardy"])}}},
+                {"$sample": {"size": jeopardy_count}}
+            ]
+            jeopardy_questions = await jeopardy_collection.aggregate(pipeline_jeopardy).to_list(length=jeopardy_count)
+            for doc in jeopardy_questions:
+                doc["db"] = "jeopardy_questions"
+            all_questions.extend(jeopardy_questions)
+
+        # Fetch from crossword_questions
+        crossword_count = questions_per_collection
+        if crossword_count > 0:
+            crossword_collection = db["crossword_questions"]
+            pipeline_crossword = [
+                {"$match": {"_id": {"$nin": list(recent_ids["crossword"])}}},
+                {"$sample": {"size": crossword_count}}
+            ]
+            crossword_questions = await crossword_collection.aggregate(pipeline_crossword).to_list(length=crossword_count)
+            for doc in crossword_questions:
+                doc["db"] = "crossword_questions"
+            all_questions.extend(crossword_questions)
+
+        # Shuffle the combined questions
+        random.shuffle(all_questions)
+
+        print(f"Rapid Fire: Loaded {len(all_questions)} questions")
+
+    except Exception as e:
+        sentry_sdk.capture_exception(e)
+        print(f"Error selecting rapid fire questions:\n{traceback.format_exc()}")
+        await safe_send(channel, "\u200b\n❌ Failed to load questions. Please try again.\n\u200b")
+        return None
+
+    # Prepare answer tracking
+    user_data = {}  # {user_id: (display_name, points)}
+    answered_questions = {}  # {question_idx: {user_id: True}}
+    question_start_time = asyncio.get_event_loop().time()
+
+    # Message check function for answer collection
+    def check(m):
+        target_channel = _active_game_channel or channel
+        return m.channel == target_channel and m.author != get_bot().user
+
+    # Start answer collection task in background
+    answer_collection_task = asyncio.create_task(
+        collect_rapidfire_answers(
+            all_questions, user_data, answered_questions,
+            check, question_start_time + 33.0
+        )
+    )
+
+    await safe_send(channel, "\u200b\n⚡ **GO!** ⚡\n\u200b")
+    await asyncio.sleep(1)
+
+    # Display questions rapid-fire style (1 per second, auto-delete)
+    for i, q in enumerate(all_questions, 1):
+        try:
+            category = q.get("category", "General")
+            question_text = q.get("question", "")
+
+            embed = discord.Embed(
+                title=f"⚡ #{i}/{total_questions}",
+                description=f"**{category}**\n\n{question_text}",
+                color=discord.Color.red()
+            )
+
+            msg = await safe_send(channel, embed=embed)
+            await asyncio.sleep(1)
+
+            # Delete the message
+            if msg:
+                try:
+                    await msg.delete()
+                except:
+                    pass  # Ignore deletion errors
+
+        except Exception as e:
+            print(f"Error displaying question {i}: {e}")
+            continue
+
+    # Wait 3 more seconds for final answers
+    await asyncio.sleep(2)
+
+    # Cancel answer collection
+    answer_collection_task.cancel()
+    try:
+        await answer_collection_task
+    except asyncio.CancelledError:
+        pass
+
+    # Store question IDs to avoid repeats
+    try:
+        question_ids_to_store = {"general": [], "jeopardy": [], "crossword": []}
+        for q in all_questions:
+            db_name = q.get("db", "")
+            qid = q.get("_id")
+            if qid:
+                if "trivia" in db_name:
+                    question_ids_to_store["general"].append(qid)
+                elif "jeopardy" in db_name:
+                    question_ids_to_store["jeopardy"].append(qid)
+                elif "crossword" in db_name:
+                    question_ids_to_store["crossword"].append(qid)
+
+        for db_key, ids in question_ids_to_store.items():
+            if ids:
+                await store_question_ids_in_mongo(ids, db_key)
+    except Exception as e:
+        print(f"Error storing question IDs: {e}")
+
+    # Display results
+    await safe_send(channel, "\u200b\n⏰ **TIME'S UP!**\n\u200b")
+    await asyncio.sleep(2)
+
+    sorted_users = sorted(user_data.items(), key=lambda x: x[1][1], reverse=True)
+
+    if sorted_users:
+        message = "\u200b\n🏁🏆 **Final Standings**\n\u200b\n"
+        for counter, (user_id, (display_name, points)) in enumerate(sorted_users[:10], start=1):
+            if counter == 1:
+                message += f"🥇 **{display_name}**: {points} pts\n"
+            elif counter == 2:
+                message += f"🥈 **{display_name}**: {points} pts\n"
+            elif counter == 3:
+                message += f"🥉 **{display_name}**: {points} pts\n"
+            else:
+                message += f"{counter}. **{display_name}**: {points} pts\n"
+        message += "\u200b"
+        await safe_send(channel, message)
+
+        # Determine winner
+        top_score = sorted_users[0][1][1]
+        top_winners = [(uid, name) for uid, (name, score) in sorted_users if score == top_score]
+
+        await asyncio.sleep(2)
+
+        if len(top_winners) == 1:
+            winner_uid, winner_name = top_winners[0]
+            await safe_send(channel, f"\u200b\n🎉⚡ **{winner_name}** wins with {top_score} points!\n\u200b")
+            wf_winner = True
+            return winner_uid
+        else:
+            message = f"\u200b\n🤝 It's a tie! **Winners:**\n\u200b"
+            for uid, name in top_winners:
+                message += f"• **{name}** ({top_score} pts)\n"
+            message += "\u200b"
+            await safe_send(channel, message)
+            wf_winner = True
+            return None
+    else:
+        await safe_send(channel, "\u200b\n👎😢 **No correct answers!** Too fast for you?\n\u200b")
+        wf_winner = True
+        return None
+
+
+async def collect_rapidfire_answers(all_questions, user_data, answered_questions, check, end_time):
+    """
+    Background task to collect answers during rapid fire challenge
+    """
+    while asyncio.get_event_loop().time() < end_time:
+        try:
+            timeout = max(0.1, end_time - asyncio.get_event_loop().time())
+            message = await get_bot().wait_for("message", timeout=timeout, check=check)
+
+            # Delete user's message immediately to keep channel clean
+            try:
+                await message.delete()
+            except:
+                pass  # Ignore if bot lacks delete permissions
+
+            content = message.content.strip()
+            user_id = message.author.id
+            display_name = message.author.display_name
+
+            # Check answer against all questions
+            for idx, q in enumerate(all_questions):
+                # Skip if user already answered this question correctly
+                if idx in answered_questions and user_id in answered_questions[idx]:
+                    continue
+
+                answers = q.get("answers", [])
+                category = q.get("category", "")
+                url = q.get("url", "")
+
+                # Check if answer matches
+                for answer in answers:
+                    if fuzzy_match(content, answer, category, url):
+                        # Award point
+                        if user_id not in user_data:
+                            user_data[user_id] = (display_name, 0)
+                        user_data[user_id] = (display_name, user_data[user_id][1] + 1)
+
+                        # Mark question as answered by this user
+                        if idx not in answered_questions:
+                            answered_questions[idx] = {}
+                        answered_questions[idx][user_id] = True
+
+                        break  # Stop checking other answers for this question
+
+        except asyncio.TimeoutError:
+            break
+        except Exception as e:
+            print(f"Error in rapid fire answer collection: {e}")
+            continue
 
 
 async def ask_stock_challenge(winner, winner_id, num=7):
@@ -5634,7 +5889,8 @@ async def ask_chaos_challenge(winner, winner_id, num_of_games):
         ask_audio_question_challenge,
         ask_feud_question,
         ask_okrace_challenge,
-        ask_sports_logos_challenge
+        ask_sports_logos_challenge,
+        ask_rapidfire_challenge
     ]
 
 
@@ -13163,6 +13419,11 @@ async def select_wof_questions(winner, winner_id):
             await ask_sports_logos_challenge(winner, winner_id, 5)
             await asyncio.sleep(3)
             return None
+
+        elif selected_wof_category == "46":
+            await ask_rapidfire_challenge(winner, winner_id, 5)
+            await asyncio.sleep(3)
+            return None
         
         elif selected_wof_category == "99":
             await ask_chaos_challenge(winner, winner_id, 5)
@@ -13431,10 +13692,11 @@ async def ask_wof_number(winner, winner_id):
         "43": "Who Says?",
         "44": "Let's Talk",
         "45": "Jock Talk",
+        "46": "30 for 30",
         "99": "CHAOS"
     }
     multiplayer_required = {k for k in unlocks if k not in {"5", "6", "7", "8", "9"}}
-    all_options = {str(i) for i in range(46)} | {"00", "x", "99"}
+    all_options = {str(i) for i in range(47)} | {"00", "x", "99"}
 
     start = asyncio.get_event_loop().time()
     selected_question = None
@@ -13453,7 +13715,7 @@ async def ask_wof_number(winner, winner_id):
             if content == "00":
                 await message.add_reaction("👍")
                 set_a = [str(i) for i in range(5)]
-                set_b = [str(i) for i in range(5, 46)] if len(round_responders) >= num_list_players else [str(i) for i in range(5, 10)]
+                set_b = [str(i) for i in range(5, 47)] if len(round_responders) >= num_list_players else [str(i) for i in range(5, 10)]
                 selected_question = random.choice(set_a if random.random() < 0.5 else set_b)
 
                 # Store frequency data for random selection
@@ -13494,7 +13756,7 @@ async def ask_wof_number(winner, winner_id):
     # Fallback random selection
     return "x"
     set_a = [str(i) for i in range(5)]
-    set_b = [str(i) for i in range(5, 46)] if len(round_responders) >= num_list_players else [str(i) for i in range(5, 10)]
+    set_b = [str(i) for i in range(5, 47)] if len(round_responders) >= num_list_players else [str(i) for i in range(5, 10)]
     selected_question = random.choice(set_a if random.random() < 0.5 else set_b)
     
     # Store frequency data for random selection
@@ -17556,6 +17818,7 @@ async def start_trivia():
             #await ask_audio_question_challenge("TheOkraG",591861826690613248, 7)
             #await ask_flags_challenge("The Creator", 591861826690613248)
             #await ask_sports_logos_challenge("TheOkraG", 591861826690613248, 7)
+            #await ask_rapidfire_challenge("TheOkraG", 591861826690613248, 1)
             
 
             if len(round_responders) == 0:
@@ -17588,8 +17851,7 @@ async def start_trivia():
 
             start_message = f"\u200b\n✨🧪 **NEW** from the **Okra Lab**! 🧪✨\n"
             
-            start_message += f"\n🍦 **Simply Trivia** [New Channel]\n"
-            start_message += f"\nNo frills. No bells & whistles. Just trivia.\n"
+            start_message += f"\n⏱️⚡ **30 for 30** [Mini Game]\n"
 
             start_message += "\n\n\u200b"
             await safe_send(channel, start_message)
