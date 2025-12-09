@@ -13191,8 +13191,10 @@ async def select_wof_questions(winner, winner_id):
         message += f"{counter}.\u200b 🎙️🗯️ Let's Talk 🎧\n"
         counter = counter + 1
         message += f"{counter}.\u200b 🏈🏀 Jock Talk\n"
+        counter = counter + 1
+        message += f"{counter}.\u200b ⏱️⚡ 30 for 30\n"
         message += f"99.\u200b 🌀🤯 CHAOS\n"
-
+        
         message += f"\n⚙️ **Other Options**\n"
   
         message += f"00.\u200b 🥗🌟 Okra's Choice\n"
