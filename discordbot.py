@@ -13421,7 +13421,7 @@ async def select_wof_questions(winner, winner_id):
             return None
 
         elif selected_wof_category == "46":
-            await ask_rapidfire_challenge(winner, winner_id, 5)
+            await ask_rapidfire_challenge(winner, winner_id, 1)
             await asyncio.sleep(3)
             return None
         
