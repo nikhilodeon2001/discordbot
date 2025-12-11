@@ -19,6 +19,10 @@ first_answer_time = None
 first_answerer = None
 additional_answerers = []
 
+# Question tracking for #flag functionality (separate from discordbot.py)
+simply_current_question = None
+simply_previous_question = None
+
 # Leaderboard tracking
 questions_count = 0  # Counter for questions asked since bot started
 
@@ -49,6 +53,60 @@ async def get_trivia_question(db):
     if questions:
         return questions[0]
     return None
+
+
+async def load_simply_previous_question(db):
+    """
+    Load previous question from MongoDB on startup
+
+    Args:
+        db: MongoDB database instance
+    """
+    global simply_previous_question
+
+    try:
+        # Retrieve previous question from MongoDB
+        previous_question_retrieved = await db.previous_question_simply_trivia.find_one({"_id": "previous_question"})
+
+        if previous_question_retrieved is not None:
+            simply_previous_question = {
+                "category": previous_question_retrieved.get("category"),
+                "question": previous_question_retrieved.get("question"),
+                "url": previous_question_retrieved.get("url"),
+                "answers": previous_question_retrieved.get("answers"),
+                "_id": previous_question_retrieved.get("question_id")
+            }
+        else:
+            # If not found, set to None
+            simply_previous_question = None
+
+        print(f"📝 Loaded simply_trivia previous question from MongoDB")
+    except Exception as e:
+        print(f"❌ Error loading simply_trivia previous question: {e}")
+        simply_previous_question = None
+
+
+async def save_simply_previous_question(db):
+    """
+    Save previous question to MongoDB
+
+    Args:
+        db: MongoDB database instance
+    """
+    from discordbot import save_data_to_mongo
+
+    try:
+        if simply_previous_question:
+            data = {
+                "category": simply_previous_question.get("category"),
+                "question": simply_previous_question.get("question"),
+                "url": simply_previous_question.get("url"),
+                "answers": simply_previous_question.get("answers"),
+                "question_id": simply_previous_question.get("_id")
+            }
+            await save_data_to_mongo("previous_question_simply_trivia", "previous_question", data)
+    except Exception as e:
+        print(f"❌ Error saving simply_trivia previous question: {e}")
 
 
 async def check_and_record_top_streak(db, user_id, user_name, streak_count):
@@ -115,6 +173,124 @@ async def record_correct_answer(db, user_id, user_name, question_id):
     })
 
 
+class SimplyTriviaFlagReasonModal(discord.ui.Modal, title="Flag Question"):
+    """Modal for collecting the reason for flagging a simply_trivia question"""
+
+    reason = discord.ui.TextInput(
+        label="Why are you flagging this question?",
+        placeholder="Enter your reason here...",
+        style=discord.TextStyle.paragraph,
+        required=True,
+        max_length=500
+    )
+
+    def __init__(self, question, question_type, display_name):
+        super().__init__()
+        self.question = question
+        self.question_type = question_type  # "current" or "previous"
+        self.display_name = display_name
+
+    async def on_submit(self, interaction: discord.Interaction):
+        from discordbot import update_audit_question
+
+        try:
+            reason_text = self.reason.value
+
+            # Convert simply_trivia question format to audit format
+            question_for_audit = {
+                "trivia_category": self.question.get("category", ""),
+                "trivia_question": self.question.get("question", ""),
+                "trivia_url": self.question.get("url", ""),
+                "trivia_answer_list": self.question.get("answers", []),
+                "trivia_db": "trivia_questions",
+                "trivia_id": self.question.get("_id")
+            }
+
+            # Call update_audit_question with the selected question and reason
+            await update_audit_question(
+                question_for_audit,
+                f"[SIMPLY_TRIVIA - {self.question_type.upper()}] {reason_text}",
+                self.display_name
+            )
+            await interaction.response.send_message(
+                f"✅ Thank you! Your flag for the **{self.question_type}** question has been recorded.",
+                ephemeral=True
+            )
+        except Exception as e:
+            print(f"Error in SimplyTriviaFlagReasonModal submit: {e}")
+            await interaction.response.send_message(
+                "❌ An error occurred while recording your flag.",
+                ephemeral=True
+            )
+
+
+class SimplyTriviaFlagQuestionView(discord.ui.View):
+    """View with buttons to select which question to flag"""
+
+    def __init__(self, current_question, previous_question, user_id, display_name):
+        super().__init__(timeout=None)  # No timeout - buttons stay active until message is deleted
+        self.current_question = current_question
+        self.previous_question = previous_question
+        self.user_id = user_id
+        self.display_name = display_name
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        """Check if the user interacting is the one who typed #flag"""
+        if interaction.user.id != self.user_id:
+            await interaction.response.send_message(
+                "❌ Only the user who typed #flag can use these buttons.",
+                ephemeral=True
+            )
+            return False
+        return True
+
+    @discord.ui.button(label="Current Question", style=discord.ButtonStyle.success, emoji="🚩")
+    async def flag_current_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        """Button to flag the current question"""
+        if self.current_question is None:
+            await interaction.response.send_message(
+                "❌ No current question available to flag.",
+                ephemeral=True
+            )
+            return
+
+        # Show the modal to collect reason
+        modal = SimplyTriviaFlagReasonModal(self.current_question, "current", self.display_name)
+        await interaction.response.send_modal(modal)
+
+    @discord.ui.button(label="Previous Question", style=discord.ButtonStyle.danger, emoji="⏮️")
+    async def flag_previous_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        """Button to flag the previous question"""
+        if self.previous_question is None:
+            await interaction.response.send_message(
+                "❌ No previous question available to flag.",
+                ephemeral=True
+            )
+            return
+
+        # Show the modal to collect reason
+        modal = SimplyTriviaFlagReasonModal(self.previous_question, "previous", self.display_name)
+        await interaction.response.send_modal(modal)
+
+    @discord.ui.button(label="Cancel", style=discord.ButtonStyle.secondary, emoji="❌")
+    async def cancel_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        """Button to cancel and close the embed"""
+        # Delete the message
+        try:
+            await interaction.message.delete()
+            await interaction.response.send_message(
+                "✅ Flag action cancelled.",
+                ephemeral=True,
+                delete_after=3
+            )
+        except:
+            await interaction.response.send_message(
+                "✅ Cancelled.",
+                ephemeral=True,
+                delete_after=3
+            )
+
+
 async def handle_answer(message, bot, db, fuzzy_match_func):
     """
     Handle incoming answers in Simply Trivia channel
@@ -139,12 +315,77 @@ async def handle_answer(message, bot, db, fuzzy_match_func):
         except Exception as e:
             print(f"❌ Failed to react with flag emoji: {e}")
 
-        # Create question dict in the format expected by update_audit_question
-        question_data = {
-            "trivia_db": "trivia_questions",
-            "trivia_id": active_question.get("_id")
-        }
-        await update_audit_question(question_data, message.content.strip(), message.author.display_name)
+        # Build embed showing both current and previous questions
+        embed = discord.Embed(
+            title="🚩 Which question do you want to flag?",
+            description="Select the question you want to flag and provide a reason.",
+            color=discord.Color.red()
+        )
+
+        # Add current question info
+        if simply_current_question:
+            current_answer = simply_current_question.get("answers", ["N/A"])
+            if isinstance(current_answer, list):
+                current_answer = ", ".join(str(a) for a in current_answer)
+            embed.add_field(
+                name="🟢 CURRENT QUESTION",
+                value=f"**Category:** {simply_current_question.get('category', 'N/A')}\n"
+                      f"**Question:** {simply_current_question.get('question', 'N/A')}\n"
+                      f"**Answer:** {current_answer}",
+                inline=False
+            )
+        else:
+            embed.add_field(
+                name="🟢 CURRENT QUESTION",
+                value="*No current question available*",
+                inline=False
+            )
+
+        # Add previous question info
+        if simply_previous_question:
+            previous_answer = simply_previous_question.get("answers", ["N/A"])
+            if isinstance(previous_answer, list):
+                previous_answer = ", ".join(str(a) for a in previous_answer)
+            embed.add_field(
+                name="🔴 PREVIOUS QUESTION",
+                value=f"**Category:** {simply_previous_question.get('category', 'N/A')}\n"
+                      f"**Question:** {simply_previous_question.get('question', 'N/A')}\n"
+                      f"**Answer:** {previous_answer}",
+                inline=False
+            )
+        else:
+            embed.add_field(
+                name="🔴 PREVIOUS QUESTION",
+                value="*No previous question available*",
+                inline=False
+            )
+
+        # Create view with buttons
+        view = SimplyTriviaFlagQuestionView(
+            current_question=simply_current_question,
+            previous_question=simply_previous_question,
+            user_id=message.author.id,
+            display_name=message.author.display_name
+        )
+
+        # Send message with embed and view (visible for 30 seconds)
+        try:
+            await message.channel.send(
+                content=f"{message.author.mention}",
+                embed=embed,
+                view=view,
+                delete_after=30  # Auto-delete after 30 seconds
+            )
+        except Exception as e:
+            print(f"❌ Error sending flag embed: {e}")
+            # Fallback to old behavior if embed fails
+            if active_question:
+                question_data = {
+                    "trivia_db": "trivia_questions",
+                    "trivia_id": active_question.get("_id")
+                }
+                await update_audit_question(question_data, message.content.strip(), message.author.display_name)
+
         return
 
     # Check if answer is correct against any valid answer
@@ -196,6 +437,9 @@ async def start_simply_trivia(bot, db, channel_id, fuzzy_match_func):
 
     print(f"🎯 Simply Trivia started in channel: {channel.name}")
 
+    # Load previous question from MongoDB on startup
+    await load_simply_previous_question(db)
+
     while True:
         try:
             # Get next question
@@ -205,9 +449,17 @@ async def start_simply_trivia(bot, db, channel_id, fuzzy_match_func):
                 await asyncio.sleep(10)
                 continue
 
-            # Set up tracking for this question
+            # Move current question to previous before setting new question
             global active_question, first_answerer, first_answer_time, additional_answerers
+            global simply_current_question, simply_previous_question
+
+            if simply_current_question is not None:
+                simply_previous_question = simply_current_question.copy()
+                await save_simply_previous_question(db)
+
+            # Set up tracking for this question
             active_question = question
+            simply_current_question = question.copy()
             first_answerer = None
             first_answer_time = None
             additional_answerers = []
