@@ -14333,7 +14333,7 @@ def generate_crossword_image(answer, prefill=0.5):
     return image_buffer, display_string
 
 
-async def process_round_options(round_winner, winner_points, round_winner_id):
+async def clear_round_options():
     global since_token, time_between_questions, time_between_questions_default, ghost_mode, since_token, categories_to_exclude, num_crossword_clues, num_jeopardy_clues, num_mysterybox_clues, num_wof_clues, god_mode, yolo_mode, magic_number, wf_winner, num_math_questions, num_stats_questions, image_questions, nice_okra, creep_okra, marx_mode, blind_mode, seductive_okra, joke_okra, sniper_mode, blitz_mode, exact_mode, golf_mode, cloak_mode, cloaked_user, haiku_okra, trailer_okra, heist_okra, horoscope_okra, rap_okra, shakespeare_okra, pirate_okra, noir_okra, hype_okra, roast_okra
     time_between_questions = time_between_questions_default
     ghost_mode = ghost_mode_default
@@ -14372,6 +14372,7 @@ async def process_round_options(round_winner, winner_points, round_winner_id):
     cloak_mode = cloak_mode_default
     cloaked_user = None
 
+async def process_round_options(round_winner, winner_points, round_winner_id):
     if round_winner is None:
         return
 
@@ -15678,6 +15679,8 @@ async def ask_question(trivia_category, trivia_question, trivia_url, trivia_answ
     """Ask the trivia question."""
     # Define the numbered block emojis for questions 1 to 10
     numbered_blocks = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"]
+    if exact_mode:
+        numbered_blocks = [f"{block}🤓" for block in numbered_blocks]
     number_block = numbered_blocks[question_number - 1]  # Get the corresponding numbered block
     new_solution = None
     new_question = None
@@ -17944,6 +17947,7 @@ async def start_trivia():
                 
             reset_embed_color()
             round_winner, winner_points, round_winner_id = await determine_round_winner()
+            await clear_round_options()
             await update_round_streaks(round_winner, round_winner_id)
 
             round_count += 1
