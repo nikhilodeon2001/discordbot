@@ -15967,7 +15967,7 @@ def trig_checker(response, answer):
         return False
 
 
-def fuzzy_match(user_answer, correct_answer, category, url, _skip_alias_check=False):
+def fuzzy_match(user_answer, correct_answer, category, url, _skip_alias_check=False, ignore_exact_mode=False):
     threshold = 0.90
 
     if not isinstance(user_answer, str) or not isinstance(correct_answer, str):
@@ -16083,9 +16083,9 @@ def fuzzy_match(user_answer, correct_answer, category, url, _skip_alias_check=Fa
     if user_answer == correct_answer:
         return True
 
-    if exact_mode:
+    if exact_mode and not ignore_exact_mode:
         return False
-    
+
     # New Step: First 5 characters match
     if user_answer[:5] == correct_answer[:5] or no_spaces_user[:5] == no_spaces_correct[:5] or no_filler_user[:5] == no_filler_correct[:5] or no_filler_spaces_user[:5] == no_filler_spaces_correct[:5]:
         return True
