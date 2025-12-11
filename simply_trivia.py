@@ -153,7 +153,8 @@ async def handle_answer(message, bot, db, fuzzy_match_func):
             message.content,
             correct_answer,
             active_question.get("category", ""),
-            active_question.get("url", "")
+            active_question.get("url", ""),
+            ignore_exact_mode=True
         ):
             current_time = asyncio.get_event_loop().time()
 
@@ -268,7 +269,8 @@ async def start_simply_trivia(bot, db, channel_id, fuzzy_match_func):
                             # Check if this message contains a correct answer
                             for correct_answer in answers:
                                 if fuzzy_match_func(msg.content, correct_answer,
-                                                   question.get("category", ""), question.get("url", "")):
+                                                   question.get("category", ""), question.get("url", ""),
+                                                   ignore_exact_mode=True):
                                     await msg.add_reaction("✅")
                                     reacted_users.add(msg.author.id)
                                     break
