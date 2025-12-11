@@ -4227,6 +4227,93 @@ async def ask_lyric_challenge(winner, winner_id, num=7):
     return lyric_winner_id
 
 
+class FlagReasonModal(discord.ui.Modal, title="Flag Question"):
+    """Modal for collecting the reason for flagging a question"""
+
+    reason = discord.ui.TextInput(
+        label="Why are you flagging this question?",
+        placeholder="Enter your reason here...",
+        style=discord.TextStyle.paragraph,
+        required=True,
+        max_length=500
+    )
+
+    def __init__(self, question, question_type, display_name):
+        super().__init__()
+        self.question = question
+        self.question_type = question_type  # "current" or "previous"
+        self.display_name = display_name
+
+    async def on_submit(self, interaction: discord.Interaction):
+        try:
+            reason_text = self.reason.value
+            # Call update_audit_question with the selected question and reason
+            await update_audit_question(
+                self.question,
+                f"[{self.question_type.upper()}] {reason_text}",
+                self.display_name
+            )
+            await interaction.response.send_message(
+                f"✅ Thank you! Your flag for the **{self.question_type}** question has been recorded.",
+                ephemeral=True
+            )
+        except Exception as e:
+            print(f"Error in FlagReasonModal submit: {e}")
+            await interaction.response.send_message(
+                "❌ An error occurred while recording your flag.",
+                ephemeral=True
+            )
+
+
+class FlagQuestionView(discord.ui.View):
+    """View with buttons to select which question to flag"""
+
+    def __init__(self, current_question, previous_question, user_id, display_name):
+        super().__init__(timeout=None)  # No timeout - buttons stay active until message is deleted
+        self.current_question = current_question
+        self.previous_question = previous_question
+        self.user_id = user_id
+        self.display_name = display_name
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        """Check if the user interacting is the one who typed #flag"""
+        if interaction.user.id != self.user_id:
+            await interaction.response.send_message(
+                "❌ Only the user who typed #flag can use these buttons.",
+                ephemeral=True
+            )
+            return False
+        return True
+
+    @discord.ui.button(label="Flag Current Question", style=discord.ButtonStyle.danger, emoji="🚩")
+    async def flag_current_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        """Button to flag the current question"""
+        if self.current_question is None:
+            await interaction.response.send_message(
+                "❌ No current question available to flag.",
+                ephemeral=True
+            )
+            return
+
+        # Show the modal to collect reason
+        modal = FlagReasonModal(self.current_question, "current", self.display_name)
+        await interaction.response.send_modal(modal)
+
+    @discord.ui.button(label="Flag Previous Question", style=discord.ButtonStyle.secondary, emoji="⏮️")
+    async def flag_previous_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        """Button to flag the previous question"""
+        if self.previous_question is None:
+            await interaction.response.send_message(
+                "❌ No previous question available to flag.",
+                ephemeral=True
+            )
+            return
+
+        # Show the modal to collect reason
+        modal = FlagReasonModal(self.previous_question, "previous", self.display_name)
+        await interaction.response.send_modal(modal)
+
+
 class VoiceChannelJoinView(discord.ui.View):
     """View with a green button to join voice channel (shows native Discord join UI)"""
 
@@ -18325,7 +18412,73 @@ async def on_message(message):
     if "#flag" in message.content.strip().lower() and collect_feedback_mode == True and message.author.id != get_bot().user.id and message.channel.id == channel_id:
         if emoji_mode == True:
             await message.add_reaction("🚩")
-        await update_audit_question(current_question, message.content.strip(), message.author.display_name)
+
+        # Build embed showing both current and previous questions
+        embed = discord.Embed(
+            title="🚩 Which question do you want to flag?",
+            description="Select the question you want to flag and provide a reason.",
+            color=discord.Color.red()
+        )
+
+        # Add current question info
+        if current_question:
+            current_answer = current_question.get("trivia_answer_list", ["N/A"])
+            if isinstance(current_answer, list):
+                current_answer = ", ".join(str(a) for a in current_answer)
+            embed.add_field(
+                name="🟢 CURRENT QUESTION",
+                value=f"**Category:** {current_question.get('trivia_category', 'N/A')}\n"
+                      f"**Question:** {current_question.get('trivia_question', 'N/A')}\n"
+                      f"**Answer:** {current_answer}",
+                inline=False
+            )
+        else:
+            embed.add_field(
+                name="🟢 CURRENT QUESTION",
+                value="*No current question available*",
+                inline=False
+            )
+
+        # Add previous question info
+        if previous_question:
+            previous_answer = previous_question.get("trivia_answer_list", ["N/A"])
+            if isinstance(previous_answer, list):
+                previous_answer = ", ".join(str(a) for a in previous_answer)
+            embed.add_field(
+                name="🔴 PREVIOUS QUESTION",
+                value=f"**Category:** {previous_question.get('trivia_category', 'N/A')}\n"
+                      f"**Question:** {previous_question.get('trivia_question', 'N/A')}\n"
+                      f"**Answer:** {previous_answer}",
+                inline=False
+            )
+        else:
+            embed.add_field(
+                name="🔴 PREVIOUS QUESTION",
+                value="*No previous question available*",
+                inline=False
+            )
+
+        # Create view with buttons
+        view = FlagQuestionView(
+            current_question=current_question,
+            previous_question=previous_question,
+            user_id=message.author.id,
+            display_name=message.author.display_name
+        )
+
+        # Send message with embed and view (visible for 30 seconds)
+        try:
+            await message.channel.send(
+                content=f"{message.author.mention}",
+                embed=embed,
+                view=view,
+                delete_after=30  # Auto-delete after 30 seconds
+            )
+        except Exception as e:
+            print(f"Error sending flag embed: {e}")
+            # Fallback to old behavior if embed fails
+            await update_audit_question(current_question, message.content.strip(), message.author.display_name)
+
         return
 
     if message.content.startswith("#") and (message.author.id == current_longest_round_streak["user_id"] or message.author.id == okrag_id) and message.channel.id == channel_id:
