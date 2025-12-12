@@ -184,11 +184,13 @@ class SimplyTriviaFlagReasonModal(discord.ui.Modal, title="Flag Question"):
         max_length=500
     )
 
-    def __init__(self, question, question_type, display_name):
+    def __init__(self, question, question_type, display_name, flag_message, embed_message):
         super().__init__()
         self.question = question
         self.question_type = question_type  # "current" or "previous"
         self.display_name = display_name
+        self.flag_message = flag_message  # Original message where #flag was typed
+        self.embed_message = embed_message  # The embed message to delete after submission
 
     async def on_submit(self, interaction: discord.Interaction):
         from discordbot import update_audit_question
@@ -206,12 +208,21 @@ class SimplyTriviaFlagReasonModal(discord.ui.Modal, title="Flag Question"):
                 "trivia_id": self.question.get("_id")
             }
 
-            # Call update_audit_question with the selected question and reason
+            # Call update_audit_question with the selected question, reason, and message context
             await update_audit_question(
                 question_for_audit,
                 f"[SIMPLY_TRIVIA - {self.question_type.upper()}] {reason_text}",
-                self.display_name
+                self.display_name,
+                self.flag_message
             )
+
+            # Delete the embed message after successful submission
+            if self.embed_message:
+                try:
+                    await self.embed_message.delete()
+                except:
+                    pass  # Ignore if already deleted or can't delete
+
             await interaction.response.send_message(
                 f"✅ Thank you! Your flag for the **{self.question_type}** question has been recorded.",
                 ephemeral=True
@@ -227,12 +238,14 @@ class SimplyTriviaFlagReasonModal(discord.ui.Modal, title="Flag Question"):
 class SimplyTriviaFlagQuestionView(discord.ui.View):
     """View with buttons to select which question to flag"""
 
-    def __init__(self, current_question, previous_question, user_id, display_name):
+    def __init__(self, current_question, previous_question, user_id, display_name, flag_message):
         super().__init__(timeout=None)  # No timeout - buttons stay active until message is deleted
         self.current_question = current_question
         self.previous_question = previous_question
         self.user_id = user_id
         self.display_name = display_name
+        self.flag_message = flag_message  # Original message where #flag was typed
+        self.embed_message = None  # Will be set after sending the embed
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         """Check if the user interacting is the one who typed #flag"""
@@ -255,7 +268,7 @@ class SimplyTriviaFlagQuestionView(discord.ui.View):
             return
 
         # Show the modal to collect reason
-        modal = SimplyTriviaFlagReasonModal(self.current_question, "current", self.display_name)
+        modal = SimplyTriviaFlagReasonModal(self.current_question, "current", self.display_name, self.flag_message, self.embed_message)
         await interaction.response.send_modal(modal)
 
     @discord.ui.button(label="Previous Question", style=discord.ButtonStyle.danger, emoji="⏮️")
@@ -269,7 +282,7 @@ class SimplyTriviaFlagQuestionView(discord.ui.View):
             return
 
         # Show the modal to collect reason
-        modal = SimplyTriviaFlagReasonModal(self.previous_question, "previous", self.display_name)
+        modal = SimplyTriviaFlagReasonModal(self.previous_question, "previous", self.display_name, self.flag_message, self.embed_message)
         await interaction.response.send_modal(modal)
 
     @discord.ui.button(label="Cancel", style=discord.ButtonStyle.secondary, emoji="❌")
@@ -365,17 +378,20 @@ async def handle_answer(message, bot, db, fuzzy_match_func):
             current_question=simply_current_question,
             previous_question=simply_previous_question,
             user_id=message.author.id,
-            display_name=message.author.display_name
+            display_name=message.author.display_name,
+            flag_message=message
         )
 
         # Send message with embed and view (visible for 30 seconds)
         try:
-            await message.channel.send(
+            embed_message = await message.channel.send(
                 content=f"{message.author.mention}",
                 embed=embed,
                 view=view,
                 delete_after=30  # Auto-delete after 30 seconds
             )
+            # Store the embed message reference in the view so modals can delete it
+            view.embed_message = embed_message
         except Exception as e:
             print(f"❌ Error sending flag embed: {e}")
             # Fallback to old behavior if embed fails
