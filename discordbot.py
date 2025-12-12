@@ -4300,7 +4300,7 @@ class FlagQuestionView(discord.ui.View):
             return False
         return True
 
-    @discord.ui.button(label="Flag Current Question", style=discord.ButtonStyle.danger, emoji="🚩")
+    @discord.ui.button(label="Current Question", style=discord.ButtonStyle.success, emoji="🚩")
     async def flag_current_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         """Button to flag the current question"""
         if self.current_question is None:
@@ -4314,7 +4314,7 @@ class FlagQuestionView(discord.ui.View):
         modal = FlagReasonModal(self.current_question, "current", self.display_name, self.flag_message, self.embed_message)
         await interaction.response.send_modal(modal)
 
-    @discord.ui.button(label="Flag Previous Question", style=discord.ButtonStyle.secondary, emoji="⏮️")
+    @discord.ui.button(label="Previous Question", style=discord.ButtonStyle.danger, emoji="⏮️")
     async def flag_previous_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         """Button to flag the previous question"""
         if self.previous_question is None:
@@ -4327,6 +4327,24 @@ class FlagQuestionView(discord.ui.View):
         # Show the modal to collect reason
         modal = FlagReasonModal(self.previous_question, "previous", self.display_name, self.flag_message, self.embed_message)
         await interaction.response.send_modal(modal)
+
+    @discord.ui.button(label="Cancel", style=discord.ButtonStyle.secondary, emoji="❌")
+    async def cancel_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        """Button to cancel and close the embed"""
+        # Delete the message
+        try:
+            await interaction.message.delete()
+            await interaction.response.send_message(
+                "✅ Flag action cancelled.",
+                ephemeral=True,
+                delete_after=3
+            )
+        except:
+            await interaction.response.send_message(
+                "✅ Cancelled.",
+                ephemeral=True,
+                delete_after=3
+            )
 
 
 class VoiceChannelJoinView(discord.ui.View):
