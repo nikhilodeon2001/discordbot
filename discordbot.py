@@ -423,6 +423,7 @@ if prod_or_stage == "stage":
     SIMPLY_TRIVIA_CHANNEL_ID = 1447070553646174258
     SIMPLY_ANSWERS_CHANNEL_ID = 1447108022882140283
     SIMPLY_STREAKS_CHANNEL_ID = 1447107992657854586
+    FLAGGED_QUESTIONS_CHANNEL_ID = 1448901996257083493
 
 elif prod_or_stage == "prod":
     okrag_id = 591861826690613248
@@ -460,6 +461,7 @@ elif prod_or_stage == "prod":
     SIMPLY_TRIVIA_CHANNEL_ID = 1447071058443370577
     SIMPLY_ANSWERS_CHANNEL_ID = 1447107408387375235
     SIMPLY_STREAKS_CHANNEL_ID = 1447107455376035881
+    FLAGGED_QUESTIONS_CHANNEL_ID = 1448895124183453696
 
 
 
@@ -4238,21 +4240,32 @@ class FlagReasonModal(discord.ui.Modal, title="Flag Question"):
         max_length=500
     )
 
-    def __init__(self, question, question_type, display_name):
+    def __init__(self, question, question_type, display_name, flag_message, embed_message):
         super().__init__()
         self.question = question
         self.question_type = question_type  # "current" or "previous"
         self.display_name = display_name
+        self.flag_message = flag_message  # Original message where #flag was typed
+        self.embed_message = embed_message  # The embed message to delete after submission
 
     async def on_submit(self, interaction: discord.Interaction):
         try:
             reason_text = self.reason.value
-            # Call update_audit_question with the selected question and reason
+            # Call update_audit_question with the selected question, reason, and message context
             await update_audit_question(
                 self.question,
                 f"[{self.question_type.upper()}] {reason_text}",
-                self.display_name
+                self.display_name,
+                self.flag_message
             )
+
+            # Delete the embed message after successful submission
+            if self.embed_message:
+                try:
+                    await self.embed_message.delete()
+                except:
+                    pass  # Ignore if already deleted or can't delete
+
             await interaction.response.send_message(
                 f"✅ Thank you! Your flag for the **{self.question_type}** question has been recorded.",
                 ephemeral=True
@@ -4268,12 +4281,14 @@ class FlagReasonModal(discord.ui.Modal, title="Flag Question"):
 class FlagQuestionView(discord.ui.View):
     """View with buttons to select which question to flag"""
 
-    def __init__(self, current_question, previous_question, user_id, display_name):
+    def __init__(self, current_question, previous_question, user_id, display_name, flag_message):
         super().__init__(timeout=None)  # No timeout - buttons stay active until message is deleted
         self.current_question = current_question
         self.previous_question = previous_question
         self.user_id = user_id
         self.display_name = display_name
+        self.flag_message = flag_message  # Original message where #flag was typed
+        self.embed_message = None  # Will be set after sending the embed
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         """Check if the user interacting is the one who typed #flag"""
@@ -4296,7 +4311,7 @@ class FlagQuestionView(discord.ui.View):
             return
 
         # Show the modal to collect reason
-        modal = FlagReasonModal(self.current_question, "current", self.display_name)
+        modal = FlagReasonModal(self.current_question, "current", self.display_name, self.flag_message, self.embed_message)
         await interaction.response.send_modal(modal)
 
     @discord.ui.button(label="Flag Previous Question", style=discord.ButtonStyle.secondary, emoji="⏮️")
@@ -4310,7 +4325,7 @@ class FlagQuestionView(discord.ui.View):
             return
 
         # Show the modal to collect reason
-        modal = FlagReasonModal(self.previous_question, "previous", self.display_name)
+        modal = FlagReasonModal(self.previous_question, "previous", self.display_name, self.flag_message, self.embed_message)
         await interaction.response.send_modal(modal)
 
 
@@ -11338,7 +11353,102 @@ def update_audit_question(question, message_content, display_name):
                 print(f"Failed to update audit for document '{document_id}' in {question['db']}.")
 
 
-async def update_audit_question(question, message_content, display_name):
+async def send_flag_notification(question, flag_reason, display_name, flag_message):
+    """
+    Send a notification to the flagged questions channel when a question is flagged
+
+    Args:
+        question: Question dict with trivia_category, trivia_question, trivia_answer_list, trivia_db, trivia_id
+        flag_reason: The reason the user provided for flagging
+        display_name: User's display name
+        flag_message: The Discord message object where #flag was typed
+    """
+    try:
+        # Get the channel from the guild that the flag message came from
+        # This is more reliable than using bot.get_channel() or bot.fetch_channel()
+        guild = flag_message.guild
+        channel = guild.get_channel(FLAGGED_QUESTIONS_CHANNEL_ID)
+
+        if not channel:
+            print(f"❌ Flagged questions channel {FLAGGED_QUESTIONS_CHANNEL_ID} not found in guild {guild.name}!")
+            return
+
+    except Exception as e:
+        print(f"❌ Error getting flagged questions channel: {e}")
+        import traceback
+        traceback.print_exc()
+        return
+
+    try:
+
+        # Prepare MongoDB Compass deep link first (needed for description)
+        db_name = "triviabot"
+        collection_name = question.get("trivia_db", "unknown")
+        document_id = question.get("trivia_id")
+
+        # Build embed with clickable link in description
+        message_link = f"https://discord.com/channels/{flag_message.guild.id}/{flag_message.channel.id}/{flag_message.id}"
+
+        embed = discord.Embed(
+            title="🚩 Question Flagged",
+            description=f"[Jump to #flag message]({message_link})",
+            color=discord.Color.red(),
+            timestamp=datetime.datetime.now(timezone.utc)
+        )
+
+        # Flagged by
+        embed.add_field(
+            name="👤 Flagged By",
+            value=display_name,
+            inline=True
+        )
+
+        # Database info
+        embed.add_field(
+            name="🗄️ Database",
+            value=f"{db_name} › {collection_name}",
+            inline=True
+        )
+
+        # Question details
+        category = question.get("trivia_category", "N/A")
+        question_text = question.get("trivia_question", "N/A")
+        answers = question.get("trivia_answer_list", [])
+        if isinstance(answers, list):
+            answers_str = ", ".join(str(a) for a in answers)
+        else:
+            answers_str = str(answers)
+
+        embed.add_field(
+            name="❓ Question",
+            value=f"**Category:** {category}\n**Question:** {question_text}\n**Answer(s):** {answers_str}",
+            inline=False
+        )
+
+        # Flag reason
+        embed.add_field(
+            name="💬 Flag Reason",
+            value=flag_reason,
+            inline=False
+        )
+
+        # MongoDB query filter - copy and paste into Compass filter box
+        embed.add_field(
+            name="📋 MongoDB Query (Copy & Paste into Compass Filter)",
+            value=f'```json\n{{"_id": ObjectId("{document_id}")}}\n```',
+            inline=False
+        )
+
+        await channel.send(embed=embed)
+        print(f"✅ Sent flag notification for question ID: {document_id}")
+
+    except Exception as e:
+        print(f"❌ Error sending flag notification: {e}")
+        import traceback
+        traceback.print_exc()
+
+
+async def update_audit_question(question, message_content, display_name, flag_message=None):
     if question:
         if question["trivia_db"] in {"math", "stats"}:
             return
@@ -11359,6 +11469,11 @@ async def update_audit_question(question, message_content, display_name):
                 }
 
                 await collection.update_one({"_id": document_id}, update, upsert=False)
+
+                # Send notification to flagged questions channel
+                if flag_message:
+                    await send_flag_notification(question, message_content, display_name, flag_message)
+
                 break  # Success
 
             except Exception as e:
@@ -18463,17 +18578,20 @@ async def on_message(message):
             current_question=current_question,
             previous_question=previous_question,
             user_id=message.author.id,
-            display_name=message.author.display_name
+            display_name=message.author.display_name,
+            flag_message=message
         )
 
         # Send message with embed and view (visible for 30 seconds)
         try:
-            await message.channel.send(
+            embed_message = await message.channel.send(
                 content=f"{message.author.mention}",
                 embed=embed,
                 view=view,
                 delete_after=30  # Auto-delete after 30 seconds
             )
+            # Store the embed message reference in the view so modals can delete it
+            view.embed_message = embed_message
         except Exception as e:
             print(f"Error sending flag embed: {e}")
             # Fallback to old behavior if embed fails
