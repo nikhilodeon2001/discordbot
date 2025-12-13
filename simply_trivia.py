@@ -7,7 +7,7 @@ Tracks first-to-answer and streaks
 import asyncio
 import discord
 from datetime import datetime, timezone
-from discordbot import update_audit_question
+from discordbot import update_audit_question, generate_scrambled_image, scramble_text
 
 # Configuration
 LEADERBOARD_UPDATE_FREQUENCY = 5  # Update leaderboards every N questions
@@ -483,21 +483,30 @@ async def start_simply_trivia(bot, db, channel_id, fuzzy_match_func):
             # Build question embed
             category = question.get("category", "Trivia")
             question_text = question.get("question", "")
+            url = question.get("url", "")
+            answers = question.get("answers", [])
+            main_answer = answers[0] if answers else "Unknown"
 
             embed = discord.Embed(
                 description=f"**{category}**\n\n{question_text}",
                 color=discord.Color.blue()
             )
 
-            # Add image if URL is provided and valid
-            url = question.get("url", "")
-            if url and url.startswith("http"):
+            # Handle special URL types
+            if url == "scramble":
+                # Generate scrambled image
+                image_buffer, scrambled_word = generate_scrambled_image(scramble_text(answers[0]))
+                file = discord.File(fp=image_buffer, filename="scramble.png")
+                embed.set_image(url="attachment://scramble.png")
+                await channel.send(embed=embed, file=file)
+            elif url and url.startswith("http"):
+                # Regular image URL
                 embed.set_image(url=url)
+                await channel.send(embed=embed)
+            else:
+                # No image
+                await channel.send(embed=embed)
 
-            # Ask the question
-            await channel.send(embed=embed)
-            answers = question.get("answers", [])
-            main_answer = answers[0] if answers else "Unknown"
             print(f"📝 Asked: {category} - {question_text}")
             print(f"📝 Answer: {answers}")
 
