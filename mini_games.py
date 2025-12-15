@@ -18,7 +18,7 @@ GAME_NAMES = [
     "wordle", "list", "ranker_list", "music", "myopic", "microscopic",
     "fusion", "tally", "currency", "chess", "stock", "search",
     "soundfx", "audio_music", "audio_question", "feud", "okrace",
-    "sports_logos", "3430"
+    "sports_logos", "3430", "okra_says"
 ]
 
 
@@ -66,6 +66,7 @@ def _get_game_function(game_name: str):
         ask_okrace_challenge,
         ask_sports_logos_challenge,
         ask_rapidfire_challenge,
+        ask_okra_says_challenge
     )
 
     game_function_map = {
@@ -106,6 +107,7 @@ def _get_game_function(game_name: str):
         "okrace": ask_okrace_challenge,
         "sports_logos": ask_sports_logos_challenge,
         "3430": ask_rapidfire_challenge,
+        "okra_says": ask_okra_says_challenge
     }
 
     return game_function_map.get(game_name.lower())
