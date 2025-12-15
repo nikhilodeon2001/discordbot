@@ -18379,7 +18379,7 @@ async def start_trivia():
             #await ask_flags_challenge("The Creator", 591861826690613248)
             #await ask_sports_logos_challenge("TheOkraG", 591861826690613248, 7)
             #await ask_rapidfire_challenge("TheOkraG", 591861826690613248, 1)
-            await ask_okra_says_challenge("TheOkraG", 591861826690613248, 1)
+            #await ask_okra_says_challenge("TheOkraG", 591861826690613248, 1)
 
             if len(round_responders) == 0:
                 no_players = True
