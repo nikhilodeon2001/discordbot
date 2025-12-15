@@ -13741,7 +13741,7 @@ async def select_wof_questions(winner, winner_id):
         counter = counter + 1
         message += f"{counter}.\u200b ⏱️⚡ 30 for 30\n"
         counter = counter + 1
-        message += f"{counter}.\u200b 🧠🥒 Okra Says\n"
+        message += f"{counter}.\u200b 🧠🥒 Okra Says (Beta)\n"
         message += f"99.\u200b 🌀🤯 CHAOS\n"
         
         message += f"\n⚙️ **Other Options**\n"
@@ -18411,7 +18411,7 @@ async def start_trivia():
 
             start_message = f"\u200b\n✨🧪 **NEW** from the **Okra Lab**! 🧪✨\n"
             
-            start_message += f"\n🧠🥒 **Okra Says** [Mini Game]\n"
+            start_message += f"\n🧠🥒 **Okra Says** (Beta) [Mini Game]\n"
 
             start_message += "\n\n\u200b"
             await safe_send(channel, start_message)
