@@ -66,6 +66,7 @@ import difflib
 from metaphone import doublemetaphone
 import discord
 from discord.ext import commands
+from discord import app_commands
 import aiohttp
 import aiofiles
 from discord import Embed, File
@@ -2187,7 +2188,7 @@ async def ask_okrace_challenge(winner, winner_id, num=1):
         wf_winner = True
         return None
     
-    if len(emoji_to_user) == 10:
+    if len(emoji_to_user) == 1:
         user_id = list(emoji_to_user.values())[0]
         user_name = user_names[user_id]
         await safe_send(channel, f"\u200b\n🏃‍♂️ Only **{user_name}** joined! They win by default!\n\u200b")
@@ -2362,6 +2363,263 @@ async def ask_okrace_challenge(winner, winner_id, num=1):
         await safe_send(channel, "\u200b\n👎😢 **No winners**. Better luck next time!\n\u200b")
         wf_winner = True
         return None
+
+
+async def ask_okra_says_challenge(winner, winner_id, num=1):
+    """
+    Okra Says - Simon Says style pattern memory game
+    Players watch a sequence of colors flash and must replicate the pattern using buttons
+    """
+    global wf_winner
+    wf_winner = True
+
+    # Configuration
+    ALLOW_SOLO_TESTING = local_mode  # Set to False for production (requires 2+ players)
+    JOIN_TIMEOUT = 15
+    INPUT_TIMEOUT = 20
+    STARTING_PATTERN_LENGTH = 3
+    MAX_ROUNDS = 15
+    COLORS = ["red", "blue", "green", "yellow"]
+    COLOR_EMOJIS = {"red": "🟥", "blue": "🟦", "green": "🟩", "yellow": "🟨"}
+
+    # Intro
+    gifs = [
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/okrasays1.gif",
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/okrasays2.gif",
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/okrasays3.gif",
+    ]
+    gif_url = random.choice(gifs)
+
+    await safe_send(channel, content="\u200b\n🧠🥒 **OKRA SAYS**: Remember the pattern!\n\u200b", embed=discord.Embed().set_image(url=gif_url))
+    await asyncio.sleep(3)
+
+    # Join Phase
+    join_message = await safe_send(channel, f"\u200b\n🎯 **Join Okra Says!**\n\nType **\"okra\"** to join! (**{JOIN_TIMEOUT}** seconds)\n\u200b")
+
+    # Wait for messages saying "okra" during join phase
+    joined_users = {}  # user_id -> user_name
+
+    start_time = asyncio.get_event_loop().time()
+
+    def message_check(m):
+        return (m.channel.id == channel.id and
+                m.author != get_bot().user and
+                m.content.lower() == "okra" and
+                m.author.id not in joined_users)
+
+    # Monitor messages for join period
+    while asyncio.get_event_loop().time() - start_time < JOIN_TIMEOUT:
+        try:
+            timeout_remaining = JOIN_TIMEOUT - (asyncio.get_event_loop().time() - start_time)
+            message = await get_bot().wait_for('message', timeout=timeout_remaining, check=message_check)
+
+            joined_users[message.author.id] = message.author.display_name
+
+        except asyncio.TimeoutError:
+            break
+
+    if len(joined_users) == 0:
+        await safe_send(channel, "\u200b\n😢 No one joined! Maybe next time.\n\u200b")
+        wf_winner = True
+        return None
+
+    if len(joined_users) == 1 and not ALLOW_SOLO_TESTING:
+        user_id = list(joined_users.keys())[0]
+        user_name = joined_users[user_id]
+        await safe_send(channel, f"\u200b\n🏆 Only **{user_name}** joined! They win by default!\n\u200b")
+        wf_winner = True
+        return user_id
+
+    # Announce final roster
+    roster_text = f"\u200b\n🎯 **Final Roster ({len(joined_users)} players)**\n\n"
+    for user_id, user_name in joined_users.items():
+        roster_text += f"🥒 **{user_name}**\n"
+    roster_text += "\u200b"
+    await safe_send(channel, roster_text)
+    await asyncio.sleep(2)
+
+    # Game loop
+    active_players = list(joined_users.keys())
+    user_names = joined_users
+    pattern_length = STARTING_PATTERN_LENGTH
+    round_num = 0
+    min_players = 1 if ALLOW_SOLO_TESTING else 2
+
+    while len(active_players) >= min_players and round_num < MAX_ROUNDS:
+        round_num += 1
+        players_at_round_start = active_players.copy()  # For repeat safety
+
+        # Generate pattern
+        current_pattern = [random.choice(COLORS) for _ in range(pattern_length)]
+
+        await safe_send(channel, f"\u200b\n🔄 **Round {round_num}** - Pattern length: {pattern_length}\n\u200b")
+        await asyncio.sleep(1)
+
+        # Show pattern animation
+        embed = discord.Embed(title="👀 Watch the pattern!", color=discord.Color.blue())
+        embed.description = " ".join(["▪️"] * pattern_length)
+        pattern_msg = await safe_send(channel, embed=embed)
+
+        # Track the cutoff message ID - delete anything after the pattern message
+        cutoff_message_id = pattern_msg.id
+
+        # Delete ALL messages (except bot/host) that appear after the pattern message during input period
+        async def delete_user_messages():
+            """Background task to delete user messages during input period"""
+            start = asyncio.get_event_loop().time()
+            while asyncio.get_event_loop().time() - start < INPUT_TIMEOUT:
+                try:
+                    def message_check(m):
+                        # Delete if: in this channel, after cutoff, not from bot, user doesn't have HOST_ROLE_ID
+                        if m.channel.id != channel.id or m.id <= cutoff_message_id:
+                            return False
+                        if m.author == get_bot().user:
+                            return False
+                        # Check if user has host role
+                        if hasattr(m.author, 'roles'):
+                            for role in m.author.roles:
+                                if role.id == HOST_ROLE_ID:
+                                    return False
+                        return True
+
+                    msg = await get_bot().wait_for('message', timeout=0.5, check=message_check)
+                    try:
+                        await msg.delete()
+                    except:
+                        pass
+                except asyncio.TimeoutError:
+                    continue
+                except:
+                    break
+
+        # Start background message deletion task IMMEDIATELY
+        deletion_task = asyncio.create_task(delete_user_messages())
+
+        await asyncio.sleep(0.5)
+
+        # Animate each color in sequence
+        for i, color in enumerate(current_pattern):
+            # Build display with current color highlighted
+            display = []
+            for j in range(pattern_length):
+                if j < i:
+                    display.append("⬛")  # Already shown
+                elif j == i:
+                    display.append(COLOR_EMOJIS[color])  # Current color flashing
+                else:
+                    display.append("▪️")  # Not yet shown
+
+            embed.description = " ".join(display)
+            await pattern_msg.edit(embed=embed)
+            await asyncio.sleep(0.7)  # Flash duration (was 1.2s, now 0.7s)
+
+        # Show all as complete
+        embed.description = " ".join(["⬛"] * pattern_length)
+        embed.add_field(name="Your turn!", value="Replicate the pattern using the color buttons!")
+        await pattern_msg.edit(embed=embed)
+        await asyncio.sleep(0.5)
+
+        # Send ONE shared button UI for all players
+        view = SimonSaysView(active_players, pattern_length)
+
+        button_msg = await safe_send(
+            channel,
+            "🎮 **Click the colors to replicate the pattern!**",
+            view=view
+        )
+
+        # Wait for all players to complete OR timeout
+        start_time = asyncio.get_event_loop().time()
+        while asyncio.get_event_loop().time() - start_time < INPUT_TIMEOUT:
+            # Check if all players have submitted
+            if len(view.completed_players) >= len(active_players):
+                break
+            await asyncio.sleep(0.5)
+
+        # Cancel deletion task
+        deletion_task.cancel()
+
+        # Check answers and eliminate
+        await safe_send(channel, "\u200b\n⏰ **Time's up!** Checking answers...\n\u200b")
+        await asyncio.sleep(1)
+
+        survived = []
+        eliminated = []
+
+        for user_id in active_players:
+            user_input = view.player_inputs[user_id]
+            name = user_names[user_id]
+
+            if user_input == current_pattern:
+                survived.append(user_id)
+                input_display = " ".join([COLOR_EMOJIS[c] for c in user_input])
+                await safe_send(channel, f"✅ **{name}** - {input_display} - CORRECT!")
+            else:
+                eliminated.append(user_id)
+                if len(user_input) == 0:
+                    await safe_send(channel, f"❌ **{name}** - No answer - ELIMINATED!")
+                else:
+                    input_display = " ".join([COLOR_EMOJIS[c] for c in user_input])
+                    await safe_send(channel, f"❌ **{name}** - {input_display} - ELIMINATED!")
+
+        # Delete the button message
+        try:
+            await button_msg.delete()
+        except:
+            pass
+
+        await asyncio.sleep(2)
+
+        # Handle elimination
+        if len(survived) == 0:
+            # Everyone eliminated - repeat round with new pattern
+            await safe_send(channel, "\u200b\n💥 **Everyone was eliminated!** Let's try a new pattern of the same length.\n\u200b")
+            await asyncio.sleep(2)
+            active_players = players_at_round_start.copy()
+            # Don't increment pattern_length or round_num for retry
+            round_num -= 1
+            continue
+        elif len(survived) == 1 and not ALLOW_SOLO_TESTING:
+            # Winner! (Skip this check in solo testing mode to keep playing)
+            winner_id = survived[0]
+            winner_name = user_names[winner_id]
+            await safe_send(channel, f"\u200b\n🎉🏆 **WINNER!**\n\n🥒 **{winner_name}** wins Okra Says!\n\u200b")
+            wf_winner = True
+            await asyncio.sleep(3)
+            return winner_id
+        else:
+            # Continue to next round
+            active_players = survived
+            players_remaining = len(active_players)
+            if ALLOW_SOLO_TESTING and len(active_players) == 1:
+                await safe_send(channel, f"\u200b\n✅ **Round {round_num} complete!** Next pattern...\n\u200b")
+            else:
+                await safe_send(channel, f"\u200b\n🔥 **{players_remaining} player{'s' if players_remaining > 1 else ''} remain!** Next round...\n\u200b")
+            await asyncio.sleep(2)
+            pattern_length += 1  # Make it harder
+
+    # Max rounds reached or tie
+    if round_num >= MAX_ROUNDS:
+        if len(active_players) == 1:
+            winner_id = active_players[0]
+            winner_name = user_names[winner_id]
+            await safe_send(channel, f"\u200b\n⏰ **{MAX_ROUNDS} rounds completed!**\n\n🏆 🥒 **{winner_name}** is the last one standing!\n\u200b")
+            wf_winner = True
+            await asyncio.sleep(3)
+            return winner_id
+        else:
+            # Multiple survivors after max rounds
+            survivors_text = "\u200b\n🎉 **TIE! Final Survivors:**\n"
+            for user_id in active_players:
+                survivors_text += f"🥒 **{user_names[user_id]}**\n"
+            survivors_text += "\u200b"
+            await safe_send(channel, survivors_text)
+            wf_winner = True
+            await asyncio.sleep(3)
+            return None
+
+    wf_winner = True
+    return None
 
 
 def get_largest_fitting_font(draw, text, box_width, box_height, font_path, padding=6):
@@ -4245,7 +4503,7 @@ class FlagReasonModal(discord.ui.Modal, title="Flag Question"):
         self.question = question
         self.question_type = question_type  # "current" or "previous"
         self.display_name = display_name
-        self.flag_message = flag_message  # Original message where #flag was typed
+        self.flag_message = flag_message  # Original interaction/message (can be None for slash commands)
         self.embed_message = embed_message  # The embed message to delete after submission
 
     async def on_submit(self, interaction: discord.Interaction):
@@ -4287,14 +4545,14 @@ class FlagQuestionView(discord.ui.View):
         self.previous_question = previous_question
         self.user_id = user_id
         self.display_name = display_name
-        self.flag_message = flag_message  # Original message where #flag was typed
+        self.flag_message = flag_message  # Original interaction/message (can be None for slash commands)
         self.embed_message = None  # Will be set after sending the embed
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        """Check if the user interacting is the one who typed #flag"""
+        """Check if the user interacting is the one who initiated the flag"""
         if interaction.user.id != self.user_id:
             await interaction.response.send_message(
-                "❌ Only the user who typed #flag can use these buttons.",
+                "❌ Only the user who initiated the flag can use these buttons.",
                 ephemeral=True
             )
             return False
@@ -4345,6 +4603,71 @@ class FlagQuestionView(discord.ui.View):
                 ephemeral=True,
                 delete_after=3
             )
+
+
+class SimonSaysView(discord.ui.View):
+    """Interactive button grid for Simon Says pattern input - shared by all players"""
+
+    def __init__(self, active_players: list, pattern_length: int):
+        super().__init__(timeout=20)
+        self.active_players = set(active_players)  # User IDs who can participate
+        self.pattern_length = pattern_length
+        self.player_inputs = {user_id: [] for user_id in active_players}  # Track each player's input
+        self.completed_players = set()  # Track who has finished
+
+    async def handle_color_click(self, interaction: discord.Interaction, color: str):
+        """Common handler for all color button clicks"""
+        user_id = interaction.user.id
+
+        # Check if user is in the game
+        if user_id not in self.active_players:
+            await interaction.response.send_message(
+                "❌ You're not in this game!",
+                ephemeral=True
+            )
+            return
+
+        # Check if user already completed
+        if user_id in self.completed_players:
+            await interaction.response.send_message(
+                "✅ You already submitted your pattern!",
+                ephemeral=True
+            )
+            return
+
+        # Add color to their input
+        self.player_inputs[user_id].append(color)
+
+        # Build visual feedback showing their input so far
+        color_emojis = {"red": "🟥", "blue": "🟦", "green": "🟩", "yellow": "🟨"}
+        input_display = " ".join([color_emojis[c] for c in self.player_inputs[user_id]])
+
+        if len(self.player_inputs[user_id]) >= self.pattern_length:
+            # Pattern complete
+            self.completed_players.add(user_id)
+            await interaction.response.send_message(
+                f"✅ Pattern submitted: {input_display}",
+                ephemeral=True
+            )
+        else:
+            # Still building pattern - acknowledge silently
+            await interaction.response.defer()
+
+    @discord.ui.button(label="🟥 Red", style=discord.ButtonStyle.danger, row=0)
+    async def red_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.handle_color_click(interaction, "red")
+
+    @discord.ui.button(label="🟦 Blue", style=discord.ButtonStyle.primary, row=0)
+    async def blue_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.handle_color_click(interaction, "blue")
+
+    @discord.ui.button(label="🟩 Green", style=discord.ButtonStyle.success, row=0)
+    async def green_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.handle_color_click(interaction, "green")
+
+    @discord.ui.button(label="🟨 Yellow", style=discord.ButtonStyle.secondary, row=0)
+    async def yellow_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.handle_color_click(interaction, "yellow")
 
 
 class VoiceChannelJoinView(discord.ui.View):
@@ -11379,7 +11702,7 @@ async def send_flag_notification(question, flag_reason, display_name, flag_messa
         question: Question dict with trivia_category, trivia_question, trivia_answer_list, trivia_db, trivia_id
         flag_reason: The reason the user provided for flagging
         display_name: User's display name
-        flag_message: The Discord message object where #flag was typed
+        flag_message: The Discord message object (can be None for slash commands)
     """
     try:
         # Get the channel from the guild that the flag message came from
@@ -11404,12 +11727,16 @@ async def send_flag_notification(question, flag_reason, display_name, flag_messa
         collection_name = question.get("trivia_db", "unknown")
         document_id = question.get("trivia_id")
 
-        # Build embed with clickable link in description
-        message_link = f"https://discord.com/channels/{flag_message.guild.id}/{flag_message.channel.id}/{flag_message.id}"
+        # Build embed with clickable link in description (if message available)
+        if flag_message:
+            message_link = f"https://discord.com/channels/{flag_message.guild.id}/{flag_message.channel.id}/{flag_message.id}"
+            description = f"[Jump to flag report]({message_link})"
+        else:
+            description = "Flagged via /flag command"
 
         embed = discord.Embed(
             title="🚩 Question Flagged",
-            description=f"[Jump to #flag message]({message_link})",
+            description=description,
             color=discord.Color.red(),
             timestamp=datetime.datetime.now(timezone.utc)
         )
@@ -13413,6 +13740,8 @@ async def select_wof_questions(winner, winner_id):
         message += f"{counter}.\u200b 🏈🏀 Jock Talk\n"
         counter = counter + 1
         message += f"{counter}.\u200b ⏱️⚡ 30 for 30\n"
+        counter = counter + 1
+        message += f"{counter}.\u200b 🧠🥒 Okra Says\n"
         message += f"99.\u200b 🌀🤯 CHAOS\n"
         
         message += f"\n⚙️ **Other Options**\n"
@@ -13644,6 +13973,11 @@ async def select_wof_questions(winner, winner_id):
 
         elif selected_wof_category == "46":
             await ask_rapidfire_challenge(winner, winner_id, 1)
+            await asyncio.sleep(3)
+            return None
+        
+        elif selected_wof_category == "47":
+            await ask_okra_says_challenge(winner, winner_id, 1)
             await asyncio.sleep(3)
             return None
         
@@ -13915,10 +14249,11 @@ async def ask_wof_number(winner, winner_id):
         "44": "Let's Talk",
         "45": "Jock Talk",
         "46": "30 for 30",
+        "47": "Okra Says",
         "99": "CHAOS"
     }
     multiplayer_required = {k for k in unlocks if k not in {"5", "6", "7", "8", "9"}}
-    all_options = {str(i) for i in range(47)} | {"00", "x", "99"}
+    all_options = {str(i) for i in range(48)} | {"00", "x", "99"}
 
     start = asyncio.get_event_loop().time()
     selected_question = None
@@ -13937,7 +14272,7 @@ async def ask_wof_number(winner, winner_id):
             if content == "00":
                 await message.add_reaction("👍")
                 set_a = [str(i) for i in range(5)]
-                set_b = [str(i) for i in range(5, 47)] if len(round_responders) >= num_list_players else [str(i) for i in range(5, 10)]
+                set_b = [str(i) for i in range(5, 48)] if len(round_responders) >= num_list_players else [str(i) for i in range(5, 10)]
                 selected_question = random.choice(set_a if random.random() < 0.5 else set_b)
 
                 # Store frequency data for random selection
@@ -13978,7 +14313,7 @@ async def ask_wof_number(winner, winner_id):
     # Fallback random selection
     return "x"
     set_a = [str(i) for i in range(5)]
-    set_b = [str(i) for i in range(5, 47)] if len(round_responders) >= num_list_players else [str(i) for i in range(5, 10)]
+    set_b = [str(i) for i in range(5, 48)] if len(round_responders) >= num_list_players else [str(i) for i in range(5, 10)]
     selected_question = random.choice(set_a if random.random() < 0.5 else set_b)
     
     # Store frequency data for random selection
@@ -18044,7 +18379,7 @@ async def start_trivia():
             #await ask_flags_challenge("The Creator", 591861826690613248)
             #await ask_sports_logos_challenge("TheOkraG", 591861826690613248, 7)
             #await ask_rapidfire_challenge("TheOkraG", 591861826690613248, 1)
-            
+            await ask_okra_says_challenge("TheOkraG", 591861826690613248, 1)
 
             if len(round_responders) == 0:
                 no_players = True
@@ -18076,7 +18411,7 @@ async def start_trivia():
 
             start_message = f"\u200b\n✨🧪 **NEW** from the **Okra Lab**! 🧪✨\n"
             
-            start_message += f"\n⏱️⚡ **30 for 30** [Mini Game]\n"
+            start_message += f"\n🧠🥒 **Okra Says** [Mini Game]\n"
 
             start_message += "\n\n\u200b"
             await safe_send(channel, start_message)
@@ -18084,7 +18419,7 @@ async def start_trivia():
             
             start_message = f"\u200b\n\u200b\n⏩ Starting a **{questions_per_round} question** round! ⏩\n\u200b"
 
-            start_message += f"\u200b\n🚩 Type **#flag** to report question\n"
+            start_message += f"\u200b\n🚩 Use **/flag** to report question\n"
             start_message += f"🗝️ Type **#perks** to unlock perks\n\u200b"
 
             if current_longest_round_streak["user"] is not None and await get_coffees(current_longest_round_streak["user_id"]) > 0:
@@ -18542,80 +18877,6 @@ async def on_message(message):
             print(f"Error sending DM: {e}")
             return
 
-    if "#flag" in message.content.strip().lower() and collect_feedback_mode == True and message.author.id != get_bot().user.id and message.channel.id == channel_id:
-        if emoji_mode == True:
-            await message.add_reaction("🚩")
-
-        # Build embed showing both current and previous questions
-        embed = discord.Embed(
-            title="🚩 Which question do you want to flag?",
-            description="Select the question you want to flag and provide a reason.",
-            color=discord.Color.red()
-        )
-
-        # Add current question info
-        if current_question:
-            current_answer = current_question.get("trivia_answer_list", ["N/A"])
-            if isinstance(current_answer, list):
-                current_answer = ", ".join(str(a) for a in current_answer)
-            embed.add_field(
-                name="🟢 CURRENT QUESTION",
-                value=f"**Category:** {current_question.get('trivia_category', 'N/A')}\n"
-                      f"**Question:** {current_question.get('trivia_question', 'N/A')}\n"
-                      f"**Answer:** {current_answer}",
-                inline=False
-            )
-        else:
-            embed.add_field(
-                name="🟢 CURRENT QUESTION",
-                value="*No current question available*",
-                inline=False
-            )
-
-        # Add previous question info
-        if previous_question:
-            previous_answer = previous_question.get("trivia_answer_list", ["N/A"])
-            if isinstance(previous_answer, list):
-                previous_answer = ", ".join(str(a) for a in previous_answer)
-            embed.add_field(
-                name="🔴 PREVIOUS QUESTION",
-                value=f"**Category:** {previous_question.get('trivia_category', 'N/A')}\n"
-                      f"**Question:** {previous_question.get('trivia_question', 'N/A')}\n"
-                      f"**Answer:** {previous_answer}",
-                inline=False
-            )
-        else:
-            embed.add_field(
-                name="🔴 PREVIOUS QUESTION",
-                value="*No previous question available*",
-                inline=False
-            )
-
-        # Create view with buttons
-        view = FlagQuestionView(
-            current_question=current_question,
-            previous_question=previous_question,
-            user_id=message.author.id,
-            display_name=message.author.display_name,
-            flag_message=message
-        )
-
-        # Send message with embed and view (visible for 30 seconds)
-        try:
-            embed_message = await message.channel.send(
-                content=f"{message.author.mention}",
-                embed=embed,
-                view=view,
-                delete_after=30  # Auto-delete after 30 seconds
-            )
-            # Store the embed message reference in the view so modals can delete it
-            view.embed_message = embed_message
-        except Exception as e:
-            print(f"Error sending flag embed: {e}")
-            # Fallback to old behavior if embed fails
-            await update_audit_question(current_question, message.content.strip(), message.author.display_name)
-
-        return
 
     if message.content.startswith("#") and (message.author.id == current_longest_round_streak["user_id"] or message.author.id == okrag_id) and message.channel.id == channel_id:
         if await get_coffees(message.author.id) > 0:
@@ -18733,6 +18994,8 @@ def get_minigame_name(number):
         "43": "Who Says?",
         "44": "Let's Talk",
         "45": "Jock Talk",
+        "46": "30 for 30",
+        "47": "Okra Says",
         "99": "CHAOS",
         "x": "Skip Mini Game"
     }
@@ -18901,6 +19164,105 @@ async def cleanup_lodge_messages():
     except Exception as e:
         print(f"❌ Error cleaning Lodge messages: {e}")
 
+@bot.tree.command(name="flag", description="Flag the current or previous trivia question")
+async def flag_command(interaction: discord.Interaction):
+    """Unified slash command - works in both main trivia and Simply Trivia channels"""
+
+    # Detect which channel we're in and get appropriate questions
+    if interaction.channel_id == channel_id:
+        # Main trivia channel - use current_question/previous_question
+        current_q = current_question
+        prev_q = previous_question
+    elif interaction.channel_id == SIMPLY_TRIVIA_CHANNEL_ID:
+        # Simply Trivia channel - import from simply_trivia module
+        try:
+            from simply_trivia import simply_current_question, simply_previous_question
+            current_q = simply_current_question
+            prev_q = simply_previous_question
+        except ImportError:
+            await interaction.response.send_message("❌ Simply Trivia is not available.", ephemeral=True)
+            return
+    else:
+        await interaction.response.send_message("❌ This command only works in trivia channels.", ephemeral=True)
+        return
+
+    # Build flag selection embed
+    embed = discord.Embed(
+        title="🚩 Which question do you want to flag?",
+        description="Select the question you want to flag and provide a reason.",
+        color=discord.Color.red()
+    )
+
+    # Add current question info
+    if current_q:
+        current_answer = current_q.get("trivia_answer_list" if interaction.channel_id == channel_id else "answers", ["N/A"])
+        if isinstance(current_answer, list):
+            current_answer = ", ".join(str(a) for a in current_answer)
+
+        category_key = "trivia_category" if interaction.channel_id == channel_id else "category"
+        question_key = "trivia_question" if interaction.channel_id == channel_id else "question"
+
+        embed.add_field(
+            name="🟢 CURRENT QUESTION",
+            value=f"**Category:** {current_q.get(category_key, 'N/A')}\n"
+                  f"**Question:** {current_q.get(question_key, 'N/A')}\n"
+                  f"**Answer:** {current_answer}",
+            inline=False
+        )
+    else:
+        embed.add_field(
+            name="🟢 CURRENT QUESTION",
+            value="*No current question available*",
+            inline=False
+        )
+
+    # Add previous question info
+    if prev_q:
+        previous_answer = prev_q.get("trivia_answer_list" if interaction.channel_id == channel_id else "answers", ["N/A"])
+        if isinstance(previous_answer, list):
+            previous_answer = ", ".join(str(a) for a in previous_answer)
+
+        category_key = "trivia_category" if interaction.channel_id == channel_id else "category"
+        question_key = "trivia_question" if interaction.channel_id == channel_id else "question"
+
+        embed.add_field(
+            name="🔴 PREVIOUS QUESTION",
+            value=f"**Category:** {prev_q.get(category_key, 'N/A')}\n"
+                  f"**Question:** {prev_q.get(question_key, 'N/A')}\n"
+                  f"**Answer:** {previous_answer}",
+            inline=False
+        )
+    else:
+        embed.add_field(
+            name="🔴 PREVIOUS QUESTION",
+            value="*No previous question available*",
+            inline=False
+        )
+
+    # Create view with buttons (use main trivia view for both contexts)
+    view = FlagQuestionView(
+        current_question=current_q,
+        previous_question=prev_q,
+        user_id=interaction.user.id,
+        display_name=interaction.user.display_name,
+        flag_message=None  # No message object for slash commands
+    )
+
+    # Send as ephemeral response
+    try:
+        await interaction.response.send_message(
+            embed=embed,
+            view=view,
+            ephemeral=True,
+            delete_after=30
+        )
+        # Store the embed message reference
+        view.embed_message = await interaction.original_response()
+    except Exception as e:
+        print(f"Error showing flag selection: {e}")
+        await interaction.response.send_message("❌ Error showing flag options.", ephemeral=True)
+
+
 @bot.event
 async def on_ready():
     global channel, db
@@ -18915,6 +19277,13 @@ async def on_ready():
 
     # Clean up bot messages from The Lodge
     await cleanup_lodge_messages()
+
+    # Sync slash commands
+    try:
+        await bot.tree.sync()
+        print("✅ Slash commands synced")
+    except Exception as e:
+        print(f"⚠️ Could not sync slash commands: {e}")
 
     # Setup tournament system
     try:
