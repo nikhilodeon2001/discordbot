@@ -2402,7 +2402,7 @@ async def ask_okra_says_challenge(winner, winner_id, num=1):
     start_time = asyncio.get_event_loop().time()
 
     def message_check(m):
-        return (m.channel.id == channel.id and
+        return (m.channel == (_active_game_channel or channel) and
                 m.author != get_bot().user and
                 m.content.lower() == "okra" and
                 m.author.id not in joined_users)
@@ -2471,7 +2471,7 @@ async def ask_okra_says_challenge(winner, winner_id, num=1):
                 try:
                     def message_check(m):
                         # Delete if: in this channel, after cutoff, not from bot, user doesn't have HOST_ROLE_ID
-                        if m.channel.id != channel.id or m.id <= cutoff_message_id:
+                        if m.channel != (_active_game_channel or channel) or m.id <= cutoff_message_id:
                             return False
                         if m.author == get_bot().user:
                             return False
@@ -13741,7 +13741,7 @@ async def select_wof_questions(winner, winner_id):
         counter = counter + 1
         message += f"{counter}.\u200b ⏱️⚡ 30 for 30\n"
         counter = counter + 1
-        message += f"{counter}.\u200b 🧠🥒 Okra Says (Beta)\n"
+        message += f"{counter}.\u200b 🧠🥒 Okra Says\n"
         message += f"99.\u200b 🌀🤯 CHAOS\n"
         
         message += f"\n⚙️ **Other Options**\n"
@@ -18411,7 +18411,7 @@ async def start_trivia():
 
             start_message = f"\u200b\n✨🧪 **NEW** from the **Okra Lab**! 🧪✨\n"
             
-            start_message += f"\n🧠🥒 **Okra Says** (Beta) [Mini Game]\n"
+            start_message += f"\n🧠🥒 **Okra Says** [Mini Game]\n"
 
             start_message += "\n\n\u200b"
             await safe_send(channel, start_message)
