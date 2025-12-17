@@ -14152,7 +14152,7 @@ async def select_wof_questions(winner, winner_id):
             return None
 
         elif selected_wof_category == "48":
-            await ask_custom_trivia_challenge(winner, winner_id, 10)
+            await ask_custom_trivia_challenge(winner, winner_id, 5)
             await asyncio.sleep(3)
             return None
 
