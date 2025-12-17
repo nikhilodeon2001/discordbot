@@ -5093,6 +5093,174 @@ async def ask_riddle_challenge(winner, winner_id, num=7):
     return riddle_winner_id
 
 
+async def ask_custom_trivia_challenge(winner, winner_id, num=10):
+    """The Genie: Master makes a wish, Genie grants 10 questions."""
+    global wf_winner
+    wf_winner = True
+
+    gifs = [
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/genie1.gif",
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/genie2.gif",
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/genie3.gif",
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/genie4.gif",
+    ]
+    gif_url = random.choice(gifs)
+
+    await safe_send(channel, content="\u200b\n\u200b\n🧞‍♂️🪔 **The Genie**: Wish For Your Category\n\u200b", embed=discord.Embed().set_image(url=gif_url))
+    await asyncio.sleep(5)
+
+    # Ask winner for category
+    await safe_send(channel, f"\u200b\n🪔✨ **Master <@{winner_id}>**, make your wish! What category do you desire? (3 words max, must be SFW)\n\u200b")
+
+    category = None
+    try:
+        def check_category(m):
+            target_channel = _active_game_channel or channel
+            return (m.author.id == winner_id and
+                    m.author != get_bot().user and
+                    m.channel == target_channel and
+                    len(m.content.split()) <= 3)
+
+        msg = await get_bot().wait_for("message", timeout=20, check=check_category)
+        category = msg.content.strip()
+        await msg.add_reaction("✅")
+        await safe_send(channel, f"\u200b\n🧞‍♂️💫 Your wish is my command! Summoning **{category.upper()}** trivia from the mystical realm...\n\u200b")
+    except asyncio.TimeoutError:
+        category = "General Knowledge"
+        await safe_send(channel, f"\u200b\n⏳🪔 The lamp grows dim! The Genie chooses **{category.upper()}** for you, Master.\n\u200b")
+
+    await asyncio.sleep(2)
+
+    # Generate questions using GPT
+    questions_data = await generate_custom_trivia_questions(category)
+
+    if not questions_data:
+        await safe_send(channel, "\u200b\n❌🧞‍♂️ The Genie's magic has failed! Be careful what you wish for, Master. Try again later!\n\u200b")
+        return None
+
+    await safe_send(channel, f"\u200b\n✨🧞‍♂️ **Wish granted!** Your **{num}** questions about **{category}** await, Master!\n\u200b")
+    await asyncio.sleep(3)
+
+    user_data = {}
+    round_num = 1
+    sorted_users = []
+    numbered_blocks = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"]
+
+    while round_num <= num:
+        try:
+            q = questions_data[round_num - 1]
+            question_text = q["question"]
+            answer = q["answer"]
+            subcategory = q["category"]
+            emojis = q.get("emojis", "❓❔")  # Default fallback emojis
+
+            print(f"Question {round_num}: {question_text} (Answer: {answer})")
+
+        except Exception as e:
+            sentry_sdk.capture_exception(e)
+            print(f"Error accessing question {round_num}:\n{traceback.format_exc()}")
+            await safe_send(channel, f"\u200b\n❌ Error loading question {round_num}.\n\u200b")
+            round_num += 1
+            continue
+
+        # Get the numbered emoji (use numbered_blocks for 1-10, fallback to number for >10)
+        number_emoji = numbered_blocks[round_num - 1] if round_num <= 10 else f"{round_num}."
+
+        # Format question like main trivia: {number_emoji} **{Category} {emojis}**\n\n{question}
+        prompt = f"\u200b\n\u200b\n{number_emoji} **{subcategory} {emojis}**\n\n{question_text}\n"
+        await safe_send(channel, prompt)
+
+        start_time = asyncio.get_event_loop().time()
+        answered = False
+        processed_users = set()
+
+        def check(m):
+            target_channel = _active_game_channel or channel
+            return m.channel == target_channel and m.author != get_bot().user
+
+        while asyncio.get_event_loop().time() - start_time < 20 and not answered:
+            try:
+                timeout = 20 - (asyncio.get_event_loop().time() - start_time)
+                message = await get_bot().wait_for("message", timeout=timeout, check=check)
+                content = message.content.strip()
+                user = message.author.display_name
+                user_id = message.author.id
+                key = (user_id, content.lower())
+
+                if key in processed_users:
+                    continue
+                processed_users.add(key)
+
+                if fuzzy_match(content, answer, subcategory, ""):
+                    await message.add_reaction("✅")
+                    await safe_send(channel, f"\u200b\n✅🎉 **<@{user_id}>** got it! **{answer.upper()}**\n\u200b")
+                    if user_id not in user_data:
+                        user_data[user_id] = (user, 0)
+                    user_data[user_id] = (user, user_data[user_id][1] + 1)
+                    answered = True
+
+            except asyncio.TimeoutError:
+                break
+
+        if not answered:
+            await safe_send(channel, f"\u200b\n❌😢 No one got it.\n\nAnswer: **{answer.upper()}**\n\u200b")
+
+        await asyncio.sleep(1)
+        round_num += 1
+
+        # Show standings
+        message = ""
+        sorted_users = sorted(user_data.items(), key=lambda x: x[1][1], reverse=True)
+
+        if num == 1:
+            if sorted_users:
+                top_score = sorted_users[0][1][1]
+                top_winners = [uid for uid, (name, score) in sorted_users if score == top_score]
+                if len(top_winners) == 1:
+                    return top_winners[0]
+                else:
+                    return None  # Tie
+            else:
+                return None
+
+        if sorted_users:
+            if round_num > num:
+                message += "\u200b\n🏁🏆 Final Standings\n\u200b"
+            else:
+                message += "\u200b\n📊🏆 Current Standings\n\u200b"
+
+        for counter, (user_id, (display_name, count)) in enumerate(sorted_users, start=1):
+            message += f"{counter}. **{display_name}**: {count}\n"
+            message += "\u200b"
+
+        if message:
+            await safe_send(channel, message)
+
+        await asyncio.sleep(3)
+
+    await asyncio.sleep(2)
+    custom_trivia_winner_id = None
+    if sorted_users:
+        top_score = sorted_users[0][1][1]
+        top_winners = [(uid, name) for uid, (name, score) in sorted_users if score == top_score]
+
+        if len(top_winners) == 1:
+            custom_trivia_winner_id, winner_name = top_winners[0]
+            message = f"\u200b\n🎉🥇 The winner is **{winner_name}**!\n\u200b"
+        else:
+            message = f"\u200b\n🤝 It's a tie! **Winners:**\n\u200b"
+            for uid, name in top_winners:
+                message += f"• **{name}** ({top_score} pts)\n"
+            message += "\u200b"
+    else:
+        message = f"\u200b\n👎😢 **No right answers**. I'm ashamed to call you Okrans.\n\u200b"
+    await safe_send(channel, message)
+
+    wf_winner = True
+    await asyncio.sleep(3)
+
+    return custom_trivia_winner_id
+
 
 async def ask_rapidfire_challenge(winner, winner_id, num=1):
     """
@@ -13742,6 +13910,8 @@ async def select_wof_questions(winner, winner_id):
         message += f"{counter}.\u200b ⏱️⚡ 30 for 30\n"
         counter = counter + 1
         message += f"{counter}.\u200b 🧠🥒 Okra Says\n"
+        counter = counter + 1
+        message += f"{counter}.\u200b 🧞‍♂️🪔 The Genie\n"
         message += f"99.\u200b 🌀🤯 CHAOS\n"
         
         message += f"\n⚙️ **Other Options**\n"
@@ -13980,7 +14150,12 @@ async def select_wof_questions(winner, winner_id):
             await ask_okra_says_challenge(winner, winner_id, 1)
             await asyncio.sleep(3)
             return None
-        
+
+        elif selected_wof_category == "48":
+            await ask_custom_trivia_challenge(winner, winner_id, 10)
+            await asyncio.sleep(3)
+            return None
+
         elif selected_wof_category == "99":
             await ask_chaos_challenge(winner, winner_id, 5)
             await asyncio.sleep(3)
@@ -14250,10 +14425,11 @@ async def ask_wof_number(winner, winner_id):
         "45": "Jock Talk",
         "46": "30 for 30",
         "47": "Okra Says",
+        "48": "The Genie",
         "99": "CHAOS"
     }
     multiplayer_required = {k for k in unlocks if k not in {"5", "6", "7", "8", "9"}}
-    all_options = {str(i) for i in range(48)} | {"00", "x", "99"}
+    all_options = {str(i) for i in range(49)} | {"00", "x", "99"}
 
     start = asyncio.get_event_loop().time()
     selected_question = None
@@ -14272,7 +14448,7 @@ async def ask_wof_number(winner, winner_id):
             if content == "00":
                 await message.add_reaction("👍")
                 set_a = [str(i) for i in range(5)]
-                set_b = [str(i) for i in range(5, 48)] if len(round_responders) >= num_list_players else [str(i) for i in range(5, 10)]
+                set_b = [str(i) for i in range(5, 49)] if len(round_responders) >= num_list_players else [str(i) for i in range(5, 10)]
                 selected_question = random.choice(set_a if random.random() < 0.5 else set_b)
 
                 # Store frequency data for random selection
@@ -14313,7 +14489,7 @@ async def ask_wof_number(winner, winner_id):
     # Fallback random selection
     return "x"
     set_a = [str(i) for i in range(5)]
-    set_b = [str(i) for i in range(5, 48)] if len(round_responders) >= num_list_players else [str(i) for i in range(5, 10)]
+    set_b = [str(i) for i in range(5, 49)] if len(round_responders) >= num_list_players else [str(i) for i in range(5, 10)]
     selected_question = random.choice(set_a if random.random() < 0.5 else set_b)
     
     # Store frequency data for random selection
@@ -15117,6 +15293,65 @@ async def generate_okra_joke(winner_name):
         # Capture any errors with Sentry and return a default message
         sentry_sdk.capture_exception(e)
         return "Sorry, I couldn't come up with an okra joke this time!"
+
+
+async def generate_custom_trivia_questions(category):
+    """Generate 10 trivia questions based on user's category using GPT-4."""
+    prompt = (
+        f"Create 10 trivia questions about '{category}'. "
+        "For each question, provide:\n"
+        "- A specific subcategory (related to the main category but more specific)\n"
+        "- Exactly 2 emojis that represent the subcategory\n"
+        "- The question text\n"
+        "- A single correct answer\n\n"
+        "Return ONLY valid JSON in this exact format:\n"
+        '[\n'
+        '  {"category": "subcategory name", "emojis": "🎭🎪", "question": "question text?", "answer": "answer text"},\n'
+        '  ...\n'
+        ']\n'
+        "Make questions interesting and varied in difficulty. Keep answers concise."
+    )
+
+    try:
+        response = await openai_client.chat.completions.create(
+            model="gpt-4-turbo",
+            messages=[
+                {"role": "system", "content": "You are a trivia question generator. Always respond with valid JSON only."},
+                {"role": "user", "content": prompt}
+            ],
+            max_tokens=1500,
+            temperature=0.7,
+        )
+
+        # Extract and parse the JSON response
+        content = response.choices[0].message.content.strip()
+
+        # Try to extract JSON from markdown code blocks if present
+        if "```json" in content:
+            content = content.split("```json")[1].split("```")[0].strip()
+        elif "```" in content:
+            content = content.split("```")[1].split("```")[0].strip()
+
+        questions = json.loads(content)
+
+        # Validate the structure
+        if not isinstance(questions, list) or len(questions) != 10:
+            raise ValueError("Expected 10 questions")
+
+        for q in questions:
+            if not all(key in q for key in ["category", "question", "answer", "emojis"]):
+                raise ValueError("Invalid question structure")
+            # Add default emojis if missing or empty
+            if not q.get("emojis"):
+                q["emojis"] = "❓❔"
+
+        return questions
+
+    except (openai.OpenAIError, json.JSONDecodeError, ValueError) as e:
+        # Capture any errors with Sentry and return None
+        sentry_sdk.capture_exception(e)
+        print(f"Error generating custom trivia questions: {e}")
+        return None
 
 
 def insert_trivia_questions_into_mongo(trivia_questions):
@@ -18380,6 +18615,7 @@ async def start_trivia():
             #await ask_sports_logos_challenge("TheOkraG", 591861826690613248, 7)
             #await ask_rapidfire_challenge("TheOkraG", 591861826690613248, 1)
             #await ask_okra_says_challenge("TheOkraG", 591861826690613248, 1)
+            #await ask_custom_trivia_challenge("TheOkraG", 591861826690613248, 10)
 
             if len(round_responders) == 0:
                 no_players = True
@@ -18411,7 +18647,7 @@ async def start_trivia():
 
             start_message = f"\u200b\n✨🧪 **NEW** from the **Okra Lab**! 🧪✨\n"
             
-            start_message += f"\n🧠🥒 **Okra Says** [Mini Game]\n"
+            start_message += f"\n🧞‍♂️🪔 **The Genie** [Mini Game]\n"
 
             start_message += "\n\n\u200b"
             await safe_send(channel, start_message)
@@ -18996,6 +19232,7 @@ def get_minigame_name(number):
         "45": "Jock Talk",
         "46": "30 for 30",
         "47": "Okra Says",
+        "48": "The Genie",
         "99": "CHAOS",
         "x": "Skip Mini Game"
     }
