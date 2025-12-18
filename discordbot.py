@@ -5093,7 +5093,7 @@ async def ask_riddle_challenge(winner, winner_id, num=7):
     return riddle_winner_id
 
 
-async def ask_custom_trivia_challenge(winner, winner_id, num=10):
+async def ask_custom_trivia_challenge(winner, winner_id, num=3):
     """The Genie: Master makes a wish, Genie grants 10 questions."""
     global wf_winner
     wf_winner = True
@@ -5106,11 +5106,11 @@ async def ask_custom_trivia_challenge(winner, winner_id, num=10):
     ]
     gif_url = random.choice(gifs)
 
-    await safe_send(channel, content="\u200b\n\u200b\n🧞‍♂️🪔 **The Genie**: Wish For Your Category\n\u200b", embed=discord.Embed().set_image(url=gif_url))
+    await safe_send(channel, content="\u200b\n\u200b\n🧞‍♂️🪔 **The Genie**: You Get 3 Wishes\n\u200b", embed=discord.Embed().set_image(url=gif_url))
     await asyncio.sleep(5)
 
     # Ask winner for category
-    await safe_send(channel, f"\u200b\n🪔✨ **Master <@{winner_id}>**, make your wish! What category do you desire? (3 words max, must be SFW)\n\u200b")
+    await safe_send(channel, f"\u200b\n🪔✨ **Master <@{winner_id}>**, What category do you desire? (3 words max, must be SFW)\n\u200b")
 
     category = None
     try:
@@ -5138,7 +5138,7 @@ async def ask_custom_trivia_challenge(winner, winner_id, num=10):
         await safe_send(channel, "\u200b\n❌🧞‍♂️ The Genie's magic has failed! Be careful what you wish for, Master. Try again later!\n\u200b")
         return None
 
-    await safe_send(channel, f"\u200b\n✨🧞‍♂️ **Wish granted!** Your **{num}** questions about **{category}** await, Master!\n\u200b")
+    await safe_send(channel, f"\u200b\n✨🧞‍♂️ **{num} wishes granted!** Your questions about **{category}** await, Master!\n\u200b")
     await asyncio.sleep(3)
 
     user_data = {}
@@ -14152,7 +14152,7 @@ async def select_wof_questions(winner, winner_id):
             return None
 
         elif selected_wof_category == "48":
-            await ask_custom_trivia_challenge(winner, winner_id, 10)
+            await ask_custom_trivia_challenge(winner, winner_id, 3)
             await asyncio.sleep(3)
             return None
 
