@@ -5093,7 +5093,7 @@ async def ask_riddle_challenge(winner, winner_id, num=7):
     return riddle_winner_id
 
 
-async def ask_custom_trivia_challenge(winner, winner_id, num=10):
+async def ask_custom_trivia_challenge(winner, winner_id, num=3):
     """The Genie: Master makes a wish, Genie grants 10 questions."""
     global wf_winner
     wf_winner = True
@@ -5106,11 +5106,11 @@ async def ask_custom_trivia_challenge(winner, winner_id, num=10):
     ]
     gif_url = random.choice(gifs)
 
-    await safe_send(channel, content="\u200b\n\u200b\n🧞‍♂️🪔 **The Genie**: Wish For Your Category\n\u200b", embed=discord.Embed().set_image(url=gif_url))
+    await safe_send(channel, content="\u200b\n\u200b\n🧞‍♂️🪔 **The Genie**: You Get 3 Wishes\n\u200b", embed=discord.Embed().set_image(url=gif_url))
     await asyncio.sleep(5)
 
     # Ask winner for category
-    await safe_send(channel, f"\u200b\n🪔✨ **Master <@{winner_id}>**, make your wish! What category do you desire? (3 words max, must be SFW)\n\u200b")
+    await safe_send(channel, f"\u200b\n🪔✨ **Master <@{winner_id}>**, What category do you desire? (3 words max, must be SFW)\n\u200b")
 
     category = None
     try:
@@ -5138,7 +5138,7 @@ async def ask_custom_trivia_challenge(winner, winner_id, num=10):
         await safe_send(channel, "\u200b\n❌🧞‍♂️ The Genie's magic has failed! Be careful what you wish for, Master. Try again later!\n\u200b")
         return None
 
-    await safe_send(channel, f"\u200b\n✨🧞‍♂️ **Wish granted!** Your **{num}** questions about **{category}** await, Master!\n\u200b")
+    await safe_send(channel, f"\u200b\n✨🧞‍♂️ **{num} wishes granted!** Your questions about **{category}** await, Master!\n\u200b")
     await asyncio.sleep(3)
 
     user_data = {}
@@ -14152,7 +14152,7 @@ async def select_wof_questions(winner, winner_id):
             return None
 
         elif selected_wof_category == "48":
-            await ask_custom_trivia_challenge(winner, winner_id, 10)
+            await ask_custom_trivia_challenge(winner, winner_id, 3)
             await asyncio.sleep(3)
             return None
 
@@ -18615,7 +18615,7 @@ async def start_trivia():
             #await ask_sports_logos_challenge("TheOkraG", 591861826690613248, 7)
             #await ask_rapidfire_challenge("TheOkraG", 591861826690613248, 1)
             #await ask_okra_says_challenge("TheOkraG", 591861826690613248, 1)
-            await ask_custom_trivia_challenge("TheOkraG", 591861826690613248, 5)
+            #await ask_custom_trivia_challenge("TheOkraG", 591861826690613248, 10)
 
             if len(round_responders) == 0:
                 no_players = True
@@ -19515,12 +19515,8 @@ async def on_ready():
     # Clean up bot messages from The Lodge
     await cleanup_lodge_messages()
 
-    # Sync slash commands
-    try:
-        await bot.tree.sync()
-        print("✅ Slash commands synced")
-    except Exception as e:
-        print(f"⚠️ Could not sync slash commands: {e}")
+    # NOTE: Slash command sync moved to after tournament system setup
+    # to ensure all commands (including Cogs) are registered before syncing
 
     # Setup tournament system
     try:
@@ -19648,34 +19644,24 @@ async def on_ready():
     
     
     if sync_commands:
-        # Try syncing to specific tournament guild first
+        # Sync to OKRAN guild only (no global sync to avoid conflicts with other bots)
         try:
-            tournament_guild = discord.Object(id=TOURNAMENT_GUILD_ID)
-            synced = await bot.tree.sync(guild=tournament_guild)
-            print(f"✅ Synced {len(synced)} slash command(s) to tournament guild {TOURNAMENT_GUILD_ID}")
+            okran_guild = discord.Object(id=OKRAN_GUILD_ID)
+            synced = await bot.tree.sync(guild=okran_guild)
+            print(f"✅ Synced {len(synced)} slash command(s) to OKRAN guild {OKRAN_GUILD_ID}")
             if synced:
-                print(f"🔍 Tournament guild synced commands: {[cmd.name for cmd in synced]}")
-        except Exception as tournament_e:
-            print(f"❌ Failed to sync commands to tournament guild: {tournament_e}")
+                print(f"🔍 OKRAN guild synced commands: {[cmd.name for cmd in synced]}")
+        except Exception as okran_e:
+            print(f"❌ Failed to sync commands to OKRAN guild: {okran_e}")
+            traceback.print_exc()
 
-        # Try global sync
-        try:
-            synced = await bot.tree.sync()
-            print(f"✅ Synced {len(synced)} slash command(s) globally")
-            if synced:
-                print(f"🔍 Globally synced commands: {[cmd.name for cmd in synced]}")
-        except Exception as e:
-            print(f"❌ Failed to sync slash commands globally: {e}")
-            # Try guild sync as fallback to main guild
-            try:
-                guild = discord.Object(id=OKRAN_GUILD_ID)
-                synced = await bot.tree.sync(guild=guild)
-                print(f"✅ Synced {len(synced)} slash command(s) to guild {OKRAN_GUILD_ID}")
-                if synced:
-                    print(f"🔍 Guild synced commands: {[cmd.name for cmd in synced]}")
-            except Exception as guild_e:
-                print(f"❌ Guild sync also failed: {guild_e}")
-                traceback.print_exc()
+        # NOTE: TOURNAMENT_GUILD_ID is actually a channel ID (not a guild ID), so no separate sync needed
+        # Tournament commands are restricted to that channel via allowed_channel_id parameter in setup_tournament_system()
+        # All commands for OKRAN guild (including tournament commands) are synced above
+
+        # NO GLOBAL SYNC - removed to prevent conflicts with simply_trivia_standalone.py
+        # Global sync was causing /start and other tournament commands to disappear
+        # when simply_trivia_standalone.py was invited to the same server
 
     # Send startup notifications to configured channels
     print("📢 Sending startup notifications...")
@@ -19725,16 +19711,16 @@ async def on_ready():
 
 @bot.command()
 async def sync_tournament_commands(ctx):
-    """Manual command to sync tournament slash commands"""
+    """Manual command to sync tournament slash commands to OKRAN guild"""
     if not ctx.author.guild_permissions.administrator:
         await ctx.send("❌ Only administrators can sync commands")
         return
 
     try:
-        # Sync to tournament guild
-        tournament_guild = discord.Object(id=TOURNAMENT_GUILD_ID)
-        synced = await bot.tree.sync(guild=tournament_guild)
-        await ctx.send(f"✅ Synced {len(synced)} slash command(s) to tournament guild!")
+        # Sync to OKRAN guild (tournament commands are channel-restricted via Cog)
+        okran_guild = discord.Object(id=OKRAN_GUILD_ID)
+        synced = await bot.tree.sync(guild=okran_guild)
+        await ctx.send(f"✅ Synced {len(synced)} slash command(s) to OKRAN guild!")
         if synced:
             commands_list = [cmd.name for cmd in synced]
             await ctx.send(f"Commands: {', '.join(commands_list)}")
@@ -19743,14 +19729,16 @@ async def sync_tournament_commands(ctx):
 
 @bot.command()
 async def sync_global(ctx):
-    """Manual command to sync all slash commands globally"""
+    """Manual command to sync all slash commands to OKRAN guild only (not globally)"""
     if not ctx.author.guild_permissions.administrator:
         await ctx.send("❌ Only administrators can sync commands")
         return
 
     try:
-        synced = await bot.tree.sync()
-        await ctx.send(f"✅ Synced {len(synced)} slash command(s) globally!")
+        # Sync to OKRAN guild only (no global sync to avoid conflicts)
+        okran_guild = discord.Object(id=OKRAN_GUILD_ID)
+        synced = await bot.tree.sync(guild=okran_guild)
+        await ctx.send(f"✅ Synced {len(synced)} slash command(s) to OKRAN guild!")
         if synced:
             commands_list = [cmd.name for cmd in synced]
             await ctx.send(f"Commands: {', '.join(commands_list)}")
