@@ -2987,176 +2987,6 @@ class TournamentManager:
             pass
 
 
-class TournamentCog(commands.Cog):
-    """Discord cog for tournament slash commands"""
-    
-    def __init__(self, bot: commands.Bot, tournament_manager: TournamentManager, allowed_channel_id: int = None):
-        self.bot = bot
-        self.tournament_manager = tournament_manager
-        self.allowed_channel_id = allowed_channel_id
-    
-    def _is_channel_allowed(self, interaction: discord.Interaction) -> bool:
-        """Check if command is being used in allowed channel"""
-        if self.allowed_channel_id is None:
-            # If no specific channel set, allow only in designated tournament channel
-            return validate_tournament_channel(interaction.channel)
-        return interaction.channel.id == self.allowed_channel_id
-
-    @discord.app_commands.command(name="start", description="Start a new tournament")
-    async def start(self, interaction: discord.Interaction):
-        if not self._is_channel_allowed(interaction):
-            await interaction.response.send_message(
-                "❌ Tournament commands can only be used in the designated tournament channel",
-                ephemeral=True
-            )
-            return
-
-        # Check if user has OKRAN_ROLE_ID or BUMPER_KING_ROLE_ID
-        import discordbot
-        okran_role_id = getattr(discordbot, 'OKRAN_ROLE_ID', None)
-        okran_role_id_2 = getattr(discordbot, 'OKRAN_ROLE_ID_2', None)
-        bumper_king_role_id = getattr(discordbot, 'BUMPER_KING_ROLE_ID', None)
-
-        has_tournament_role = False
-        if okran_role_id and any(role.id == okran_role_id for role in interaction.user.roles):
-            has_tournament_role = True
-        elif okran_role_id_2 and any(role.id == okran_role_id_2 for role in interaction.user.roles):
-            has_tournament_role = True
-        elif bumper_king_role_id and any(role.id == bumper_king_role_id for role in interaction.user.roles):
-            has_tournament_role = True
-
-        if not has_tournament_role:
-            await interaction.response.send_message(
-                "Tournaments can only be started by Okrans and The Bumper King.",
-                ephemeral=True
-            )
-            return
-
-        try:
-            print(f"🏆 Starting tournament with default settings")
-            await self.tournament_manager.start_tournament(interaction)
-            print("✅ Tournament started successfully")
-        except ChannelError as e:
-            print(f"❌ ChannelError: {e}")
-            await interaction.response.send_message(
-                "❌ Tournaments can only be started in the designated tournament channel",
-                ephemeral=True
-            )
-        except ActiveTournamentError as e:
-            print(f"❌ ActiveTournamentError: {e}")
-            await interaction.response.send_message(
-                f"❌ {str(e)}",
-                ephemeral=True
-            )
-        except Exception as e:
-            print(f"❌ Unexpected error starting tournament: {type(e).__name__}: {e}")
-            import traceback
-            traceback.print_exc()
-            try:
-                await interaction.response.send_message(
-                    f"❌ Error starting tournament: {e}",
-                    ephemeral=True
-                )
-            except:
-                print("❌ Could not send error response to Discord")
-
-    @discord.app_commands.command(name="status", description="Show tournament status")
-    async def status(self, interaction: discord.Interaction):
-        if not self._is_channel_allowed(interaction):
-            await interaction.response.send_message(
-                "❌ This command can only be used in the designated tournament channel",
-                ephemeral=True
-            )
-            return
-        
-        embed = await self.tournament_manager.get_tournament_status(interaction.channel)
-        await interaction.response.send_message(embed=embed)
-
-    @discord.app_commands.command(name="cancel", description="Cancel the active tournament")
-    async def cancel(self, interaction: discord.Interaction):
-        if not self._is_channel_allowed(interaction):
-            await interaction.response.send_message(
-                "❌ This command can only be used in the designated tournament channel",
-                ephemeral=True
-            )
-            return
-
-        # Check if user has HOST_ROLE_ID to cancel tournaments
-        import discordbot
-        host_role_id = getattr(discordbot, 'HOST_ROLE_ID', None)
-
-        has_host_role = False
-        if host_role_id and any(role.id == host_role_id for role in interaction.user.roles):
-            has_host_role = True
-
-        if not has_host_role:
-            await interaction.response.send_message(
-                "❌ Only hosts can cancel tournaments.",
-                ephemeral=True
-            )
-            return
-
-        success = await self.tournament_manager.cancel_tournament(interaction.channel, interaction.user)
-        if success:
-            embed = discord.Embed(
-                title="❌ Tournament Cancelled",
-                description="The active tournament has been cancelled by an administrator.",
-                color=discord.Color.red()
-            )
-            await interaction.response.send_message(embed=embed)
-        else:
-            await interaction.response.send_message(
-                "❌ No active tournament to cancel or insufficient permissions",
-                ephemeral=True
-            )
-
-    @discord.app_commands.command(name="test", description="Add fake players for testing")
-    async def test(self, interaction: discord.Interaction):
-        if not self._is_channel_allowed(interaction):
-            await interaction.response.send_message(
-                "❌ This command can only be used in the designated tournament channel",
-                ephemeral=True
-            )
-            return
-
-        # Check if user has HOST_ROLE_ID to add test players
-        import discordbot
-        host_role_id = getattr(discordbot, 'HOST_ROLE_ID', None)
-
-        has_host_role = False
-        if host_role_id and any(role.id == host_role_id for role in interaction.user.roles):
-            has_host_role = True
-
-        if not has_host_role:
-            await interaction.response.send_message(
-                "❌ Only hosts can add test players.",
-                ephemeral=True
-            )
-            return
-
-        success = await self.tournament_manager.add_fake_players_to_tournament(interaction.channel)
-        if success:
-            await interaction.response.send_message("✅ Added 4 fake players (Alpha, Beta, Gamma, Delta) for testing!", ephemeral=True)
-        else:
-            # Check specific reasons for failure
-            tournament = self.tournament_manager.load_tournament_by_channel(interaction.channel.id)
-            if not tournament:
-                await interaction.response.send_message(
-                    "❌ No active tournament found",
-                    ephemeral=True
-                )
-            elif tournament["status"] != "signup":
-                await interaction.response.send_message(
-                    "❌ Can only add test players during signup phase",
-                    ephemeral=True
-                )
-            else:
-                await interaction.response.send_message(
-                    "❌ Fake players already added or tournament at capacity",
-                    ephemeral=True
-                )
-
-
 class TournamentStatsManager:
     """Manages tournament statistics and historical data"""
     
@@ -3230,80 +3060,6 @@ class TournamentStatsManager:
         except Exception as e:
             logger.error(f"Error getting leaderboard: {e}")
             return []
-
-class TournamentStatsCommands(commands.Cog):
-    """Tournament statistics and management commands"""
-    
-    def __init__(self, bot: commands.Bot, stats_manager: TournamentStatsManager, allowed_channel_id: int = None):
-        self.bot = bot
-        self.stats_manager = stats_manager
-        self.allowed_channel_id = allowed_channel_id
-    
-    def _is_channel_allowed(self, interaction: discord.Interaction) -> bool:
-        """Check if command is being used in allowed channel"""
-        if self.allowed_channel_id is None:
-            # If no specific channel set, allow only in designated tournament channel
-            return validate_tournament_channel(interaction.channel)
-        return interaction.channel.id == self.allowed_channel_id
-    
-    @discord.app_commands.command(name="stats", description="Show your tournament statistics")
-    async def stats(self, interaction: discord.Interaction):
-        if not self._is_channel_allowed(interaction):
-            await interaction.response.send_message(
-                "❌ This command can only be used in the designated tournament channel",
-                ephemeral=True
-            )
-            return
-            
-        stats = await self.stats_manager.get_player_stats(
-            str(interaction.user.id), str(interaction.guild.id)
-        )
-        
-        embed = discord.Embed(
-            title=f"🏆 Tournament Stats - {interaction.user.display_name}",
-            color=discord.Color.blue()
-        )
-        
-        embed.add_field(name="Tournaments Played", value=stats["tournaments_played"], inline=True)
-        embed.add_field(name="Championships", value=stats["wins"], inline=True)
-        embed.add_field(name="Finals Reached", value=stats["finals_reached"], inline=True)
-        
-        if stats["tournaments_played"] > 0:
-            win_rate = (stats["wins"] / stats["tournaments_played"]) * 100
-            embed.add_field(name="Win Rate", value=f"{win_rate:.1f}%", inline=True)
-        
-        await interaction.response.send_message(embed=embed)
-    
-    @discord.app_commands.command(name="leaderboard", description="Show tournament leaderboard")
-    async def leaderboard(self, interaction: discord.Interaction):
-        if not self._is_channel_allowed(interaction):
-            await interaction.response.send_message(
-                "❌ This command can only be used in the designated tournament channel",
-                ephemeral=True
-            )
-            return
-            
-        leaderboard = await self.stats_manager.get_leaderboard(str(interaction.guild.id))
-        
-        if not leaderboard:
-            await interaction.response.send_message("No completed tournaments found for this server.")
-            return
-        
-        embed = discord.Embed(
-            title="🏆 Tournament Leaderboard",
-            color=discord.Color.gold()
-        )
-        
-        description = ""
-        medals = ["🥇", "🥈", "🥉"]
-        
-        for i, player in enumerate(leaderboard, 1):
-            medal = medals[i-1] if i <= 3 else f"{i}."
-            description += f"{medal} **{player['display_name']}** - {player['wins']} wins ({player['tournaments']} tournaments)\n"
-        
-        embed.description = description
-        await interaction.response.send_message(embed=embed)
-
 
 class SeedingVoteView(discord.ui.View):
     """View for seeding mode voting with buttons"""
@@ -3390,53 +3146,49 @@ class SeedingVoteView(discord.ui.View):
             item.disabled = True
 
 
-async def setup_tournament_system(bot: commands.Bot, 
+async def setup_tournament_system(bot: commands.Bot,
                                 db: AsyncIOMotorDatabase,
                                 fuzzy_match_func: Callable[[str, str, str, str], bool],
                                 select_trivia_questions_func: Callable = None,
-                                allowed_channel_id: int = None) -> TournamentManager:
+                                allowed_channel_id: int = None,
+                                guild_id: int = None) -> TournamentManager:
     """
     Complete tournament system setup for the Discord bot.
-    
+
     Args:
         bot: Discord bot instance
-        db: MongoDB database instance  
+        db: MongoDB database instance
         fuzzy_match_func: Existing fuzzy_match function from discordbot.py
         select_trivia_questions_func: Optional existing question selection function
         allowed_channel_id: Optional specific channel ID to restrict commands to
-    
+        guild_id: Optional guild ID to restrict commands to (makes them guild-specific, not global)
+
     Returns:
         TournamentManager instance for additional customization if needed
     """
-    
+
     logger.info("Setting up tournament system...")
-    
+
     try:
         # 1. Create and setup tournament manager with custom functions
         tournament_manager = TournamentManager(db, bot, select_trivia_questions_func, fuzzy_match_func)
         await tournament_manager.ensure_indexes()
-        
-        # 2. Add tournament slash commands cog
-        tournament_cog = TournamentCog(bot, tournament_manager, allowed_channel_id)
-        await bot.add_cog(tournament_cog)
-        
-        # 3. Setup statistics system
+
+        # 2. Setup statistics system
         stats_manager = TournamentStatsManager(db)
-        stats_cog = TournamentStatsCommands(bot, stats_manager, allowed_channel_id)
-        await bot.add_cog(stats_cog)
-        
-        # 4. Store references for later access
+
+        # 3. Store references for later access (commands are registered directly in discordbot.py)
         bot._tournament_manager = tournament_manager
         bot._tournament_stats = stats_manager
         
         logger.info("Tournament system setup complete!")
         logger.info("Available commands:")
-        logger.info("  • /start - Start a new tournament")
-        logger.info("  • /status - Show current tournament status")
-        logger.info("  • /cancel - Cancel active tournament (host only)")
-        logger.info("  • /test - Add fake players for testing (host only)")
-        logger.info("  • /stats - Show your tournament statistics")
-        logger.info("  • /leaderboard - Show server leaderboard")
+        logger.info("  • /tournament start - Start a new tournament")
+        logger.info("  • /tournament status - Show current tournament status")
+        logger.info("  • /tournament cancel - Cancel active tournament (host only)")
+        logger.info("  • /tournament test - Add fake players for testing (host only)")
+        logger.info("  • /tournament stats - Show your tournament statistics")
+        logger.info("  • /tournament leaderboard - Show server leaderboard")
         logger.info("  • Type 'okra' during signup to join tournaments")
         
         if allowed_channel_id:
