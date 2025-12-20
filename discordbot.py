@@ -2184,7 +2184,7 @@ async def ask_okrace_challenge(winner, winner_id, num=1):
                 if len(emoji_to_user) >= MAX_RACERS:
                     break
         except asyncio.TimeoutError:
-            break
+            continue
     
     if len(emoji_to_user) == 0:
         await safe_send(channel, "\u200b\n😢 No one joined the race! Maybe next time.\n\u200b")
@@ -5024,7 +5024,7 @@ async def ask_riddle_challenge(winner, winner_id, num=7):
                 processed_users.add(key)
 
                 for answer in riddle_answers:
-                    if fuzzy_match(content, answer, category, url):
+                    if fuzzy_match(content, answer, category, url, ignore_exact_mode=True):
                         await message.add_reaction("✅")
                         await safe_send(channel, f"\u200b\n✅🎉 **<@{user_id}>** got it! **{answer.upper()}**\n\u200b")
                         if user_id not in user_data:
@@ -5265,6 +5265,84 @@ async def ask_custom_trivia_challenge(winner, winner_id, num=3):
     return custom_trivia_winner_id
 
 
+async def show_rapidfire_detailed_summary(channel, sorted_users, all_questions, answered_questions):
+    """
+    Show detailed summary for top 3 users in Rapid Fire Challenge
+    Displays which questions they got right with question text and answers
+    """
+    try:
+        await asyncio.sleep(2)
+
+        # Header
+        header = "\u200b\n━━━━━━━━━━━━━━━━━━━━━━\n📊 **Top 3 Detailed Results**\n━━━━━━━━━━━━━━━━━━━━━━\n\u200b\n"
+        await safe_send(channel, header)
+
+        medals = ["🥇", "🥈", "🥉"]
+
+        # Show top 3 users only
+        for rank, (user_id, (display_name, points)) in enumerate(sorted_users[:3], start=0):
+            if points == 0:
+                continue  # Skip users with no correct answers
+
+            medal = medals[rank]
+            user_summary = f"{medal} **{display_name}** - {points} Correct:\n\u200b\n"
+
+            # Find all questions this user got right
+            correct_questions = []
+            for q_idx, users_dict in answered_questions.items():
+                if user_id in users_dict:
+                    correct_questions.append(q_idx)
+
+            # Sort by question index
+            correct_questions.sort()
+
+            # Build message for this user's correct answers
+            for q_idx in correct_questions:
+                q = all_questions[q_idx]
+                category = q.get("category", "General")
+                question_text = q.get("question", "")
+
+                # Truncate long questions
+                if len(question_text) > 100:
+                    question_text = question_text[:97] + "..."
+
+                # Get first answer (primary answer)
+                answers = q.get("answers", [])
+                answer_text = answers[0] if answers else "Unknown"
+
+                user_summary += f"**Q{q_idx + 1}** ({category}): {question_text}\n"
+                user_summary += f"   ✅ Answer: {answer_text}\n\u200b\n"
+
+            # Check message length and split if needed
+            if len(user_summary) > 1900:
+                # Split into chunks
+                lines = user_summary.split("\n")
+                current_chunk = f"{medal} **{display_name}** - {points} Correct:\n\u200b\n"
+
+                for line in lines[2:]:  # Skip the header lines
+                    if len(current_chunk) + len(line) + 1 > 1900:
+                        await safe_send(channel, current_chunk)
+                        await asyncio.sleep(0.5)
+                        current_chunk = line + "\n"
+                    else:
+                        current_chunk += line + "\n"
+
+                if current_chunk.strip():
+                    await safe_send(channel, current_chunk)
+            else:
+                await safe_send(channel, user_summary)
+
+            # Add separator between users (except after last user)
+            if rank < min(2, len(sorted_users) - 1):
+                await safe_send(channel, "━━━━━━━━━━━━━━━━")
+                await asyncio.sleep(0.5)
+
+    except Exception as e:
+        print(f"Error displaying rapid fire detailed summary: {e}")
+        import traceback
+        traceback.print_exc()
+
+
 async def ask_rapidfire_challenge(winner, winner_id, num=1):
     """
     Rapid Fire Challenge: Show 30 questions in 30 seconds (1 per second)
@@ -5272,6 +5350,12 @@ async def ask_rapidfire_challenge(winner, winner_id, num=1):
     Wait 3 more seconds for answers (total 33s)
     Players can answer any question shown - winner has most points
     """
+    # Configuration: Toggle question sources on/off
+    RAPIDFIRE_USE_TRIVIA = True      # Include trivia_questions collection
+    RAPIDFIRE_USE_JEOPARDY = False   # Include jeopardy_questions collection
+    RAPIDFIRE_USE_CROSSWORD = False   # Include crossword_questions collection
+    RAPIDFIRE_DEBUG = False
+
     global wf_winner
     wf_winner = True
 
@@ -5287,23 +5371,36 @@ async def ask_rapidfire_challenge(winner, winner_id, num=1):
 
     total_questions = 30 * num
 
-    await safe_send(channel, f"\u200b\n💨 Get ready for **{total_questions} questions** at lightning speed!\n\u200b")
+    await safe_send(channel, f"\u200b\n💨 Get ready for **{total_questions} questions** at lightning speed!\n\n💡 **Answer ANY question at ANY time!** You have the full 30 seconds.\n\u200b")
     await asyncio.sleep(3)
 
     # Fetch questions from trivia, jeopardy, and crossword collections
     try:
-        questions_per_collection = total_questions // 3
-        remainder = total_questions % 3
+        # Count enabled collections
+        enabled_collections = sum([RAPIDFIRE_USE_TRIVIA, RAPIDFIRE_USE_JEOPARDY, RAPIDFIRE_USE_CROSSWORD])
+
+        if enabled_collections == 0:
+            await safe_send(channel, "\u200b\n❌ No question sources enabled. Please check configuration.\n\u200b")
+            return None
+
+        questions_per_collection = total_questions // enabled_collections
+        remainder = total_questions % enabled_collections
 
         recent_ids = await get_all_recent_question_ids()
         all_questions = []
 
         # Fetch from trivia_questions
         trivia_count = questions_per_collection + (1 if remainder > 0 else 0)
-        if trivia_count > 0:
+        if RAPIDFIRE_USE_TRIVIA and trivia_count > 0:
             trivia_collection = db["trivia_questions"]
             pipeline_trivia = [
-                {"$match": {"_id": {"$nin": list(recent_ids["general"])}}},
+                {"$match": {
+                    "_id": {"$nin": list(recent_ids["general"])},
+                    "$and": [
+                        {"url": {"$not": {"$regex": "http", "$options": "i"}}},      # Exclude image questions
+                        {"url": {"$not": {"$regex": "scramble", "$options": "i"}}}   # Exclude scramble
+                    ]
+                }},
                 {"$sample": {"size": trivia_count}}
             ]
             trivia_questions = await trivia_collection.aggregate(pipeline_trivia).to_list(length=trivia_count)
@@ -5312,11 +5409,20 @@ async def ask_rapidfire_challenge(winner, winner_id, num=1):
             all_questions.extend(trivia_questions)
 
         # Fetch from jeopardy_questions
-        jeopardy_count = questions_per_collection + (1 if remainder > 1 else 0)
-        if jeopardy_count > 0:
+        # Adjust remainder allocation based on enabled collections
+        jeopardy_remainder = 0
+        if RAPIDFIRE_USE_TRIVIA and remainder > 1:
+            jeopardy_remainder = 1
+        elif not RAPIDFIRE_USE_TRIVIA and remainder > 0:
+            jeopardy_remainder = 1
+        jeopardy_count = questions_per_collection + jeopardy_remainder
+        if RAPIDFIRE_USE_JEOPARDY and jeopardy_count > 0:
             jeopardy_collection = db["jeopardy_questions"]
             pipeline_jeopardy = [
-                {"$match": {"_id": {"$nin": list(recent_ids["jeopardy"])}}},
+                {"$match": {
+                    "_id": {"$nin": list(recent_ids["jeopardy"])},
+                    "url": {"$not": {"$regex": "http", "$options": "i"}}  # Exclude image questions
+                }},
                 {"$sample": {"size": jeopardy_count}}
             ]
             jeopardy_questions = await jeopardy_collection.aggregate(pipeline_jeopardy).to_list(length=jeopardy_count)
@@ -5326,10 +5432,13 @@ async def ask_rapidfire_challenge(winner, winner_id, num=1):
 
         # Fetch from crossword_questions
         crossword_count = questions_per_collection
-        if crossword_count > 0:
+        if RAPIDFIRE_USE_CROSSWORD and crossword_count > 0:
             crossword_collection = db["crossword_questions"]
             pipeline_crossword = [
-                {"$match": {"_id": {"$nin": list(recent_ids["crossword"])}}},
+                {"$match": {
+                    "_id": {"$nin": list(recent_ids["crossword"])},
+                    "url": {"$not": {"$regex": "http", "$options": "i"}}  # Exclude image questions
+                }},
                 {"$sample": {"size": crossword_count}}
             ]
             crossword_questions = await crossword_collection.aggregate(pipeline_crossword).to_list(length=crossword_count)
@@ -5351,23 +5460,22 @@ async def ask_rapidfire_challenge(winner, winner_id, num=1):
     # Prepare answer tracking
     user_data = {}  # {user_id: (display_name, points)}
     answered_questions = {}  # {question_idx: {user_id: True}}
-    question_start_time = asyncio.get_event_loop().time()
+    stop_answer_collection = asyncio.Event()
 
     # Message check function for answer collection
     def check(m):
         target_channel = _active_game_channel or channel
         return m.channel == target_channel and m.author != get_bot().user
 
+    await safe_send(channel, "\u200b\n⚡ **GO!** ⚡\n\u200b")
+    await asyncio.sleep(1)
     # Start answer collection task in background
     answer_collection_task = asyncio.create_task(
         collect_rapidfire_answers(
             all_questions, user_data, answered_questions,
-            check, question_start_time + 33.0
+            check, stop_answer_collection, RAPIDFIRE_DEBUG
         )
     )
-
-    await safe_send(channel, "\u200b\n⚡ **GO!** ⚡\n\u200b")
-    await asyncio.sleep(1)
 
     # Display questions rapid-fire style (1 per second, auto-delete)
     for i, q in enumerate(all_questions, 1):
@@ -5382,28 +5490,18 @@ async def ask_rapidfire_challenge(winner, winner_id, num=1):
             )
 
             msg = await safe_send(channel, embed=embed)
+            #if msg:
+            #    asyncio.create_task(delete_message_after(msg, 1))
             await asyncio.sleep(1)
-
-            # Delete the message
-            if msg:
-                try:
-                    await msg.delete()
-                except:
-                    pass  # Ignore deletion errors
 
         except Exception as e:
             print(f"Error displaying question {i}: {e}")
             continue
 
-    # Wait 3 more seconds for final answers
-    await asyncio.sleep(2)
-
-    # Cancel answer collection
-    answer_collection_task.cancel()
-    try:
-        await answer_collection_task
-    except asyncio.CancelledError:
-        pass
+    # Wait 3 more seconds for final answers, then stop collection
+    await asyncio.sleep(5)
+    stop_answer_collection.set()
+    await answer_collection_task
 
     # Store question IDs to avoid repeats
     try:
@@ -5445,6 +5543,9 @@ async def ask_rapidfire_challenge(winner, winner_id, num=1):
         message += "\u200b"
         await safe_send(channel, message)
 
+        # Show detailed summary for top 3
+        await show_rapidfire_detailed_summary(channel, sorted_users, all_questions, answered_questions)
+
         # Determine winner
         top_score = sorted_users[0][1][1]
         top_winners = [(uid, name) for uid, (name, score) in sorted_users if score == top_score]
@@ -5470,26 +5571,35 @@ async def ask_rapidfire_challenge(winner, winner_id, num=1):
         return None
 
 
-async def collect_rapidfire_answers(all_questions, user_data, answered_questions, check, end_time):
+async def delete_message_after(message, delay_seconds):
+    await asyncio.sleep(delay_seconds)
+    try:
+        await message.delete()
+    except:
+        pass  # Ignore deletion errors
+
+
+async def collect_rapidfire_answers(all_questions, user_data, answered_questions, check, stop_event, debug):
     """
     Background task to collect answers during rapid fire challenge
     """
-    while asyncio.get_event_loop().time() < end_time:
+    while not stop_event.is_set():
         try:
-            timeout = max(0.1, end_time - asyncio.get_event_loop().time())
+            timeout = 0.5
             message = await get_bot().wait_for("message", timeout=timeout, check=check)
 
             # Delete user's message immediately to keep channel clean
-            try:
-                await message.delete()
-            except:
-                pass  # Ignore if bot lacks delete permissions
+            #try:
+            #    await message.delete()
+            #except:
+            #    pass  # Ignore if bot lacks delete permissions
 
             content = message.content.strip()
             user_id = message.author.id
             display_name = message.author.display_name
 
             # Check answer against all questions
+            matched = False
             for idx, q in enumerate(all_questions):
                 # Skip if user already answered this question correctly
                 if idx in answered_questions and user_id in answered_questions[idx]:
@@ -5501,7 +5611,7 @@ async def collect_rapidfire_answers(all_questions, user_data, answered_questions
 
                 # Check if answer matches
                 for answer in answers:
-                    if fuzzy_match(content, answer, category, url):
+                    if fuzzy_match(content, answer, category, url, ignore_exact_mode=True):
                         # Award point
                         if user_id not in user_data:
                             user_data[user_id] = (display_name, 0)
@@ -5512,10 +5622,16 @@ async def collect_rapidfire_answers(all_questions, user_data, answered_questions
                             answered_questions[idx] = {}
                         answered_questions[idx][user_id] = True
 
+                        matched = True
+                        if debug:
+                            print(f"Rapid Fire match: {display_name} -> '{content}' matched '{answer}' (Q{idx + 1})")
                         break  # Stop checking other answers for this question
 
+            if debug and not matched:
+                print(f"Rapid Fire no match: {display_name} -> '{content}'")
+
         except asyncio.TimeoutError:
-            break
+            continue
         except Exception as e:
             print(f"Error in rapid fire answer collection: {e}")
             continue
@@ -19998,14 +20114,18 @@ async def arena(interaction: discord.Interaction, game_name: str = None, num: in
             arena_game_starter_id = interaction.user.id
 
             if game_name is None or game_name.lower() == "random":
-                print(f"🎲 Running random mini-game for {interaction.user.display_name} in channel {interaction.channel.id}")
-                await mini_games.run_random_mini_game(
+                selected_game = random.choice(mini_games.GAME_NAMES)
+                await interaction.followup.send(f"🎮 **Starting arena game:** {selected_game.upper()}")
+                print(f"🎲 Running random mini-game '{selected_game}' for {interaction.user.display_name} in channel {interaction.channel.id}")
+                await mini_games.run_mini_game(
                     bot,
+                    selected_game,
                     interaction.user.display_name,
                     interaction.user.id,
                     channel_override=interaction.channel
                 )
             elif game_name.lower() == "chaos":
+                await interaction.followup.send(f"🌀 **Starting chaos mode:** {num} games")
                 print(f"🌀 Running chaos mode with {num} games in channel {interaction.channel.id}")
                 await mini_games.run_mini_game_chaos(
                     bot,
@@ -20015,10 +20135,12 @@ async def arena(interaction: discord.Interaction, game_name: str = None, num: in
                     channel_override=interaction.channel
                 )
             else:
-                print(f"🎯 Running specific game: {game_name} in channel {interaction.channel.id}")
+                resolved_name = mini_games.resolve_game_name(game_name) or game_name
+                await interaction.followup.send(f"🎮 **Starting arena game:** {resolved_name.upper()}")
+                print(f"🎯 Running specific game: {resolved_name} in channel {interaction.channel.id}")
                 await mini_games.run_mini_game(
                     bot,
-                    game_name,
+                    resolved_name,
                     interaction.user.display_name,
                     interaction.user.id,
                     num=num,
