@@ -7,6 +7,7 @@ Tracks first-to-answer and streaks
 import asyncio
 import discord
 from datetime import datetime, timezone
+import discordbot
 from discordbot import update_audit_question, generate_scrambled_image, scramble_text
 
 # Configuration
@@ -376,8 +377,7 @@ async def start_simply_trivia(bot, db, channel_id, fuzzy_match_func):
     while True:
         try:
             # Check if bot is shutting down for update
-            from discordbot import shutdown_initiated
-            if shutdown_initiated:
+            if discordbot.shutdown_initiated:
                 # Send shutdown notification to Simply Trivia channel
                 await channel.send("🔄 **Update detected!** I'll be back shortly...")
                 print("🔄 Simply Trivia stopping - update detected")
@@ -441,6 +441,12 @@ async def start_simply_trivia(bot, db, channel_id, fuzzy_match_func):
             answer_revealed = False
 
             while not answer_revealed:
+                # Check for shutdown during answer wait
+                if discordbot.shutdown_initiated:
+                    await channel.send("🔄 **Update detected!** I'll be back shortly...")
+                    print("🔄 Simply Trivia stopping - update detected during answer wait")
+                    return  # Exit the entire function/loop
+
                 await asyncio.sleep(0.1)  # Check every 0.1 seconds
                 current_time = asyncio.get_event_loop().time()
                 elapsed = current_time - start_time
