@@ -11,15 +11,25 @@ import asyncio
 
 
 # Game name to function name mapping (strings, not actual functions)
+# Names match the display names shown in game intro messages (without punctuation)
 GAME_NAMES = [
-    "poster", "scenes", "missing_link", "people", "magic", "animal",
-    "riddle", "dictionary", "flags", "lyric", "polyglot", "book",
-    "math", "element", "jigsaw", "border", "faceoff", "president",
-    "wordle", "list", "ranker_list", "music", "myopic", "microscopic",
-    "fusion", "tally", "currency", "chess", "stock", "search",
-    "soundfx", "audio_music", "audio_question", "feud", "okrace",
-    "sports_logos", "3430", "okra_says"
+    "poster blitz", "movie mayhem", "missing link", "famous peeps", "magic eye", "okranimal",
+    "the riddler", "word nerd", "flag fest", "lyriq", "polyglottery", "prose and cons",
+    "sign language", "elementary", "jigsawed", "borderline", "faceoff", "rushmore",
+    "wordle war", "list battle", "ranker lists", "musiq", "myopic mystery", "microscopic mystery",
+    "fusion challenge", "tally", "xxxx", "checkmate", "wall street", "spotlight",
+    "hear here", "who says", "lets talk", "feud blitz", "okrace",
+    "jock talk", "30 for 30", "okra says"
 ]
+
+def resolve_game_name(game_name: str):
+    if not game_name:
+        return None
+    lower_name = game_name.lower()
+    for name in GAME_NAMES:
+        if name.lower() == lower_name:
+            return name
+    return None
 
 
 def _get_game_function(game_name: str):
@@ -70,44 +80,44 @@ def _get_game_function(game_name: str):
     )
 
     game_function_map = {
-        "poster": ask_poster_challenge,
-        "scenes": ask_movie_scenes_challenge,
-        "missing_link": ask_missing_link,
-        "people": ask_ranker_people_challenge,
-        "magic": ask_magic_challenge,
-        "animal": ask_animal_challenge,
-        "riddle": ask_riddle_challenge,
-        "dictionary": ask_dictionary_challenge,
-        "flags": ask_flags_challenge,
-        "lyric": ask_lyric_challenge,
-        "polyglot": ask_polyglottery_challenge,
-        "book": ask_book_challenge,
-        "math": ask_math_challenge,
-        "element": ask_element_challenge,
-        "jigsaw": ask_jigsaw_challenge,
-        "border": ask_border_challenge,
+        "poster blitz": ask_poster_challenge,
+        "movie mayhem": ask_movie_scenes_challenge,
+        "missing link": ask_missing_link,
+        "famous peeps": ask_ranker_people_challenge,
+        "magic eye": ask_magic_challenge,
+        "okranimal": ask_animal_challenge,
+        "the riddler": ask_riddle_challenge,
+        "word nerd": ask_dictionary_challenge,
+        "flag fest": ask_flags_challenge,
+        "lyriq": ask_lyric_challenge,
+        "polyglottery": ask_polyglottery_challenge,
+        "prose & cons": ask_book_challenge,
+        "sign language": ask_math_challenge,
+        "elementary": ask_element_challenge,
+        "jigsawed": ask_jigsaw_challenge,
+        "borderline": ask_border_challenge,
         "faceoff": ask_faceoff_challenge,
-        "president": ask_president_challenge,
-        "wordle": ask_wordle_challenge,
-        "list": ask_list_question,
-        "ranker_list": ask_ranker_list_question,
-        "music": ask_music_challenge,
-        "myopic": ask_myopic_challenge,
-        "microscopic": ask_microscopic_challenge,
-        "fusion": ask_fusion_challenge,
+        "rushmore": ask_president_challenge,
+        "wordle war": ask_wordle_challenge,
+        "list battle": ask_list_question,
+        "ranker lists": ask_ranker_list_question,
+        "musiq": ask_music_challenge,
+        "myopic mystery": ask_myopic_challenge,
+        "microscopic mystery": ask_microscopic_challenge,
+        "fusion challenge": ask_fusion_challenge,
         "tally": ask_tally_challenge,
-        "currency": ask_currency_challenge,
-        "chess": ask_chess_challenge,
-        "stock": ask_stock_challenge,
-        "search": ask_search_challenge,
-        "soundfx": ask_soundfx_challenge,
-        "audio_music": ask_audio_music_challenge,
-        "audio_question": ask_audio_question_challenge,
-        "feud": ask_feud_question,
+        "xxxx": ask_currency_challenge,
+        "checkmate": ask_chess_challenge,
+        "wall street": ask_stock_challenge,
+        "spotlight": ask_search_challenge,
+        "hear here": ask_soundfx_challenge,
+        "who says": ask_audio_music_challenge,
+        "lets talk": ask_audio_question_challenge,
+        "feud blitz": ask_feud_question,
         "okrace": ask_okrace_challenge,
-        "sports_logos": ask_sports_logos_challenge,
-        "3430": ask_rapidfire_challenge,
-        "okra_says": ask_okra_says_challenge
+        "jock talk": ask_sports_logos_challenge,
+        "30 for 30": ask_rapidfire_challenge,
+        "okra says": ask_okra_says_challenge
     }
 
     return game_function_map.get(game_name.lower())
@@ -120,7 +130,7 @@ async def run_mini_game(bot, game_name: str, player_name: str, player_id: int,
 
     Args:
         bot: The Discord bot instance (passed from command)
-        game_name: Name of the game (e.g., "poster", "flags", "feud")
+        game_name: Name of the game (e.g., "poster blitz", "flag fest", "feud blitz")
         player_name: Display name of the player
         player_id: Discord user ID
         num: Number of questions/rounds
@@ -163,7 +173,7 @@ async def run_mini_game(bot, game_name: str, player_name: str, player_id: int,
         game_voice_channel_id.set(MINI_GAME_ARENA_VOICE_CHANNEL_ID)
 
     # For audio games, use the mini-game audio bot if available (to avoid voice conflicts)
-    audio_games = ["soundfx", "audio_music", "audio_question"]
+    audio_games = ["hear here", "who says?", "let's talk"]
     if game_name.lower() in audio_games and discordbot.mini_game_audio_bot:
         print(f"🎵 Using mini-game audio bot for {game_name}")
         game_bot_instance.set(discordbot.mini_game_audio_bot)
@@ -178,7 +188,7 @@ async def run_mini_game(bot, game_name: str, player_name: str, player_id: int,
     # Run the game with context set
     try:
         # Special handling for feud which has different signature
-        if game_name.lower() == "feud":
+        if game_name.lower() == "feud blitz":
             result = await game_fn(player_name, "cooperative", player_id)
         else:
             result = await game_fn(player_name, player_id, num=num)
