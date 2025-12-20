@@ -84,9 +84,11 @@ from okra_hunt import OkraHunt
 # Mini-games system import
 try:
     import mini_games
+    from mini_games import GAME_NAMES
     MINI_GAMES_ENABLED = True
 except ImportError:
     MINI_GAMES_ENABLED = False
+    GAME_NAMES = []
     print("⚠️ mini_games.py not found - mini-game arena disabled")
 
 # Simply Trivia system import
@@ -159,6 +161,10 @@ async def end_of_round():
         if await check_for_new_commit():
             print("New commit found! Notifying all channels...")
 
+            # Set global shutdown flag to stop Simply Trivia loop
+            global shutdown_initiated
+            shutdown_initiated = True
+
             # Send update notification to main channel
             if channel:
                 try:
@@ -194,14 +200,7 @@ async def end_of_round():
                 except Exception as e:
                     print(f"❌ Failed to send update notification to Mini-Game Arena: {e}")
 
-            # Send to Simply Trivia channel
-            simply_trivia_channel = bot.get_channel(SIMPLY_TRIVIA_CHANNEL_ID)
-            if simply_trivia_channel:
-                try:
-                    await safe_send(simply_trivia_channel, "🔄 **Update detected!** I'll be back shortly...")
-                    print(f"✅ Sent update notification to Simply Trivia {SIMPLY_TRIVIA_CHANNEL_ID}")
-                except Exception as e:
-                    print(f"❌ Failed to send update notification to Simply Trivia: {e}")
+            # Note: Simply Trivia will send its own update message when it detects shutdown_initiated flag
 
             # Now deploy and wait (this blocks until SIGTERM)
             print("Deploying new build...")
@@ -358,6 +357,9 @@ bumper_king_id = ""
 bumper_king_name = ""
 last_bump_time = None
 
+# Global shutdown flag for coordinating trivia loops during updates
+shutdown_initiated = False
+
 
 
 if local_mode == True:
@@ -469,6 +471,7 @@ elif prod_or_stage == "prod":
 
 intents = discord.Intents.all()
 bot = commands.Bot(command_prefix="!", intents=intents, help_command=None)
+bot.remove_command("help")  # Explicitly remove default help command
 
 # Create second bot instance for mini-game audio to allow simultaneous voice streams
 # Store in sys.modules to persist across re-imports
@@ -476,7 +479,7 @@ if not _IS_REIMPORT:
     # First import - create the bot
     mini_game_audio_bot = None
     if discord_mini_game_audio_bot_token:
-        mini_game_audio_bot = commands.Bot(command_prefix="!", intents=intents)
+        mini_game_audio_bot = commands.Bot(command_prefix="!", intents=intents, help_command=None)
         print("🎵 Mini-game audio bot instance created")
 
         # Add ready event handler for audio bot
@@ -19879,7 +19882,38 @@ async def prefix_help_command(ctx):
 
     await ctx.send(embed=embed)
 
+async def arena_game_autocomplete(
+    interaction: discord.Interaction,
+    current: str,
+) -> list[discord.app_commands.Choice[str]]:
+    """Autocomplete function for arena game names"""
+    # Special options that should always appear first
+    special_options = ["random", "chaos", "cancel"]
+
+    # Combine special options with all game names
+    all_options = special_options + GAME_NAMES
+
+    # Filter based on what user has typed
+    current_lower = current.lower()
+    if current:
+        # Show matches that start with the input first, then matches that contain it
+        starts_with = [game for game in all_options if game.lower().startswith(current_lower)]
+        contains = [game for game in all_options if current_lower in game.lower() and game not in starts_with]
+        filtered = starts_with + contains
+    else:
+        # If no input, show special options first, then all games
+        filtered = all_options
+
+    # Discord limits autocomplete to 25 choices
+    filtered = filtered[:25]
+
+    return [
+        discord.app_commands.Choice(name=game, value=game)
+        for game in filtered
+    ]
+
 @bot.tree.command(name="arena", description="Run a mini-game in the Mini-Game Arena", guild=discord.Object(id=OKRAN_GUILD_ID))
+@discord.app_commands.autocomplete(game_name=arena_game_autocomplete)
 @discord.app_commands.describe(
     game_name="Game name (e.g., 'flags', 'random', 'chaos', 'cancel')",
     num="Number of questions/rounds (default 1, max 7)"
