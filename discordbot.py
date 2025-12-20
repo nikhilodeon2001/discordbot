@@ -468,7 +468,7 @@ elif prod_or_stage == "prod":
 
 
 intents = discord.Intents.all()
-bot = commands.Bot(command_prefix="!", intents=intents)
+bot = commands.Bot(command_prefix="!", intents=intents, help_command=None)
 
 # Create second bot instance for mini-game audio to allow simultaneous voice streams
 # Store in sys.modules to persist across re-imports
@@ -16361,7 +16361,7 @@ async def change_bumper_king_role_color(color_input):
         return f"Error changing role color: {e}"
 
 
-@bot.tree.command(name="okrafx", description="Change your username color (only for the current 👑🍔 Bumper King 🍔👑)")
+@bot.tree.command(name="okrafx", description="Change your username color (only for the current 👑🍔 Bumper King 🍔👑)", guild=discord.Object(id=OKRAN_GUILD_ID))
 @discord.app_commands.describe(color="Color name or hex code")
 async def change_color_command(interaction: discord.Interaction, color: str):
     global bumper_king_id
@@ -19401,7 +19401,7 @@ async def cleanup_lodge_messages():
     except Exception as e:
         print(f"❌ Error cleaning Lodge messages: {e}")
 
-@bot.tree.command(name="flag", description="Flag the current or previous trivia question")
+@bot.tree.command(name="flag", description="Flag the current or previous trivia question", guild=discord.Object(id=OKRAN_GUILD_ID))
 async def flag_command(interaction: discord.Interaction):
     """Unified slash command - works in both main trivia and Simply Trivia channels"""
 
@@ -19582,12 +19582,13 @@ async def on_ready():
             db=db,
             fuzzy_match_func=fuzzy_match,
             select_trivia_questions_func=get_tournament_question,
-            allowed_channel_id=specific_channel_id  # Restrict to this specific channel
+            allowed_channel_id=specific_channel_id,  # Restrict to this specific channel
+            guild_id=OKRAN_GUILD_ID  # Make commands guild-specific, not global
         )
         
         print("✅ Tournament system integrated successfully!")
         print("📋 Tournament commands restricted to #tournament channels only")
-        print("🎮 Commands: /start, /status, /cancel, /join, /stats, /leaderboard")
+        print("🎮 Commands: /tournament (with subcommands: start, status, cancel, test, stats, leaderboard)")
 
         # Initialize Okra Hunt escape room system
         global okra_hunt
@@ -19644,7 +19645,7 @@ async def on_ready():
     
     
     if sync_commands:
-        # Sync to OKRAN guild only (no global sync to avoid conflicts with other bots)
+        # Sync commands to OKRAN guild
         try:
             okran_guild = discord.Object(id=OKRAN_GUILD_ID)
             synced = await bot.tree.sync(guild=okran_guild)
@@ -19709,53 +19710,190 @@ async def on_ready():
     await start_trivia()
 
 
-@bot.command()
-async def sync_tournament_commands(ctx):
-    """Manual command to sync tournament slash commands to OKRAN guild"""
-    if not ctx.author.guild_permissions.administrator:
-        await ctx.send("❌ Only administrators can sync commands")
-        return
+@bot.tree.command(name="tournament", description="Tournament system commands", guild=discord.Object(id=OKRAN_GUILD_ID))
+@discord.app_commands.describe(action="Choose an action")
+@discord.app_commands.choices(action=[
+    discord.app_commands.Choice(name="Start a new tournament", value="start"),
+    discord.app_commands.Choice(name="Show tournament status", value="status"),
+    discord.app_commands.Choice(name="Cancel active tournament", value="cancel"),
+    discord.app_commands.Choice(name="Add test players", value="test"),
+    discord.app_commands.Choice(name="Show your stats", value="stats"),
+    discord.app_commands.Choice(name="Show leaderboard", value="leaderboard"),
+])
+async def tournament(interaction: discord.Interaction, action: str):
+    """Tournament system commands"""
+    if action == "start":
+        await tournament_manager.start_tournament(interaction)
+    elif action == "status":
+        embed = await tournament_manager.get_tournament_status(interaction.channel)
+        await interaction.response.send_message(embed=embed)
+    elif action == "cancel":
+        success = await tournament_manager.cancel_tournament(interaction.channel, interaction.user)
+        if success:
+            await interaction.response.send_message("✅ Tournament cancelled")
+        else:
+            await interaction.response.send_message("❌ No active tournament", ephemeral=True)
+    elif action == "test":
+        success = await tournament_manager.add_fake_players_to_tournament(interaction.channel)
+        if success:
+            await interaction.response.send_message("✅ Added 4 fake players for testing!", ephemeral=True)
+        else:
+            await interaction.response.send_message("❌ Failed to add test players", ephemeral=True)
+    elif action == "stats":
+        stats = await bot._tournament_stats.get_player_stats(str(interaction.user.id), str(interaction.guild.id))
+        embed = discord.Embed(title=f"🏆 Stats - {interaction.user.display_name}", color=discord.Color.blue())
+        embed.add_field(name="Tournaments", value=stats["tournaments_played"], inline=True)
+        embed.add_field(name="Wins", value=stats["wins"], inline=True)
+        await interaction.response.send_message(embed=embed)
+    elif action == "leaderboard":
+        leaderboard = await bot._tournament_stats.get_leaderboard(str(interaction.guild.id))
+        if not leaderboard:
+            await interaction.response.send_message("No completed tournaments found.")
+            return
+        embed = discord.Embed(title="🏆 Leaderboard", color=discord.Color.gold())
+        description = "\n".join([f"{i}. **{p['display_name']}** - {p['wins']} wins" for i, p in enumerate(leaderboard, 1)])
+        embed.description = description
+        await interaction.response.send_message(embed=embed)
 
-    try:
-        # Sync to OKRAN guild (tournament commands are channel-restricted via Cog)
-        okran_guild = discord.Object(id=OKRAN_GUILD_ID)
-        synced = await bot.tree.sync(guild=okran_guild)
-        await ctx.send(f"✅ Synced {len(synced)} slash command(s) to OKRAN guild!")
-        if synced:
-            commands_list = [cmd.name for cmd in synced]
-            await ctx.send(f"Commands: {', '.join(commands_list)}")
-    except Exception as e:
-        await ctx.send(f"❌ Failed to sync commands: {e}")
+@bot.tree.command(name="help", description="Show all available bot commands", guild=discord.Object(id=OKRAN_GUILD_ID))
+async def help_command(interaction: discord.Interaction):
+    """Display help information for all bot commands"""
+    embed = discord.Embed(
+        title="🤖 OkraStrut Bot Commands",
+        description="Here are all the available slash commands:",
+        color=discord.Color.green()
+    )
 
-@bot.command()
-async def sync_global(ctx):
-    """Manual command to sync all slash commands to OKRAN guild only (not globally)"""
-    if not ctx.author.guild_permissions.administrator:
-        await ctx.send("❌ Only administrators can sync commands")
-        return
+    # Tournament commands
+    embed.add_field(
+        name="🏆 /tournament",
+        value=(
+            "Manage tournament system\n"
+            "• **Start** - Begin a new tournament\n"
+            "• **Status** - View current tournament status\n"
+            "• **Cancel** - Cancel the active tournament\n"
+            "• **Stats** - View your tournament statistics\n"
+            "• **Leaderboard** - See the tournament leaderboard\n"
+            "• **Test** - Add test players (for testing)"
+        ),
+        inline=False
+    )
 
-    try:
-        # Sync to OKRAN guild only (no global sync to avoid conflicts)
-        okran_guild = discord.Object(id=OKRAN_GUILD_ID)
-        synced = await bot.tree.sync(guild=okran_guild)
-        await ctx.send(f"✅ Synced {len(synced)} slash command(s) to OKRAN guild!")
-        if synced:
-            commands_list = [cmd.name for cmd in synced]
-            await ctx.send(f"Commands: {', '.join(commands_list)}")
-    except Exception as e:
-        await ctx.send(f"❌ Failed to sync commands: {e}")
+    # Arena commands
+    embed.add_field(
+        name="🎮 /arena",
+        value=(
+            "Run mini-games in the Mini-Game Arena\n"
+            "`/arena <game> [rounds]`\n"
+            "• **flags** - Flag identification game\n"
+            "• **random** - Random mini-game\n"
+            "• **chaos** - Chaos mode (random game each round)\n"
+            "• **cancel** - Cancel active game (starter/host/admin only)\n"
+            "Example: `/arena flags 5`"
+        ),
+        inline=False
+    )
 
-@bot.command()
-async def arena(ctx, game_name: str = None, num: int = 1):
+    # Flag command
+    embed.add_field(
+        name="🚩 /flag",
+        value="Flag the current or previous trivia question for review",
+        inline=False
+    )
+
+    # OkraFX command
+    embed.add_field(
+        name="🎨 /okrafx",
+        value=(
+            "Change your username color\n"
+            "(Only available to the current 👑🍔 Bumper King 🍔👑)\n"
+            "Usage: `/okrafx <color>`\n"
+            "Example: `/okrafx #FF5733` or `/okrafx red`"
+        ),
+        inline=False
+    )
+
+    embed.set_footer(text="All commands are slash commands - type / to see them!")
+
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+@bot.command(name="help")
+async def prefix_help_command(ctx):
+    """Display help information for all bot commands (prefix command version)"""
+    embed = discord.Embed(
+        title="🤖 OkraStrut Bot Commands",
+        description="Here are all the available slash commands:",
+        color=discord.Color.green()
+    )
+
+    # Tournament commands
+    embed.add_field(
+        name="🏆 /tournament",
+        value=(
+            "Manage tournament system\n"
+            "• **Start** - Begin a new tournament\n"
+            "• **Status** - View current tournament status\n"
+            "• **Cancel** - Cancel the active tournament\n"
+            "• **Stats** - View your tournament statistics\n"
+            "• **Leaderboard** - See the tournament leaderboard\n"
+            "• **Test** - Add test players (for testing)"
+        ),
+        inline=False
+    )
+
+    # Arena commands
+    embed.add_field(
+        name="🎮 /arena",
+        value=(
+            "Run mini-games in the Mini-Game Arena\n"
+            "`/arena <game> [rounds]`\n"
+            "• **flags** - Flag identification game\n"
+            "• **random** - Random mini-game\n"
+            "• **chaos** - Chaos mode (random game each round)\n"
+            "• **cancel** - Cancel active game (starter/host/admin only)\n"
+            "Example: `/arena flags 5`"
+        ),
+        inline=False
+    )
+
+    # Flag command
+    embed.add_field(
+        name="🚩 /flag",
+        value="Flag the current or previous trivia question for review",
+        inline=False
+    )
+
+    # OkraFX command
+    embed.add_field(
+        name="🎨 /okrafx",
+        value=(
+            "Change your username color\n"
+            "(Only available to the current 👑🍔 Bumper King 🍔👑)\n"
+            "Usage: `/okrafx <color>`\n"
+            "Example: `/okrafx #FF5733` or `/okrafx red`"
+        ),
+        inline=False
+    )
+
+    embed.set_footer(text="All commands are slash commands - type / to see them!")
+
+    await ctx.send(embed=embed)
+
+@bot.tree.command(name="arena", description="Run a mini-game in the Mini-Game Arena", guild=discord.Object(id=OKRAN_GUILD_ID))
+@discord.app_commands.describe(
+    game_name="Game name (e.g., 'flags', 'random', 'chaos', 'cancel')",
+    num="Number of questions/rounds (default 1, max 7)"
+)
+async def arena(interaction: discord.Interaction, game_name: str = None, num: int = 1):
     """
     Run a mini-game in the Mini-Game Arena
 
     Examples:
-        !arena flags
-        !arena flags 5
-        !arena random
-        !arena chaos 10
-        !arena cancel (game starter, host, or admin only)
+        /arena flags
+        /arena flags 5
+        /arena random
+        /arena chaos 10
+        /arena cancel (game starter, host, or admin only)
     """
     print(f"🎮 Arena command triggered! game_name={game_name}, num={num}, MINI_GAMES_ENABLED={MINI_GAMES_ENABLED}")
 
@@ -19764,99 +19902,103 @@ async def arena(ctx, game_name: str = None, num: int = 1):
         global arena_game_task, arena_game_starter_id
 
         # Check permissions: must be admin (okrag_id), have host role, or be the game starter
-        is_admin = ctx.author.id == okrag_id
+        is_admin = interaction.user.id == okrag_id
 
         # Check for host role
         has_host_role = False
-        if hasattr(ctx.author, 'roles'):
-            host_role = ctx.guild.get_role(HOST_ROLE_ID)
-            if host_role and host_role in ctx.author.roles:
+        if hasattr(interaction.user, 'roles'):
+            host_role = interaction.guild.get_role(HOST_ROLE_ID)
+            if host_role and host_role in interaction.user.roles:
                 has_host_role = True
 
         # Check if they started the current game
-        is_game_starter = arena_game_starter_id and ctx.author.id == arena_game_starter_id
+        is_game_starter = arena_game_starter_id and interaction.user.id == arena_game_starter_id
 
         # If none of the above, deny with message
         if not (is_admin or has_host_role or is_game_starter):
             # Show username via Discord mention (e.g., "@PlayerName")
             starter_mention = f"<@{arena_game_starter_id}>" if arena_game_starter_id else "the player who started it"
-            await ctx.send(f"❌ Only {starter_mention} or a host/admin can cancel this game")
+            await interaction.response.send_message(f"❌ Only {starter_mention} or a host/admin can cancel this game", ephemeral=True)
             return
 
         # Check if a game is running
         if not arena_game_lock.locked() or arena_game_task is None:
-            await ctx.send("❌ No arena game is currently running")
+            await interaction.response.send_message("❌ No arena game is currently running", ephemeral=True)
             return
 
         # Cancel the running task
         try:
             arena_game_task.cancel()
-            await ctx.send("✅ **Arena game cancelled**")
-            print(f"🛑 Arena game cancelled by {ctx.author.display_name}")
+            await interaction.response.send_message("✅ **Arena game cancelled**")
+            print(f"🛑 Arena game cancelled by {interaction.user.display_name}")
         except Exception as e:
             print(f"Error cancelling arena game: {e}")
-            await ctx.send(f"❌ Error cancelling game: {e}")
+            await interaction.response.send_message(f"❌ Error cancelling game: {e}", ephemeral=True)
         return
 
     # Restrict to Mini-Game Arena channel only - silently ignore if wrong channel
-    if ctx.channel.id != MINI_GAME_ARENA_CHANNEL_ID:
+    if interaction.channel.id != MINI_GAME_ARENA_CHANNEL_ID:
+        await interaction.response.send_message("❌ This command can only be used in the Mini-Game Arena channel", ephemeral=True)
         return
 
     if not MINI_GAMES_ENABLED:
-        await ctx.send("❌ Mini-games system not available")
+        await interaction.response.send_message("❌ Mini-games system not available", ephemeral=True)
         return
 
     # Cap num at 7 for regular users (okrag_id has no limit) - applies to both specific games and chaos mode
-    if ctx.author.id != okrag_id and num > 7:
+    if interaction.user.id != okrag_id and num > 7:
         num = 7
 
     # Check if a game is already running
     if arena_game_lock.locked():
-        await ctx.send("❌ A mini-game is already running! Please wait for it to finish.")
+        await interaction.response.send_message("❌ A mini-game is already running! Please wait for it to finish.", ephemeral=True)
         return
+
+    # Defer the response since the game might take a while
+    await interaction.response.defer()
 
     async with arena_game_lock:
         try:
             # Store current task and starter for cancellation support
             arena_game_task = asyncio.current_task()
-            arena_game_starter_id = ctx.author.id
+            arena_game_starter_id = interaction.user.id
 
             if game_name is None or game_name.lower() == "random":
-                print(f"🎲 Running random mini-game for {ctx.author.display_name} in channel {ctx.channel.id}")
+                print(f"🎲 Running random mini-game for {interaction.user.display_name} in channel {interaction.channel.id}")
                 await mini_games.run_random_mini_game(
                     bot,
-                    ctx.author.display_name,
-                    ctx.author.id,
-                    channel_override=ctx.channel
+                    interaction.user.display_name,
+                    interaction.user.id,
+                    channel_override=interaction.channel
                 )
             elif game_name.lower() == "chaos":
-                print(f"🌀 Running chaos mode with {num} games in channel {ctx.channel.id}")
+                print(f"🌀 Running chaos mode with {num} games in channel {interaction.channel.id}")
                 await mini_games.run_mini_game_chaos(
                     bot,
-                    ctx.author.display_name,
-                    ctx.author.id,
+                    interaction.user.display_name,
+                    interaction.user.id,
                     num_games=num,
-                    channel_override=ctx.channel
+                    channel_override=interaction.channel
                 )
             else:
-                print(f"🎯 Running specific game: {game_name} in channel {ctx.channel.id}")
+                print(f"🎯 Running specific game: {game_name} in channel {interaction.channel.id}")
                 await mini_games.run_mini_game(
                     bot,
                     game_name,
-                    ctx.author.display_name,
-                    ctx.author.id,
+                    interaction.user.display_name,
+                    interaction.user.id,
                     num=num,
-                    channel_override=ctx.channel
+                    channel_override=interaction.channel
                 )
         except asyncio.CancelledError:
             print(f"🛑 Arena game cancelled by admin")
-            await ctx.send("🛑 **Game cancelled by admin**")
+            await interaction.followup.send("🛑 **Game cancelled by admin**")
             raise  # Re-raise to properly clean up the task
         except Exception as e:
             print(f"❌ Error in arena command: {e}")
             import traceback
             traceback.print_exc()
-            await ctx.send(f"❌ Error running mini-game: {e}")
+            await interaction.followup.send(f"❌ Error running mini-game: {e}")
         finally:
             arena_game_task = None
             arena_game_starter_id = None
