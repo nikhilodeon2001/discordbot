@@ -19,7 +19,7 @@ first_answer_time = None
 first_answerer = None
 additional_answerers = []
 
-# Question tracking for #flag functionality (separate from discordbot.py)
+# Question tracking for /flag functionality (shared with discordbot.py)
 simply_current_question = None
 simply_previous_question = None
 
@@ -189,7 +189,7 @@ class SimplyTriviaFlagReasonModal(discord.ui.Modal, title="Flag Question"):
         self.question = question
         self.question_type = question_type  # "current" or "previous"
         self.display_name = display_name
-        self.flag_message = flag_message  # Original message where #flag was typed
+        self.flag_message = flag_message  # Original interaction/message (can be None for slash commands)
         self.embed_message = embed_message  # The embed message to delete after submission
 
     async def on_submit(self, interaction: discord.Interaction):
@@ -244,14 +244,14 @@ class SimplyTriviaFlagQuestionView(discord.ui.View):
         self.previous_question = previous_question
         self.user_id = user_id
         self.display_name = display_name
-        self.flag_message = flag_message  # Original message where #flag was typed
+        self.flag_message = flag_message  # Original interaction/message (can be None for slash commands)
         self.embed_message = None  # Will be set after sending the embed
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        """Check if the user interacting is the one who typed #flag"""
+        """Check if the user interacting is the one who initiated the flag"""
         if interaction.user.id != self.user_id:
             await interaction.response.send_message(
-                "❌ Only the user who typed #flag can use these buttons.",
+                "❌ Only the user who initiated the flag can use these buttons.",
                 ephemeral=True
             )
             return False
@@ -321,89 +321,6 @@ async def handle_answer(message, bot, db, fuzzy_match_func):
     if not active_question or message.author.bot:
         return
 
-    # Handle #flag command for reporting questions
-    if "#flag" in message.content.strip().lower():
-        try:
-            await message.add_reaction("🚩")
-        except Exception as e:
-            print(f"❌ Failed to react with flag emoji: {e}")
-
-        # Build embed showing both current and previous questions
-        embed = discord.Embed(
-            title="🚩 Which question do you want to flag?",
-            description="Select the question you want to flag and provide a reason.",
-            color=discord.Color.red()
-        )
-
-        # Add current question info
-        if simply_current_question:
-            current_answer = simply_current_question.get("answers", ["N/A"])
-            if isinstance(current_answer, list):
-                current_answer = ", ".join(str(a) for a in current_answer)
-            embed.add_field(
-                name="🟢 CURRENT QUESTION",
-                value=f"**Category:** {simply_current_question.get('category', 'N/A')}\n"
-                      f"**Question:** {simply_current_question.get('question', 'N/A')}\n"
-                      f"**Answer:** {current_answer}",
-                inline=False
-            )
-        else:
-            embed.add_field(
-                name="🟢 CURRENT QUESTION",
-                value="*No current question available*",
-                inline=False
-            )
-
-        # Add previous question info
-        if simply_previous_question:
-            previous_answer = simply_previous_question.get("answers", ["N/A"])
-            if isinstance(previous_answer, list):
-                previous_answer = ", ".join(str(a) for a in previous_answer)
-            embed.add_field(
-                name="🔴 PREVIOUS QUESTION",
-                value=f"**Category:** {simply_previous_question.get('category', 'N/A')}\n"
-                      f"**Question:** {simply_previous_question.get('question', 'N/A')}\n"
-                      f"**Answer:** {previous_answer}",
-                inline=False
-            )
-        else:
-            embed.add_field(
-                name="🔴 PREVIOUS QUESTION",
-                value="*No previous question available*",
-                inline=False
-            )
-
-        # Create view with buttons
-        view = SimplyTriviaFlagQuestionView(
-            current_question=simply_current_question,
-            previous_question=simply_previous_question,
-            user_id=message.author.id,
-            display_name=message.author.display_name,
-            flag_message=message
-        )
-
-        # Send message with embed and view (visible for 30 seconds)
-        try:
-            embed_message = await message.channel.send(
-                content=f"{message.author.mention}",
-                embed=embed,
-                view=view,
-                delete_after=30  # Auto-delete after 30 seconds
-            )
-            # Store the embed message reference in the view so modals can delete it
-            view.embed_message = embed_message
-        except Exception as e:
-            print(f"❌ Error sending flag embed: {e}")
-            # Fallback to old behavior if embed fails
-            if active_question:
-                question_data = {
-                    "trivia_db": "trivia_questions",
-                    "trivia_id": active_question.get("_id")
-                }
-                await update_audit_question(question_data, message.content.strip(), message.author.display_name)
-
-        return
-
     # Check if answer is correct against any valid answer
     for correct_answer in active_question["answers"]:
         if fuzzy_match_func(
@@ -458,6 +375,14 @@ async def start_simply_trivia(bot, db, channel_id, fuzzy_match_func):
 
     while True:
         try:
+            # Check if bot is shutting down for update
+            from discordbot import shutdown_initiated
+            if shutdown_initiated:
+                # Send shutdown notification to Simply Trivia channel
+                await channel.send("🔄 **Update detected!** I'll be back shortly...")
+                print("🔄 Simply Trivia stopping - update detected")
+                break
+
             # Get next question
             question = await get_trivia_question(db)
             if not question:
