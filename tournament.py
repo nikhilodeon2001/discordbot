@@ -53,7 +53,7 @@ SEEDING_MODE_DEFAULT = "points_race" # or "round_robin"
 POINTS_RACE_QUESTIONS = 10
 POINTS_RACE_REVEAL_TIME = 5  # Question reveals over 5 seconds
 POINTS_RACE_ANSWER_TIME = 15  # Answer window after full reveal
-POINTS_RACE_QUESTION_DELAY = 15  # Delay between questions
+POINTS_RACE_QUESTION_DELAY = 10  # Delay between questions
 POINTS_RACE_MAX_POINTS = 100
 
 # Global tournament locks per channel
@@ -610,13 +610,13 @@ class TournamentManager:
             )
             embed.add_field(
                 name="\u200b\n⏱️ Starting Soon",
-                value="Round-robin will begin in 15 seconds!\n\n🚨 **ONE answer per question. Be careful!**",
+                value="Round-robin will begin in 10 seconds!\n\n🚨 **ONE answer per question. Be careful!**",
                 inline=False
             )
         await channel.send(embed=embed)
 
-        # 15 second delay before starting matches
-        await asyncio.sleep(15)
+        # 10 second delay before starting matches
+        await asyncio.sleep(10)
 
         await self.build_rr_schedule_and_start(channel_id, all_players)
 
@@ -740,13 +740,13 @@ class TournamentManager:
                 # Merged matchup announcement
                 merged_embed = discord.Embed(
                     title=f"🔔 Round Robin Match {i} of {total_matches}",
-                    description=f"\n**{match['player_a']['display_name']}** vs **{match['player_b']['display_name']}**\n\nMatch will begin in 15 seconds!",
+                    description=f"\n**{match['player_a']['display_name']}** vs **{match['player_b']['display_name']}**\n\nMatch will begin in 10 seconds!",
                     color=discord.Color.gold()
                 )
                 await channel.send(embed=merged_embed)
 
-                # 15-second pause for new matchups
-                await asyncio.sleep(15)
+                # 10-second pause for new matchups
+                await asyncio.sleep(10)
                 previous_pair = current_pair
             else:
                 # Same pairing, just show match start without announcement
@@ -814,13 +814,13 @@ class TournamentManager:
             )
             bracket_embed.add_field(
                 name="\u200b\n⏱️ Starting Soon",
-                value="Semifinals will begin in 30 seconds!",
+                value="Semifinals will begin in 20 seconds!",
                 inline=False
             )
             await channel.send(embed=bracket_embed)
 
-            # 15 second break before first semifinal
-            await asyncio.sleep(15)
+            # 10 second break before first semifinal
+            await asyncio.sleep(10)
             await self.run_semifinals(channel_id)
             
         elif len(standings) == 3:
@@ -870,8 +870,8 @@ class TournamentManager:
         # Update tournament status
         tournament["status"] = "points_race"
 
-        # Wait 15 seconds before starting
-        await asyncio.sleep(15)
+        # Wait 10 seconds before starting
+        await asyncio.sleep(10)
 
         # Run 10 questions
         for question_num in range(1, POINTS_RACE_QUESTIONS + 1):
@@ -1434,11 +1434,11 @@ class TournamentManager:
         # Announce and run first semifinal
         match1_embed = discord.Embed(
             title="🔔 Semifinal Match 1",
-            description=f"\n**{s1_match['player_a']['display_name']}** vs **{s1_match['player_b']['display_name']}**\n\nMatch will begin in 15 seconds!",
+            description=f"\n**{s1_match['player_a']['display_name']}** vs **{s1_match['player_b']['display_name']}**\n\nMatch will begin in 10 seconds!",
             color=discord.Color.gold()
         )
         await channel.send(embed=match1_embed)
-        await asyncio.sleep(15)
+        await asyncio.sleep(10)
 
         await self.run_match(s1_match, channel)
 
@@ -1448,11 +1448,11 @@ class TournamentManager:
         # Announce and run second semifinal
         match2_embed = discord.Embed(
             title="🔔 Semifinal Match 2",
-            description=f"\n**{s2_match['player_a']['display_name']}** vs **{s2_match['player_b']['display_name']}**\n\nMatch will begin in 15 seconds!",
+            description=f"\n**{s2_match['player_a']['display_name']}** vs **{s2_match['player_b']['display_name']}**\n\nMatch will begin in 10 seconds!",
             color=discord.Color.gold()
         )
         await channel.send(embed=match2_embed)
-        await asyncio.sleep(15)
+        await asyncio.sleep(10)
 
         await self.run_match(s2_match, channel)
 
@@ -1528,22 +1528,22 @@ class TournamentManager:
         )
         embed.add_field(
             name="\u200b\n⏱️ Starting Soon",
-            value="Finals will begin in 30 seconds!",
+            value="Finals will begin in 25 seconds!",
             inline=False
         )
         await channel.send(embed=embed)
 
-        # 15 second break before final announcement
-        await asyncio.sleep(15)
+        # 10 second break before final announcement
+        await asyncio.sleep(10)
 
         # Announce final match
         final_embed = discord.Embed(
             title="🔔 Final",
-            description=f"\n**{final_match['player_a']['display_name']}** vs **{final_match['player_b']['display_name']}**\n\nMatch will begin in 15 seconds!",
+            description=f"\n**{final_match['player_a']['display_name']}** vs **{final_match['player_b']['display_name']}**\n\nMatch will begin in 10 seconds!",
             color=discord.Color.gold()
         )
         await channel.send(embed=final_embed)
-        await asyncio.sleep(15)
+        await asyncio.sleep(10)
 
         await self.run_match(final_match, channel)
 
@@ -1979,8 +1979,8 @@ class TournamentManager:
                             color=discord.Color.orange()
                         )
                         await channel.send(embed=sudden_death_embed)
-                        # 15 second delay before first sudden death question
-                        await asyncio.sleep(15)
+                        # 10 second delay before first sudden death question
+                        await asyncio.sleep(10)
                     # Continue asking questions
                 elif questions_asked >= target_questions and questions_correct_a != questions_correct_b:
                     # Someone is ahead after target questions, end match
