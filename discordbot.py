@@ -5343,6 +5343,44 @@ async def show_rapidfire_detailed_summary(channel, sorted_users, all_questions, 
         traceback.print_exc()
 
 
+async def edit_rapidfire_questions_with_answers(question_messages, all_questions, total_questions):
+    """
+    Edit all rapidfire question embeds to add the correct answers
+    This allows players to scroll back and review questions with answers
+    """
+    try:
+        for msg, q_idx in question_messages:
+            try:
+                q = all_questions[q_idx]
+                category = q.get("category", "General")
+                question_text = q.get("question", "")
+                answers = q.get("answers", [])
+
+                # Format answers - show primary answer and alternates if any
+                if len(answers) > 1:
+                    answer_text = f"**{answers[0]}**\n_(also accepted: {', '.join(answers[1:3])})_"
+                else:
+                    answer_text = f"**{answers[0]}**" if answers else "**Unknown**"
+
+                # Create updated embed with answer
+                updated_embed = discord.Embed(
+                    title=f"⚡ #{q_idx + 1}/{total_questions}",
+                    description=f"**{category}**\n\n{question_text}\n\n✅ **Answer:** {answer_text}",
+                    color=discord.Color.green()  # Change to green to indicate answer revealed
+                )
+
+                await msg.edit(embed=updated_embed)
+
+            except Exception as e:
+                print(f"Error editing question message {q_idx + 1}: {e}")
+                continue
+
+    except Exception as e:
+        print(f"Error editing rapidfire questions with answers: {e}")
+        import traceback
+        traceback.print_exc()
+
+
 async def ask_rapidfire_challenge(winner, winner_id, num=1):
     """
     Rapid Fire Challenge: Show 30 questions in 30 seconds (1 per second)
@@ -5461,6 +5499,7 @@ async def ask_rapidfire_challenge(winner, winner_id, num=1):
     user_data = {}  # {user_id: (display_name, points)}
     answered_questions = {}  # {question_idx: {user_id: True}}
     stop_answer_collection = asyncio.Event()
+    question_messages = []  # Store message references to edit later with answers
 
     # Message check function for answer collection
     def check(m):
@@ -5490,6 +5529,8 @@ async def ask_rapidfire_challenge(winner, winner_id, num=1):
             )
 
             msg = await safe_send(channel, embed=embed)
+            if msg:
+                question_messages.append((msg, i - 1))  # Store message and question index
             #if msg:
             #    asyncio.create_task(delete_message_after(msg, 1))
             await asyncio.sleep(1)
@@ -5502,6 +5543,9 @@ async def ask_rapidfire_challenge(winner, winner_id, num=1):
     await asyncio.sleep(5)
     stop_answer_collection.set()
     await answer_collection_task
+
+    # Edit all question embeds to add answers
+    await edit_rapidfire_questions_with_answers(question_messages, all_questions, total_questions)
 
     # Store question IDs to avoid repeats
     try:
@@ -5524,7 +5568,7 @@ async def ask_rapidfire_challenge(winner, winner_id, num=1):
         print(f"Error storing question IDs: {e}")
 
     # Display results
-    await safe_send(channel, "\u200b\n⏰ **TIME'S UP!**\n\u200b")
+    await safe_send(channel, "\u200b\n⏰ **TIME'S UP!**\n\n📜 _Answers have been added to all questions above - scroll up to review!_\n\u200b")
     await asyncio.sleep(2)
 
     sorted_users = sorted(user_data.items(), key=lambda x: x[1][1], reverse=True)
