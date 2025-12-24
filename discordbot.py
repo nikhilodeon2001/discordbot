@@ -592,7 +592,7 @@ GLYPH_MAP = {
     'i': 'і',  # Cyrillic i
     'j': 'ј',  # Cyrillic je
     'k': 'k',  # No good lookalike, keep as is
-    'l': 'ӏ',  # Cyrillic palochka
+    'l': 'ǀ',  # Latin Letter Dental Click
     'm': 'm',  # No good lookalike, keep as is
     'n': 'n',  # No good lookalike, keep as is
     'o': 'о',  # Cyrillic o
@@ -14551,7 +14551,7 @@ async def ask_wof_letters(winner, answer, extra_time, winner_id):
     answer = answer.upper()
     start_time = time.time()
     await safe_send(channel, f"\u200b\n**<@{winner_id}>**:❓**Pick {num_wf_letters} Letters**❓\n" +
-                       (f"\n🥒 I'll give you **O K R A** 🥒\n\u200b" if fixed_letters else ""))    
+                       (f"\n🥒 I'll give you O K R A 🥒\n\u200b" if fixed_letters else ""))    
     
     wf_letters = []
 
