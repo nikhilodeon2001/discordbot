@@ -544,10 +544,70 @@ exact_mode_default = False
 exact_mode = exact_mode_default
 golf_mode_default = False
 golf_mode = golf_mode_default
+glyph_mode_default = False
+glyph_mode = glyph_mode_default
 cloak_mode_default = False
 cloak_mode = cloak_mode_default
 cloaked_user = None
 
+# Glyph mapping: ASCII letters -> Unicode lookalikes (reverse of CONFUSABLES_MAP in trivia_monitor.py)
+# Used to make questions harder to Google search by replacing normal letters with lookalikes
+GLYPH_MAP = {
+    # Uppercase letters
+    'A': 'Α',  # Greek Alpha
+    'B': 'В',  # Cyrillic Ve
+    'C': 'С',  # Cyrillic Es
+    'D': 'D',  # No good lookalike, keep as is
+    'E': 'Е',  # Cyrillic Ye
+    'F': 'F',  # No good lookalike, keep as is
+    'G': 'G',  # No good lookalike, keep as is
+    'H': 'Η',  # Greek Eta
+    'I': 'Ι',  # Greek Iota
+    'J': 'Ј',  # Cyrillic Je
+    'K': 'Κ',  # Greek Kappa
+    'L': 'L',  # No good lookalike, keep as is
+    'M': 'Μ',  # Greek Mu
+    'N': 'Ν',  # Greek Nu
+    'O': 'Ο',  # Greek Omicron
+    'P': 'Ρ',  # Greek Rho
+    'Q': 'Q',  # No good lookalike, keep as is
+    'R': 'R',  # No good lookalike, keep as is
+    'S': 'Ѕ',  # Cyrillic Dze
+    'T': 'Τ',  # Greek Tau
+    'U': 'U',  # No good lookalike, keep as is
+    'V': 'V',  # No good lookalike, keep as is
+    'W': 'W',  # No good lookalike, keep as is
+    'X': 'Χ',  # Greek Chi
+    'Y': 'Υ',  # Greek Upsilon
+    'Z': 'Ζ',  # Greek Zeta
+    # Lowercase letters
+    'a': 'а',  # Cyrillic a
+    'b': 'b',  # No good lookalike, keep as is
+    'c': 'с',  # Cyrillic es
+    'd': 'ԁ',  # Cyrillic komi de
+    'e': 'е',  # Cyrillic ye
+    'f': 'f',  # No good lookalike, keep as is
+    'g': 'ɡ',  # Latin small letter script g
+    'h': 'һ',  # Cyrillic shha
+    'i': 'і',  # Cyrillic i
+    'j': 'ј',  # Cyrillic je
+    'k': 'k',  # No good lookalike, keep as is
+    'l': 'ӏ',  # Cyrillic palochka
+    'm': 'm',  # No good lookalike, keep as is
+    'n': 'n',  # No good lookalike, keep as is
+    'o': 'о',  # Cyrillic o
+    'p': 'р',  # Cyrillic er
+    'q': 'q',  # No good lookalike, keep as is
+    'r': 'r',  # No good lookalike, keep as is
+    's': 'ѕ',  # Cyrillic dze
+    't': 't',  # No good lookalike, keep as is
+    'u': 'u',  # No good lookalike, keep as is
+    'v': 'ν',  # Greek nu
+    'w': 'w',  # No good lookalike, keep as is
+    'x': 'х',  # Cyrillic kha
+    'y': 'у',  # Cyrillic u
+    'z': 'z',  # No good lookalike, keep as is
+}
 
 channel = None
 
@@ -13324,7 +13384,7 @@ async def save_round_options_to_db():
     global time_between_questions, ghost_mode, num_crossword_clues
     global num_jeopardy_clues, num_mysterybox_clues, num_wof_clues
     global god_mode, yolo_mode, num_math_questions, num_stats_questions
-    global image_questions, marx_mode, blind_mode, sniper_mode, blitz_mode, exact_mode, golf_mode
+    global image_questions, marx_mode, blind_mode, sniper_mode, blitz_mode, exact_mode, golf_mode, glyph_mode
     global cloak_mode, cloaked_user
 
     try:
@@ -13347,6 +13407,7 @@ async def save_round_options_to_db():
             {"_id": "round_blitz_mode", "value": int(blitz_mode)},
             {"_id": "round_exact_mode", "value": int(exact_mode)},
             {"_id": "round_golf_mode", "value": int(golf_mode)},
+            {"_id": "round_glyph_mode", "value": int(glyph_mode)},
             {"_id": "round_cloak_mode", "value": int(cloak_mode)},
             {"_id": "round_cloaked_user", "value": cloaked_user or 0},  # Store 0 if None
         ]
@@ -13369,7 +13430,7 @@ async def load_round_options_from_db():
     global time_between_questions, ghost_mode, num_crossword_clues
     global num_jeopardy_clues, num_mysterybox_clues, num_wof_clues
     global god_mode, yolo_mode, num_math_questions, num_stats_questions
-    global image_questions, marx_mode, blind_mode, sniper_mode, blitz_mode, exact_mode, golf_mode
+    global image_questions, marx_mode, blind_mode, sniper_mode, blitz_mode, exact_mode, golf_mode, glyph_mode
     global cloak_mode, cloaked_user
 
     try:
@@ -13392,6 +13453,7 @@ async def load_round_options_from_db():
         exact_mode = bool(await get_int_param(db, "round_exact_mode", int(exact_mode_default)))
         golf_mode = bool(await get_int_param(db, "round_golf_mode", int(golf_mode_default)))
         cloak_mode = bool(await get_int_param(db, "round_cloak_mode", int(cloak_mode_default)))
+        glyph_mode = bool(await get_int_param(db, "round_glyph_mode", int(glyph_mode_default)))
 
         cloaked_user_val = await get_int_param(db, "round_cloaked_user", 0)
         cloaked_user = cloaked_user_val if cloaked_user_val != 0 else None
@@ -15228,7 +15290,7 @@ def generate_crossword_image(answer, prefill=0.5):
 
 
 async def clear_round_options():
-    global since_token, time_between_questions, time_between_questions_default, ghost_mode, since_token, categories_to_exclude, num_crossword_clues, num_jeopardy_clues, num_mysterybox_clues, num_wof_clues, god_mode, yolo_mode, magic_number, wf_winner, num_math_questions, num_stats_questions, image_questions, nice_okra, creep_okra, marx_mode, blind_mode, seductive_okra, joke_okra, sniper_mode, blitz_mode, exact_mode, golf_mode, cloak_mode, cloaked_user, haiku_okra, trailer_okra, heist_okra, horoscope_okra, rap_okra, shakespeare_okra, pirate_okra, noir_okra, hype_okra, roast_okra
+    global since_token, time_between_questions, time_between_questions_default, ghost_mode, since_token, categories_to_exclude, num_crossword_clues, num_jeopardy_clues, num_mysterybox_clues, num_wof_clues, god_mode, yolo_mode, magic_number, wf_winner, num_math_questions, num_stats_questions, image_questions, nice_okra, creep_okra, marx_mode, blind_mode, seductive_okra, joke_okra, sniper_mode, blitz_mode, exact_mode, golf_mode, glyph_mode, cloak_mode, cloaked_user, haiku_okra, trailer_okra, heist_okra, horoscope_okra, rap_okra, shakespeare_okra, pirate_okra, noir_okra, hype_okra, roast_okra
     time_between_questions = time_between_questions_default
     ghost_mode = ghost_mode_default
     categories_to_exclude.clear()
@@ -15263,6 +15325,7 @@ async def clear_round_options():
     blitz_mode = blitz_mode_default
     exact_mode = exact_mode_default
     golf_mode = golf_mode_default
+    glyph_mode = glyph_mode_default
     cloak_mode = cloak_mode_default
     cloaked_user = None
 
@@ -15290,6 +15353,7 @@ async def process_round_options(round_winner, winner_points, round_winner_id):
         "🚀⚡  **Blitz**: One winner per question\n"
         "🤓🔍 **Poindexter**: Stricter answers\n"
         "⛳📉 **Golf**: Slowest answers win\n" 
+        "🔐🔍 **Glyph**: Add Googling countermeasures\n" 
 
         "\n🕹️: Toggle mid-round with **#[command]**"
         "\n⛳: Golf excluded\n\n"
@@ -15315,7 +15379,7 @@ async def prompt_user_for_response(round_winner, winner_points, winner_coffees, 
     global since_token, time_between_questions, ghost_mode
     global num_jeopardy_clues, num_crossword_clues, num_mysterybox_clues, num_wof_clues
     global yolo_mode, god_mode, num_math_questions, num_stats_questions
-    global image_questions, marx_mode, blind_mode, sniper_mode, blitz_mode, exact_mode, golf_mode, cloak_mode, cloaked_user
+    global image_questions, marx_mode, blind_mode, sniper_mode, blitz_mode, exact_mode, glyph_mode, golf_mode, cloak_mode, cloaked_user
 
     # Central configuration for keywords
     # Format: "keyword": {"requires_coffee": bool, "exclude_hashtag": bool}
@@ -15336,7 +15400,8 @@ async def prompt_user_for_response(round_winner, winner_points, winner_coffees, 
         "cloak": {"requires_coffee": False, "exclude_hashtag": True},
         "blitz": {"requires_coffee": False, "exclude_hashtag": True},
         "poindexter": {"requires_coffee": False, "exclude_hashtag": True},
-        "golf": {"requires_coffee": False, "exclude_hashtag": False}
+        "golf": {"requires_coffee": False, "exclude_hashtag": False},
+        "glyph": {"requires_coffee": False, "exclude_hashtag": True}
     }
 
     def check(m):
@@ -15423,6 +15488,9 @@ async def prompt_user_for_response(round_winner, winner_points, winner_coffees, 
 
             if (not keyword_config["golf"]["exclude_hashtag"] or "#golf" not in message_content) and await coffee_gate("golf", f"\n⛳📉 **<@{round_winner_id}>** strives for the bottom!", "Golf"):
                 golf_mode = True
+
+            if (not keyword_config["glyph"]["exclude_hashtag"] or "#glyph" not in message_content) and await coffee_gate("glyph", f"\n🔐🔍 **<@{round_winner_id}>** has obscured the questions!", "Glyph"):
+                glyph_mode = True
             
 
         except asyncio.TimeoutError:
@@ -16628,6 +16696,17 @@ def remove_diacritics(input_str):
     return ''.join([char for char in nfkd_form if not unicodedata.combining(char)])
 
 
+def apply_glyphs(text):
+    """
+    Replace ASCII letters with Unicode lookalikes to make text harder to Google search.
+    Only replaces characters when glyph_mode is True.
+    """
+    if not glyph_mode:
+        return text
+
+    return ''.join(GLYPH_MAP.get(char, char) for char in text)
+
+
 async def ask_question(trivia_category, trivia_question, trivia_url, trivia_answer_list, question_number):
     """Ask the trivia question."""
     # Define the numbered block emojis for questions 1 to 10
@@ -16640,6 +16719,9 @@ async def ask_question(trivia_category, trivia_question, trivia_url, trivia_answ
     send_image_flag = False
     image_buffer = None
     image_url = None
+
+    # Apply glyph transformation if glyph_mode is enabled
+    trivia_question = apply_glyphs(trivia_question)
 
     trivia_answer = trivia_answer_list[0]  # The first item is the main answer
 
@@ -18810,7 +18892,7 @@ async def start_trivia():
 
             start_message = f"\u200b\n✨🧪 **NEW** from the **Okra Lab**! 🧪✨\n"
             
-            start_message += f"\n🧞‍♂️🪔 **The Genie** [Mini Game]\n"
+            start_message += f"\n🔐🔍 **Glyph** [Game Mode]\n"
 
             start_message += "\n\n\u200b"
             await safe_send(channel, start_message)
@@ -18975,7 +19057,7 @@ async def get_bump_url_from_s3():
 def print_round_settings():
     global time_between_questions, ghost_mode, god_mode, yolo_mode
     global image_questions, marx_mode
-    global blind_mode, sniper_mode, cloak_mode, blitz_mode, exact_mode, golf_mode
+    global blind_mode, sniper_mode, cloak_mode, blitz_mode, exact_mode, golf_mode, glyph_mode
 
     print(f"🛠️ Current Round Settings:")
     print(f"⏱️  Time Between Questions: {time_between_questions}")
@@ -18990,9 +19072,10 @@ def print_round_settings():
     print(f"🚀⚡ Blitz Mode: {blitz_mode}")
     print(f"🤓🔍 Exact Mode: {exact_mode}")
     print(f"⛳📉 Golf Mode: {golf_mode}")
+    print(f"🔐🔍 Glyph Mode: {glyph_mode}")
 
 async def reset_round_options(reset_command, winner_id):
-    global time_between_questions, ghost_mode, god_mode, yolo_mode, mirror_mode, echo_mode, image_questions, marx_mode, blind_mode, zen_mode, sniper_mode, blitz_mode, exact_mode, golf_mode, cloak_mode, cloaked_user
+    global time_between_questions, ghost_mode, god_mode, yolo_mode, mirror_mode, echo_mode, image_questions, marx_mode, blind_mode, zen_mode, sniper_mode, blitz_mode, exact_mode, golf_mode, glyph_mode, cloak_mode, cloaked_user
 
     reset_success = False
     
@@ -19067,6 +19150,14 @@ async def reset_round_options(reset_command, winner_id):
             await safe_send(channel, content=f"\n🤓🔍 **{winner_id}** demands perfection!\n")
         else:
             await safe_send(channel, content=f"\n😵‍💫🍃 **{winner_id}** says chillax. Close enough.\n")
+
+    if "glyph" in reset_command:
+        glyph_mode = not glyph_mode
+        reset_success = True
+        if glyph_mode == True:
+            await safe_send(channel, content=f"\n🔐🔍 **{winner_id}** has obscured the questions!\n")
+        else:
+            await safe_send(channel, content=f"\n🔓✅ **{winner_id}** says Google it!\n")
 
     if "cloak" in reset_command:
         cloak_mode = not cloak_mode
