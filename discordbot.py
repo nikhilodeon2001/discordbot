@@ -19696,8 +19696,7 @@ async def flag_command(interaction: discord.Interaction):
         embed.add_field(
             name="🟢 CURRENT QUESTION",
             value=f"**Category:** {current_q.get(category_key, 'N/A')}\n"
-                  f"**Question:** {current_q.get(question_key, 'N/A')}\n"
-                  f"**Answer:** {current_answer}",
+                  f"**Question:** {current_q.get(question_key, 'N/A')}\n",
             inline=False
         )
     else:
@@ -19719,8 +19718,7 @@ async def flag_command(interaction: discord.Interaction):
         embed.add_field(
             name="🔴 PREVIOUS QUESTION",
             value=f"**Category:** {prev_q.get(category_key, 'N/A')}\n"
-                  f"**Question:** {prev_q.get(question_key, 'N/A')}\n"
-                  f"**Answer:** {previous_answer}",
+                  f"**Question:** {prev_q.get(question_key, 'N/A')}\n",
             inline=False
         )
     else:
