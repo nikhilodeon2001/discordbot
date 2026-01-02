@@ -12096,11 +12096,13 @@ async def send_flag_notification(question, flag_reason, display_name, flag_messa
         flag_message: The Discord message object (can be None for slash commands)
     """
     try:
-        # Get the channel from the guild that the flag message came from
-        # This is more reliable than using bot.get_channel() or bot.fetch_channel()
-        guild = flag_message.guild
-        channel = guild.get_channel(FLAGGED_QUESTIONS_CHANNEL_ID)
+        # Get the guild using OKRAN_GUILD_ID (works for both slash commands and message flags)
+        guild = bot.get_guild(OKRAN_GUILD_ID)
+        if not guild:
+            print(f"❌ Guild {OKRAN_GUILD_ID} not found!")
+            return
 
+        channel = guild.get_channel(FLAGGED_QUESTIONS_CHANNEL_ID)
         if not channel:
             print(f"❌ Flagged questions channel {FLAGGED_QUESTIONS_CHANNEL_ID} not found in guild {guild.name}!")
             return
@@ -12206,9 +12208,8 @@ async def update_audit_question(question, message_content, display_name, flag_me
 
                 await collection.update_one({"_id": document_id}, update, upsert=False)
 
-                # Send notification to flagged questions channel
-                if flag_message:
-                    await send_flag_notification(question, message_content, display_name, flag_message)
+                # Send notification to flagged questions channel (works for both slash commands and message flags)
+                await send_flag_notification(question, message_content, display_name, flag_message)
 
                 break  # Success
 
@@ -19667,9 +19668,9 @@ async def flag_command(interaction: discord.Interaction):
     elif interaction.channel_id == SIMPLY_TRIVIA_CHANNEL_ID:
         # Simply Trivia channel - import from simply_trivia module
         try:
-            from simply_trivia import simply_current_question, simply_previous_question
-            current_q = simply_current_question
-            prev_q = simply_previous_question
+            from simply_trivia import get_current_question_for_flag, get_previous_question_for_flag
+            current_q = get_current_question_for_flag()
+            prev_q = get_previous_question_for_flag()
         except ImportError:
             await interaction.response.send_message("❌ Simply Trivia is not available.", ephemeral=True)
             return
@@ -19686,17 +19687,14 @@ async def flag_command(interaction: discord.Interaction):
 
     # Add current question info
     if current_q:
-        current_answer = current_q.get("trivia_answer_list" if interaction.channel_id == channel_id else "answers", ["N/A"])
+        current_answer = current_q.get("trivia_answer_list", ["N/A"])
         if isinstance(current_answer, list):
             current_answer = ", ".join(str(a) for a in current_answer)
 
-        category_key = "trivia_category" if interaction.channel_id == channel_id else "category"
-        question_key = "trivia_question" if interaction.channel_id == channel_id else "question"
-
         embed.add_field(
             name="🟢 CURRENT QUESTION",
-            value=f"**Category:** {current_q.get(category_key, 'N/A')}\n"
-                  f"**Question:** {current_q.get(question_key, 'N/A')}\n",
+            value=f"**Category:** {current_q.get('trivia_category', 'N/A')}\n"
+                  f"**Question:** {current_q.get('trivia_question', 'N/A')}\n",
             inline=False
         )
     else:
@@ -19708,17 +19706,14 @@ async def flag_command(interaction: discord.Interaction):
 
     # Add previous question info
     if prev_q:
-        previous_answer = prev_q.get("trivia_answer_list" if interaction.channel_id == channel_id else "answers", ["N/A"])
+        previous_answer = prev_q.get("trivia_answer_list", ["N/A"])
         if isinstance(previous_answer, list):
             previous_answer = ", ".join(str(a) for a in previous_answer)
 
-        category_key = "trivia_category" if interaction.channel_id == channel_id else "category"
-        question_key = "trivia_question" if interaction.channel_id == channel_id else "question"
-
         embed.add_field(
             name="🔴 PREVIOUS QUESTION",
-            value=f"**Category:** {prev_q.get(category_key, 'N/A')}\n"
-                  f"**Question:** {prev_q.get(question_key, 'N/A')}\n",
+            value=f"**Category:** {prev_q.get('trivia_category', 'N/A')}\n"
+                  f"**Question:** {prev_q.get('trivia_question', 'N/A')}\n",
             inline=False
         )
     else:
