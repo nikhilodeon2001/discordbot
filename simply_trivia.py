@@ -24,34 +24,91 @@ additional_answerers = []
 simply_current_question = None
 simply_previous_question = None
 
+
+def get_current_question_for_flag():
+    """
+    Get current question in standard trivia format for /flag command
+
+    Returns:
+        Question dict with trivia_* keys, or None if no current question
+    """
+    if simply_current_question is None:
+        return None
+    return {
+        "trivia_category": simply_current_question.get("category", ""),
+        "trivia_question": simply_current_question.get("question", ""),
+        "trivia_url": simply_current_question.get("url", ""),
+        "trivia_answer_list": simply_current_question.get("answers", []),
+        "trivia_db": simply_current_question.get("db", "trivia_questions"),
+        "trivia_id": simply_current_question.get("_id")
+    }
+
+
+def get_previous_question_for_flag():
+    """
+    Get previous question in standard trivia format for /flag command
+
+    Returns:
+        Question dict with trivia_* keys, or None if no previous question
+    """
+    if simply_previous_question is None:
+        return None
+    return {
+        "trivia_category": simply_previous_question.get("category", ""),
+        "trivia_question": simply_previous_question.get("question", ""),
+        "trivia_url": simply_previous_question.get("url", ""),
+        "trivia_answer_list": simply_previous_question.get("answers", []),
+        "trivia_db": simply_previous_question.get("db", "trivia_questions"),
+        "trivia_id": simply_previous_question.get("_id")
+    }
+
+
 # Leaderboard tracking
 questions_count = 0  # Counter for questions asked since bot started
 
 
-async def get_trivia_question(db):
+async def get_trivia_question(db, collections=None):
     """
-    Fetch random question from trivia_questions, avoiding recent repeats
+    Fetch random question from specified collection(s), avoiding recent repeats
 
     Args:
         db: MongoDB database instance
+        collections: List of collection names to fetch from (defaults to ["trivia_questions"])
 
     Returns:
         Question document or None if no questions available
     """
     # Import from discordbot
     from discordbot import get_recent_question_ids_from_mongo
+    import random
+
+    # Default to trivia_questions if not specified
+    if collections is None:
+        collections = ["trivia_questions"]
+
+    # Randomly select a collection from the list
+    collection_name = random.choice(collections)
+
+    # Map collection names to their question type for recent ID tracking
+    collection_to_type = {
+        "trivia_questions": "general",
+        "jeopardy_questions": "jeopardy",
+        "crossword_questions": "crossword"
+    }
+    question_type = collection_to_type.get(collection_name, "general")
 
     # Get recent IDs to avoid
-    recent_ids = await get_recent_question_ids_from_mongo("general")
+    recent_ids = await get_recent_question_ids_from_mongo(question_type)
 
-    # Fetch random question from trivia_questions collection
+    # Fetch random question from selected collection
     pipeline = [
         {"$match": {"_id": {"$nin": list(recent_ids)}}},
         {"$sample": {"size": 1}}
     ]
-    questions = await db["trivia_questions"].aggregate(pipeline).to_list(1)
+    questions = await db[collection_name].aggregate(pipeline).to_list(1)
 
     if questions:
+        questions[0]["db"] = collection_name  # Track which collection it came from
         return questions[0]
     return None
 
@@ -205,7 +262,7 @@ class SimplyTriviaFlagReasonModal(discord.ui.Modal, title="Flag Question"):
                 "trivia_question": self.question.get("question", ""),
                 "trivia_url": self.question.get("url", ""),
                 "trivia_answer_list": self.question.get("answers", []),
-                "trivia_db": "trivia_questions",
+                "trivia_db": self.question.get("db", "trivia_questions"),
                 "trivia_id": self.question.get("_id")
             }
 
