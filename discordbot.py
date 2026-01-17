@@ -13748,18 +13748,14 @@ async def generate_round_summary_image(round_data, winner, winner_id):
             # Use a default safe prompt
             default_prompt = f"A Renaissance painting of what you think {winner} looks like holding an okra. Make the painting elegant and refined."
             try:
-                loop = asyncio.get_running_loop()
-                response = await loop.run_in_executor(
-                    None,
-                    lambda: openai.Image.create(
-                        prompt=default_prompt,
-                        n=1,
-                        size="512x512"  # Adjust size as needed
-                    )
+                response = await openai_client.images.generate(
+                    model="gpt-image-1",
+                    prompt=default_prompt,
+                    size="512x512",
                 )
                 
                 # Return the image URL from the API response
-                image_url = response["data"][0]["url"]
+                image_url = response.data[0].url
                 image_description = await describe_image_with_vision(image_url, "title", prompt)
                 
     
