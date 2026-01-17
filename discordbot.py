@@ -13684,7 +13684,7 @@ async def generate_round_summary_image(round_data, winner, winner_id):
                 f"An image of what you think {winner} looks like intereracting with an okra in the most crazy, ridiculous, and over the top random way."
             ],
             "4": [
-                f"Draw an okra themed picture of {winner} {additional_prompt}.\n"  
+                f"Draw an okra themed picture of {additional_prompt}.\n"  
             ]
         }
 
@@ -13851,7 +13851,7 @@ async def request_prompt(winner, winner_id):
     start_time = asyncio.get_event_loop().time()
    
     message = f"\u200b\n🖼️🔟 **<@{winner_id}>**, Fill in the blank. *10 words max* and **be good**.\n\u200b"
-    message += f"\n*Draw an okra themed picture of **<@{winner_id}>**...*\n\u200b"
+    message += f"\n*Draw an okra themed picture of...*\n\u200b"
     await safe_send(channel, message)
 
     def check(m):
@@ -13882,7 +13882,7 @@ async def request_prompt(winner, winner_id):
     if not collected_words:
         await safe_send(channel, "Nothing. Okra time.")
     else:
-        final_msg = f"\u200b\n💥🤯 **Ok...ra I got**: 'Draw an okra-themed picture of **<@{winner_id}>** {' '.join(collected_words)}'\n\u200b"
+        final_msg = f"\u200b\n💥🤯 **Ok...ra I got**: 'Draw an okra-themed picture of **{' '.join(collected_words)}**'\n\u200b"
         await safe_send(channel, final_msg)
 
     return ' '.join(collected_words)
