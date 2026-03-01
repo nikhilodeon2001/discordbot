@@ -13160,8 +13160,8 @@ async def get_image_url_from_s3():
         
         # Remove the time from the date string
         date_only = ' '.join(full_date.split()[:-1])
-        message = "\u200b\n🖼️✨ A memory from the **Okra Museum**"
-        message += "\n🥒🏛️ [Visit the Okra Museum](https://clubokra.com/okra-museum)\n\u200b"
+        message = "\u200b\n🖼️✨ A memory from the **Okra Museum**\n\u200b"
+        #message += "\n🥒🏛️ [Visit the Okra Museum](https://clubokra.com/okra-museum)\n\u200b"
         await safe_send(channel, content=message, embed=discord.Embed().set_image(url=public_url))
 
         #message = f"\u200b\n**Masterpiece:** '{title}'\n"
@@ -13717,8 +13717,8 @@ async def generate_round_summary_image(round_data, winner, winner_id):
         await safe_send(channel, content=message, embed=discord.Embed().set_image(url=image_url))
         
         message = f"\n**I call it**...*{image_description}*\n"
-        message += f"\n🏛️👋 **Welcome to the Okra Museum**"
-        message += "\n🌐➡️ [Visit the Museum](https://clubokra.com/okra-museum)\n"
+        #message += f"\n🏛️👋 **Welcome to the Okra Museum**"
+        #message += "\n🌐➡️ [Visit the Museum](https://clubokra.com/okra-museum)\n"
         await safe_send(channel, message)
 
         async with aiohttp.ClientSession() as session:
@@ -13762,8 +13762,8 @@ async def generate_round_summary_image(round_data, winner, winner_id):
                 message = f"😈😉 <@{winner_id}> Naughty naughty, I'll have to pick another.\n\n"
                 await safe_send(channel, content=message, embed=discord.Embed().set_image(url=image_url))
                 message = f"\nI call it: '{image_description}'\n"
-                message += f"\n🏛️👋 Welcome to the Okra Museum"
-                message += "\n🌐➡️ [Visit the Museum](https://clubokra.com/okra-museum)\n"
+                #message += f"\n🏛️👋 Welcome to the Okra Museum"
+                #message += "\n🌐➡️ [Visit the Museum](https://clubokra.com/okra-museum)\n"
                 await safe_send(channel, message)
         
                 async with aiohttp.ClientSession() as session:
@@ -17472,9 +17472,11 @@ async def update_round_streaks(user, user_id):
                 discount_fraction = min((streak // discount_streak_amount) * discount_step_amount, 90)
                 message += f"\n⚖️ Going forward **<@{user_id}>** will incur a **-{discount_fraction}%** handicap.\n"
                 
-            message += f"\n▶️ **[Discord Stats](https://clubokra.com/discord)**\n\u200b\n\u200b"
+            #message += f"\n▶️ **[Discord Stats](https://clubokra.com/discord)**\n\u200b\n\u200b"
+            message += f"\u200b"
         else:
-            message = f"\u200b\n\u200b\n🏆 **Winner**: **<@{user_id}>**!\n\n▶️ **[Discord Stats](https://clubokra.com/discord)**\n\u200b\n\u200b"
+            #message = f"\u200b\n\u200b\n🏆 **Winner**: **<@{user_id}>**!\n\n▶️ **[Discord Stats](https://clubokra.com/discord)**\n\u200b\n\u200b"
+            message = f"\u200b\n\u200b\n🏆 **Winner**: **<@{user_id}>**!\n\u200b\n\u200b"
 
         await safe_send(channel, message)
         await asyncio.sleep(2)
@@ -18993,8 +18995,8 @@ async def start_trivia():
                 await safe_send(channel, message)
                 await asyncio.sleep(20)
 
-            message = f"\u200b\n\u200b\n🥒 **Unlock perks? Become an Okran!**\n💚 [Join Role Subscriptions](https://discord.com/channels/1367682586079395902/role-subscriptions)\n"
-            message += f"\n🛒 **Score Live Trivia merch!**\n👕 [Shop Merch](https://merch.clubokra.com)\n\u200b"
+            message = f"\u200b\n\u200b\n🥒 **Unlock perks? Become an Okran!**\n💚 [Join Role Subscriptions](https://discord.com/channels/1367682586079395902/role-subscriptions)\n\u200b"
+            #message += f"\n🛒 **Score Live Trivia merch!**\n👕 [Shop Merch](https://merch.clubokra.com)\n\u200b"
             await safe_send(channel, message)
             
             selected_questions = await select_trivia_questions(questions_per_round)  #Pick the next question set
