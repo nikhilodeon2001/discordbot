@@ -19,7 +19,8 @@ chess==1.11.2
 click==8.2.0
 cssselect2==0.8.0
 defusedxml==0.7.1
-discord.py==2.6.4
+discord.py==2.7.1
+davey
 distro==1.9.0
 dnspython==2.7.0
 EbookLib==0.19
