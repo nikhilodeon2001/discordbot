@@ -2424,7 +2424,7 @@ async def ask_okra_says_challenge(winner, winner_id, num=1):
     wf_winner = True
 
     # Configuration
-    ALLOW_SOLO_TESTING = local_mode  # Set to False for production (requires 2+ players)
+    ALLOW_SOLO_TESTING = os.environ.get('ALLOW_SOLO_TESTING', '').lower() == 'true'
     JOIN_TIMEOUT = 15
     INPUT_TIMEOUT = 20
     STARTING_PATTERN_LENGTH = 3
