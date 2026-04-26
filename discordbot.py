@@ -1,13 +1,14 @@
-# Initialize all variables
-local_mode = False
-prod_or_stage = "prod"
+import os
+from dotenv import load_dotenv
+load_dotenv()
+
+prod_or_stage = os.environ.get('ENVIRONMENT', 'prod')
 
 import sentry_sdk
 from sentry_sdk.integrations.logging import LoggingIntegration
 
-# Setup Sentry
 sentry_sdk.init(
-    dsn="https://REMOVED_SENTRY_KEY@o4507935419400192.ingest.us.sentry.io/4507935424839680",  # Replace with your DSN from Sentry
+    dsn=os.environ.get('SENTRY_DSN'),
     integrations=[LoggingIntegration(level=None, event_level='ERROR')]
 )
 
@@ -106,8 +107,8 @@ from self_update import self_update
 
 # AWS S3 Configuration for presigned URLs
 import boto3
-AWS_ACCESS_KEY_ID = os.environ.get('AWS_ACCESS_KEY_ID', 'REMOVED_AWS_KEY_ID')
-AWS_SECRET_ACCESS_KEY = os.environ.get('AWS_SECRET_ACCESS_KEY', 'REMOVED_AWS_SECRET')
+AWS_ACCESS_KEY_ID = os.environ.get('AWS_ACCESS_KEY_ID')
+AWS_SECRET_ACCESS_KEY = os.environ.get('AWS_SECRET_ACCESS_KEY')
 AWS_REGION = os.environ.get('AWS_REGION', 'us-east-2')
 S3_BUCKET_NAME = 'triviabotwebsite'
 S3_MUSIC_FOLDER = 'music_audio'
@@ -362,32 +363,18 @@ shutdown_initiated = False
 
 
 
-if local_mode == True:
-    discord_token = "REMOVED_DISCORD_TOKEN"
-    discord_mini_game_audio_bot_token = "REMOVED_DISCORD_AUDIO_TOKEN" 
-    mongo_db_string = "mongodb+srv://nsharma2:REMOVED_MONGO_PASSWORD@staging.oxez2.mongodb.net/?retryWrites=true&w=majority&appName=staging"
-    openai_api_key = "REMOVED_OPENAI_KEY"
-    openweather_api_key = "REMOVED_OPENWEATHER_KEY"
-    googlemaps_api_key = "REMOVED_GOOGLEMAPS_KEY"
-    googletranslate_api_key = "REMOVED_GOOGLETRANSLATE_KEY"
-    webster_api_key = "REMOVED_WEBSTER_KEY"
-    webster_thes_api_key = "REMOVED_WEBSTER_THES_KEY"
-    currency_api_key = "REMOVED_CURRENCY_KEY"
-    deepgram_api_key = "REMOVED_DEEPGRAM_KEY"
-    channel_id = 1375328414151610458
-else:
-    discord_token = os.getenv("discord_token")
-    discord_mini_game_audio_bot_token = os.getenv("DISCORD_MINI_GAME_AUDIO_BOT_TOKEN")
-    mongo_db_string = os.getenv("mongo_db_string")
-    openai_api_key = os.getenv("openai_api_key")
-    openweather_api_key = os.getenv("openweather_api_key")
-    googlemaps_api_key = os.getenv("googlemaps_api_key")
-    googletranslate_api_key = os.getenv("googletranslate_api_key")
-    webster_api_key = os.getenv("webster_api_key")
-    webster_thes_api_key = os.getenv("webster_thes_api_key")
-    currency_api_key = os.getenv("currency_api_key")
-    deepgram_api_key = os.getenv("deepgram_api_key")
-    channel_id = int(os.getenv("channel_id"))
+discord_token = os.getenv("discord_token")
+discord_mini_game_audio_bot_token = os.getenv("DISCORD_MINI_GAME_AUDIO_BOT_TOKEN")
+mongo_db_string = os.getenv("mongo_db_string")
+openai_api_key = os.getenv("openai_api_key")
+openweather_api_key = os.getenv("openweather_api_key")
+googlemaps_api_key = os.getenv("googlemaps_api_key")
+googletranslate_api_key = os.getenv("googletranslate_api_key")
+webster_api_key = os.getenv("webster_api_key")
+webster_thes_api_key = os.getenv("webster_thes_api_key")
+currency_api_key = os.getenv("currency_api_key")
+deepgram_api_key = os.getenv("deepgram_api_key")
+channel_id = int(os.getenv("channel_id"))
 
 
 if prod_or_stage == "stage":

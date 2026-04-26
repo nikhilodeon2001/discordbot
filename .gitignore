@@ -1,0 +1,9 @@
+.env
+.env.*
+*.key
+*.pem
+__pycache__/
+*.pyc
+*.pyo
+.DS_Store
+nltk_data/
