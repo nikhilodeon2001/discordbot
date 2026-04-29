@@ -19,6 +19,7 @@ The core loop runs trivia, Jeopardy, and crossword questions in a dedicated chan
 | Exact | Requires exact string match |
 | God | Alternative scoring system |
 | Marx | Groucho Marx AI commentary between questions |
+| Dicktator | Round-winner-activated modifier that triggers God mode; the winner earns the Dicktator role and controls the next round's scoring rules — a comedic power-up mechanic for the server's winning player |
 
 ### Mini-Game Arena (`/arena`)
 38 playable mini-games selectable by name, plus **Random** (picks one at random) and **Chaos** (different random game each round). Games span image identification, audio challenges, word puzzles, geography, chess, finance, and more.
