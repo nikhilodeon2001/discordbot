@@ -374,6 +374,7 @@ webster_api_key = os.getenv("webster_api_key")
 webster_thes_api_key = os.getenv("webster_thes_api_key")
 currency_api_key = os.getenv("currency_api_key")
 deepgram_api_key = os.getenv("deepgram_api_key")
+user_agent_email = os.getenv("USER_AGENT_EMAIL")
 channel_id = int(os.getenv("channel_id"))
 
 
@@ -12881,7 +12882,7 @@ async def categorize_text(input_text, title):
 async def get_wikipedia_article(max_words=3, max_length=16):
     base_url = "https://en.wikipedia.org/w/api.php"
     headers = {
-        "User-Agent": "Live Trivia & Games/2.4 ([user_agent_email])"
+        "User-Agent": f"Live Trivia & Games/2.4 ({user_agent_email})"
     }
 
     async with aiohttp.ClientSession(headers=headers) as session:
