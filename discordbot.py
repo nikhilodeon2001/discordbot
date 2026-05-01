@@ -13680,7 +13680,7 @@ async def generate_round_summary_image(round_data, winner, winner_id):
             
     print(prompt)
     
-    # Generate the image using DALL-E
+    # Generate the image
     
     try:
         response = await openai_client.images.generate(
