@@ -12677,14 +12677,13 @@ async def ask_survey_question():
             img_prompt = f"Create a hyperrealistic futuristic okra themed environment described as: {safe_words}."
 
             image = await client.images.generate(
-                model="dall-e-3",
+                model="gpt-image-1",
                 prompt=img_prompt,
                 size="1024x1024",
-                n=1
             )
-            image_url = image.data[0].url
+            image_bytes = base64.b64decode(image.data[0].b64_json)
             await safe_send(channel, "🥒🌀 Behold, your Okraverse:")
-            await safe_send(channel, image_url)
+            await safe_send(channel, file=discord.File(io.BytesIO(image_bytes), filename="okraverse.png"))
 
         except Exception as e:
             print("Error generating image:", e)
@@ -12697,33 +12696,29 @@ async def generate_themed_country_image(country, city):
 
     try:
         response = await openai_client.images.generate(
-            model="dall-e-2",
+            model="gpt-image-1",
             prompt=prompt,
-            n=1,
-            size="512x512"
+            size="1024x1024",
         )
-        image_url = response.data[0].url
-        return image_url
+        return io.BytesIO(base64.b64decode(response.data[0].b64_json))
 
     except openai.OpenAIError as e:
         print(f"Error generating image: {e}")
-        
+
         if "Your request was rejected as a result of our safety system" in str(e):
             default_prompt = f"Generate an image of an okra in {country}."
             try:
                 response = await openai_client.images.generate(
-                    model="dall-e-2",
+                    model="gpt-image-1",
                     prompt=default_prompt,
-                    n=1,
-                    size="512x512"
+                    size="1024x1024",
                 )
-                image_url = response.data[0].url
-                return image_url
+                return io.BytesIO(base64.b64decode(response.data[0].b64_json))
             except openai.OpenAIError as e2:
                 print(f"Error generating default image: {e2}")
-                return "Image generation failed!"
+                return None
 
-        return "Image generation failed!"
+        return None
 
 
 async def get_google_maps(lat, lon):
@@ -13689,32 +13684,26 @@ async def generate_round_summary_image(round_data, winner, winner_id):
     
     try:
         response = await openai_client.images.generate(
-            model="dall-e-2",
+            model="gpt-image-1",
             prompt=prompt,
-            n=1,
-            size="512x512",
+            size="1024x1024",
         )
-        image_url = response.data[0].url
-        
+        b64 = response.data[0].b64_json
+        image_data = base64.b64decode(b64)
+        image_url_for_vision = f"data:image/png;base64,{b64}"
+
         if selected_category == "4":
-            image_description = await describe_image_with_vision(image_url, "title", prompt)
+            image_description = await describe_image_with_vision(image_url_for_vision, "title", prompt)
         else:
-            image_description = await describe_image_with_vision(image_url, "title", prompt)
-            
+            image_description = await describe_image_with_vision(image_url_for_vision, "title", prompt)
+
         message = f"🔥💖 **<@{winner_id}>**, you've done well. I drew this **for you**.\n"
-        await safe_send(channel, content=message, embed=discord.Embed().set_image(url=image_url))
-        
+        await safe_send(channel, content=message, file=discord.File(io.BytesIO(image_data), filename="winner.png"))
+
         message = f"\n**I call it**...*{image_description}*\n"
         #message += f"\n🏛️👋 **Welcome to the Okra Museum**"
         #message += "\n🌐➡️ [Visit the Museum](https://clubokra.com/okra-museum)\n"
         await safe_send(channel, message)
-
-        async with aiohttp.ClientSession() as session:
-            async with session.get(image_url) as resp:
-                if resp.status != 200:
-                    print(f"Failed to download image: {resp.status}")
-                    return None
-                image_data = await resp.read()
 
         loop = asyncio.get_running_loop()
 
@@ -13739,39 +13728,31 @@ async def generate_round_summary_image(round_data, winner, winner_id):
                 response = await openai_client.images.generate(
                     model="gpt-image-1",
                     prompt=default_prompt,
-                    size="512x512",
+                    size="1024x1024",
                 )
-                
-                # Return the image URL from the API response
-                image_url = response.data[0].url
-                image_description = await describe_image_with_vision(image_url, "title", prompt)
-                
-    
+
+                b64 = response.data[0].b64_json
+                image_data = base64.b64decode(b64)
+                image_url_for_vision = f"data:image/png;base64,{b64}"
+                image_description = await describe_image_with_vision(image_url_for_vision, "title", prompt)
+
                 message = f"😈😉 <@{winner_id}> Naughty naughty, I'll have to pick another.\n\n"
-                await safe_send(channel, content=message, embed=discord.Embed().set_image(url=image_url))
+                await safe_send(channel, content=message, file=discord.File(io.BytesIO(image_data), filename="winner.png"))
                 message = f"\nI call it: '{image_description}'\n"
                 #message += f"\n🏛️👋 Welcome to the Okra Museum"
                 #message += "\n🌐➡️ [Visit the Museum](https://clubokra.com/okra-museum)\n"
                 await safe_send(channel, message)
-        
-                async with aiohttp.ClientSession() as session:
-                    async with session.get(image_url) as resp:
-                        if resp.status != 200:
-                            print(f"Failed to download image: {resp.status}")
-                            return None
-                        image_data = await resp.read()
 
                 loop = asyncio.get_running_loop()
 
-                buffer = await loop.run_in_executor(None, lambda: (
-                    lambda buf: (buf.seek(0), buf)[1]
-                )(  # open, resize, save to buffer
-                    (lambda img: (
-                        img.save(io := io.BytesIO(), format="PNG"),
-                        io
-                    ))(Image.open(io.BytesIO(image_data)).resize((256, 256)))
-                ))
+                def process_fallback_image():
+                    img = Image.open(io.BytesIO(image_data)).resize((256, 256))
+                    buffer = io.BytesIO()
+                    img.save(buffer, format="PNG")
+                    buffer.seek(0)
+                    return buffer
 
+                buffer = await loop.run_in_executor(None, process_fallback_image)
                 await upload_image_to_s3(buffer, winner, image_description)
                 return None
             
@@ -14423,8 +14404,8 @@ async def select_wof_questions(winner, winner_id):
             await safe_send(channel, content="\n🛰️🌍 Our spies tracked him to this area...\n", embed=discord.Embed().set_image(url=satellite_view_url))                
             await asyncio.sleep(2)
 
-            if ai_on:
-                await safe_send(channel, content="\n📸🥒 We found this on OkraStrut's Insta...\n", embed=discord.Embed().set_image(url=themed_country_url))                                
+            if ai_on and themed_country_url:
+                await safe_send(channel, content="\n📸🥒 We found this on OkraStrut's Insta...\n", file=discord.File(themed_country_url, filename="country.png"))
                 await asyncio.sleep(2)
 
         image_file, image_width, image_height, display_string = generate_wof_image(wof_answer, wof_clue, fixed_letters)
