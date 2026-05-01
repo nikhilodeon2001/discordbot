@@ -219,3 +219,4 @@ worker: python discordbot.py
 ```
 
 The self-update system handles subsequent deploys automatically — push to `main` and the running bot detects the change and redeploys itself at the next round boundary.
+
