@@ -8,3 +8,5 @@ __pycache__/
 *.pyo
 .DS_Store
 nltk_data/
+.venv/
+flagged_review.json
