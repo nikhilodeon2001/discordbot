@@ -6,6 +6,7 @@ All imports from discordbot are done lazily inside functions to ensure
 the bot's event loop is active when accessing bot objects.
 """
 
+import sys
 import random
 import asyncio
 
@@ -172,11 +173,14 @@ async def run_mini_game(bot, game_name: str, player_name: str, player_id: int,
     if MINI_GAME_ARENA_VOICE_CHANNEL_ID:
         game_voice_channel_id.set(MINI_GAME_ARENA_VOICE_CHANNEL_ID)
 
-    # For audio games, use the mini-game audio bot if available (to avoid voice conflicts)
+    # For audio games, use the mini-game audio bot if available (to avoid voice conflicts).
+    # Use sys.modules to get the live instance — discordbot.mini_game_audio_bot may point to
+    # a dead instance created during the circular simply_trivia -> discordbot import.
     audio_games = ["hear here", "who says", "lets talk"]
-    if game_name.lower() in audio_games and discordbot.mini_game_audio_bot:
+    live_audio_bot = sys.modules.get('__mini_game_audio_bot__') or discordbot.mini_game_audio_bot
+    if game_name.lower() in audio_games and live_audio_bot:
         print(f"🎵 Using mini-game audio bot for {game_name}")
-        game_bot_instance.set(discordbot.mini_game_audio_bot)
+        game_bot_instance.set(live_audio_bot)
 
     # Get the game function
     game_fn = _get_game_function(game_name)
@@ -252,9 +256,10 @@ async def run_mini_game_chaos(bot, player_name: str, player_id: int, num_games: 
         game_voice_channel_id.set(MINI_GAME_ARENA_VOICE_CHANNEL_ID)
 
     # Use mini-game audio bot if available (chaos mode may include audio challenges)
-    if discordbot.mini_game_audio_bot:
+    live_audio_bot = sys.modules.get('__mini_game_audio_bot__') or discordbot.mini_game_audio_bot
+    if live_audio_bot:
         print(f"🎵 Using mini-game audio bot for chaos mode")
-        game_bot_instance.set(discordbot.mini_game_audio_bot)
+        game_bot_instance.set(live_audio_bot)
 
     # Call the regular chaos challenge - it will use the context!
     try:
