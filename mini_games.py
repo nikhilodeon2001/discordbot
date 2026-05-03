@@ -173,7 +173,7 @@ async def run_mini_game(bot, game_name: str, player_name: str, player_id: int,
         game_voice_channel_id.set(MINI_GAME_ARENA_VOICE_CHANNEL_ID)
 
     # For audio games, use the mini-game audio bot if available (to avoid voice conflicts)
-    audio_games = ["hear here", "who says?", "let's talk"]
+    audio_games = ["hear here", "who says", "lets talk"]
     if game_name.lower() in audio_games and discordbot.mini_game_audio_bot:
         print(f"🎵 Using mini-game audio bot for {game_name}")
         game_bot_instance.set(discordbot.mini_game_audio_bot)
