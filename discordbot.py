@@ -17269,7 +17269,39 @@ async def check_correct_responses_delete(question_ask_time, trivia_answer_list, 
 
             if blitz_mode:
                 first_correct_found = True
-            
+
+    closest_answer_delta = None
+    if is_number(trivia_answer) and len(trivia_answer_list) == 1:
+        numeric_subs = {uid: c for uid, c in user_first_response.items() if is_number(c)}
+        if len(numeric_subs) >= 2:
+            correct_val = float(trivia_answer)
+            closest_uid = min(numeric_subs,
+                key=lambda uid: abs(float(numeric_subs[uid]) - correct_val))
+            closest_content = numeric_subs[closest_uid]
+            closest_answer_delta = abs(float(closest_content) - correct_val)
+            closest_msg = None
+            for resp in collected_responses:
+                if resp["message"].author.id == closest_uid:
+                    closest_msg = resp["message"]
+                    closest_ts = closest_msg.created_at.timestamp()
+                    break
+            if closest_msg:
+                closest_name = closest_msg.author.display_name
+                response_time = (closest_ts - question_ask_time) if (closest_ts and question_ask_time) else float('inf')
+                points = calculate_points(response_time)
+                if closest_uid == current_longest_round_streak["user_id"]:
+                    streak = current_longest_round_streak["streak"]
+                    discount_percentage = discount_step_amount * (streak // discount_streak_amount)
+                    discount_percentage = min(discount_percentage, 90)
+                    if discount_percentage > 0:
+                        points *= (1 - discount_percentage / 100.0)
+                        points = round(points / 5) * 5
+                correct_responses = [(closest_name, points, response_time, closest_content, closest_uid, closest_msg)]
+                fastest_correct_user = closest_name
+                fastest_correct_user_id = closest_uid
+                fastest_response_time = response_time
+                fastest_correct_message = closest_msg
+
     if emoji_mode == True and fastest_response_time is not None and blind_mode == False and marx_mode == False:
         try:
             await fastest_correct_message.add_reaction("⬆️")
@@ -17314,8 +17346,11 @@ async def check_correct_responses_delete(question_ask_time, trivia_answer_list, 
             message = f"\u200b\n⛳ **Answer** ({len(question_responders)}) ⛳\n{trivia_answer}\n\u200b"
         else:
             message = f"\u200b\n✅ **Answer** ({len(question_responders)}) ✅\n{trivia_answer}\n\u200b"
-            
-            
+            if closest_answer_delta is not None:
+                delta_display = int(closest_answer_delta) if closest_answer_delta == int(closest_answer_delta) else closest_answer_delta
+                message += f"\n🎯 Closest answer wins! (off by {delta_display})"
+
+
     # Notify the chat
     if correct_responses and marx_mode == False:    
         correct_responses_length = len(correct_responses)
