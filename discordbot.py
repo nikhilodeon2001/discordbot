@@ -541,60 +541,60 @@ cloaked_user = None
 # Glyph mapping: ASCII letters -> Unicode lookalikes (reverse of CONFUSABLES_MAP in trivia_monitor.py)
 # Used to make questions harder to Google search by replacing normal letters with lookalikes
 GLYPH_MAP = {
-    # Uppercase letters
-    'A': 'Α',  # Greek Alpha
-    'B': 'В',  # Cyrillic Ve
-    'C': 'С',  # Cyrillic Es
-    'D': 'D',  # No good lookalike, keep as is
-    'E': 'Е',  # Cyrillic Ye
-    'F': 'F',  # No good lookalike, keep as is
-    'G': 'G',  # No good lookalike, keep as is
-    'H': 'Η',  # Greek Eta
-    'I': 'Ι',  # Greek Iota
-    'J': 'Ј',  # Cyrillic Je
-    'K': 'Κ',  # Greek Kappa
-    'L': 'L',  # No good lookalike, keep as is
-    'M': 'Μ',  # Greek Mu
-    'N': 'Ν',  # Greek Nu
-    'O': 'Ο',  # Greek Omicron
-    'P': 'Ρ',  # Greek Rho
-    'Q': 'Q',  # No good lookalike, keep as is
-    'R': 'R',  # No good lookalike, keep as is
-    'S': 'Ѕ',  # Cyrillic Dze
-    'T': 'Τ',  # Greek Tau
-    'U': 'U',  # No good lookalike, keep as is
-    'V': 'V',  # No good lookalike, keep as is
-    'W': 'W',  # No good lookalike, keep as is
-    'X': 'Χ',  # Greek Chi
-    'Y': 'Υ',  # Greek Upsilon
-    'Z': 'Ζ',  # Greek Zeta
-    # Lowercase letters
-    'a': 'а',  # Cyrillic a
-    'b': 'b',  # No good lookalike, keep as is
-    'c': 'с',  # Cyrillic es
-    'd': 'ԁ',  # Cyrillic komi de
-    'e': 'е',  # Cyrillic ye
-    'f': 'f',  # No good lookalike, keep as is
-    'g': 'ɡ',  # Latin small letter script g
-    'h': 'һ',  # Cyrillic shha
-    'i': 'і',  # Cyrillic i
-    'j': 'ј',  # Cyrillic je
-    'k': 'k',  # No good lookalike, keep as is
-    'l': 'ǀ',  # Latin Letter Dental Click
-    'm': 'm',  # No good lookalike, keep as is
-    'n': 'n',  # No good lookalike, keep as is
-    'o': 'о',  # Cyrillic o
-    'p': 'р',  # Cyrillic er
-    'q': 'q',  # No good lookalike, keep as is
-    'r': 'r',  # No good lookalike, keep as is
-    's': 'ѕ',  # Cyrillic dze
-    't': 't',  # No good lookalike, keep as is
-    'u': 'u',  # No good lookalike, keep as is
-    'v': 'ν',  # Greek nu
-    'w': 'w',  # No good lookalike, keep as is
-    'x': 'х',  # Cyrillic kha
-    'y': 'у',  # Cyrillic u
-    'z': 'z',  # No good lookalike, keep as is
+    # Uppercase — BMP-only lookalikes (Greek, Cyrillic, Armenian, math operators, Roman numerals, exotic scripts)
+    'A': ['Α', 'А', 'Λ', 'Δ', '∀', '∆', '∧', 'Ꭺ', 'ᗅ', 'ꓮ', 'Л'],
+    'B': ['Β', 'В'],
+    'C': ['С', 'Ϲ', '⊂', '⊃', '⊆', '⊇', 'Ⅽ'],
+    'D': ['Ⅾ'],
+    'E': ['Е', 'Ε', 'Σ', '∑', '∃', '∈', 'Э', 'Ё', 'Ꭼ', 'ⴹ', 'ꓰ'],
+    'F': ['Γ', 'Ғ'],
+    'G': ['Ԍ'],
+    'H': ['Η', 'Н'],
+    'I': ['Ι', 'Ϊ', 'І'],
+    'J': ['Ј'],
+    'K': ['Κ', 'К'],
+    'L': ['Ⅼ'],
+    'M': ['Μ', 'М', 'Ⅿ'],
+    'N': ['Ν', 'П', '∏'],
+    'O': ['Ο', 'О', 'Ф', '⊕', '⊗', '⊙', 'Օ', 'ⵔ', 'ꓳ'],
+    'P': ['Ρ', 'Р'],
+    'Q': ['Ԛ'],
+    'R': ['Я', 'Г'],
+    'S': ['Ѕ'],
+    'T': ['Τ', 'Т', '⊤'],
+    'U': ['Ц', 'Ч', '⋃', '∪', '⊔'],
+    'V': ['∨', 'Ⅴ'],
+    'W': ['Ω', 'Ш', 'Щ'],
+    'X': ['Χ', 'Х', 'Ⅹ'],
+    'Y': ['Υ', 'Ϋ', 'У', 'Ү'],
+    'Z': ['Ζ'],
+    # Lowercase — BMP-only lookalikes
+    'a': ['а', 'α', 'ά'],
+    'b': ['β', 'в', 'ь', 'ъ', 'բ'],
+    'c': ['с', 'ς', 'ⅽ'],
+    'd': ['ԁ', 'δ', 'ⅾ'],
+    'e': ['е', 'ε', 'έ', 'ё', 'э', '℮'],
+    'f': ['φ', 'ф', 'ғ'],
+    'g': ['ɡ', 'д', 'ґ', 'ԍ'],
+    'h': ['һ', 'н', 'հ'],
+    'i': ['і', 'ι', 'ί', 'ϊ', 'ⅰ'],
+    'j': ['ј'],
+    'k': ['κ', 'к'],
+    'l': ['ǀ', 'ⅼ', 'ℓ', 'ӏ'],
+    'm': ['м', 'μ', 'ⅿ'],
+    'n': ['η', 'п', 'ή', 'π', 'л', '⋂', '∩', '⊓', 'ո'],
+    'o': ['о', 'ο', 'θ', 'ό', 'σ', 'օ'],
+    'p': ['р', 'ρ', 'ք'],
+    'q': ['ԛ'],
+    'r': ['г', 'я'],
+    's': ['ѕ'],
+    't': ['т', 'τ'],
+    'u': ['υ', 'ϋ', 'и', 'й', 'ц', 'ч', 'ս'],
+    'v': ['ν', 'ⅴ'],
+    'w': ['ω', 'ш', 'щ', 'ώ', 'ѡ', 'ԝ'],
+    'x': ['х', 'ξ', 'ж', 'χ', 'ⅹ'],
+    'y': ['у', 'γ', 'ύ', 'λ', 'ψ', 'ѵ'],
+    'z': ['ζ', 'ҙ'],
 }
 
 channel = None
@@ -16670,7 +16670,7 @@ def apply_glyphs(text):
     if not glyph_mode:
         return text
 
-    return ''.join(GLYPH_MAP.get(char, char) for char in text)
+    return ''.join(random.choice(GLYPH_MAP[char]) if char in GLYPH_MAP else char for char in text)
 
 
 async def ask_question(trivia_category, trivia_question, trivia_url, trivia_answer_list, question_number):
@@ -18898,8 +18898,8 @@ async def start_trivia():
             start_message += f"\n🔐🔍 **Glyph** [Game Mode]\n"
 
             start_message += "\n\n\u200b"
-            await safe_send(channel, start_message)
-            await asyncio.sleep(5)
+            #await safe_send(channel, start_message)
+            #await asyncio.sleep(5)
             
             start_message = f"\u200b\n\u200b\n⏩ Starting a **{questions_per_round} question** round! ⏩\n\u200b"
 
