@@ -18997,7 +18997,7 @@ async def start_trivia():
             if round_count % 3 == 0:
                 message = f"\u200b\n🧘‍♂️ A short breather. Relax, stretch, meditate.\n🎨 Live Trivia is a pure hobby effort.\n\n🙋 Help make it better!\n💡 [Submit Feedback](https://forms.gle/iWvmN24pfGEGSy7n7)\n\n🗣️ Like it? Spread the word!\n⭐ [Leave a Review](https://disboard.org/review/create/1367682586079395902)\u200b\n\n"
                 await safe_send(channel, message)
-                await asyncio.sleep(20)
+                await asyncio.sleep(8)
 
             message = f"\u200b\n\u200b\n🥒 **Unlock perks? Become an Okran!**\n💚 [Join Role Subscriptions](https://discord.com/channels/1367682586079395902/role-subscriptions)\n\u200b"
             #message += f"\n🛒 **Score Live Trivia merch!**\n👕 [Shop Merch](https://merch.clubokra.com)\n\u200b"
@@ -19006,7 +19006,7 @@ async def start_trivia():
             selected_questions = await select_trivia_questions(questions_per_round)  #Pick the next question set
             await save_selected_questions_to_db(selected_questions)  # Save for next round in case of restart
             
-            await asyncio.sleep(10)
+            await asyncio.sleep(4)
             
             await round_preview(selected_questions)
             
@@ -19017,7 +19017,7 @@ async def start_trivia():
             if len(active_tournaments) == 0 and _active_game_bot is None and _active_game_channel is None:
                 await end_of_round()
             
-            await asyncio.sleep(10)  # Adjust this time to whatever delay you need between rounds
+            await asyncio.sleep(4)  # Adjust this time to whatever delay you need between rounds
             
             await check_bump_status()
             if bumped_status == False:
