@@ -15338,7 +15338,7 @@ async def process_round_options(round_winner, winner_points, round_winner_id):
     if winner_coffees > 0:
         await prompt_user_for_response(round_winner, winner_points, winner_coffees, round_winner_id)
     else:
-        await asyncio.sleep(3)
+        await asyncio.sleep(1)
 
 
 async def prompt_user_for_response(round_winner, winner_points, winner_coffees, round_winner_id):
@@ -18990,6 +18990,12 @@ async def start_trivia():
             await update_round_streaks(round_winner, round_winner_id)
 
             round_count += 1
+
+            async def _load_next_questions():
+                qs = await select_trivia_questions(questions_per_round)
+                await save_selected_questions_to_db(qs)
+                return qs
+            question_task = asyncio.create_task(_load_next_questions())
         
             await asyncio.sleep(10)
             await process_round_options(round_winner, winner_points, round_winner_id)
@@ -19003,11 +19009,8 @@ async def start_trivia():
             #message += f"\n🛒 **Score Live Trivia merch!**\n👕 [Shop Merch](https://merch.clubokra.com)\n\u200b"
             await safe_send(channel, message)
             
-            selected_questions = await select_trivia_questions(questions_per_round)  #Pick the next question set
-            await save_selected_questions_to_db(selected_questions)  # Save for next round in case of restart
             
-            await asyncio.sleep(4)
-            
+            selected_questions = await question_task
             await round_preview(selected_questions)
             
             
@@ -19022,7 +19025,7 @@ async def start_trivia():
             await check_bump_status()
             if bumped_status == False:
                 await get_bump_url_from_s3()
-                await asyncio.sleep(10)
+                await asyncio.sleep(4)
 
     except Exception as e:
         sentry_sdk.capture_exception(e)
