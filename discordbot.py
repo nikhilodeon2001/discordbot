@@ -18995,10 +18995,11 @@ async def start_trivia():
                 qs = await select_trivia_questions(questions_per_round)
                 await save_selected_questions_to_db(qs)
                 return qs
-            question_task = asyncio.create_task(_load_next_questions())
         
             await asyncio.sleep(10)
             await process_round_options(round_winner, winner_points, round_winner_id)
+
+            question_task = asyncio.create_task(_load_next_questions())
             
             if round_count % 3 == 0:
                 message = f"\u200b\n🧘‍♂️ A short breather. Relax, stretch, meditate.\n🎨 Live Trivia is a pure hobby effort.\n\n🙋 Help make it better!\n💡 [Submit Feedback](https://forms.gle/iWvmN24pfGEGSy7n7)\n\n🗣️ Like it? Spread the word!\n⭐ [Leave a Review](https://disboard.org/review/create/1367682586079395902)\u200b\n\n"
