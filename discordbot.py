@@ -12887,7 +12887,7 @@ async def get_wikipedia_article(max_words=3, max_length=16):
                 "format": "json",
                 "generator": "random",
                 "grnnamespace": 0,
-                "grnlimit": 1
+                "grnlimit": 50
             }) as response:
 
                 if response.status != 200:
