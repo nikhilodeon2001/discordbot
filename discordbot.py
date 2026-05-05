@@ -14357,7 +14357,7 @@ async def select_wof_questions(winner, winner_id):
             if wof_answer is None:
                 message = f"\n❌ Wikipedia API Error. Falling back to Word Nerd\n."
                 await safe_send(channel, message)
-                await ask_dictionary_challenge(winner)
+                await ask_dictionary_challenge(winner, winner_id)
                 return None
             else:
                 wikipedia_message = f"\n🥒⬛ Okracted Clue:\n\n{redacted_intro}\n"
