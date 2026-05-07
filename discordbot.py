@@ -13209,7 +13209,7 @@ async def _update_museum_manifest(s3_client):
             if item["Key"].endswith((".png", ".jpg", ".jpeg", ".gif")):
                 name = item["Key"].split("/")[-1].rsplit(".", 1)[0]
                 images.append({
-                    "url": f"https://triviabotwebsite.s3.amazonaws.com/{item['Key']}",
+                    "url": f"https://triviabotwebsite.s3.amazonaws.com/{quote(item['Key'], safe='/')}",
                     "name": name,
                     "last_modified": item["LastModified"].isoformat()
                 })
