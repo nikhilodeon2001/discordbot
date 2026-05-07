@@ -13176,11 +13176,182 @@ async def upload_image_to_s3(buffer, winner, description):
                 ContentType="image/png"
             )
 
+        # Update museum manifest after uploading the new image
+        session2 = aioboto3.Session()
+        async with session2.client("s3") as s3_manifest:
+            await _update_museum_manifest(s3_manifest)
+
         return None
 
     except (BotoCoreError, ClientError) as boto_err:
         print(f"Error uploading to S3: {boto_err}")
         return None
+
+
+async def _update_museum_manifest(s3_client):
+    """Re-list generated-images/ and rewrite museum-manifest.json."""
+    try:
+        all_items = []
+        continuation_token = None
+        while True:
+            kwargs = {"Bucket": "triviabotwebsite", "Prefix": "generated-images/"}
+            if continuation_token:
+                kwargs["ContinuationToken"] = continuation_token
+            response = await s3_client.list_objects_v2(**kwargs)
+            all_items.extend(response.get("Contents", []))
+            if response.get("IsTruncated"):
+                continuation_token = response.get("NextContinuationToken")
+            else:
+                break
+
+        images = []
+        for item in all_items:
+            if item["Key"].endswith((".png", ".jpg", ".jpeg", ".gif")):
+                name = item["Key"].split("/")[-1].rsplit(".", 1)[0]
+                images.append({
+                    "url": f"https://triviabotwebsite.s3.amazonaws.com/{item['Key']}",
+                    "name": name,
+                    "last_modified": item["LastModified"].isoformat()
+                })
+        images.sort(key=lambda x: x["last_modified"], reverse=True)
+
+        await s3_client.put_object(
+            Bucket="triviabotwebsite",
+            Key="static/museum-manifest.json",
+            Body=json.dumps(images),
+            ContentType="application/json",
+            ACL="public-read"
+        )
+        print(f"✅ Museum manifest updated ({len(images)} images)")
+    except Exception as e:
+        print(f"❌ Error updating museum manifest: {e}")
+
+
+async def _query_leaderboard_counts(collection, start_time=None, limit=10):
+    """Aggregate count-per-user from a Discord stats collection."""
+    pipeline = []
+    if start_time is not None:
+        pipeline.append({"$match": {"timestamp": {"$gte": start_time}}})
+    pipeline += [
+        {"$group": {"_id": "$user_id", "count": {"$sum": 1}, "user": {"$first": "$user"}}},
+        {"$sort": {"count": -1}},
+        {"$limit": limit}
+    ]
+    cursor = db[collection].aggregate(pipeline)
+    results = await cursor.to_list(length=limit)
+    return [{"user": r["user"], "count": r["count"]} for r in results]
+
+
+async def _query_leaderboard_streaks(collection, start_time=None, limit=10):
+    """Fetch top streaks from a Discord streak collection."""
+    pacific = pytz.timezone('America/Los_Angeles')
+    query = {"timestamp": {"$gte": start_time}} if start_time is not None else {}
+    cursor = db[collection].find(
+        query, {"_id": 0, "user": 1, "streak": 1, "timestamp": 1}
+    ).sort("streak", -1).limit(limit)
+    results = await cursor.to_list(length=limit)
+    out = []
+    for r in results:
+        date_str = datetime.datetime.fromtimestamp(r["timestamp"], pacific).strftime('%B %d, %Y')
+        out.append({"user": r["user"], "streak": r["streak"], "date": date_str})
+    return out
+
+
+async def check_sovereignty(top_users):
+    """Induct any user with 6/6 top-category score into hall_of_sovereigns_discord."""
+    try:
+        for user, score in top_users.items():
+            if score == 6:
+                existing = await db["hall_of_sovereigns_discord"].find_one({"user": user})
+                if not existing:
+                    await db["hall_of_sovereigns_discord"].insert_one({
+                        "user": user,
+                        "inducted_at": datetime.datetime.now(pytz.utc)
+                    })
+                    print(f"👑 Inducted sovereign: {user}")
+
+        cursor = db["hall_of_sovereigns_discord"].find(
+            {}, {"_id": 0, "user": 1, "inducted_at": 1}
+        ).sort("inducted_at", 1)
+        sovereigns = await cursor.to_list(length=None)
+        return [
+            {
+                "user": s["user"],
+                "inducted_at": s["inducted_at"].strftime('%B %d, %Y')
+                if hasattr(s.get("inducted_at"), "strftime") else str(s.get("inducted_at", ""))
+            }
+            for s in sovereigns
+        ]
+    except Exception as e:
+        print(f"❌ Error checking sovereignty: {e}")
+        return []
+
+
+async def write_leaderboard_to_s3():
+    """After each round, write fresh Discord leaderboard JSON to S3 for the website."""
+    try:
+        now = time.time()
+        last_24h = now - 86400
+        last_7d = now - 604800
+
+        fastest_24h = await _query_leaderboard_counts("fastest_answers_discord", last_24h)
+        fastest_7d  = await _query_leaderboard_counts("fastest_answers_discord", last_7d)
+        wins_24h    = await _query_leaderboard_counts("round_wins_discord", last_24h)
+        wins_7d     = await _query_leaderboard_counts("round_wins_discord", last_7d)
+        ans_streaks = await _query_leaderboard_streaks("longest_answer_streaks_discord", last_7d)
+        rnd_streaks = await _query_leaderboard_streaks("longest_round_streaks_discord", last_7d)
+
+        # Determine which users lead 4+ of 6 categories
+        top_ranked = {}
+        for ranking in [fastest_24h, fastest_7d, wins_24h, wins_7d, ans_streaks, rnd_streaks]:
+            if ranking:
+                leader = ranking[0]["user"]
+                top_ranked[leader] = top_ranked.get(leader, 0) + 1
+        top_users = {u: s for u, s in top_ranked.items() if s >= 4}
+
+        sovereigns = await check_sovereignty(top_users)
+        unique_users = await db["user_submissions_discord"].distinct("user_id")
+
+        leaderboard = {
+            "total_unique_users": len(unique_users),
+            "fastest_answers_24h": fastest_24h,
+            "fastest_answers_7d": fastest_7d,
+            "round_wins_24h": wins_24h,
+            "round_wins_7d": wins_7d,
+            "longest_answer_streaks": ans_streaks,
+            "longest_round_win_streaks": rnd_streaks,
+            "top_users": top_users,
+            "sovereigns": sovereigns,
+            "warning_users": list(top_users.keys()),
+        }
+
+        alltime = {
+            "fastest_answers": await _query_leaderboard_counts("fastest_answers_discord"),
+            "round_wins": await _query_leaderboard_counts("round_wins_discord"),
+            "longest_answer_streaks": await _query_leaderboard_streaks("longest_answer_streaks_discord"),
+            "longest_round_win_streaks": await _query_leaderboard_streaks("longest_round_streaks_discord"),
+        }
+
+        session = aioboto3.Session()
+        async with session.client("s3") as s3:
+            for key, data in [
+                ("static/leaderboard.json", leaderboard),
+                ("static/alltime.json", alltime),
+                ("static/sovereigns.json", sovereigns),
+            ]:
+                await s3.put_object(
+                    Bucket="triviabotwebsite",
+                    Key=key,
+                    Body=json.dumps(data),
+                    ContentType="application/json",
+                    ACL="public-read"
+                )
+
+        print("✅ Leaderboard JSON written to S3")
+    except Exception as e:
+        print(f"❌ Error writing leaderboard to S3: {e}")
+        import traceback
+        traceback.print_exc()
 
 
 async def upload_okraverse_to_s3(buffer):
@@ -18988,6 +19159,7 @@ async def start_trivia():
             round_winner, winner_points, round_winner_id = await determine_round_winner()
             await clear_round_options()
             await update_round_streaks(round_winner, round_winner_id)
+            asyncio.create_task(write_leaderboard_to_s3())
 
             round_count += 1
 
