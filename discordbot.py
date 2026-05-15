@@ -19173,13 +19173,12 @@ async def start_trivia():
             question_task = asyncio.create_task(_load_next_questions())
             
             if round_count % 3 == 0:
-                message = f"\u200b\n🧘‍♂️ A short breather. Relax, stretch, meditate.\n🎨 Live Trivia is a pure hobby effort.\n\n🙋 Help make it better!\n💡 [Submit Feedback](https://forms.gle/iWvmN24pfGEGSy7n7)\n\n🗣️ Like it? Spread the word!\n⭐ [Leave a Review](https://disboard.org/review/create/1367682586079395902)\u200b\n\n"
+                message = f"\u200b\n🧘‍♂️ A short breather. Relax, stretch, meditate.\n\n🥒 **Unlock perks? Become an Okran!**\n💚 [Join Role Subscriptions](https://discord.com/channels/1367682586079395902/role-subscriptions)\n\u200b"
                 await safe_send(channel, message)
-                await asyncio.sleep(8)
-
-            message = f"\u200b\n\u200b\n🥒 **Unlock perks? Become an Okran!**\n💚 [Join Role Subscriptions](https://discord.com/channels/1367682586079395902/role-subscriptions)\n\u200b"
-            #message += f"\n🛒 **Score Live Trivia merch!**\n👕 [Shop Merch](https://merch.clubokra.com)\n\u200b"
-            await safe_send(channel, message)
+                await asyncio.sleep(5)
+            else:
+                message = f"\u200b\n🎨 Live Trivia is a pure hobby effort.\n\n🙋 Help make it better!\n💡 [Submit Feedback](https://forms.gle/iWvmN24pfGEGSy7n7)\n\n🗣️ Like it? Spread the word!\n⭐ [Leave a Review](https://disboard.org/review/create/1367682586079395902)\n\u200b"
+                await safe_send(channel, message)
             
             
             selected_questions = await question_task
