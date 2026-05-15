@@ -17677,15 +17677,11 @@ async def update_round_streaks(user, user_id):
 
         if ai_on:
             winner_coffees = await get_coffees(user_id)
-            if winner_coffees == 0:
-                gpt_summary = f"\n🥒💬🎨 **<@{user_id}>**: Okrans get custom end-of-round messages and paintings!\n"
-            else:
-                gpt_summary = await generate_round_summary(round_data, user, user_id)
-
-            gpt_message = f"\u200b\n{gpt_summary}\n\u200b"
-            await safe_send(channel, gpt_message)
-
             if winner_coffees > 0:
+                gpt_summary = await generate_round_summary(round_data, user, user_id)
+                gpt_message = f"\u200b\n{gpt_summary}\n\u200b"
+                await safe_send(channel, gpt_message)
+
                 highest_score_player = max(scoreboard, key=lambda uid: scoreboard[uid]["score"])
                 highest_score = scoreboard[highest_score_player]["score"]
     
@@ -18111,7 +18107,7 @@ async def fetch_and_cache_currency_data():
         # Fetch currency data
         async with aiohttp.ClientSession() as session:
             # Get currency names (API key required)
-            currencies_url = f"https://currencyapi.net/api/v1/currencies?key={currency_api_key}&output=JSON"
+            currencies_url = f"https://currencyapi.net/api/v2/currencies?key={currency_api_key}&output=JSON"
             async with session.get(currencies_url) as response:
                 if response.status == 200:
                     currencies_data = await response.json()
@@ -18125,7 +18121,7 @@ async def fetch_and_cache_currency_data():
                     return None
             
             # Get exchange rates (API key required)
-            rates_url = f"https://currencyapi.net/api/v1/rates?key={currency_api_key}&base=USD&output=JSON"
+            rates_url = f"https://currencyapi.net/api/v2/rates?key={currency_api_key}&base=USD&output=JSON"
             async with session.get(rates_url) as response:
                 if response.status == 200:
                     rates_data = await response.json()
@@ -19059,14 +19055,13 @@ async def start_trivia():
             round_responders.clear()  # Reset round responders
             round_data["questions"] = []
 
+            selected_gif_url = None
             if random.random() < 0:  # random.random() generates a float between 0 and 1
                 magic_number = random_number = random.randint(1000, 9999)
                 print(f"Magic number is {magic_number}")
                 send_magic_image(magic_number)
             elif image_questions == True:
                 selected_gif_url = await select_intro_image_url()
-                await safe_send(channel, content="\u200b\n\u200b\n🎉🤹‍♂️ **Live Trivia & Games for Discord!**\n\u200b", embed=discord.Embed().set_image(url=selected_gif_url))
-
             # Wait for a player to be present before starting
             if no_players:
                 await safe_send(channel, "\u200b\n👥 ***Send any message to start!*** 👥\n\u200b")
@@ -19079,29 +19074,18 @@ async def start_trivia():
             else:
                 await asyncio.sleep(5)
 
-            start_message = f"\u200b\n✨🧪 **NEW** from the **Okra Lab**! 🧪✨\n"
-            
-            start_message += f"\n🔐🔍 **Glyph** [Game Mode]\n"
-
-            start_message += "\n\n\u200b"
-            #await safe_send(channel, start_message)
-            #await asyncio.sleep(5)
-            
-            start_message = f"\u200b\n\u200b\n⏩ Starting a **{questions_per_round} question** round! ⏩\n\u200b"
-
-            start_message += f"\u200b\n🚩 Use **/flag** to report question\n"
-            start_message += f"🗝️ Type **#perks** to unlock perks\n\u200b"
+            start_message = f"\u200b\n\u200b\n🎉🤹‍♂️ **Live Trivia & Games for Discord!**\n"
+            start_message += f"\n⏩ Starting a **{questions_per_round} question** round! ⏩"
+            start_message += "\n\n🚩 Use **/flag** to report question"
+            start_message += "\n🗝️ Type **#perks** to unlock perks"
 
             if current_longest_round_streak["user"] is not None and await get_coffees(current_longest_round_streak["user_id"]) > 0:
-                start_message += f"\n🕹️ **{current_longest_round_streak["user"]}** can toggle modes mid-game"
-                start_message += f"\n↔️ **#[command]** any time during round\n\u200b"
-                
-            await safe_send(channel, start_message)
-            await asyncio.sleep(3)
-            
+                start_message += f"\n\n🕹️ **{current_longest_round_streak['user']}** can toggle modes mid-game"
+                start_message += "\n↔️ **#[command]** any time during round"
 
-            start_message = "\u200b\n🏁 **Get ready** 🏁\n\u200b"
-            await safe_send(channel, start_message)
+            start_message += "\n\n🏁 **Get ready** 🏁\n\u200b"
+            intro_embed = discord.Embed().set_image(url=selected_gif_url) if selected_gif_url else None
+            await safe_send(channel, content=start_message, embed=intro_embed)
 
             #await round_start_messages()
             await asyncio.sleep(5)
