@@ -6495,6 +6495,17 @@ async def ask_flags_challenge(winner, winner_id, num=7):
     await safe_send(channel, content="\u200b\n\u200b\n🎏🎉 **Flag Fest**: Identify the Banner\n\u200b", embed=discord.Embed().set_image(url=gif_url))
     await asyncio.sleep(3)
 
+    await safe_send(channel, f"\u200b\n🕹️🚀 **<@{winner_id}>**, select the mode:\n\n🧸 **Normal** or 🧨 **Okrap**.\n\u200b")
+    try:
+        msg = await get_bot().wait_for("message", timeout=magic_time + 5, check=lambda m: m.author.id == winner_id and m.author != get_bot().user and m.channel == (_active_game_channel or channel) and m.content.lower() in {"normal", "okrap"})
+        game_mode = msg.content.lower()
+        await msg.add_reaction("✅")
+    except asyncio.TimeoutError:
+        game_mode = "normal"
+
+    await safe_send(channel, f"\u200b\n💥🤯 Ok...ra! We're going with **{game_mode.upper()}** baby!\n\u200b")
+    await asyncio.sleep(2)
+
     user_correct_answers = {}
     flag_reference_url = "http://flags.net/"
 
@@ -6508,8 +6519,12 @@ async def ask_flags_challenge(winner, winner_id, num=7):
         try:
             recent_ids = await get_recent_question_ids_from_mongo("flags")
             collection = db["flags_questions"]
+            match_filter = {"_id": {"$nin": list(recent_ids)}}
+            if game_mode == "normal":
+                match_filter["flag_detail"] = "National Flag"
+
             pipeline = [
-                {"$match": {"_id": {"$nin": list(recent_ids)}}},
+                {"$match": match_filter},
                 {"$sample": {"size": 100}},
                 {"$group": {"_id": "$question", "question_doc": {"$first": "$$ROOT"}}},
                 {"$replaceRoot": {"newRoot": "$question_doc"}},
