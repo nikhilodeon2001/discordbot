@@ -13126,7 +13126,7 @@ async def sovereign_check(user):
     return sovereign is not None
 
 
-async def get_image_url_from_s3():
+async def get_image_url_from_s3(streak_message=None):
     bucket_name = "triviabotwebsite"
     prefix = "generated-images/"
     
@@ -13158,16 +13158,16 @@ async def get_image_url_from_s3():
         
         # Remove the time from the date string
         date_only = ' '.join(full_date.split()[:-1])
-        message = "\u200b\n🖼️✨ A memory from the **Okra Museum**\n\u200b"
-        message += "\n🥒🏛️ [Visit the Okra Museum](https://clubokra.com/okra-museum)\n\u200b"
-        await safe_send(channel, content=message, embed=discord.Embed().set_image(url=public_url))
-
-        #message = f"\u200b\n**Masterpiece:** '{title}'\n"
-        message = f"\u200b\n**Masterpiece**: *{clean_title}*\n"
+        message = "\u200b\n"
+        if streak_message:
+            message += f"{streak_message}\n\n"
+        message += "🖼️✨ A memory from the **Okra Museum**\n"
+        message += "\n🥒🏛️ [Visit the Okra Museum](https://clubokra.com/okra-museum)\n"
+        message += f"\n**Masterpiece**: *{clean_title}*\n"
         message += f"**Okra's Muse**: *{user}*\n"
         message += f"**Creation Date**: *{date_only}*\n\u200b"
 
-        await safe_send(channel, message)
+        await safe_send(channel, content=message, embed=discord.Embed().set_image(url=public_url))
 
 
 async def upload_image_to_s3(buffer, winner, description):
@@ -17704,19 +17704,16 @@ async def update_round_streaks(user, user_id):
                         10: "🔟"
                     }
                     
-                    await asyncio.sleep(4)
+                    await asyncio.sleep(2)
                     remaining_games = image_wins - (current_longest_round_streak['streak'] % image_wins)
                     dynamic_emoji = number_to_emoji.get(remaining_games, str(remaining_games))
                     
                     if remaining_games == 1:
-                        image_message = f"\u200b\n{dynamic_emoji}🎨 **<@{user_id}>**, win the next game and I'll draw you something.\n\u200b"
+                        image_message = f"{dynamic_emoji}🎨 **<@{user_id}>**, win the next game and I'll draw you something."
                     else:
-                        image_message = f"\u200b\n{dynamic_emoji}🎨 **<@{user_id}>**, win {remaining_games} more in a row and I'll draw you something.\n\u200b"
+                        image_message = f"{dynamic_emoji}🎨 **<@{user_id}>**, win {remaining_games} more in a row and I'll draw you something."
     
-                    await safe_send(channel, image_message)
-                    await asyncio.sleep(2)
-                    await get_image_url_from_s3()
-                    await asyncio.sleep(1)
+                    await get_image_url_from_s3(image_message)
 
     # Perform all MongoDB operations at the end
     for operation in mongo_operations:
