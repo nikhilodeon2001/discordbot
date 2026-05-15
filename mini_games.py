@@ -92,7 +92,7 @@ def _get_game_function(game_name: str):
         "flag fest": ask_flags_challenge,
         "lyriq": ask_lyric_challenge,
         "polyglottery": ask_polyglottery_challenge,
-        "prose & cons": ask_book_challenge,
+        "prose and cons": ask_book_challenge,
         "sign language": ask_math_challenge,
         "elementary": ask_element_challenge,
         "jigsawed": ask_jigsaw_challenge,
