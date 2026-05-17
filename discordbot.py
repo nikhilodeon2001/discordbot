@@ -376,6 +376,19 @@ currency_api_key = os.getenv("currency_api_key")
 deepgram_api_key = os.getenv("deepgram_api_key")
 user_agent_email = os.getenv("USER_AGENT_EMAIL")
 channel_id = int(os.getenv("channel_id"))
+facebook_page_id = os.getenv("FACEBOOK_PAGE_ID")
+facebook_page_access_token = os.getenv("FACEBOOK_PAGE_ACCESS_TOKEN")
+facebook_graph_api_version = os.getenv("FACEBOOK_GRAPH_API_VERSION", "v23.0")
+discord_invite_url = os.getenv("DISCORD_INVITE_URL", "")
+museum_backfill_enabled = os.getenv("MUSEUM_BACKFILL_ENABLED", "false").lower() == "true"
+museum_backfill_daily_batch_size = int(os.getenv("MUSEUM_BACKFILL_DAILY_BATCH_SIZE", "3"))
+museum_backfill_timezone = os.getenv("MUSEUM_BACKFILL_TIMEZONE", "America/Los_Angeles")
+museum_backfill_post_times = [
+    value.strip()
+    for value in os.getenv("MUSEUM_BACKFILL_POST_TIMES", "09:00,14:00,19:00").split(",")
+    if value.strip()
+]
+museum_backfill_task = None
 
 
 if prod_or_stage == "stage":
@@ -13141,33 +13154,24 @@ async def get_image_url_from_s3(streak_message=None):
     #public_url = f"https://triviabotwebsite.s3.amazonaws.com/generated-images/{encoded_filename}"
     public_url = f"https://{bucket_name}.s3.amazonaws.com/{encoded_filename}"
     
-    # Step 1: Remove the prefix and file extension
-    filename = os.path.basename(random_file).replace('.png', '')
-
-    # Step 2: Extract with regex
-    pattern = r'^(.+?)\s*&\s*(.+?)\s+\((.+?)\)$'
-    match = re.match(pattern, filename)
-
-    if match:
-        title = match.group(1)
-        clean_title = re.sub(r"[\"']", "", title)
-        user = match.group(2)
-        full_date = match.group(3)
-        
-
-        
-        # Remove the time from the date string
-        date_only = ' '.join(full_date.split()[:-1])
+    museum_post = parse_museum_image_key(random_file)
+    if museum_post:
+        social_post = await get_or_publish_museum_facebook_post(museum_post, is_archive=True)
         message = "\u200b\n"
         if streak_message:
             message += f"{streak_message}\n\n"
         message += "🖼️✨ A memory from the **Okra Museum**\n"
         message += "\n🥒🏛️ [Visit the Okra Museum](https://clubokra.com/okra-museum)\n"
-        message += f"\n**Masterpiece**: *{clean_title}*\n"
-        message += f"**Okra's Muse**: *{user}*\n"
-        message += f"**Creation Date**: *{date_only}*\n\u200b"
+        message += f"\n**Masterpiece**: *{museum_post['title']}*\n"
+        message += f"**Okra's Muse**: *{museum_post['muse']}*\n"
+        message += f"**Creation Date**: *{museum_post['creation_date']}*\n\u200b"
 
-        await safe_send(channel, content=message, embed=discord.Embed().set_image(url=public_url))
+        await safe_send(
+            channel,
+            content=message,
+            embed=discord.Embed().set_image(url=public_url),
+            view=build_museum_share_view(social_post),
+        )
 
 
 async def upload_image_to_s3(buffer, winner, description):
@@ -13195,6 +13199,10 @@ async def upload_image_to_s3(buffer, winner, description):
         session2 = aioboto3.Session()
         async with session2.client("s3") as s3_manifest:
             await _update_museum_manifest(s3_manifest)
+
+        museum_post = parse_museum_image_key(object_name)
+        if museum_post:
+            return await publish_and_record_museum_post_to_facebook(museum_post, is_archive=False)
 
         return None
 
@@ -13240,6 +13248,265 @@ async def _update_museum_manifest(s3_client):
         print(f"✅ Museum manifest updated ({len(images)} images)")
     except Exception as e:
         print(f"❌ Error updating museum manifest: {e}")
+
+
+def parse_museum_image_key(object_key):
+    """Parse title, muse, and date from generated museum image filenames."""
+    filename = os.path.splitext(os.path.basename(object_key))[0]
+    match = re.match(r'^(.+?)\s*&\s*(.+?)\s+\((.+?)\)$', filename)
+    if not match:
+        return None
+
+    title, muse, full_date = match.groups()
+    clean_title = re.sub(r"[\"']", "", title)
+    date_only = " ".join(full_date.split()[:-1]) or full_date
+    return {
+        "s3_key": object_key,
+        "image_url": f"https://triviabotwebsite.s3.amazonaws.com/{quote(object_key, safe='/')}",
+        "title": clean_title,
+        "muse": muse,
+        "creation_date": date_only,
+    }
+
+
+def build_museum_social_caption(museum_post, is_archive=False):
+    if is_archive:
+        lines = ["🗃️🖼️ A memory from the Okra Museum archives", ""]
+    else:
+        lines = ["🎨✨ New in the Okra Museum", ""]
+    lines.extend([
+        f"Masterpiece: {museum_post['title']}",
+        f"Okra's Muse: {museum_post['muse']}",
+        f"Creation Date: {museum_post['creation_date']}",
+        "",
+        "Made in Live Trivia & Games.",
+    ])
+    if discord_invite_url:
+        lines.append(f"Play with us: {discord_invite_url}")
+    lines.append("Visit the Okra Museum: https://clubokra.com/okra-museum")
+    return "\n".join(lines)
+
+
+def build_facebook_share_url(permalink_url):
+    """Build a Facebook share dialog URL for a published Page post."""
+    if not permalink_url:
+        return None
+    return f"https://www.facebook.com/sharer/sharer.php?{urlencode({'u': permalink_url})}"
+
+
+def build_museum_share_view(social_post):
+    """Return a Discord link-button view when a Facebook permalink exists."""
+    if not social_post:
+        return None
+    share_url = build_facebook_share_url(social_post.get("facebook_permalink_url"))
+    if not share_url:
+        return None
+
+    view = discord.ui.View(timeout=None)
+    view.add_item(discord.ui.Button(
+        label="Share on Facebook",
+        emoji="📣",
+        style=discord.ButtonStyle.link,
+        url=share_url,
+    ))
+    return view
+
+
+async def fetch_facebook_permalink(post_id):
+    """Fetch the public permalink for a published Facebook post."""
+    if not post_id or not facebook_page_access_token:
+        return None
+
+    url = f"https://graph.facebook.com/{facebook_graph_api_version}/{post_id}"
+    params = {
+        "fields": "permalink_url",
+        "access_token": facebook_page_access_token,
+    }
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, params=params) as response:
+                body = await response.json(content_type=None)
+                if response.status >= 400:
+                    print(f"❌ Facebook permalink lookup failed ({response.status}): {body}")
+                    return None
+                return body.get("permalink_url")
+    except Exception as e:
+        sentry_sdk.capture_exception(e)
+        print(f"❌ Error fetching Facebook permalink: {e}")
+        return None
+
+
+async def publish_museum_post_to_facebook(museum_post, is_archive=False):
+    """Publish one museum image to the configured Facebook Page."""
+    if not facebook_page_id or not facebook_page_access_token:
+        print("ℹ️ Facebook museum publishing skipped: Page ID or access token not configured")
+        return None
+
+    url = f"https://graph.facebook.com/{facebook_graph_api_version}/{facebook_page_id}/photos"
+    payload = {
+        "url": museum_post["image_url"],
+        "caption": build_museum_social_caption(museum_post, is_archive=is_archive),
+        "access_token": facebook_page_access_token,
+    }
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(url, data=payload) as response:
+                body = await response.json(content_type=None)
+                if response.status >= 400:
+                    print(f"❌ Facebook museum publish failed ({response.status}): {body}")
+                    return None
+                return body
+    except Exception as e:
+        sentry_sdk.capture_exception(e)
+        print(f"❌ Error publishing museum image to Facebook: {e}")
+        return None
+
+
+async def publish_and_record_museum_post_to_facebook(museum_post, is_archive=False):
+    """Publish one museum image and record it if Facebook accepts it."""
+    result = await publish_museum_post_to_facebook(museum_post, is_archive=is_archive)
+    if not result:
+        return None
+
+    facebook_post_id = result.get("post_id") or result.get("id")
+    facebook_permalink_url = await fetch_facebook_permalink(facebook_post_id)
+
+    db_conn = db or await connect_to_mongodb()
+    record = {
+        "s3_key": museum_post["s3_key"],
+        "destination": "facebook",
+        "facebook_post_id": facebook_post_id,
+        "facebook_permalink_url": facebook_permalink_url,
+        "published_at": datetime.datetime.now(datetime.UTC),
+        "is_archive": is_archive,
+        "museum_post": museum_post,
+    }
+    await db_conn["museum_social_posts"].update_one(
+        {"_id": f"facebook:{museum_post['s3_key']}"},
+        {"$set": record},
+        upsert=True,
+    )
+    return record
+
+
+async def get_or_publish_museum_facebook_post(museum_post, is_archive=False):
+    """Reuse an existing Facebook post for an image, or publish it once."""
+    db_conn = db or await connect_to_mongodb()
+    collection = db_conn["museum_social_posts"]
+    record = await collection.find_one({"_id": f"facebook:{museum_post['s3_key']}"})
+    if record:
+        if not record.get("facebook_permalink_url") and record.get("facebook_post_id"):
+            permalink_url = await fetch_facebook_permalink(record["facebook_post_id"])
+            if permalink_url:
+                await collection.update_one(
+                    {"_id": record["_id"]},
+                    {"$set": {"facebook_permalink_url": permalink_url}},
+                )
+                record["facebook_permalink_url"] = permalink_url
+        return record
+
+    return await publish_and_record_museum_post_to_facebook(museum_post, is_archive=is_archive)
+
+
+async def list_existing_museum_posts_from_s3():
+    """Return all parseable museum images currently stored in S3."""
+    session = aioboto3.Session()
+    all_items = []
+    async with session.client("s3") as s3_client:
+        continuation_token = None
+        while True:
+            kwargs = {"Bucket": "triviabotwebsite", "Prefix": "generated-images/"}
+            if continuation_token:
+                kwargs["ContinuationToken"] = continuation_token
+            response = await s3_client.list_objects_v2(**kwargs)
+            all_items.extend(response.get("Contents", []))
+            if response.get("IsTruncated"):
+                continuation_token = response.get("NextContinuationToken")
+            else:
+                break
+
+    museum_posts = []
+    for item in all_items:
+        key = item["Key"]
+        if not key.lower().endswith((".png", ".jpg", ".jpeg", ".gif")):
+            continue
+        parsed = parse_museum_image_key(key)
+        if parsed:
+            museum_posts.append(parsed)
+        else:
+            print(f"⚠️ Skipping malformed museum filename during backfill: {key}")
+    return museum_posts
+
+
+async def run_museum_archive_backfill_once(scheduled_slot=None):
+    """Publish one randomized archive image, capped by the daily batch setting."""
+    if not museum_backfill_enabled:
+        return
+    if not facebook_page_id or not facebook_page_access_token:
+        print("ℹ️ Museum backfill enabled but Facebook config is incomplete")
+        return
+
+    db_conn = db or await connect_to_mongodb()
+    state_collection = db_conn["museum_social_backfill_state"]
+    posted_collection = db_conn["museum_social_posts"]
+    local_tz = pytz.timezone(museum_backfill_timezone)
+    now_local = datetime.datetime.now(datetime.UTC).astimezone(local_tz)
+    today = now_local.date().isoformat()
+    state = await state_collection.find_one({"_id": "facebook_archive_backfill"})
+    posted_today = state.get("published_today", 0) if state and state.get("date") == today else 0
+    completed_slots = set(state.get("completed_slots", [])) if state and state.get("date") == today else set()
+    if scheduled_slot and scheduled_slot in completed_slots:
+        print(f"ℹ️ Museum archive backfill already ran for {scheduled_slot}")
+        return
+    if posted_today >= museum_backfill_daily_batch_size:
+        print("ℹ️ Museum archive backfill already reached today's limit")
+        return
+
+    museum_posts = await list_existing_museum_posts_from_s3()
+    random.shuffle(museum_posts)
+    posted_keys = {
+        doc["s3_key"]
+        async for doc in posted_collection.find(
+            {"destination": "facebook"},
+            {"s3_key": 1}
+        )
+    }
+    candidates = [post for post in museum_posts if post["s3_key"] not in posted_keys]
+
+    published_count = 0
+    if candidates:
+        result = await publish_and_record_museum_post_to_facebook(candidates[0], is_archive=True)
+        if result:
+            published_count = 1
+
+    completed_slots_after_run = sorted(completed_slots | ({scheduled_slot} if scheduled_slot else set()))
+    await state_collection.update_one(
+        {"_id": "facebook_archive_backfill"},
+        {"$set": {
+            "date": today,
+            "completed_slots": completed_slots_after_run,
+            "published_today": posted_today + published_count,
+            "last_run_at": datetime.datetime.now(datetime.UTC),
+            "last_published_count": published_count,
+        }},
+        upsert=True,
+    )
+    print(f"✅ Museum archive backfill published {published_count} image(s) for slot {scheduled_slot or 'manual'}")
+
+
+async def run_museum_archive_backfill_loop():
+    """Post one archive image at each configured daily time while enabled."""
+    local_tz = pytz.timezone(museum_backfill_timezone)
+    while True:
+        try:
+            now_local = datetime.datetime.now(datetime.UTC).astimezone(local_tz)
+            current_time = now_local.strftime("%H:%M")
+            if current_time in museum_backfill_post_times:
+                await run_museum_archive_backfill_once(scheduled_slot=current_time)
+        except Exception as e:
+            sentry_sdk.capture_exception(e)
+            print(f"❌ Museum archive backfill loop failed: {e}")
+        await asyncio.sleep(30)
 
 
 async def _query_leaderboard_counts(collection, start_time=None, limit=10):
@@ -13889,7 +14156,7 @@ async def generate_round_summary_image(round_data, winner, winner_id):
         message = f"\n**I call it**...*{image_description}*\n"
         message += f"\n🏛️👋 **Welcome to the Okra Museum**"
         message += "\n🌐➡️ [Visit the Museum](https://clubokra.com/okra-museum)\n"
-        await safe_send(channel, message)
+        museum_message = await safe_send(channel, message)
 
         loop = asyncio.get_running_loop()
 
@@ -13901,7 +14168,10 @@ async def generate_round_summary_image(round_data, winner, winner_id):
             return buffer
 
         buffer = await loop.run_in_executor(None, process_image)
-        await upload_image_to_s3(buffer, winner, image_description)
+        social_post = await upload_image_to_s3(buffer, winner, image_description)
+        share_view = build_museum_share_view(social_post)
+        if museum_message and share_view:
+            await museum_message.edit(view=share_view)
         return None
         
     except openai.OpenAIError as e:
@@ -13927,7 +14197,7 @@ async def generate_round_summary_image(round_data, winner, winner_id):
                 message = f"\nI call it: '{image_description}'\n"
                 message += f"\n🏛️👋 Welcome to the Okra Museum"
                 message += "\n🌐➡️ [Visit the Museum](https://clubokra.com/okra-museum)\n"
-                await safe_send(channel, message)
+                museum_message = await safe_send(channel, message)
 
                 loop = asyncio.get_running_loop()
 
@@ -13939,7 +14209,10 @@ async def generate_round_summary_image(round_data, winner, winner_id):
                     return buffer
 
                 buffer = await loop.run_in_executor(None, process_fallback_image)
-                await upload_image_to_s3(buffer, winner, image_description)
+                social_post = await upload_image_to_s3(buffer, winner, image_description)
+                share_view = build_museum_share_view(social_post)
+                if museum_message and share_view:
+                    await museum_message.edit(view=share_view)
                 return None
             
             except openai.OpenAIError as e2:
@@ -19922,12 +20195,16 @@ async def flag_command(interaction: discord.Interaction):
 
 @bot.event
 async def on_ready():
-    global channel, db
+    global channel, db, museum_backfill_task
     print(f"✅ Logged in as {bot.user}")
     db =  await connect_to_mongodb()
     await load_parameters()
     await load_round_options_from_db()
     channel = bot.get_channel(channel_id)
+
+    if museum_backfill_enabled and (museum_backfill_task is None or museum_backfill_task.done()):
+        museum_backfill_task = asyncio.create_task(run_museum_archive_backfill_loop())
+        print("🏛️ Museum archive backfill loop started")
 
     # Clean up tournament roles from previous sessions
     await cleanup_tournament_roles()
