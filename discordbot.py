@@ -13371,7 +13371,7 @@ async def publish_and_record_museum_post_to_facebook(museum_post, is_archive=Fal
     facebook_post_id = result.get("post_id") or result.get("id")
     facebook_permalink_url = await fetch_facebook_permalink(facebook_post_id)
 
-    db_conn = db or await connect_to_mongodb()
+    db_conn = db if db is not None else await connect_to_mongodb()
     record = {
         "s3_key": museum_post["s3_key"],
         "destination": "facebook",
@@ -13391,7 +13391,7 @@ async def publish_and_record_museum_post_to_facebook(museum_post, is_archive=Fal
 
 async def get_or_publish_museum_facebook_post(museum_post, is_archive=False):
     """Reuse an existing Facebook post for an image, or publish it once."""
-    db_conn = db or await connect_to_mongodb()
+    db_conn = db if db is not None else await connect_to_mongodb()
     collection = db_conn["museum_social_posts"]
     record = await collection.find_one({"_id": f"facebook:{museum_post['s3_key']}"})
     if record:
@@ -13446,7 +13446,7 @@ async def run_museum_archive_backfill_once(scheduled_slot=None):
         print("ℹ️ Museum backfill enabled but Facebook config is incomplete")
         return
 
-    db_conn = db or await connect_to_mongodb()
+    db_conn = db if db is not None else await connect_to_mongodb()
     state_collection = db_conn["museum_social_backfill_state"]
     posted_collection = db_conn["museum_social_posts"]
     local_tz = pytz.timezone(museum_backfill_timezone)
