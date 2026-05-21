@@ -20197,9 +20197,9 @@ def _invalidate_attribution_cache(db_name, _id):
 
 async def ensure_submission_indexes():
     try:
-        await db.user_submissions.create_index([("submitter_id", 1), ("status", 1)])
-        await db.user_submissions.create_index([("status", 1), ("submitted_at", 1)])
-        await db.user_submission_stats.create_index([("points", -1)])
+        await db.question_submissions.create_index([("submitter_id", 1), ("status", 1)])
+        await db.question_submissions.create_index([("status", 1), ("submitted_at", 1)])
+        await db.question_submission_stats.create_index([("points", -1)])
     except Exception as e:
         sentry_sdk.capture_exception(e)
         print(f"⚠️ ensure_submission_indexes: {e}")
@@ -20207,7 +20207,7 @@ async def ensure_submission_indexes():
 
 async def _count_submissions_last_24h(submitter_id):
     cutoff = datetime.datetime.utcnow() - datetime.timedelta(hours=24)
-    return await db.user_submissions.count_documents({
+    return await db.question_submissions.count_documents({
         "submitter_id": submitter_id,
         "submitted_at": {"$gte": cutoff},
     })
@@ -20260,7 +20260,7 @@ def _validate_submission(category, question, correct_answer, alternates, sub_typ
 
 async def _is_self_duplicate(submitter_id, question_text):
     cutoff = datetime.datetime.utcnow() - datetime.timedelta(days=30)
-    doc = await db.user_submissions.find_one({
+    doc = await db.question_submissions.find_one({
         "submitter_id": submitter_id,
         "question": question_text,
         "submitted_at": {"$gte": cutoff},
@@ -20367,7 +20367,7 @@ class SubmitQuestionModal(discord.ui.Modal):
                     "status": "awaiting_mod",
                     "ai_completed_at": None,
                 }
-                result = await db.user_submissions.insert_one(doc)
+                result = await db.question_submissions.insert_one(doc)
                 doc["_id"] = result.inserted_id
             await interaction.response.send_message(
                 "✅ Submitted! A moderator will review it shortly.",
@@ -20384,7 +20384,7 @@ class SubmitQuestionModal(discord.ui.Modal):
 
 
 async def post_submission_to_mod_channel(submission_id):
-    sub = await db.user_submissions.find_one({"_id": submission_id})
+    sub = await db.question_submissions.find_one({"_id": submission_id})
     if not sub:
         return
     guild = bot.get_guild(OKRAN_GUILD_ID)
@@ -20398,7 +20398,7 @@ async def post_submission_to_mod_channel(submission_id):
     view = SubmissionReviewView(submission_id=str(submission_id))
     try:
         msg = await channel.send(embed=embed, view=view)
-        await db.user_submissions.update_one(
+        await db.question_submissions.update_one(
             {"_id": submission_id},
             {"$set": {"mod_message_id": msg.id, "mod_channel_id": channel.id}},
         )
@@ -20420,13 +20420,13 @@ class RejectReasonModal(discord.ui.Modal, title="Reject submission"):
 
     async def on_submit(self, interaction: discord.Interaction):
         try:
-            sub = await db.user_submissions.find_one({"_id": _to_object_id(self.submission_id)})
+            sub = await db.question_submissions.find_one({"_id": _to_object_id(self.submission_id)})
             if not sub or sub.get("status") != "awaiting_mod":
                 await interaction.response.send_message("❌ Submission no longer pending.", ephemeral=True)
                 return
             now = datetime.datetime.utcnow()
             reason_text = (self.reason.value or "").strip()
-            await db.user_submissions.update_one(
+            await db.question_submissions.update_one(
                 {"_id": sub["_id"]},
                 {"$set": {
                     "status": "rejected",
@@ -20437,7 +20437,7 @@ class RejectReasonModal(discord.ui.Modal, title="Reject submission"):
                     "decided_at": now,
                 }},
             )
-            await db.user_submission_stats.update_one(
+            await db.question_submission_stats.update_one(
                 {"_id": sub["submitter_id"]},
                 {
                     "$inc": {"submissions_total": 1, "rejected": 1},
@@ -20447,7 +20447,7 @@ class RejectReasonModal(discord.ui.Modal, title="Reject submission"):
             )
             # Update the mod-channel embed
             try:
-                fresh = await db.user_submissions.find_one({"_id": sub["_id"]})
+                fresh = await db.question_submissions.find_one({"_id": sub["_id"]})
                 embed = _build_submission_embed(fresh)
                 embed.set_footer(text=f"❌ Rejected by {interaction.user.display_name}")
                 await interaction.message.edit(embed=embed, view=None)
@@ -20513,7 +20513,7 @@ class EditSubmissionModal(discord.ui.Modal, title="Edit & Approve"):
         if err:
             await interaction.response.send_message(f"❌ {err}", ephemeral=True)
             return
-        sub = await db.user_submissions.find_one({"_id": _to_object_id(self.submission_id)})
+        sub = await db.question_submissions.find_one({"_id": _to_object_id(self.submission_id)})
         if not sub or sub.get("status") != "awaiting_mod":
             await interaction.response.send_message("❌ Submission no longer pending.", ephemeral=True)
             return
@@ -20523,7 +20523,7 @@ class EditSubmissionModal(discord.ui.Modal, title="Edit & Approve"):
             "correct_answer": sub.get("correct_answer"),
             "alternates": sub.get("alternates"),
         }
-        await db.user_submissions.update_one(
+        await db.question_submissions.update_one(
             {"_id": sub["_id"]},
             {"$set": {
                 "category": cleaned["category"],
@@ -20547,7 +20547,7 @@ def _to_object_id(val):
 
 async def _approve_submission(interaction, submission_id, edited=False):
     try:
-        sub = await db.user_submissions.find_one({"_id": _to_object_id(submission_id)})
+        sub = await db.question_submissions.find_one({"_id": _to_object_id(submission_id)})
         if not sub or sub.get("status") != "awaiting_mod":
             if not interaction.response.is_done():
                 await interaction.response.send_message("❌ Submission no longer pending.", ephemeral=True)
@@ -20574,7 +20574,7 @@ async def _approve_submission(interaction, submission_id, edited=False):
             "user_submission_id": sub["_id"],
         }
         ins = await db[target_pool].insert_one(approved_doc)
-        await db.user_submissions.update_one(
+        await db.question_submissions.update_one(
             {"_id": sub["_id"]},
             {"$set": {
                 "status": "approved",
@@ -20586,7 +20586,7 @@ async def _approve_submission(interaction, submission_id, edited=False):
                 "approved_question_id": ins.inserted_id,
             }},
         )
-        await db.user_submission_stats.update_one(
+        await db.question_submission_stats.update_one(
             {"_id": sub["submitter_id"]},
             {
                 "$inc": {"submissions_total": 1, "approved": 1, "points": POINTS_FOR_APPROVAL},
@@ -20598,7 +20598,7 @@ async def _approve_submission(interaction, submission_id, edited=False):
         _invalidate_attribution_cache(target_pool, ins.inserted_id)
         # Update the mod-channel embed
         try:
-            fresh = await db.user_submissions.find_one({"_id": sub["_id"]})
+            fresh = await db.question_submissions.find_one({"_id": sub["_id"]})
             embed = _build_submission_embed(fresh)
             verb = "Edited & Approved" if edited else "Approved"
             embed.set_footer(text=f"✅ {verb} by {interaction.user.display_name} · +{POINTS_FOR_APPROVAL} pt")
@@ -20663,7 +20663,7 @@ class SubmissionReviewView(discord.ui.View):
     @discord.ui.button(label="Edit & Approve", style=discord.ButtonStyle.secondary, custom_id="submit:edit:_")
     async def edit_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         sub_id = self._extract_id(button.custom_id)
-        sub = await db.user_submissions.find_one({"_id": _to_object_id(sub_id)})
+        sub = await db.question_submissions.find_one({"_id": _to_object_id(sub_id)})
         if not sub or sub.get("status") != "awaiting_mod":
             await interaction.response.send_message("❌ Submission no longer pending.", ephemeral=True)
             return
@@ -20686,7 +20686,7 @@ async def sync_top_contributor_role():
         {"$sort": {"count": -1, "_id": 1}},
         {"$limit": 1},
     ]
-    top = await db.user_submissions.aggregate(pipeline).to_list(length=1)
+    top = await db.question_submissions.aggregate(pipeline).to_list(length=1)
     target_id = top[0]["_id"] if top else None
     for member in list(role.members):
         if member.id != target_id:
@@ -20706,7 +20706,7 @@ async def sync_top_contributor_role():
 async def register_persistent_submission_views():
     try:
         bot.add_view(SubmissionReviewView())
-        async for sub in db.user_submissions.find({"status": "awaiting_mod"}, {"_id": 1}):
+        async for sub in db.question_submissions.find({"status": "awaiting_mod"}, {"_id": 1}):
             bot.add_view(SubmissionReviewView(submission_id=str(sub["_id"])))
     except Exception as e:
         sentry_sdk.capture_exception(e)
@@ -20746,7 +20746,7 @@ async def submit_command(interaction: discord.Interaction, type: discord.app_com
 async def contributors_command(interaction: discord.Interaction):
     try:
         await interaction.response.defer()
-        rows = await db.user_submission_stats.find().sort("points", -1).limit(15).to_list(length=15)
+        rows = await db.question_submission_stats.find().sort("points", -1).limit(15).to_list(length=15)
         if not rows:
             await interaction.followup.send("No approved submissions yet.")
             return
