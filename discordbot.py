@@ -40,7 +40,8 @@ import aioboto3
 import logging
 import tempfile
 import base64
-from collections import Counter, defaultdict
+from bson import ObjectId
+from collections import Counter, defaultdict, OrderedDict
 import math
 import sys
 import signal
@@ -428,6 +429,9 @@ if prod_or_stage == "stage":
     SIMPLY_ANSWERS_CHANNEL_ID = 1447108022882140283
     SIMPLY_STREAKS_CHANNEL_ID = 1447107992657854586
     FLAGGED_QUESTIONS_CHANNEL_ID = 1448901996257083493
+    SUBMISSION_REVIEW_CHANNEL_ID = 1448901996257083493
+    SUBMISSION_MOD_ROLE_ID = 1416587636709134408
+    TOP_CONTRIBUTOR_ROLE_ID = 1507142100892778740
 
 elif prod_or_stage == "prod":
     okrag_id = 591861826690613248
@@ -466,6 +470,9 @@ elif prod_or_stage == "prod":
     SIMPLY_ANSWERS_CHANNEL_ID = 1447107408387375235
     SIMPLY_STREAKS_CHANNEL_ID = 1447107455376035881
     FLAGGED_QUESTIONS_CHANNEL_ID = 1448895124183453696
+    SUBMISSION_REVIEW_CHANNEL_ID = 1448895124183453696
+    SUBMISSION_MOD_ROLE_ID = 1411059745774764193
+    TOP_CONTRIBUTOR_ROLE_ID = 0
 
 
 
@@ -497,6 +504,24 @@ else:
     mini_game_audio_bot = sys.modules.get('__mini_game_audio_bot__')
 
 openai_client = AsyncOpenAI(api_key=openai_api_key)
+
+# --- User-submitted questions ---
+try:
+    import anthropic
+    _anthropic_api_key = os.getenv("ANTHROPIC_API_KEY")
+    anthropic_client = anthropic.AsyncAnthropic(api_key=_anthropic_api_key) if _anthropic_api_key else None
+except ImportError:
+    anthropic_client = None
+CLAUDE_MODEL = "claude-opus-4-7"
+
+MAX_SUBMISSIONS_PER_24H = 100
+POINTS_FOR_APPROVAL = 1
+TOP_CONTRIBUTOR_WINDOW_DAYS = 7
+
+_submission_locks = {}  # submitter_id -> asyncio.Lock (rate-limit TOCTOU guard)
+_submitter_attribution_cache = OrderedDict()  # (db_name, _id) -> attribution string; bounded LRU
+_SUBMITTER_CACHE_MAX = 256
+
 id_limits = {"general": 2000, "mysterybox": 2000, "crossword": 5000, "jeopardy": 5000, "wof": 1500, "list": 20, "feud": 1000, "posters": 2000, "movie_scenes": 5000, "missing_link": 2500, "people": 2500, "ranker_list": 4000, "animal": 2000, "riddle": 2500, "dictionary": 5000, "flags": 800, "lyric": 500, "polyglottery": 80, "book": 80, "element": 100, "jigsaw": 5000, "border": 100, "faceoff": 5000, "president": 80, "wordle": 1400, "myopic": 5000, "fusion": 5000, "microscopic": 5000, "chess": 5000, "stock": 800, "currency": 100, "search": 10, "billboard": 40, "soundfx": 500, "audio_music":100, "audio_question": 2000, "sports_logos": 20}
 max_retries = 3
 delay_between_retries = 3
@@ -17132,7 +17157,7 @@ def apply_glyphs(text):
     return ''.join(random.choice(GLYPH_MAP[char]) if char in GLYPH_MAP else char for char in text)
 
 
-async def ask_question(trivia_category, trivia_question, trivia_url, trivia_answer_list, question_number):
+async def ask_question(trivia_category, trivia_question, trivia_url, trivia_answer_list, question_number, trivia_db=None, trivia_id=None):
     """Ask the trivia question."""
     # Define the numbered block emojis for questions 1 to 10
     numbered_blocks = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"]
@@ -17289,6 +17314,14 @@ async def ask_question(trivia_category, trivia_question, trivia_url, trivia_answ
 
     else:
          message_body += f"\u200b\n\u200b\n{number_block} **{get_category_title(trivia_category, trivia_url)}**\n\n{trivia_question}\n"
+
+    # Attribution for user-submitted questions
+    try:
+        submitter_line = await get_submitter_attribution(trivia_db, trivia_id)
+        if submitter_line:
+            message_body += f"{submitter_line}\n"
+    except Exception:
+        pass
 
     message_body += "\u200b"
     
@@ -19292,7 +19325,11 @@ async def start_trivia():
             
             await load_parameters()
 
-            await sync_bumper_king_with_role() 
+            await sync_bumper_king_with_role()
+            try:
+                await sync_top_contributor_role()
+            except Exception as _e:
+                sentry_sdk.capture_exception(_e)
             #await get_survey_results()
             scoreboard.clear()
             fastest_answers_count.clear()
@@ -19390,7 +19427,7 @@ async def start_trivia():
                 collected_responses.clear()
                 question_asked_start = time.time()
                 question_asked_end = question_asked_start + question_time
-                question_ask_time, new_question, new_solution = await ask_question(trivia_category, trivia_question, trivia_url, trivia_answer_list, question_number)
+                question_ask_time, new_question, new_solution = await ask_question(trivia_category, trivia_question, trivia_url, trivia_answer_list, question_number, trivia_db=trivia_db, trivia_id=trivia_id)
                 await asyncio.sleep(question_time)
                 #await safe_send(channel, "\u200b\n🛑 TIME 🛑\n\u200b")
                 
@@ -20102,6 +20139,643 @@ async def cleanup_lodge_messages():
     except Exception as e:
         print(f"❌ Error cleaning Lodge messages: {e}")
 
+
+# ============================================================
+# USER-SUBMITTED QUESTIONS
+# ============================================================
+
+SUBMISSION_FORBIDDEN_SUBSTRINGS = ("<@", "<#", "http", "discord.gg")
+
+
+def _parse_alternates(raw):
+    parts = []
+    for chunk in (raw or "").replace("\n", ",").split(","):
+        s = chunk.strip()
+        if s:
+            parts.append(s)
+    seen, out = set(), []
+    for p in parts:
+        k = p.lower()
+        if k not in seen:
+            seen.add(k)
+            out.append(p)
+    return out
+
+
+def _build_mc_answers(correct_answer, wrong_choices):
+    choices = [correct_answer] + list(wrong_choices)
+    random.shuffle(choices)
+    letters = ["A", "B", "C", "D"][:len(choices)]
+    labeled = [f"{letter}. {choice}" for letter, choice in zip(letters, choices)]
+    correct_idx = choices.index(correct_answer)
+    return [labeled[correct_idx], *labeled]
+
+
+async def get_submitter_attribution(db_name, _id):
+    if db_name not in ("trivia_questions", "mysterybox_questions"):
+        return ""
+    cache_key = (db_name, str(_id))
+    if cache_key in _submitter_attribution_cache:
+        _submitter_attribution_cache.move_to_end(cache_key)
+        return _submitter_attribution_cache[cache_key]
+    try:
+        doc = await db[db_name].find_one({"_id": _id}, {"submitter_id": 1, "submitter_name": 1})
+    except Exception:
+        return ""
+    line = ""
+    if doc and doc.get("submitter_id"):
+        line = f"💡 Submitted by <@{doc['submitter_id']}>"
+    _submitter_attribution_cache[cache_key] = line
+    if len(_submitter_attribution_cache) > _SUBMITTER_CACHE_MAX:
+        _submitter_attribution_cache.popitem(last=False)
+    return line
+
+
+def _invalidate_attribution_cache(db_name, _id):
+    _submitter_attribution_cache.pop((db_name, str(_id)), None)
+
+
+async def ensure_submission_indexes():
+    try:
+        await db.user_submissions.create_index([("submitter_id", 1), ("status", 1)])
+        await db.user_submissions.create_index([("status", 1), ("submitted_at", 1)])
+        await db.user_submission_stats.create_index([("points", -1)])
+    except Exception as e:
+        sentry_sdk.capture_exception(e)
+        print(f"⚠️ ensure_submission_indexes: {e}")
+
+
+async def _count_submissions_last_24h(submitter_id):
+    cutoff = datetime.datetime.utcnow() - datetime.timedelta(hours=24)
+    return await db.user_submissions.count_documents({
+        "submitter_id": submitter_id,
+        "submitted_at": {"$gte": cutoff},
+    })
+
+
+def _get_submission_lock(submitter_id):
+    lock = _submission_locks.get(submitter_id)
+    if lock is None:
+        lock = asyncio.Lock()
+        _submission_locks[submitter_id] = lock
+    return lock
+
+
+def _validate_submission(category, question, correct_answer, alternates, sub_type):
+    cat = (category or "").strip().title()
+    if not cat:
+        return None, "Category is required."
+    if cat in categories_to_exclude:
+        return None, f"Category '{cat}' is not accepted."
+    q = (question or "").strip()
+    if len(q) < 15:
+        return None, "Question must be at least 15 characters."
+    if len(q) > 300:
+        return None, "Question must be at most 300 characters."
+    low_q = q.lower()
+    for bad in SUBMISSION_FORBIDDEN_SUBSTRINGS:
+        if bad in low_q:
+            return None, f"Question contains a disallowed substring ({bad!r})."
+    ca = (correct_answer or "").strip()
+    if not ca:
+        return None, "Correct/primary answer is required."
+    if len(ca) > 100:
+        return None, "Answer must be at most 100 characters."
+    alts = _parse_alternates(alternates)
+    if sub_type == "multiple_choice":
+        if not (1 <= len(alts) <= 3):
+            return None, "Multiple-choice submissions need 1–3 wrong choices."
+        if any(a.lower() == ca.lower() for a in alts):
+            return None, "A wrong choice cannot equal the correct answer."
+    else:
+        if len(alts) > 3:
+            return None, "At most 3 alternate spellings allowed."
+    return {
+        "category": cat,
+        "question": q,
+        "correct_answer": ca,
+        "alternates": alts,
+    }, None
+
+
+async def _is_self_duplicate(submitter_id, question_text):
+    cutoff = datetime.datetime.utcnow() - datetime.timedelta(days=30)
+    doc = await db.user_submissions.find_one({
+        "submitter_id": submitter_id,
+        "question": question_text,
+        "submitted_at": {"$gte": cutoff},
+    })
+    return doc is not None
+
+
+def _build_submission_embed(sub):
+    color = discord.Color.blurple()
+    if sub.get("status") == "approved":
+        color = discord.Color.green()
+    elif sub.get("status") == "rejected":
+        color = discord.Color.red()
+    type_label = "Multiple Choice" if sub.get("type") == "multiple_choice" else "Free-text"
+    embed = discord.Embed(
+        title=f"📝 New Question Submission · {type_label}",
+        color=color,
+        timestamp=sub.get("submitted_at") or datetime.datetime.utcnow(),
+    )
+    embed.add_field(name="Submitter", value=f"<@{sub['submitter_id']}> ({sub.get('submitter_name', 'unknown')})", inline=False)
+    embed.add_field(name="Category", value=sub.get("category", ""), inline=True)
+    embed.add_field(name="Question", value=sub.get("question", "")[:1024], inline=False)
+    if sub.get("type") == "multiple_choice":
+        embed.add_field(name="Correct", value=sub.get("correct_answer", ""), inline=False)
+        wrongs = sub.get("alternates", [])
+        embed.add_field(name=f"Wrong choices ({len(wrongs)})", value=("\n".join(f"• {w}" for w in wrongs) or "—"), inline=False)
+    else:
+        embed.add_field(name="Primary answer", value=sub.get("correct_answer", ""), inline=False)
+        alts = sub.get("alternates", [])
+        if alts:
+            embed.add_field(name=f"Alternate spellings ({len(alts)})", value="\n".join(f"• {a}" for a in alts), inline=False)
+    decision = sub.get("mod_decision")
+    if decision:
+        embed.set_footer(text=f"{decision} by {sub.get('mod_name', 'unknown')}")
+    return embed
+
+
+class SubmitQuestionModal(discord.ui.Modal):
+    def __init__(self, submitter_id, submitter_name, sub_type):
+        super().__init__(title=("Submit a Multiple-Choice Question" if sub_type == "multiple_choice" else "Submit a Trivia Question"))
+        self.submitter_id = submitter_id
+        self.submitter_name = submitter_name
+        self.sub_type = sub_type
+        self.category_input = discord.ui.TextInput(
+            label="Category",
+            placeholder="e.g. Science, History, Movies",
+            style=discord.TextStyle.short, required=True, max_length=40,
+        )
+        self.question_input = discord.ui.TextInput(
+            label="Question",
+            placeholder="The question prompt (15–300 chars)",
+            style=discord.TextStyle.paragraph, required=True, max_length=300,
+        )
+        if sub_type == "multiple_choice":
+            ca_label = "Correct Answer"
+            alt_label = "Wrong Choices (1–3, comma or new lines)"
+            alt_required = True
+        else:
+            ca_label = "Primary Answer"
+            alt_label = "Alternate Spellings (optional, max 3)"
+            alt_required = False
+        self.correct_input = discord.ui.TextInput(
+            label=ca_label, style=discord.TextStyle.short, required=True, max_length=100,
+        )
+        self.alts_input = discord.ui.TextInput(
+            label=alt_label, style=discord.TextStyle.paragraph, required=alt_required, max_length=300,
+        )
+        for item in (self.category_input, self.question_input, self.correct_input, self.alts_input):
+            self.add_item(item)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        try:
+            cleaned, err = _validate_submission(
+                self.category_input.value, self.question_input.value,
+                self.correct_input.value, self.alts_input.value, self.sub_type,
+            )
+            if err:
+                await interaction.response.send_message(f"❌ {err}", ephemeral=True)
+                return
+            lock = _get_submission_lock(self.submitter_id)
+            async with lock:
+                count_24h = await _count_submissions_last_24h(self.submitter_id)
+                if count_24h >= MAX_SUBMISSIONS_PER_24H:
+                    await interaction.response.send_message(
+                        f"❌ You've hit the {MAX_SUBMISSIONS_PER_24H}/24h submission limit. Try again later.",
+                        ephemeral=True,
+                    )
+                    return
+                if await _is_self_duplicate(self.submitter_id, cleaned["question"]):
+                    await interaction.response.send_message(
+                        "❌ You already submitted this exact question in the last 30 days.",
+                        ephemeral=True,
+                    )
+                    return
+                doc = {
+                    "submitter_id": self.submitter_id,
+                    "submitter_name": self.submitter_name,
+                    "submitted_at": datetime.datetime.utcnow(),
+                    "type": self.sub_type,
+                    "category": cleaned["category"],
+                    "question": cleaned["question"],
+                    "correct_answer": cleaned["correct_answer"],
+                    "alternates": cleaned["alternates"],
+                    "status": "awaiting_mod",
+                    "ai_completed_at": None,
+                }
+                result = await db.user_submissions.insert_one(doc)
+                doc["_id"] = result.inserted_id
+            await interaction.response.send_message(
+                "✅ Submitted! A moderator will review it shortly.",
+                ephemeral=True,
+            )
+            await post_submission_to_mod_channel(doc["_id"])
+        except Exception as e:
+            sentry_sdk.capture_exception(e)
+            print(f"❌ SubmitQuestionModal.on_submit: {e}")
+            try:
+                await interaction.response.send_message("❌ Something went wrong submitting.", ephemeral=True)
+            except Exception:
+                pass
+
+
+async def post_submission_to_mod_channel(submission_id):
+    sub = await db.user_submissions.find_one({"_id": submission_id})
+    if not sub:
+        return
+    guild = bot.get_guild(OKRAN_GUILD_ID)
+    if not guild:
+        return
+    channel = guild.get_channel(SUBMISSION_REVIEW_CHANNEL_ID)
+    if not channel:
+        print(f"❌ Submission review channel {SUBMISSION_REVIEW_CHANNEL_ID} not found")
+        return
+    embed = _build_submission_embed(sub)
+    view = SubmissionReviewView(submission_id=str(submission_id))
+    try:
+        msg = await channel.send(embed=embed, view=view)
+        await db.user_submissions.update_one(
+            {"_id": submission_id},
+            {"$set": {"mod_message_id": msg.id, "mod_channel_id": channel.id}},
+        )
+    except Exception as e:
+        sentry_sdk.capture_exception(e)
+        print(f"❌ post_submission_to_mod_channel: {e}")
+
+
+class RejectReasonModal(discord.ui.Modal, title="Reject submission"):
+    reason = discord.ui.TextInput(
+        label="Reason (optional, shown to submitter)",
+        placeholder="Why is this being rejected?",
+        style=discord.TextStyle.paragraph, required=False, max_length=300,
+    )
+
+    def __init__(self, submission_id):
+        super().__init__()
+        self.submission_id = submission_id
+
+    async def on_submit(self, interaction: discord.Interaction):
+        try:
+            sub = await db.user_submissions.find_one({"_id": _to_object_id(self.submission_id)})
+            if not sub or sub.get("status") != "awaiting_mod":
+                await interaction.response.send_message("❌ Submission no longer pending.", ephemeral=True)
+                return
+            now = datetime.datetime.utcnow()
+            reason_text = (self.reason.value or "").strip()
+            await db.user_submissions.update_one(
+                {"_id": sub["_id"]},
+                {"$set": {
+                    "status": "rejected",
+                    "mod_decision": "reject",
+                    "mod_id": interaction.user.id,
+                    "mod_name": interaction.user.display_name,
+                    "mod_reason": reason_text,
+                    "decided_at": now,
+                }},
+            )
+            await db.user_submission_stats.update_one(
+                {"_id": sub["submitter_id"]},
+                {
+                    "$inc": {"submissions_total": 1, "rejected": 1},
+                    "$set": {"display_name": sub.get("submitter_name", "unknown"), "last_updated": now},
+                },
+                upsert=True,
+            )
+            # Update the mod-channel embed
+            try:
+                fresh = await db.user_submissions.find_one({"_id": sub["_id"]})
+                embed = _build_submission_embed(fresh)
+                embed.set_footer(text=f"❌ Rejected by {interaction.user.display_name}")
+                await interaction.message.edit(embed=embed, view=None)
+            except Exception:
+                pass
+            # DM the submitter
+            try:
+                member = interaction.guild.get_member(sub["submitter_id"])
+                if member:
+                    dm_text = "❌ Your trivia question submission was rejected."
+                    if reason_text:
+                        dm_text += f"\n**Reason:** {reason_text}"
+                    dm_text += f"\n\n> {sub.get('question', '')}"
+                    await member.send(dm_text)
+            except (discord.Forbidden, Exception):
+                pass
+            await interaction.response.send_message("Rejected.", ephemeral=True)
+        except Exception as e:
+            sentry_sdk.capture_exception(e)
+            print(f"❌ RejectReasonModal.on_submit: {e}")
+            try:
+                await interaction.response.send_message("❌ Something went wrong.", ephemeral=True)
+            except Exception:
+                pass
+
+
+class EditSubmissionModal(discord.ui.Modal, title="Edit & Approve"):
+    def __init__(self, submission_id, sub):
+        super().__init__()
+        self.submission_id = submission_id
+        self.sub_type = sub.get("type", "free_text")
+        self.category_input = discord.ui.TextInput(
+            label="Category", default=sub.get("category", ""),
+            style=discord.TextStyle.short, required=True, max_length=40,
+        )
+        self.question_input = discord.ui.TextInput(
+            label="Question", default=sub.get("question", ""),
+            style=discord.TextStyle.paragraph, required=True, max_length=300,
+        )
+        if self.sub_type == "multiple_choice":
+            ca_label, alt_label = "Correct Answer", "Wrong Choices (1–3)"
+        else:
+            ca_label, alt_label = "Primary Answer", "Alternate Spellings (max 3)"
+        self.correct_input = discord.ui.TextInput(
+            label=ca_label, default=sub.get("correct_answer", ""),
+            style=discord.TextStyle.short, required=True, max_length=100,
+        )
+        self.alts_input = discord.ui.TextInput(
+            label=alt_label,
+            default="\n".join(sub.get("alternates", []) or []),
+            style=discord.TextStyle.paragraph,
+            required=(self.sub_type == "multiple_choice"),
+            max_length=300,
+        )
+        for item in (self.category_input, self.question_input, self.correct_input, self.alts_input):
+            self.add_item(item)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        cleaned, err = _validate_submission(
+            self.category_input.value, self.question_input.value,
+            self.correct_input.value, self.alts_input.value, self.sub_type,
+        )
+        if err:
+            await interaction.response.send_message(f"❌ {err}", ephemeral=True)
+            return
+        sub = await db.user_submissions.find_one({"_id": _to_object_id(self.submission_id)})
+        if not sub or sub.get("status") != "awaiting_mod":
+            await interaction.response.send_message("❌ Submission no longer pending.", ephemeral=True)
+            return
+        mod_edits = {
+            "category": sub.get("category"),
+            "question": sub.get("question"),
+            "correct_answer": sub.get("correct_answer"),
+            "alternates": sub.get("alternates"),
+        }
+        await db.user_submissions.update_one(
+            {"_id": sub["_id"]},
+            {"$set": {
+                "category": cleaned["category"],
+                "question": cleaned["question"],
+                "correct_answer": cleaned["correct_answer"],
+                "alternates": cleaned["alternates"],
+                "mod_edits": mod_edits,
+            }},
+        )
+        await _approve_submission(interaction, sub["_id"], edited=True)
+
+
+def _to_object_id(val):
+    if isinstance(val, ObjectId):
+        return val
+    try:
+        return ObjectId(val)
+    except Exception:
+        return val
+
+
+async def _approve_submission(interaction, submission_id, edited=False):
+    try:
+        sub = await db.user_submissions.find_one({"_id": _to_object_id(submission_id)})
+        if not sub or sub.get("status") != "awaiting_mod":
+            if not interaction.response.is_done():
+                await interaction.response.send_message("❌ Submission no longer pending.", ephemeral=True)
+            return
+        now = datetime.datetime.utcnow()
+        is_mc = sub.get("type") == "multiple_choice"
+        if is_mc:
+            answers = _build_mc_answers(sub["correct_answer"], sub.get("alternates", []))
+            url_val = "multiple choice"
+            target_pool = "mysterybox_questions"
+        else:
+            answers = [sub["correct_answer"], *(sub.get("alternates") or [])]
+            url_val = ""
+            target_pool = "trivia_questions"
+        approved_doc = {
+            "category": sub["category"],
+            "question": sub["question"],
+            "url": url_val,
+            "answers": answers,
+            "submitter_id": sub["submitter_id"],
+            "submitter_name": sub.get("submitter_name", "unknown"),
+            "submitted_at": sub["submitted_at"],
+            "approved_at": now,
+            "user_submission_id": sub["_id"],
+        }
+        ins = await db[target_pool].insert_one(approved_doc)
+        await db.user_submissions.update_one(
+            {"_id": sub["_id"]},
+            {"$set": {
+                "status": "approved",
+                "mod_decision": ("edit_approve" if edited else "approve"),
+                "mod_id": interaction.user.id,
+                "mod_name": interaction.user.display_name,
+                "decided_at": now,
+                "approved_pool": target_pool,
+                "approved_question_id": ins.inserted_id,
+            }},
+        )
+        await db.user_submission_stats.update_one(
+            {"_id": sub["submitter_id"]},
+            {
+                "$inc": {"submissions_total": 1, "approved": 1, "points": POINTS_FOR_APPROVAL},
+                "$set": {"display_name": sub.get("submitter_name", "unknown"), "last_updated": now},
+                "$setOnInsert": {"first_approved_at": now},
+            },
+            upsert=True,
+        )
+        _invalidate_attribution_cache(target_pool, ins.inserted_id)
+        # Update the mod-channel embed
+        try:
+            fresh = await db.user_submissions.find_one({"_id": sub["_id"]})
+            embed = _build_submission_embed(fresh)
+            verb = "Edited & Approved" if edited else "Approved"
+            embed.set_footer(text=f"✅ {verb} by {interaction.user.display_name} · +{POINTS_FOR_APPROVAL} pt")
+            if interaction.message:
+                await interaction.message.edit(embed=embed, view=None)
+        except Exception:
+            pass
+        if not interaction.response.is_done():
+            await interaction.response.send_message(f"✅ Approved into `{target_pool}`.", ephemeral=True)
+        else:
+            try:
+                await interaction.followup.send(f"✅ Approved into `{target_pool}`.", ephemeral=True)
+            except Exception:
+                pass
+        # Update the Top Contributor role (best-effort)
+        try:
+            await sync_top_contributor_role()
+        except Exception as e:
+            sentry_sdk.capture_exception(e)
+    except Exception as e:
+        sentry_sdk.capture_exception(e)
+        print(f"❌ _approve_submission: {e}")
+        try:
+            if not interaction.response.is_done():
+                await interaction.response.send_message("❌ Approve failed.", ephemeral=True)
+        except Exception:
+            pass
+
+
+class SubmissionReviewView(discord.ui.View):
+    def __init__(self, submission_id=None):
+        super().__init__(timeout=None)
+        # NOTE: submission_id is encoded in the custom_id so the view survives restarts
+        if submission_id is not None:
+            self.approve_btn.custom_id = f"submit:approve:{submission_id}"
+            self.reject_btn.custom_id = f"submit:reject:{submission_id}"
+            self.edit_btn.custom_id = f"submit:edit:{submission_id}"
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if not any(r.id == SUBMISSION_MOD_ROLE_ID for r in getattr(interaction.user, "roles", [])):
+            await interaction.response.send_message("❌ Only moderators can use these buttons.", ephemeral=True)
+            return False
+        return True
+
+    @staticmethod
+    def _extract_id(custom_id):
+        try:
+            return custom_id.split(":")[-1]
+        except Exception:
+            return None
+
+    @discord.ui.button(label="Approve", style=discord.ButtonStyle.success, custom_id="submit:approve:_")
+    async def approve_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        sub_id = self._extract_id(button.custom_id)
+        await _approve_submission(interaction, sub_id, edited=False)
+
+    @discord.ui.button(label="Reject", style=discord.ButtonStyle.danger, custom_id="submit:reject:_")
+    async def reject_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        sub_id = self._extract_id(button.custom_id)
+        await interaction.response.send_modal(RejectReasonModal(submission_id=sub_id))
+
+    @discord.ui.button(label="Edit & Approve", style=discord.ButtonStyle.secondary, custom_id="submit:edit:_")
+    async def edit_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        sub_id = self._extract_id(button.custom_id)
+        sub = await db.user_submissions.find_one({"_id": _to_object_id(sub_id)})
+        if not sub or sub.get("status") != "awaiting_mod":
+            await interaction.response.send_message("❌ Submission no longer pending.", ephemeral=True)
+            return
+        await interaction.response.send_modal(EditSubmissionModal(submission_id=sub_id, sub=sub))
+
+
+async def sync_top_contributor_role():
+    if not TOP_CONTRIBUTOR_ROLE_ID:
+        return
+    guild = bot.get_guild(OKRAN_GUILD_ID)
+    if not guild:
+        return
+    role = guild.get_role(TOP_CONTRIBUTOR_ROLE_ID)
+    if not role:
+        return
+    cutoff = datetime.datetime.utcnow() - datetime.timedelta(days=TOP_CONTRIBUTOR_WINDOW_DAYS)
+    pipeline = [
+        {"$match": {"status": "approved", "decided_at": {"$gte": cutoff}}},
+        {"$group": {"_id": "$submitter_id", "count": {"$sum": 1}}},
+        {"$sort": {"count": -1, "_id": 1}},
+        {"$limit": 1},
+    ]
+    top = await db.user_submissions.aggregate(pipeline).to_list(length=1)
+    target_id = top[0]["_id"] if top else None
+    for member in list(role.members):
+        if member.id != target_id:
+            try:
+                await member.remove_roles(role, reason="No longer top weekly contributor")
+            except (discord.Forbidden, Exception):
+                pass
+    if target_id:
+        member = guild.get_member(target_id)
+        if member and role not in member.roles:
+            try:
+                await member.add_roles(role, reason="Top contributor (last 7 days)")
+            except (discord.Forbidden, Exception):
+                pass
+
+
+async def register_persistent_submission_views():
+    try:
+        bot.add_view(SubmissionReviewView())
+        async for sub in db.user_submissions.find({"status": "awaiting_mod"}, {"_id": 1}):
+            bot.add_view(SubmissionReviewView(submission_id=str(sub["_id"])))
+    except Exception as e:
+        sentry_sdk.capture_exception(e)
+        print(f"⚠️ register_persistent_submission_views: {e}")
+
+
+@bot.tree.command(name="submit", description="Submit a trivia question for review", guild=discord.Object(id=OKRAN_GUILD_ID))
+@discord.app_commands.describe(type="Free-text (typed answer) or multiple choice (A/B/C/D)")
+@discord.app_commands.choices(type=[
+    discord.app_commands.Choice(name="Free-text", value="free_text"),
+    discord.app_commands.Choice(name="Multiple choice", value="multiple_choice"),
+])
+async def submit_command(interaction: discord.Interaction, type: discord.app_commands.Choice[str]):
+    try:
+        count_24h = await _count_submissions_last_24h(interaction.user.id)
+        if count_24h >= MAX_SUBMISSIONS_PER_24H:
+            await interaction.response.send_message(
+                f"❌ You've hit the {MAX_SUBMISSIONS_PER_24H}/24h submission limit. Try again later.",
+                ephemeral=True,
+            )
+            return
+        modal = SubmitQuestionModal(
+            submitter_id=interaction.user.id,
+            submitter_name=interaction.user.display_name,
+            sub_type=type.value,
+        )
+        await interaction.response.send_modal(modal)
+    except Exception as e:
+        sentry_sdk.capture_exception(e)
+        try:
+            await interaction.response.send_message("❌ Something went wrong.", ephemeral=True)
+        except Exception:
+            pass
+
+
+@bot.tree.command(name="contributors", description="Top question contributors", guild=discord.Object(id=OKRAN_GUILD_ID))
+async def contributors_command(interaction: discord.Interaction):
+    try:
+        await interaction.response.defer()
+        rows = await db.user_submission_stats.find().sort("points", -1).limit(15).to_list(length=15)
+        if not rows:
+            await interaction.followup.send("No approved submissions yet.")
+            return
+        lines = []
+        for i, r in enumerate(rows, 1):
+            pts = r.get("points", 0)
+            ap = r.get("approved", 0)
+            rj = r.get("rejected", 0)
+            name = r.get("display_name") or f"<@{r['_id']}>"
+            lines.append(f"**{i}.** {name} — {pts} pts ({ap} approved · {rj} rejected)")
+        embed = discord.Embed(
+            title="🏆 Top Question Contributors",
+            description="\n".join(lines),
+            color=discord.Color.gold(),
+        )
+        await interaction.followup.send(embed=embed)
+    except Exception as e:
+        sentry_sdk.capture_exception(e)
+        try:
+            await interaction.followup.send("❌ Something went wrong.", ephemeral=True)
+        except Exception:
+            pass
+
+
+# ============================================================
+# END USER-SUBMITTED QUESTIONS
+# ============================================================
+
+
 @bot.tree.command(name="flag", description="Flag the current or previous trivia question", guild=discord.Object(id=OKRAN_GUILD_ID))
 async def flag_command(interaction: discord.Interaction):
     """Unified slash command - works in both main trivia and Simply Trivia channels"""
@@ -20201,6 +20875,15 @@ async def on_ready():
     await load_parameters()
     await load_round_options_from_db()
     channel = bot.get_channel(channel_id)
+
+    # User-submission feature: indexes + persistent views + initial role sync
+    try:
+        await ensure_submission_indexes()
+        await register_persistent_submission_views()
+        await sync_top_contributor_role()
+    except Exception as _e:
+        sentry_sdk.capture_exception(_e)
+        print(f"⚠️ user-submission startup hook: {_e}")
 
     if museum_backfill_enabled and (museum_backfill_task is None or museum_backfill_task.done()):
         museum_backfill_task = asyncio.create_task(run_museum_archive_backfill_loop())
