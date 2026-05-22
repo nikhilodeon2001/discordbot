@@ -20701,7 +20701,7 @@ class RejectReasonModal(discord.ui.Modal, title="Reject submission"):
             dm_sent = False
             if notify_text:
                 try:
-                    member = interaction.guild.get_member(sub["submitter_id"])
+                    member = await interaction.guild.fetch_member(sub["submitter_id"])
                     if member:
                         await member.send(f"❌ Your trivia question submission was rejected.\n\n{notify_text}\n\n> {sub.get('question', '')}")
                         dm_sent = True
@@ -20854,7 +20854,7 @@ async def _approve_submission(interaction, submission_id, edited=False, notify_t
         # DM the submitter only if the mod provided a message
         if notify_text:
             try:
-                member = interaction.guild.get_member(sub["submitter_id"]) if interaction.guild else None
+                member = await interaction.guild.fetch_member(sub["submitter_id"]) if interaction.guild else None
                 if member:
                     pool_label = "Mystery Box" if target_pool == "mysterybox_questions" else "trivia"
                     await member.send(
@@ -20985,7 +20985,7 @@ async def _dm_flaggers(guild, doc, notify_text):
         if not uid:
             continue
         try:
-            member = guild.get_member(uid)
+            member = await guild.fetch_member(uid)
             if member:
                 q = doc.get("question", "")
                 await member.send(f"{notify_text}\n\n> {q}")
