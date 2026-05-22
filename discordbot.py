@@ -20748,7 +20748,12 @@ class EditSubmissionModal(discord.ui.Modal, title="Edit & Approve"):
             required=(self.sub_type == "multiple_choice"),
             max_length=300,
         )
-        for item in (self.category_input, self.question_input, self.correct_input, self.alts_input):
+        self.dm_text = discord.ui.TextInput(
+            label="Message to submitter (leave blank to skip)",
+            placeholder="e.g. Fixed a small wording issue — great question!",
+            style=discord.TextStyle.short, required=False, max_length=300,
+        )
+        for item in (self.category_input, self.question_input, self.correct_input, self.alts_input, self.dm_text):
             self.add_item(item)
 
     async def on_submit(self, interaction: discord.Interaction):
@@ -20779,7 +20784,8 @@ class EditSubmissionModal(discord.ui.Modal, title="Edit & Approve"):
                 "mod_edits": mod_edits,
             }},
         )
-        await _approve_submission(interaction, sub["_id"], edited=True)
+        notify_text = (self.dm_text.value or "").strip() or None
+        await _approve_submission(interaction, sub["_id"], edited=True, notify_text=notify_text)
 
 
 def _to_object_id(val):
