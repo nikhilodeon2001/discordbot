@@ -21722,7 +21722,6 @@ async def on_ready():
     try:
         _okran_guild_obj = discord.Object(id=OKRAN_GUILD_ID)
         _fetched = await bot.tree.fetch_commands(guild=_okran_guild_obj)
-        global SUBMIT_COMMAND_ID, FLAG_COMMAND_ID, PERKS_COMMAND_ID, OKRAFX_COMMAND_ID
         for _cmd in _fetched:
             if _cmd.name == "submit" and not SUBMIT_COMMAND_ID:
                 SUBMIT_COMMAND_ID = _cmd.id
