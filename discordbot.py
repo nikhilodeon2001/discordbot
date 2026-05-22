@@ -518,6 +518,8 @@ MAX_SUBMISSIONS_PER_24H = 100
 POINTS_FOR_APPROVAL = 1
 TOP_CONTRIBUTOR_WINDOW_DAYS = 7
 SUBMIT_COMMAND_ID = None
+FLAG_COMMAND_ID = None
+PERKS_COMMAND_ID = None
 
 _submission_locks = {}  # submitter_id -> asyncio.Lock (rate-limit TOCTOU guard)
 _submitter_attribution_cache = OrderedDict()  # (db_name, _id) -> attribution string; bounded LRU
@@ -19395,10 +19397,14 @@ async def start_trivia():
             else:
                 await asyncio.sleep(5)
 
+            _flag_mention = f"</flag:{FLAG_COMMAND_ID}>" if FLAG_COMMAND_ID else "/flag"
+            _perks_mention = f"</perks:{PERKS_COMMAND_ID}>" if PERKS_COMMAND_ID else "/perks"
+            _submit_mention = f"</submit:{SUBMIT_COMMAND_ID}>" if SUBMIT_COMMAND_ID else "/submit"
             start_message = f"\u200b\n\u200b\n🎉🤹‍♂️ **Live Trivia & Games for Discord!**\n"
             start_message += f"\n⏩ Starting a **{questions_per_round} question** round! ⏩"
-            start_message += "\n\n🚩 Use **/flag** to report question"
-            start_message += "\n🗝️ Use **/perks** to unlock perks"
+            start_message += f"\n\n🚩 {{_flag_mention}} to report a question"
+            start_message += f"\n🗝️ {{_perks_mention}} to unlock perks"
+            start_message += f"\n❓ {{_submit_mention}} to submit questions"
 
             if current_longest_round_streak["user"] is not None and await get_coffees(current_longest_round_streak["user_id"]) > 0:
                 start_message += f"\n\n🕹️ **{current_longest_round_streak['user']}** can toggle modes mid-game"
@@ -21752,11 +21758,15 @@ async def on_ready():
             print(f"✅ Synced {len(synced)} slash command(s) to OKRAN guild {OKRAN_GUILD_ID}")
             if synced:
                 print(f"🔍 OKRAN guild synced commands: {[cmd.name for cmd in synced]}")
-                global SUBMIT_COMMAND_ID
-                submit_cmd = next((c for c in synced if c.name == "submit"), None)
-                if submit_cmd:
-                    SUBMIT_COMMAND_ID = submit_cmd.id
-                    print(f"✅ Captured submit command ID: {SUBMIT_COMMAND_ID}")
+                global SUBMIT_COMMAND_ID, FLAG_COMMAND_ID, PERKS_COMMAND_ID
+                for _cmd in synced:
+                    if _cmd.name == "submit":
+                        SUBMIT_COMMAND_ID = _cmd.id
+                    elif _cmd.name == "flag":
+                        FLAG_COMMAND_ID = _cmd.id
+                    elif _cmd.name == "perks":
+                        PERKS_COMMAND_ID = _cmd.id
+                print(f"✅ Captured command IDs — submit:{SUBMIT_COMMAND_ID} flag:{FLAG_COMMAND_ID} perks:{PERKS_COMMAND_ID}")
         except Exception as okran_e:
             print(f"❌ Failed to sync commands to OKRAN guild: {okran_e}")
             traceback.print_exc()
