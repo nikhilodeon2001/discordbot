@@ -20933,13 +20933,65 @@ class SubmissionReviewView(discord.ui.View):
         await interaction.response.send_modal(EditSubmissionModal(submission_id=sub_id, sub=sub))
 
 
+class EditFlaggedQuestionModal(discord.ui.Modal, title="Edit & Apply Question Fix"):
+    category_input = discord.ui.TextInput(
+        label="Category", style=discord.TextStyle.short, required=True, max_length=100,
+    )
+    question_input = discord.ui.TextInput(
+        label="Question", style=discord.TextStyle.paragraph, required=True, max_length=500,
+    )
+    answers_input = discord.ui.TextInput(
+        label="Answers (one per line)", style=discord.TextStyle.paragraph, required=True, max_length=1000,
+    )
+
+    def __init__(self, collection_name, doc_id, doc, proposed):
+        super().__init__()
+        self.collection_name = collection_name
+        self.doc_id = doc_id
+        self.original_message = None
+        answers = proposed.get("answers") or doc.get("answers", [])
+        self.category_input.default = proposed.get("category") or doc.get("category", "")
+        self.question_input.default = proposed.get("question") or doc.get("question", "")
+        self.answers_input.default = "\n".join(str(a) for a in answers)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        col = self.collection_name
+        doc_id = self.doc_id
+        answers = [line.strip() for line in self.answers_input.value.splitlines() if line.strip()]
+        fields = {
+            "category": self.category_input.value.strip(),
+            "question": self.question_input.value.strip(),
+            "answers": answers,
+        }
+        try:
+            await db[col].update_one(
+                {"_id": ObjectId(doc_id)},
+                {"$set": fields, "$unset": {"audit": ""}},
+            )
+            await db.flag_notifications.update_one(
+                {"doc_id": doc_id, "collection_name": col}, {"$set": {"resolved": True}}
+            )
+            embed = discord.Embed(title="🚩 Question Flagged", color=discord.Color.green())
+            embed.add_field(name="✏️ Edited & Applied", value=f"**{fields['category']}**: {fields['question']}", inline=False)
+            embed.set_footer(text=f"✅ Edited & applied by {interaction.user.display_name}")
+            await interaction.response.send_message("✅ Applied edits and cleared audit.", ephemeral=True)
+            if interaction.message:
+                await interaction.message.edit(embed=embed, view=None)
+        except Exception as e:
+            sentry_sdk.capture_exception(e)
+            if not interaction.response.is_done():
+                await interaction.response.send_message(f"❌ Edit failed: {e}", ephemeral=True)
+
+
 class FlaggedReviewView(discord.ui.View):
     def __init__(self, collection_name=None, doc_id=None, apply_enabled=False):
         super().__init__(timeout=None)
         if collection_name and doc_id:
             self.claude_btn.custom_id = f"flagged:claude:{collection_name}:{doc_id}"
             self.apply_btn.custom_id = f"flagged:apply:{collection_name}:{doc_id}"
+            self.edit_btn.custom_id = f"flagged:edit:{collection_name}:{doc_id}"
             self.clear_btn.custom_id = f"flagged:clear:{collection_name}:{doc_id}"
+            self.edit_btn.disabled = False
         self.apply_btn.disabled = not apply_enabled
 
     @staticmethod
@@ -21015,6 +21067,19 @@ class FlaggedReviewView(discord.ui.View):
         except Exception as e:
             sentry_sdk.capture_exception(e)
             await interaction.followup.send(f"❌ Apply failed: {e}", ephemeral=True)
+
+    @discord.ui.button(label="✏️ Edit & Apply", style=discord.ButtonStyle.secondary, custom_id="flagged:edit:_:_", disabled=True)
+    async def edit_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        col, doc_id = self._parse_custom_id(button.custom_id)
+        if not col or not doc_id:
+            await interaction.response.send_message("❌ Could not parse document ID.", ephemeral=True)
+            return
+        doc = await db[col].find_one({"_id": ObjectId(doc_id)})
+        if not doc:
+            await interaction.response.send_message("❌ Question not found.", ephemeral=True)
+            return
+        proposed = (doc.get("ai_review") or {}).get("proposed_changes", {})
+        await interaction.response.send_modal(EditFlaggedQuestionModal(col, doc_id, doc, proposed))
 
     @discord.ui.button(label="🧹 Clear Audit", style=discord.ButtonStyle.secondary, custom_id="flagged:clear:_:_")
     async def clear_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
