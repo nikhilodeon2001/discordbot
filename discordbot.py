@@ -19509,9 +19509,9 @@ async def start_trivia():
             message = (
                 "\u200b\n"
                 "\U0001f9d8\u200d\u2642\ufe0f A short breather. Relax, stretch, meditate.\n\n"
-                "\U0001f49a [Unlock Perks](https://discord.com/channels/1367682586079395902/role-subscriptions)\n\n"
-                "\U0001f4a1 [Submit Feedback](https://forms.gle/iWvmN24pfGEGSy7n7)  \u00b7  "
-                "\u2b50 [Leave a Review](https://disboard.org/review/create/1367682586079395902)\n\n"
+                "\U0001f49a [Unlock Perks](https://discord.com/channels/1367682586079395902/role-subscriptions)\n"
+                "\U0001f4a1 [Submit Feedback](https://forms.gle/iWvmN24pfGEGSy7n7)\n"
+                "\u2b50 [Leave a Review](https://disboard.org/review/create/1367682586079395902)\n"
                 f"\u2753 {submit_mention} to submit questions\n\n"
                 "\U0001f3a8 Live Trivia is a pure hobby effort.\n"
                 "\u200b"
