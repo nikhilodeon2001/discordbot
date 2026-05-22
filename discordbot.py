@@ -20704,10 +20704,11 @@ class RejectReasonModal(discord.ui.Modal, title="Reject submission"):
                     member = await interaction.guild.fetch_member(sub["submitter_id"])
                     alts = sub.get("alternates") or []
                     alt_label = "Wrong choices" if sub.get("type") == "multiple_choice" else "Alternate spellings"
-                    body = (
-                        f"❌ Your trivia question submission was rejected.\n\n"
-                        f"{notify_text}\n\n"
-                        f"**Category:** {sub.get('category', '')}\n"
+                    body = f"❌ Your trivia question submission was rejected.\n\n{notify_text}"
+                    if reason_text:
+                        body += f"\n**Reason:** {reason_text}"
+                    body += (
+                        f"\n\n**Category:** {sub.get('category', '')}\n"
                         f"**Question:** {sub.get('question', '')}\n"
                         f"**Your answer:** {sub.get('correct_answer', '')}"
                     )
