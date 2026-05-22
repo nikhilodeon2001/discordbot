@@ -4603,7 +4603,8 @@ class FlagReasonModal(discord.ui.Modal, title="Flag Question"):
                 self.question,
                 f"[{self.question_type.upper()}] {reason_text}",
                 self.display_name,
-                self.flag_message
+                self.flag_message,
+                user_id=interaction.user.id,
             )
 
             # Delete the embed message after successful submission
@@ -12237,7 +12238,7 @@ async def send_flag_notification(question, flag_reason, display_name, flag_messa
         traceback.print_exc()
 
 
-async def update_audit_question(question, message_content, display_name, flag_message=None):
+async def update_audit_question(question, message_content, display_name, flag_message=None, user_id=None):
     if question:
         if question["trivia_db"] in {"math", "stats"}:
             return
@@ -12247,8 +12248,10 @@ async def update_audit_question(question, message_content, display_name, flag_me
 
         audit_entry = {
             "display_name": f"{display_name} (Discord)",
-            "message_content": message_content
+            "message_content": message_content,
         }
+        if user_id is not None:
+            audit_entry["user_id"] = user_id
 
         for attempt in range(max_retries):
             try:
@@ -20787,7 +20790,7 @@ def _to_object_id(val):
         return val
 
 
-async def _approve_submission(interaction, submission_id, edited=False):
+async def _approve_submission(interaction, submission_id, edited=False, notify_text=None):
     try:
         sub = await db.question_submissions.find_one({"_id": _to_object_id(submission_id)})
         if not sub or sub.get("status") != "awaiting_mod":
@@ -20848,17 +20851,18 @@ async def _approve_submission(interaction, submission_id, edited=False):
                 await interaction.message.edit(embed=embed, view=None)
         except Exception:
             pass
-        # DM the submitter
-        try:
-            member = interaction.guild.get_member(sub["submitter_id"]) if interaction.guild else None
-            if member:
-                pool_label = "Mystery Box" if target_pool == "mysterybox_questions" else "trivia"
-                await member.send(
-                    f"✅ Your trivia question was approved and added to the {pool_label} pool!\n\n"
-                    f"> **{sub.get('category', '')}**: {sub.get('question', '')}"
-                )
-        except (discord.Forbidden, Exception):
-            pass
+        # DM the submitter only if the mod provided a message
+        if notify_text:
+            try:
+                member = interaction.guild.get_member(sub["submitter_id"]) if interaction.guild else None
+                if member:
+                    pool_label = "Mystery Box" if target_pool == "mysterybox_questions" else "trivia"
+                    await member.send(
+                        f"✅ Your trivia question was approved and added to the {pool_label} pool!\n\n"
+                        f"{notify_text}\n\n> **{sub.get('category', '')}**: {sub.get('question', '')}"
+                    )
+            except (discord.Forbidden, Exception):
+                pass
         if not interaction.response.is_done():
             await interaction.response.send_message(f"✅ Approved into `{target_pool}`.", ephemeral=True)
         else:
@@ -20879,6 +20883,22 @@ async def _approve_submission(interaction, submission_id, edited=False):
                 await interaction.response.send_message("❌ Approve failed.", ephemeral=True)
         except Exception:
             pass
+
+
+class ApproveWithNoteModal(discord.ui.Modal, title="Approve submission"):
+    note = discord.ui.TextInput(
+        label="Message to submitter (leave blank to skip)",
+        placeholder="e.g. Great question! It'll appear in the rotation soon.",
+        style=discord.TextStyle.paragraph, required=False, max_length=300,
+    )
+
+    def __init__(self, submission_id):
+        super().__init__()
+        self.submission_id = submission_id
+
+    async def on_submit(self, interaction: discord.Interaction):
+        notify_text = (self.note.value or "").strip() or None
+        await _approve_submission(interaction, self.submission_id, edited=False, notify_text=notify_text)
 
 
 class SubmissionReviewView(discord.ui.View):
@@ -20939,7 +20959,7 @@ class SubmissionReviewView(discord.ui.View):
     @discord.ui.button(label="Approve", style=discord.ButtonStyle.success, custom_id="submit:approve:_")
     async def approve_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         sub_id = self._extract_id(button.custom_id)
-        await _approve_submission(interaction, sub_id, edited=False)
+        await interaction.response.send_modal(ApproveWithNoteModal(submission_id=sub_id))
 
     @discord.ui.button(label="Reject", style=discord.ButtonStyle.danger, custom_id="submit:reject:_")
     async def reject_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -20956,6 +20976,93 @@ class SubmissionReviewView(discord.ui.View):
         await interaction.response.send_modal(EditSubmissionModal(submission_id=sub_id, sub=sub))
 
 
+async def _dm_flaggers(guild, doc, notify_text):
+    """DM all flaggers in the audit array who have a stored user_id."""
+    if not notify_text or not guild:
+        return
+    for entry in doc.get("audit", []):
+        uid = entry.get("user_id")
+        if not uid:
+            continue
+        try:
+            member = guild.get_member(uid)
+            if member:
+                q = doc.get("question", "")
+                await member.send(f"{notify_text}\n\n> {q}")
+        except (discord.Forbidden, Exception):
+            pass
+
+
+class ApplyFlaggedModal(discord.ui.Modal, title="Apply Claude Changes"):
+    notify = discord.ui.TextInput(
+        label="Message to flagger(s) (leave blank to skip)",
+        placeholder="e.g. Good catch! We updated that question.",
+        style=discord.TextStyle.paragraph, required=False, max_length=300,
+    )
+
+    def __init__(self, collection_name, doc_id):
+        super().__init__()
+        self.collection_name = collection_name
+        self.doc_id = doc_id
+
+    async def on_submit(self, interaction: discord.Interaction):
+        col, doc_id = self.collection_name, self.doc_id
+        try:
+            doc = await db[col].find_one({"_id": ObjectId(doc_id)})
+            proposed = (doc.get("ai_review") or {}).get("proposed_changes", {})
+            update_op = {"$unset": {"audit": ""}}
+            if proposed:
+                update_op["$set"] = proposed
+            await db[col].update_one({"_id": ObjectId(doc_id)}, update_op)
+            await db.flag_notifications.update_one(
+                {"doc_id": doc_id, "collection_name": col}, {"$set": {"resolved": True}}
+            )
+            notify_text = (self.notify.value or "").strip() or None
+            await _dm_flaggers(interaction.guild, doc, notify_text)
+            embed = discord.Embed(title="🚩 Question Flagged", color=discord.Color.green())
+            embed.set_footer(text=f"✅ Applied by {interaction.user.display_name}")
+            await interaction.response.send_message("✅ Applied changes and cleared audit.", ephemeral=True)
+            if interaction.message:
+                await interaction.message.edit(embed=embed, view=None)
+        except Exception as e:
+            sentry_sdk.capture_exception(e)
+            if not interaction.response.is_done():
+                await interaction.response.send_message(f"❌ Apply failed: {e}", ephemeral=True)
+
+
+class ClearFlaggedModal(discord.ui.Modal, title="Clear Audit"):
+    notify = discord.ui.TextInput(
+        label="Message to flagger(s) (leave blank to skip)",
+        placeholder="e.g. We reviewed this — the question is correct as-is.",
+        style=discord.TextStyle.paragraph, required=False, max_length=300,
+    )
+
+    def __init__(self, collection_name, doc_id):
+        super().__init__()
+        self.collection_name = collection_name
+        self.doc_id = doc_id
+
+    async def on_submit(self, interaction: discord.Interaction):
+        col, doc_id = self.collection_name, self.doc_id
+        try:
+            doc = await db[col].find_one({"_id": ObjectId(doc_id)})
+            await db[col].update_one({"_id": ObjectId(doc_id)}, {"$unset": {"audit": ""}})
+            await db.flag_notifications.update_one(
+                {"doc_id": doc_id, "collection_name": col}, {"$set": {"resolved": True}}
+            )
+            notify_text = (self.notify.value or "").strip() or None
+            await _dm_flaggers(interaction.guild, doc, notify_text)
+            embed = discord.Embed(title="🚩 Question Flagged", color=discord.Color.greyple())
+            embed.set_footer(text=f"🧹 Audit cleared by {interaction.user.display_name}")
+            await interaction.response.send_message("🧹 Audit cleared.", ephemeral=True)
+            if interaction.message:
+                await interaction.message.edit(embed=embed, view=None)
+        except Exception as e:
+            sentry_sdk.capture_exception(e)
+            if not interaction.response.is_done():
+                await interaction.response.send_message(f"❌ Clear failed: {e}", ephemeral=True)
+
+
 class EditFlaggedQuestionModal(discord.ui.Modal, title="Edit & Apply Question Fix"):
     category_input = discord.ui.TextInput(
         label="Category", style=discord.TextStyle.short, required=True, max_length=100,
@@ -20965,6 +21072,11 @@ class EditFlaggedQuestionModal(discord.ui.Modal, title="Edit & Apply Question Fi
     )
     answers_input = discord.ui.TextInput(
         label="Answers (one per line)", style=discord.TextStyle.paragraph, required=True, max_length=1000,
+    )
+    notify = discord.ui.TextInput(
+        label="Message to flagger(s) (leave blank to skip)",
+        placeholder="e.g. Good catch! We updated that question.",
+        style=discord.TextStyle.short, required=False, max_length=300,
     )
 
     def __init__(self, collection_name, doc_id, doc, proposed):
@@ -20987,6 +21099,7 @@ class EditFlaggedQuestionModal(discord.ui.Modal, title="Edit & Apply Question Fi
             "answers": answers,
         }
         try:
+            doc_before = await db[col].find_one({"_id": ObjectId(doc_id)})
             await db[col].update_one(
                 {"_id": ObjectId(doc_id)},
                 {"$set": fields, "$unset": {"audit": ""}},
@@ -20994,6 +21107,9 @@ class EditFlaggedQuestionModal(discord.ui.Modal, title="Edit & Apply Question Fi
             await db.flag_notifications.update_one(
                 {"doc_id": doc_id, "collection_name": col}, {"$set": {"resolved": True}}
             )
+            notify_text = (self.notify.value or "").strip() or None
+            if doc_before:
+                await _dm_flaggers(interaction.guild, doc_before, notify_text)
             embed = discord.Embed(title="🚩 Question Flagged", color=discord.Color.green())
             embed.add_field(name="✏️ Edited & Applied", value=f"**{fields['category']}**: {fields['question']}", inline=False)
             embed.set_footer(text=f"✅ Edited & applied by {interaction.user.display_name}")
@@ -21072,24 +21188,7 @@ class FlaggedReviewView(discord.ui.View):
         if not col or not doc_id:
             await interaction.response.send_message("❌ Could not parse document ID.", ephemeral=True)
             return
-        await interaction.response.defer()
-        try:
-            doc = await db[col].find_one({"_id": ObjectId(doc_id)})
-            proposed = (doc.get("ai_review") or {}).get("proposed_changes", {})
-            update_op = {"$unset": {"audit": ""}}
-            if proposed:
-                update_op["$set"] = proposed
-            await db[col].update_one({"_id": ObjectId(doc_id)}, update_op)
-            await db.flag_notifications.update_one(
-                {"doc_id": doc_id, "collection_name": col}, {"$set": {"resolved": True}}
-            )
-            embed = discord.Embed(title="🚩 Question Flagged", color=discord.Color.green())
-            embed.set_footer(text=f"✅ Applied by {interaction.user.display_name}")
-            if interaction.message:
-                await interaction.message.edit(embed=embed, view=None)
-        except Exception as e:
-            sentry_sdk.capture_exception(e)
-            await interaction.followup.send(f"❌ Apply failed: {e}", ephemeral=True)
+        await interaction.response.send_modal(ApplyFlaggedModal(col, doc_id))
 
     @discord.ui.button(label="✏️ Edit & Apply", style=discord.ButtonStyle.secondary, custom_id="flagged:edit:_:_", disabled=True)
     async def edit_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -21110,19 +21209,7 @@ class FlaggedReviewView(discord.ui.View):
         if not col or not doc_id:
             await interaction.response.send_message("❌ Could not parse document ID.", ephemeral=True)
             return
-        await interaction.response.defer()
-        try:
-            await db[col].update_one({"_id": ObjectId(doc_id)}, {"$unset": {"audit": ""}})
-            await db.flag_notifications.update_one(
-                {"doc_id": doc_id, "collection_name": col}, {"$set": {"resolved": True}}
-            )
-            embed = discord.Embed(title="🚩 Question Flagged", color=discord.Color.greyple())
-            embed.set_footer(text=f"🧹 Audit cleared by {interaction.user.display_name}")
-            if interaction.message:
-                await interaction.message.edit(embed=embed, view=None)
-        except Exception as e:
-            sentry_sdk.capture_exception(e)
-            await interaction.followup.send(f"❌ Clear failed: {e}", ephemeral=True)
+        await interaction.response.send_modal(ClearFlaggedModal(col, doc_id))
 
 
 async def sync_top_contributor_role():
