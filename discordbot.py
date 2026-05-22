@@ -20639,8 +20639,13 @@ async def post_submission_to_mod_channel(submission_id):
 
 class RejectReasonModal(discord.ui.Modal, title="Reject submission"):
     reason = discord.ui.TextInput(
-        label="Reason (optional, shown to submitter)",
+        label="Reason (shown in embed)",
         placeholder="Why is this being rejected?",
+        style=discord.TextStyle.paragraph, required=False, max_length=300,
+    )
+    dm_text = discord.ui.TextInput(
+        label="DM to submitter (leave blank to skip)",
+        placeholder="Leave blank to reject silently. Fill to notify the submitter.",
         style=discord.TextStyle.paragraph, required=False, max_length=300,
     )
 
@@ -20649,13 +20654,15 @@ class RejectReasonModal(discord.ui.Modal, title="Reject submission"):
         self.submission_id = submission_id
 
     async def on_submit(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
         try:
             sub = await db.question_submissions.find_one({"_id": _to_object_id(self.submission_id)})
             if not sub or sub.get("status") != "awaiting_mod":
-                await interaction.response.send_message("❌ Submission no longer pending.", ephemeral=True)
+                await interaction.followup.send("❌ Submission no longer pending.", ephemeral=True)
                 return
             now = datetime.datetime.utcnow()
             reason_text = (self.reason.value or "").strip()
+            notify_text = (self.dm_text.value or "").strip()
             await db.question_submissions.update_one(
                 {"_id": sub["_id"]},
                 {"$set": {
@@ -20679,27 +20686,32 @@ class RejectReasonModal(discord.ui.Modal, title="Reject submission"):
             try:
                 fresh = await db.question_submissions.find_one({"_id": sub["_id"]})
                 embed = _build_submission_embed(fresh)
-                embed.set_footer(text=f"❌ Rejected by {interaction.user.display_name}")
-                await interaction.message.edit(embed=embed, view=None)
+                footer = f"❌ Rejected by {interaction.user.display_name}"
+                if reason_text:
+                    footer += f" · {reason_text}"
+                embed.set_footer(text=footer)
+                if interaction.message:
+                    await interaction.message.edit(embed=embed, view=None)
             except Exception:
                 pass
-            # DM the submitter
-            try:
-                member = interaction.guild.get_member(sub["submitter_id"])
-                if member:
-                    dm_text = "❌ Your trivia question submission was rejected."
-                    if reason_text:
-                        dm_text += f"\n**Reason:** {reason_text}"
-                    dm_text += f"\n\n> {sub.get('question', '')}"
-                    await member.send(dm_text)
-            except (discord.Forbidden, Exception):
-                pass
-            await interaction.response.send_message("Rejected.", ephemeral=True)
+            # DM the submitter only if the mod filled in the DM field
+            dm_sent = False
+            if notify_text:
+                try:
+                    member = interaction.guild.get_member(sub["submitter_id"])
+                    if member:
+                        await member.send(f"❌ Your trivia question submission was rejected.\n\n{notify_text}\n\n> {sub.get('question', '')}")
+                        dm_sent = True
+                except (discord.Forbidden, Exception):
+                    pass
+            await interaction.followup.send(
+                f"Rejected.{' DM sent.' if dm_sent else ''}", ephemeral=True
+            )
         except Exception as e:
             sentry_sdk.capture_exception(e)
             print(f"❌ RejectReasonModal.on_submit: {e}")
             try:
-                await interaction.response.send_message("❌ Something went wrong.", ephemeral=True)
+                await interaction.followup.send("❌ Something went wrong.", ephemeral=True)
             except Exception:
                 pass
 
@@ -20835,6 +20847,17 @@ async def _approve_submission(interaction, submission_id, edited=False):
             if interaction.message:
                 await interaction.message.edit(embed=embed, view=None)
         except Exception:
+            pass
+        # DM the submitter
+        try:
+            member = interaction.guild.get_member(sub["submitter_id"]) if interaction.guild else None
+            if member:
+                pool_label = "Mystery Box" if target_pool == "mysterybox_questions" else "trivia"
+                await member.send(
+                    f"✅ Your trivia question was approved and added to the {pool_label} pool!\n\n"
+                    f"> **{sub.get('category', '')}**: {sub.get('question', '')}"
+                )
+        except (discord.Forbidden, Exception):
             pass
         if not interaction.response.is_done():
             await interaction.response.send_message(f"✅ Approved into `{target_pool}`.", ephemeral=True)
