@@ -20866,10 +20866,9 @@ async def _approve_submission(interaction, submission_id, edited=False, notify_t
                 guild = interaction.guild
                 member = await guild.fetch_member(sub["submitter_id"]) if guild else None
                 if member:
-                    pool_label = "Mystery Box" if target_pool == "mysterybox_questions" else "trivia"
                     alts = sub.get("alternates") or []
                     alt_label = "Wrong choices" if sub.get("type") == "multiple_choice" else "Alternate spellings"
-                    body = f"✅ Your trivia question was approved and added to the {pool_label} pool!\n\n{notify_text}"
+                    body = f"✅ Your trivia question was approved and added to the pool!\n\n{notify_text}"
                     body += (
                         f"\n\n**Category:** {sub.get('category', '')}\n"
                         f"**Question:** {sub.get('question', '')}\n"
