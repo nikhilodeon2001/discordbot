@@ -20698,18 +20698,19 @@ class RejectReasonModal(discord.ui.Modal, title="Reject submission"):
             except Exception:
                 pass
             # DM the submitter only if the mod filled in the DM field
-            dm_sent = False
+            dm_status = ""
             if notify_text:
                 try:
                     member = await interaction.guild.fetch_member(sub["submitter_id"])
-                    if member:
-                        await member.send(f"❌ Your trivia question submission was rejected.\n\n{notify_text}\n\n> {sub.get('question', '')}")
-                        dm_sent = True
-                except (discord.Forbidden, Exception):
-                    pass
-            await interaction.followup.send(
-                f"Rejected.{' DM sent.' if dm_sent else ''}", ephemeral=True
-            )
+                    await member.send(f"❌ Your trivia question submission was rejected.\n\n{notify_text}\n\n> {sub.get('question', '')}")
+                    dm_status = " DM sent."
+                except discord.Forbidden:
+                    dm_status = " ⚠️ DM failed (user has DMs disabled)."
+                except discord.NotFound:
+                    dm_status = " ⚠️ DM failed (user not found in server)."
+                except Exception as dm_err:
+                    dm_status = f" ⚠️ DM failed: {dm_err}"
+            await interaction.followup.send(f"Rejected.{dm_status}", ephemeral=True)
         except Exception as e:
             sentry_sdk.capture_exception(e)
             print(f"❌ RejectReasonModal.on_submit: {e}")
@@ -20852,22 +20853,32 @@ async def _approve_submission(interaction, submission_id, edited=False, notify_t
         except Exception:
             pass
         # DM the submitter only if the mod provided a message
+        dm_status = ""
         if notify_text:
             try:
-                member = await interaction.guild.fetch_member(sub["submitter_id"]) if interaction.guild else None
+                guild = interaction.guild
+                member = await guild.fetch_member(sub["submitter_id"]) if guild else None
                 if member:
                     pool_label = "Mystery Box" if target_pool == "mysterybox_questions" else "trivia"
                     await member.send(
                         f"✅ Your trivia question was approved and added to the {pool_label} pool!\n\n"
                         f"{notify_text}\n\n> **{sub.get('category', '')}**: {sub.get('question', '')}"
                     )
-            except (discord.Forbidden, Exception):
-                pass
+                    dm_status = " DM sent."
+                else:
+                    dm_status = " ⚠️ DM failed (not in server)."
+            except discord.Forbidden:
+                dm_status = " ⚠️ DM failed (user has DMs disabled)."
+            except discord.NotFound:
+                dm_status = " ⚠️ DM failed (user not found in server)."
+            except Exception as dm_err:
+                dm_status = f" ⚠️ DM failed: {dm_err}"
+        approved_msg = f"✅ Approved into `{target_pool}`.{dm_status}"
         if not interaction.response.is_done():
-            await interaction.response.send_message(f"✅ Approved into `{target_pool}`.", ephemeral=True)
+            await interaction.response.send_message(approved_msg, ephemeral=True)
         else:
             try:
-                await interaction.followup.send(f"✅ Approved into `{target_pool}`.", ephemeral=True)
+                await interaction.followup.send(approved_msg, ephemeral=True)
             except Exception:
                 pass
         # Update the Top Contributor role (best-effort)
