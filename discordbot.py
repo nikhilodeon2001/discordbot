@@ -21718,6 +21718,24 @@ async def on_ready():
         # Tournament commands are restricted to that channel via allowed_channel_id parameter in setup_tournament_system()
         # All commands for OKRAN guild (including tournament commands) are synced above
 
+    # Always fetch command IDs from Discord, even if sync was skipped
+    try:
+        _okran_guild_obj = discord.Object(id=OKRAN_GUILD_ID)
+        _fetched = await bot.tree.fetch_commands(guild=_okran_guild_obj)
+        global SUBMIT_COMMAND_ID, FLAG_COMMAND_ID, PERKS_COMMAND_ID, OKRAFX_COMMAND_ID
+        for _cmd in _fetched:
+            if _cmd.name == "submit" and not SUBMIT_COMMAND_ID:
+                SUBMIT_COMMAND_ID = _cmd.id
+            elif _cmd.name == "flag" and not FLAG_COMMAND_ID:
+                FLAG_COMMAND_ID = _cmd.id
+            elif _cmd.name == "perks" and not PERKS_COMMAND_ID:
+                PERKS_COMMAND_ID = _cmd.id
+            elif _cmd.name == "okrafx" and not OKRAFX_COMMAND_ID:
+                OKRAFX_COMMAND_ID = _cmd.id
+        print(f"✅ Command IDs — submit:{SUBMIT_COMMAND_ID} flag:{FLAG_COMMAND_ID} perks:{PERKS_COMMAND_ID} okrafx:{OKRAFX_COMMAND_ID}")
+    except Exception as _fetch_e:
+        print(f"⚠️ Could not fetch command IDs: {_fetch_e}")
+
         # NO GLOBAL SYNC - removed to prevent conflicts with simply_trivia_standalone.py
         # Global sync was causing /start and other tournament commands to disappear
         # when simply_trivia_standalone.py was invited to the same server
