@@ -21281,6 +21281,19 @@ async def sync_top_contributor_role():
         if member and role not in member.roles:
             try:
                 await member.add_roles(role, reason="Top contributor (last 7 days)")
+                trivia_channel = bot.get_channel(channel_id)
+                if trivia_channel:
+                    await trivia_channel.send(
+                        f"🏆 **{member.display_name}** is now the **Top Contributor** of the week! "
+                        f"Thanks for submitting questions to the pool! 🥒"
+                    )
+                try:
+                    await member.send(
+                        f"🏆 Congrats! You're now the **Top Contributor** of the week on Live Trivia!\n\n"
+                        f"You've submitted the most approved questions over the last 7 days. Keep it up! 🥒"
+                    )
+                except (discord.Forbidden, Exception):
+                    pass
             except (discord.Forbidden, Exception):
                 pass
 
