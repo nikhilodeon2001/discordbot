@@ -20641,13 +20641,8 @@ async def post_submission_to_mod_channel(submission_id):
 
 
 class RejectReasonModal(discord.ui.Modal, title="Reject submission"):
-    reason = discord.ui.TextInput(
-        label="Reason (shown in embed)",
-        placeholder="Why is this being rejected?",
-        style=discord.TextStyle.paragraph, required=False, max_length=300,
-    )
     dm_text = discord.ui.TextInput(
-        label="DM to submitter (leave blank to skip)",
+        label="Message to submitter (leave blank to skip)",
         placeholder="Leave blank to reject silently. Fill to notify the submitter.",
         style=discord.TextStyle.paragraph, required=False, max_length=300,
     )
@@ -20664,7 +20659,6 @@ class RejectReasonModal(discord.ui.Modal, title="Reject submission"):
                 await interaction.followup.send("❌ Submission no longer pending.", ephemeral=True)
                 return
             now = datetime.datetime.utcnow()
-            reason_text = (self.reason.value or "").strip()
             notify_text = (self.dm_text.value or "").strip()
             await db.question_submissions.update_one(
                 {"_id": sub["_id"]},
@@ -20673,7 +20667,6 @@ class RejectReasonModal(discord.ui.Modal, title="Reject submission"):
                     "mod_decision": "reject",
                     "mod_id": interaction.user.id,
                     "mod_name": interaction.user.display_name,
-                    "mod_reason": reason_text,
                     "decided_at": now,
                 }},
             )
@@ -20689,10 +20682,7 @@ class RejectReasonModal(discord.ui.Modal, title="Reject submission"):
             try:
                 fresh = await db.question_submissions.find_one({"_id": sub["_id"]})
                 embed = _build_submission_embed(fresh)
-                footer = f"❌ Rejected by {interaction.user.display_name}"
-                if reason_text:
-                    footer += f" · {reason_text}"
-                embed.set_footer(text=footer)
+                embed.set_footer(text=f"❌ Rejected by {interaction.user.display_name}")
                 if interaction.message:
                     await interaction.message.edit(embed=embed, view=None)
             except Exception:
@@ -20705,8 +20695,6 @@ class RejectReasonModal(discord.ui.Modal, title="Reject submission"):
                     alts = sub.get("alternates") or []
                     alt_label = "Wrong choices" if sub.get("type") == "multiple_choice" else "Alternate spellings"
                     body = f"❌ Your trivia question submission was rejected.\n\n{notify_text}"
-                    if reason_text:
-                        body += f"\n**Reason:** {reason_text}"
                     body += (
                         f"\n\n**Category:** {sub.get('category', '')}\n"
                         f"**Question:** {sub.get('question', '')}\n"
@@ -20859,7 +20847,8 @@ async def _approve_submission(interaction, submission_id, edited=False, notify_t
             fresh = await db.question_submissions.find_one({"_id": sub["_id"]})
             embed = _build_submission_embed(fresh)
             verb = "Edited & Approved" if edited else "Approved"
-            embed.set_footer(text=f"✅ {verb} by {interaction.user.display_name} · +{POINTS_FOR_APPROVAL} pt")
+            footer = f"✅ {verb} by {interaction.user.display_name} · +{POINTS_FOR_APPROVAL} pt"
+            embed.set_footer(text=footer)
             if interaction.message:
                 await interaction.message.edit(embed=embed, view=None)
         except Exception:
@@ -20874,10 +20863,9 @@ async def _approve_submission(interaction, submission_id, edited=False, notify_t
                     pool_label = "Mystery Box" if target_pool == "mysterybox_questions" else "trivia"
                     alts = sub.get("alternates") or []
                     alt_label = "Wrong choices" if sub.get("type") == "multiple_choice" else "Alternate spellings"
-                    body = (
-                        f"✅ Your trivia question was approved and added to the {pool_label} pool!\n\n"
-                        f"{notify_text}\n\n"
-                        f"**Category:** {sub.get('category', '')}\n"
+                    body = f"✅ Your trivia question was approved and added to the {pool_label} pool!\n\n{notify_text}"
+                    body += (
+                        f"\n\n**Category:** {sub.get('category', '')}\n"
                         f"**Question:** {sub.get('question', '')}\n"
                         f"**Answer:** {sub.get('correct_answer', '')}"
                     )
