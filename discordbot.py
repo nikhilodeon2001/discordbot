@@ -20702,7 +20702,18 @@ class RejectReasonModal(discord.ui.Modal, title="Reject submission"):
             if notify_text:
                 try:
                     member = await interaction.guild.fetch_member(sub["submitter_id"])
-                    await member.send(f"❌ Your trivia question submission was rejected.\n\n{notify_text}\n\n> {sub.get('question', '')}")
+                    alts = sub.get("alternates") or []
+                    alt_label = "Wrong choices" if sub.get("type") == "multiple_choice" else "Alternate spellings"
+                    body = (
+                        f"❌ Your trivia question submission was rejected.\n\n"
+                        f"{notify_text}\n\n"
+                        f"**Category:** {sub.get('category', '')}\n"
+                        f"**Question:** {sub.get('question', '')}\n"
+                        f"**Your answer:** {sub.get('correct_answer', '')}"
+                    )
+                    if alts:
+                        body += f"\n**{alt_label}:** {', '.join(alts)}"
+                    await member.send(body)
                     dm_status = " DM sent."
                 except discord.Forbidden:
                     dm_status = " ⚠️ DM failed (user has DMs disabled)."
@@ -20860,10 +20871,18 @@ async def _approve_submission(interaction, submission_id, edited=False, notify_t
                 member = await guild.fetch_member(sub["submitter_id"]) if guild else None
                 if member:
                     pool_label = "Mystery Box" if target_pool == "mysterybox_questions" else "trivia"
-                    await member.send(
+                    alts = sub.get("alternates") or []
+                    alt_label = "Wrong choices" if sub.get("type") == "multiple_choice" else "Alternate spellings"
+                    body = (
                         f"✅ Your trivia question was approved and added to the {pool_label} pool!\n\n"
-                        f"{notify_text}\n\n> **{sub.get('category', '')}**: {sub.get('question', '')}"
+                        f"{notify_text}\n\n"
+                        f"**Category:** {sub.get('category', '')}\n"
+                        f"**Question:** {sub.get('question', '')}\n"
+                        f"**Answer:** {sub.get('correct_answer', '')}"
                     )
+                    if alts:
+                        body += f"\n**{alt_label}:** {', '.join(alts)}"
+                    await member.send(body)
                     dm_status = " DM sent."
                 else:
                     dm_status = " ⚠️ DM failed (not in server)."
