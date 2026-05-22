@@ -12218,7 +12218,17 @@ async def send_flag_notification(question, flag_reason, display_name, flag_messa
             inline=False
         )
 
-        await channel.send(embed=embed)
+        flag_view = FlaggedReviewView(collection_name=collection_name, doc_id=str(document_id))
+        msg = await channel.send(embed=embed, view=flag_view)
+        bot.add_view(flag_view)
+        try:
+            await db.flag_notifications.update_one(
+                {"doc_id": str(document_id), "collection_name": collection_name},
+                {"$set": {"message_id": msg.id, "resolved": False, "posted_at": datetime.datetime.utcnow()}},
+                upsert=True,
+            )
+        except Exception:
+            pass
         print(f"✅ Sent flag notification for question ID: {document_id}")
 
     except Exception as e:
@@ -20146,6 +20156,226 @@ async def cleanup_lodge_messages():
 
 SUBMISSION_FORBIDDEN_SUBSTRINGS = ("<@", "<#", "http", "discord.gg")
 
+SUBMISSION_REVIEW_SYSTEM_PROMPT = """You are a trivia question quality reviewer evaluating a user-submitted question for addition to a trivia game.
+
+Evaluate the question on these criteria:
+- Factually correct: the stated answer must be verifiably true
+- Unambiguous: only one answer should be clearly correct
+- Appropriate: not NSFW, no slurs, not purely opinion-based
+- Not a duplicate: not substantially the same as questions in the provided similar-question list
+- For multiple-choice: wrong choices should be plausibly distinguishable from the correct answer
+
+Return ONLY a JSON object with this exact structure:
+{
+  "verdict": "approve" | "reject" | "uncertain",
+  "reasoning": "Brief explanation (1-2 sentences)",
+  "suggested_edits": {
+    "category": "new category if needed",
+    "question": "new question text if needed",
+    "correct_answer": "corrected answer if needed"
+  }
+}
+
+IMPORTANT:
+- Only include keys in suggested_edits for fields that actually need to change
+- If verdict is "approve" or "uncertain", suggested_edits may be empty {}
+- Be conservative: approve borderline questions, reject only clear failures
+- Return valid JSON only, no markdown, no explanation outside the JSON"""
+
+FLAGGED_REVIEW_SYSTEM_PROMPT = """You are a trivia question quality reviewer. You will be given a trivia question with user-submitted flag reports, and you must decide whether the question needs to be updated.
+
+ANSWER ARRAY RULES:
+- For multiple choice questions (url = "multiple choice", "multiple choice opentrivia", or "multiple choice oracle"):
+  - answers[0] = the correct answer letter (A, B, C, D, True, or False)
+  - answers[1:] = the labeled choices shown to players (e.g. "A) Paris", "B) London")
+  - To fix a wrong answer, update answers[0] to the correct letter
+- For free-text questions:
+  - answers[0] = the primary correct answer
+  - answers[1:] = accepted alternate answers
+
+YOUR TASK:
+1. Analyze the question, category, answers, and all user flag comments
+2. Decide: does the question need to be updated, or is it fine as-is?
+3. Return ONLY a JSON object with this exact structure:
+
+{
+  "ai_action": "no_change" | "update",
+  "ai_reasoning": "Brief explanation of your decision",
+  "proposed_changes": {
+    "category": "new category if needed",
+    "question": "new question text if needed",
+    "answers": ["new", "answers", "array", "if", "needed"]
+  }
+}
+
+IMPORTANT:
+- Only include keys in proposed_changes for fields that actually need to change
+- If ai_action is "no_change", proposed_changes must be {}
+- If a user flag is incorrect or the question is already right, set ai_action to "no_change"
+- Be conservative — only update if the flag is clearly correct
+- Return valid JSON only, no markdown, no explanation outside the JSON"""
+
+
+def _is_multiple_choice_url(url):
+    return url in {"multiple choice", "multiple choice opentrivia", "multiple choice oracle"}
+
+
+def _format_flagged_question_for_claude(doc):
+    url = doc.get("url", "")
+    answers = doc.get("answers", [])
+    question_type = "multiple choice" if _is_multiple_choice_url(url) else "free-text"
+    lines = [
+        f"CATEGORY: {doc.get('category', 'N/A')}",
+        f"QUESTION: {doc.get('question', 'N/A')}",
+        f"QUESTION TYPE: {question_type}",
+    ]
+    if _is_multiple_choice_url(url):
+        lines.append(f"CORRECT ANSWER LETTER: {answers[0] if answers else 'N/A'}")
+        if len(answers) > 1:
+            lines.append("ANSWER CHOICES:")
+            for choice in answers[1:]:
+                lines.append(f"  {choice}")
+    else:
+        lines.append(f"CORRECT ANSWER: {answers[0] if answers else 'N/A'}")
+        if len(answers) > 1:
+            lines.append(f"ALTERNATE ANSWERS: {', '.join(answers[1:])}")
+    lines.append("\nUSER FLAG REPORTS:")
+    for entry in doc.get("audit", []):
+        name = entry.get("display_name", "Unknown")
+        comment = entry.get("message_content", "")
+        lines.append(f"  [{name}]: {comment}")
+    return "\n".join(lines)
+
+
+async def _run_claude_review(submission_id, mod_user):
+    """Call Claude to evaluate a pending submission. Stores result in question_submissions doc."""
+    if not anthropic_client:
+        return
+    sub = await db.question_submissions.find_one({"_id": _to_object_id(submission_id)})
+    if not sub:
+        return
+    now = datetime.datetime.utcnow()
+    # Fetch similar questions for duplicate detection
+    similar_lines = []
+    try:
+        cursor = db.trivia_questions.find(
+            {"$text": {"$search": sub["question"]}},
+            {"score": {"$meta": "textScore"}, "question": 1, "category": 1, "answers": 1},
+        ).sort([("score", {"$meta": "textScore"})]).limit(8)
+        similar_docs = await cursor.to_list(length=8)
+    except Exception:
+        similar_docs = await db.trivia_questions.find(
+            {"category": sub.get("category", "")}, {"question": 1, "answers": 1}
+        ).limit(8).to_list(length=8)
+    for i, sdoc in enumerate(similar_docs, 1):
+        ans = sdoc.get("answers", ["?"])
+        similar_lines.append(f"  {i}. {sdoc.get('question', '')} → {ans[0] if ans else '?'}")
+    # Build user message
+    type_label = "multiple_choice" if sub.get("type") == "multiple_choice" else "free_text"
+    user_content = (
+        f"TYPE: {type_label}\n"
+        f"CATEGORY: {sub.get('category', '')}\n"
+        f"QUESTION: {sub.get('question', '')}\n"
+        f"CORRECT ANSWER: {sub.get('correct_answer', '')}\n"
+        f"ALTERNATES/WRONG CHOICES: {', '.join(sub.get('alternates') or []) or 'none'}\n"
+    )
+    if similar_lines:
+        user_content += "\nSIMILAR EXISTING QUESTIONS (check for duplicates):\n" + "\n".join(similar_lines)
+    # Call Claude
+    ai_verdict = "uncertain"
+    ai_reasoning = "Parse error"
+    ai_suggested_edits = {}
+    for attempt in range(2):
+        try:
+            response = await anthropic_client.messages.create(
+                model=CLAUDE_MODEL,
+                max_tokens=512,
+                system=[{"type": "text", "text": SUBMISSION_REVIEW_SYSTEM_PROMPT,
+                         "cache_control": {"type": "ephemeral"}}],
+                messages=[{"role": "user", "content": user_content}],
+            )
+            parsed = json.loads(response.content[0].text.strip())
+            ai_verdict = parsed.get("verdict", "uncertain")
+            ai_reasoning = parsed.get("reasoning", "")
+            ai_suggested_edits = parsed.get("suggested_edits", {})
+            break
+        except json.JSONDecodeError:
+            if attempt == 0:
+                import asyncio as _asyncio
+                await _asyncio.sleep(1)
+            ai_verdict = "uncertain"
+            ai_reasoning = "Claude returned unparseable response"
+        except Exception as e:
+            sentry_sdk.capture_exception(e)
+            ai_verdict = "uncertain"
+            ai_reasoning = f"Claude API unavailable: {e}"
+            break
+    await db.question_submissions.update_one(
+        {"_id": _to_object_id(submission_id)},
+        {"$set": {
+            "ai_verdict": ai_verdict,
+            "ai_reasoning": ai_reasoning,
+            "ai_suggested_edits": ai_suggested_edits,
+            "ai_requested_by": mod_user.id,
+            "ai_completed_at": now,
+        }},
+    )
+
+
+async def _run_flagged_review(collection_name, doc_id, mod_user_id):
+    """Call Claude to evaluate a flagged question. Stores result in ai_review sub-doc."""
+    if not anthropic_client:
+        return {"ai_action": "no_change", "ai_reasoning": "Claude client not configured", "proposed_changes": {}}
+    try:
+        doc = await db[collection_name].find_one({"_id": ObjectId(doc_id)})
+    except Exception:
+        return {"ai_action": "no_change", "ai_reasoning": "Document not found", "proposed_changes": {}}
+    if not doc:
+        return {"ai_action": "no_change", "ai_reasoning": "Document not found", "proposed_changes": {}}
+    if doc.get("url") == "scramble":
+        return {"ai_action": "no_change", "ai_reasoning": "Scramble questions are generated at runtime — skipping.", "proposed_changes": {}}
+    user_content = _format_flagged_question_for_claude(doc)
+    ai_action = "no_change"
+    ai_reasoning = "Parse error"
+    proposed_changes = {}
+    for attempt in range(2):
+        try:
+            response = await anthropic_client.messages.create(
+                model=CLAUDE_MODEL,
+                max_tokens=1024,
+                system=[{"type": "text", "text": FLAGGED_REVIEW_SYSTEM_PROMPT,
+                         "cache_control": {"type": "ephemeral"}}],
+                messages=[{"role": "user", "content": user_content}],
+            )
+            parsed = json.loads(response.content[0].text.strip())
+            ai_action = parsed.get("ai_action", "no_change")
+            ai_reasoning = parsed.get("ai_reasoning", "")
+            proposed_changes = parsed.get("proposed_changes", {})
+            break
+        except json.JSONDecodeError:
+            if attempt == 0:
+                import asyncio as _asyncio
+                await _asyncio.sleep(1)
+            ai_action = "no_change"
+            ai_reasoning = "Claude returned unparseable response"
+        except Exception as e:
+            sentry_sdk.capture_exception(e)
+            ai_action = "no_change"
+            ai_reasoning = f"Claude API unavailable: {e}"
+            break
+    result = {
+        "ai_action": ai_action,
+        "ai_reasoning": ai_reasoning,
+        "proposed_changes": proposed_changes,
+        "ai_reviewed_at": datetime.datetime.utcnow(),
+        "ai_reviewed_by": mod_user_id,
+    }
+    await db[collection_name].update_one(
+        {"_id": ObjectId(doc_id)},
+        {"$set": {"ai_review": result}},
+    )
+    return result
+
 
 def _parse_alternates(raw):
     parts = []
@@ -20629,13 +20859,17 @@ async def _approve_submission(interaction, submission_id, edited=False):
 
 
 class SubmissionReviewView(discord.ui.View):
-    def __init__(self, submission_id=None):
+    def __init__(self, submission_id=None, ai_done=False):
         super().__init__(timeout=None)
         # NOTE: submission_id is encoded in the custom_id so the view survives restarts
         if submission_id is not None:
+            self.claude_btn.custom_id = f"submit:claude:{submission_id}"
             self.approve_btn.custom_id = f"submit:approve:{submission_id}"
             self.reject_btn.custom_id = f"submit:reject:{submission_id}"
             self.edit_btn.custom_id = f"submit:edit:{submission_id}"
+        if ai_done:
+            self.claude_btn.disabled = True
+            self.claude_btn.label = "🤖 Reviewed"
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if not any(r.id == SUBMISSION_MOD_ROLE_ID for r in getattr(interaction.user, "roles", [])):
@@ -20649,6 +20883,35 @@ class SubmissionReviewView(discord.ui.View):
             return custom_id.split(":")[-1]
         except Exception:
             return None
+
+    @discord.ui.button(label="🤖 Claude Review", style=discord.ButtonStyle.blurple, custom_id="submit:claude:_")
+    async def claude_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        sub_id = self._extract_id(button.custom_id)
+        sub = await db.question_submissions.find_one({"_id": _to_object_id(sub_id)})
+        if not sub or sub.get("status") != "awaiting_mod":
+            await interaction.response.send_message("❌ Submission no longer pending.", ephemeral=True)
+            return
+        if sub.get("ai_completed_at"):
+            await interaction.response.send_message("❌ Claude review already run for this submission.", ephemeral=True)
+            return
+        await interaction.response.defer()
+        await _run_claude_review(sub_id, interaction.user)
+        fresh = await db.question_submissions.find_one({"_id": _to_object_id(sub_id)})
+        embed = _build_submission_embed(fresh)
+        verdict = fresh.get("ai_verdict", "uncertain")
+        verdict_emoji = {"approve": "✅", "reject": "❌", "uncertain": "❓"}.get(verdict, "❓")
+        embed.add_field(
+            name=f"{verdict_emoji} Claude verdict: {verdict.upper()}",
+            value=fresh.get("ai_reasoning", "")[:1024],
+            inline=False,
+        )
+        edits = fresh.get("ai_suggested_edits") or {}
+        if edits:
+            edits_text = "\n".join(f"**{k}:** {v}" for k, v in edits.items())
+            embed.add_field(name="💡 Suggested edits", value=edits_text[:1024], inline=False)
+        new_view = SubmissionReviewView(submission_id=sub_id, ai_done=True)
+        if interaction.message:
+            await interaction.message.edit(embed=embed, view=new_view)
 
     @discord.ui.button(label="Approve", style=discord.ButtonStyle.success, custom_id="submit:approve:_")
     async def approve_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -20668,6 +20931,110 @@ class SubmissionReviewView(discord.ui.View):
             await interaction.response.send_message("❌ Submission no longer pending.", ephemeral=True)
             return
         await interaction.response.send_modal(EditSubmissionModal(submission_id=sub_id, sub=sub))
+
+
+class FlaggedReviewView(discord.ui.View):
+    def __init__(self, collection_name=None, doc_id=None, apply_enabled=False):
+        super().__init__(timeout=None)
+        if collection_name and doc_id:
+            self.claude_btn.custom_id = f"flagged:claude:{collection_name}:{doc_id}"
+            self.apply_btn.custom_id = f"flagged:apply:{collection_name}:{doc_id}"
+            self.clear_btn.custom_id = f"flagged:clear:{collection_name}:{doc_id}"
+        self.apply_btn.disabled = not apply_enabled
+
+    @staticmethod
+    def _parse_custom_id(custom_id):
+        # format: flagged:{action}:{collection}:{doc_id}
+        parts = custom_id.split(":", 3)
+        if len(parts) == 4:
+            return parts[2], parts[3]
+        return None, None
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if not any(r.id == SUBMISSION_MOD_ROLE_ID for r in getattr(interaction.user, "roles", [])):
+            await interaction.response.send_message("❌ Only moderators can use these buttons.", ephemeral=True)
+            return False
+        return True
+
+    @discord.ui.button(label="🤖 Claude Review", style=discord.ButtonStyle.blurple, custom_id="flagged:claude:_:_")
+    async def claude_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        col, doc_id = self._parse_custom_id(button.custom_id)
+        if not col or not doc_id:
+            await interaction.response.send_message("❌ Could not parse document ID.", ephemeral=True)
+            return
+        await interaction.response.defer()
+        result = await _run_flagged_review(col, doc_id, interaction.user.id)
+        ai_action = result.get("ai_action", "no_change")
+        ai_reasoning = result.get("ai_reasoning", "")
+        proposed = result.get("proposed_changes", {})
+        # Rebuild embed with verdict
+        try:
+            doc = await db[col].find_one({"_id": ObjectId(doc_id)})
+            answers = doc.get("answers", [])
+            embed = discord.Embed(
+                title="🚩 Question Flagged",
+                color=discord.Color.red(),
+                timestamp=datetime.datetime.now(timezone.utc),
+            )
+            embed.add_field(name="❓ Question", value=f"**{doc.get('category','')}**: {doc.get('question','')}", inline=False)
+            embed.add_field(name="Answers", value=", ".join(str(a) for a in answers)[:512] or "—", inline=False)
+            action_emoji = "🔄" if ai_action == "update" else "✅"
+            embed.add_field(name=f"{action_emoji} Claude: {ai_action.upper()}", value=ai_reasoning[:1024], inline=False)
+            if proposed:
+                embed.add_field(name="📝 Proposed changes", value="\n".join(f"**{k}:** {v}" for k, v in proposed.items())[:1024], inline=False)
+        except Exception:
+            embed = discord.Embed(title="🚩 Question Flagged (Claude reviewed)", color=discord.Color.red())
+            embed.add_field(name="Verdict", value=f"{ai_action}: {ai_reasoning[:512]}", inline=False)
+        new_view = FlaggedReviewView(collection_name=col, doc_id=doc_id, apply_enabled=(ai_action == "update"))
+        new_view.claude_btn.disabled = True
+        new_view.claude_btn.label = "🤖 Reviewed"
+        if interaction.message:
+            await interaction.message.edit(embed=embed, view=new_view)
+
+    @discord.ui.button(label="✅ Apply Changes", style=discord.ButtonStyle.success, custom_id="flagged:apply:_:_", disabled=True)
+    async def apply_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        col, doc_id = self._parse_custom_id(button.custom_id)
+        if not col or not doc_id:
+            await interaction.response.send_message("❌ Could not parse document ID.", ephemeral=True)
+            return
+        await interaction.response.defer()
+        try:
+            doc = await db[col].find_one({"_id": ObjectId(doc_id)})
+            proposed = (doc.get("ai_review") or {}).get("proposed_changes", {})
+            update_op = {"$unset": {"audit": ""}}
+            if proposed:
+                update_op["$set"] = proposed
+            await db[col].update_one({"_id": ObjectId(doc_id)}, update_op)
+            await db.flag_notifications.update_one(
+                {"doc_id": doc_id, "collection_name": col}, {"$set": {"resolved": True}}
+            )
+            embed = discord.Embed(title="🚩 Question Flagged", color=discord.Color.green())
+            embed.set_footer(text=f"✅ Applied by {interaction.user.display_name}")
+            if interaction.message:
+                await interaction.message.edit(embed=embed, view=None)
+        except Exception as e:
+            sentry_sdk.capture_exception(e)
+            await interaction.followup.send(f"❌ Apply failed: {e}", ephemeral=True)
+
+    @discord.ui.button(label="🧹 Clear Audit", style=discord.ButtonStyle.secondary, custom_id="flagged:clear:_:_")
+    async def clear_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        col, doc_id = self._parse_custom_id(button.custom_id)
+        if not col or not doc_id:
+            await interaction.response.send_message("❌ Could not parse document ID.", ephemeral=True)
+            return
+        await interaction.response.defer()
+        try:
+            await db[col].update_one({"_id": ObjectId(doc_id)}, {"$unset": {"audit": ""}})
+            await db.flag_notifications.update_one(
+                {"doc_id": doc_id, "collection_name": col}, {"$set": {"resolved": True}}
+            )
+            embed = discord.Embed(title="🚩 Question Flagged", color=discord.Color.greyple())
+            embed.set_footer(text=f"🧹 Audit cleared by {interaction.user.display_name}")
+            if interaction.message:
+                await interaction.message.edit(embed=embed, view=None)
+        except Exception as e:
+            sentry_sdk.capture_exception(e)
+            await interaction.followup.send(f"❌ Clear failed: {e}", ephemeral=True)
 
 
 async def sync_top_contributor_role():
@@ -20708,6 +21075,11 @@ async def register_persistent_submission_views():
         bot.add_view(SubmissionReviewView())
         async for sub in db.question_submissions.find({"status": "awaiting_mod"}, {"_id": 1}):
             bot.add_view(SubmissionReviewView(submission_id=str(sub["_id"])))
+        async for fn in db.flag_notifications.find({"resolved": False}):
+            bot.add_view(FlaggedReviewView(
+                collection_name=fn["collection_name"],
+                doc_id=fn["doc_id"],
+            ))
     except Exception as e:
         sentry_sdk.capture_exception(e)
         print(f"⚠️ register_persistent_submission_views: {e}")
