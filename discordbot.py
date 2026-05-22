@@ -19397,14 +19397,20 @@ async def start_trivia():
             else:
                 await asyncio.sleep(5)
 
-            _flag_mention = f"</flag:{FLAG_COMMAND_ID}>" if FLAG_COMMAND_ID else "/flag"
-            _perks_mention = f"</perks:{PERKS_COMMAND_ID}>" if PERKS_COMMAND_ID else "/perks"
-            _submit_mention = f"</submit:{SUBMIT_COMMAND_ID}>" if SUBMIT_COMMAND_ID else "/submit"
+            flag_mention = f"</flag:{FLAG_COMMAND_ID}>" if FLAG_COMMAND_ID else "/flag"
+            perks_mention = f"</perks:{PERKS_COMMAND_ID}>" if PERKS_COMMAND_ID else "/perks"
+            submit_mention = f"</submit:{SUBMIT_COMMAND_ID}>" if SUBMIT_COMMAND_ID else "/submit"
+            lab_message = "\u200b\n✨🧪 **NEW** from the **Okra Lab**! 🧪✨\n"
+            lab_message += f"\n{submit_mention} **Submit Your Own Trivia Questions!**\n"
+            lab_message += "Community questions are now in the rotation!\n"
+            lab_message += "\n\n\u200b"
+            await safe_send(channel, lab_message)
+            await asyncio.sleep(3)
             start_message = f"\u200b\n\u200b\n🎉🤹‍♂️ **Live Trivia & Games for Discord!**\n"
             start_message += f"\n⏩ Starting a **{questions_per_round} question** round! ⏩"
-            start_message += f"\n\n🚩 {{_flag_mention}} to report a question"
-            start_message += f"\n🗝️ {{_perks_mention}} to unlock perks"
-            start_message += f"\n❓ {{_submit_mention}} to submit questions"
+            start_message += f"\n\n🚩 {flag_mention} to report a question"
+            start_message += f"\n🗝️ {perks_mention} to unlock perks"
+            start_message += f"\n❓ {submit_mention} to submit questions"
 
             if current_longest_round_streak["user"] is not None and await get_coffees(current_longest_round_streak["user_id"]) > 0:
                 start_message += f"\n\n🕹️ **{current_longest_round_streak['user']}** can toggle modes mid-game"
