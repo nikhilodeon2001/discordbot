@@ -21293,13 +21293,38 @@ async def register_persistent_submission_views():
         print(f"⚠️ register_persistent_submission_views: {e}")
 
 
+class SubmitTypeView(discord.ui.View):
+    def __init__(self, submitter_id, submitter_name):
+        super().__init__(timeout=120)
+        self.submitter_id = submitter_id
+        self.submitter_name = submitter_name
+
+    @discord.ui.button(label="Free-text", style=discord.ButtonStyle.primary)
+    async def free_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_modal(SubmitQuestionModal(
+            submitter_id=self.submitter_id,
+            submitter_name=self.submitter_name,
+            sub_type="free_text",
+        ))
+
+    @discord.ui.button(label="Multiple Choice", style=discord.ButtonStyle.primary)
+    async def mc_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_modal(SubmitQuestionModal(
+            submitter_id=self.submitter_id,
+            submitter_name=self.submitter_name,
+            sub_type="multiple_choice",
+        ))
+
+    @discord.ui.button(label="Bulk Submit", style=discord.ButtonStyle.secondary)
+    async def bulk_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_modal(BulkSubmitModal(
+            submitter_id=self.submitter_id,
+            submitter_name=self.submitter_name,
+        ))
+
+
 @bot.tree.command(name="submit", description="Submit a trivia question for review", guild=discord.Object(id=OKRAN_GUILD_ID))
-@discord.app_commands.describe(type="Free-text (typed answer) or multiple choice (A/B/C/D)")
-@discord.app_commands.choices(type=[
-    discord.app_commands.Choice(name="Free-text", value="free_text"),
-    discord.app_commands.Choice(name="Multiple choice", value="multiple_choice"),
-])
-async def submit_command(interaction: discord.Interaction, type: discord.app_commands.Choice[str]):
+async def submit_command(interaction: discord.Interaction):
     try:
         count_24h = await _count_submissions_last_24h(interaction.user.id)
         if count_24h >= MAX_SUBMISSIONS_PER_24H:
@@ -21308,12 +21333,8 @@ async def submit_command(interaction: discord.Interaction, type: discord.app_com
                 ephemeral=True,
             )
             return
-        modal = SubmitQuestionModal(
-            submitter_id=interaction.user.id,
-            submitter_name=interaction.user.display_name,
-            sub_type=type.value,
-        )
-        await interaction.response.send_modal(modal)
+        view = SubmitTypeView(submitter_id=interaction.user.id, submitter_name=interaction.user.display_name)
+        await interaction.response.send_message("What type of question are you submitting?", view=view, ephemeral=True)
     except Exception as e:
         sentry_sdk.capture_exception(e)
         try:
@@ -21412,21 +21433,6 @@ class BulkSubmitModal(discord.ui.Modal, title="Bulk Submit Questions"):
             except Exception:
                 pass
 
-
-@bot.tree.command(name="submit_bulk", description="Submit multiple trivia questions at once", guild=discord.Object(id=OKRAN_GUILD_ID))
-async def submit_bulk_command(interaction: discord.Interaction):
-    try:
-        modal = BulkSubmitModal(
-            submitter_id=interaction.user.id,
-            submitter_name=interaction.user.display_name,
-        )
-        await interaction.response.send_modal(modal)
-    except Exception as e:
-        sentry_sdk.capture_exception(e)
-        try:
-            await interaction.response.send_message("❌ Something went wrong.", ephemeral=True)
-        except Exception:
-            pass
 
 
 @bot.tree.command(name="contributors", description="Top question contributors", guild=discord.Object(id=OKRAN_GUILD_ID))
