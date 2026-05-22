@@ -17235,7 +17235,7 @@ async def ask_question(trivia_category, trivia_question, trivia_url, trivia_answ
     try:
         submitter_line = await get_submitter_attribution(trivia_db, trivia_id)
         if submitter_line:
-            message_body += f"{submitter_line}\n"
+            message_body += f"\n{submitter_line}\n"
     except Exception:
         pass
 
