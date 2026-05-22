@@ -517,6 +517,7 @@ CLAUDE_MODEL = "claude-opus-4-7"
 MAX_SUBMISSIONS_PER_24H = 100
 POINTS_FOR_APPROVAL = 1
 TOP_CONTRIBUTOR_WINDOW_DAYS = 7
+SUBMIT_COMMAND_ID = None
 
 _submission_locks = {}  # submitter_id -> asyncio.Lock (rate-limit TOCTOU guard)
 _submitter_attribution_cache = OrderedDict()  # (db_name, _id) -> attribution string; bounded LRU
@@ -19492,13 +19493,19 @@ async def start_trivia():
 
             question_task = asyncio.create_task(_load_next_questions())
             
-            if round_count % 3 == 0:
-                message = f"\u200b\n🧘‍♂️ A short breather. Relax, stretch, meditate.\n\n🥒 **Unlock perks? Become an Okran!**\n💚 [Join Role Subscriptions](https://discord.com/channels/1367682586079395902/role-subscriptions)\n\u200b"
-                await safe_send(channel, message)
-                await asyncio.sleep(5)
-            else:
-                message = f"\u200b\n🎨 Live Trivia is a pure hobby effort.\n\n🙋 Help make it better!\n💡 [Submit Feedback](https://forms.gle/iWvmN24pfGEGSy7n7)\n\n🗣️ Like it? Spread the word!\n⭐ [Leave a Review](https://disboard.org/review/create/1367682586079395902)\n\u200b"
-                await safe_send(channel, message)
+            submit_mention = f"</submit:{SUBMIT_COMMAND_ID}>" if SUBMIT_COMMAND_ID else "/submit"
+            message = (
+                "\u200b\n"
+                "\U0001f9d8\u200d\u2642\ufe0f A short breather. Relax, stretch, meditate.\n\n"
+                "\U0001f49a [Unlock Perks](https://discord.com/channels/1367682586079395902/role-subscriptions)\n\n"
+                "\U0001f4a1 [Submit Feedback](https://forms.gle/iWvmN24pfGEGSy7n7)  \u00b7  "
+                "\u2b50 [Leave a Review](https://disboard.org/review/create/1367682586079395902)\n\n"
+                f"\u2753 {submit_mention} to submit questions\n\n"
+                "\U0001f3a8 Live Trivia is a pure hobby effort.\n"
+                "\u200b"
+            )
+            await safe_send(channel, message)
+            await asyncio.sleep(5)
             
             
             selected_questions = await question_task
@@ -21745,6 +21752,11 @@ async def on_ready():
             print(f"✅ Synced {len(synced)} slash command(s) to OKRAN guild {OKRAN_GUILD_ID}")
             if synced:
                 print(f"🔍 OKRAN guild synced commands: {[cmd.name for cmd in synced]}")
+                global SUBMIT_COMMAND_ID
+                submit_cmd = next((c for c in synced if c.name == "submit"), None)
+                if submit_cmd:
+                    SUBMIT_COMMAND_ID = submit_cmd.id
+                    print(f"✅ Captured submit command ID: {SUBMIT_COMMAND_ID}")
         except Exception as okran_e:
             print(f"❌ Failed to sync commands to OKRAN guild: {okran_e}")
             traceback.print_exc()
