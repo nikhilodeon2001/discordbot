@@ -19397,7 +19397,7 @@ async def start_trivia():
             start_message = f"\u200b\n\u200b\n🎉🤹‍♂️ **Live Trivia & Games for Discord!**\n"
             start_message += f"\n⏩ Starting a **{questions_per_round} question** round! ⏩"
             start_message += "\n\n🚩 Use **/flag** to report question"
-            start_message += "\n🗝️ Type **#perks** to unlock perks"
+            start_message += "\n🗝️ Use **/perks** to unlock perks"
 
             if current_longest_round_streak["user"] is not None and await get_coffees(current_longest_round_streak["user_id"]) > 0:
                 start_message += f"\n\n🕹️ **{current_longest_round_streak['user']}** can toggle modes mid-game"
@@ -19849,20 +19849,6 @@ async def on_message(message):
 
 
 
-    if "#perks" in message.content.strip().lower() and message.author.id != get_bot().user.id:
-        try:
-            dm_channel = await message.author.create_dm()
-    
-            embed = discord.Embed(
-                title="🔓✨ Unlock ALL Live Trivia Perks",
-                url="https://discord.com/channels/1367682586079395902/role-subscriptions",
-            )
-            await dm_channel.send(embed=embed)
-            return
-        except Exception as e:
-            await message.channel.send(f"\u200b\n{message.author.mention} ⚠️ I couldn't message you. Make sure your DMs are open.\n\u200b")
-            print(f"Error sending DM: {e}")
-            return
 
 
     if message.content.startswith("#") and (message.author.id == current_longest_round_streak["user_id"] or message.author.id == okrag_id) and message.channel.id == channel_id:
@@ -21086,7 +21072,7 @@ class ClearFlaggedModal(discord.ui.Modal, title="Clear Audit"):
                 {"doc_id": doc_id, "collection_name": col}, {"$set": {"resolved": True}}
             )
             notify_text = (self.notify.value or "").strip() or None
-            await _dm_flaggers(interaction.guild, doc, notify_text, intro_text="✅ A question you flagged has been reviewed — no changes were needed.")
+            await _dm_flaggers(interaction.guild, doc, notify_text, intro_text="❌ Your flag was reviewed but the question was found to be correct as-is.")
             embed = discord.Embed(title="🚩 Question Flagged", color=discord.Color.greyple())
             embed.set_footer(text=f"🧹 Audit cleared by {interaction.user.display_name}")
             await interaction.response.send_message("🧹 Audit cleared.", ephemeral=True)
@@ -21492,6 +21478,15 @@ async def contributors_command(interaction: discord.Interaction):
 # ============================================================
 # END USER-SUBMITTED QUESTIONS
 # ============================================================
+
+
+@bot.tree.command(name="perks", description="See how to unlock Live Trivia perks", guild=discord.Object(id=OKRAN_GUILD_ID))
+async def perks_command(interaction: discord.Interaction):
+    embed = discord.Embed(
+        title="🔓✨ Unlock ALL Live Trivia Perks",
+        url="https://discord.com/channels/1367682586079395902/role-subscriptions",
+    )
+    await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
 @bot.tree.command(name="flag", description="Flag the current or previous trivia question", guild=discord.Object(id=OKRAN_GUILD_ID))
