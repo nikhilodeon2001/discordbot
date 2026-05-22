@@ -21322,6 +21322,113 @@ async def submit_command(interaction: discord.Interaction, type: discord.app_com
             pass
 
 
+class BulkSubmitModal(discord.ui.Modal, title="Bulk Submit Questions"):
+    questions_input = discord.ui.TextInput(
+        label="One question per line (pipe-delimited)",
+        placeholder=(
+            "Category | Question | free | Answer | Alt1, Alt2\n"
+            "Category | Question | mc | CorrectAnswer | Wrong1, Wrong2, Wrong3"
+        ),
+        style=discord.TextStyle.paragraph,
+        required=True,
+        max_length=4000,
+    )
+
+    def __init__(self, submitter_id, submitter_name):
+        super().__init__()
+        self.submitter_id = submitter_id
+        self.submitter_name = submitter_name
+
+    async def on_submit(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+        try:
+            lines = [l.strip() for l in self.questions_input.value.splitlines() if l.strip()]
+            if not lines:
+                await interaction.followup.send("❌ No questions found.", ephemeral=True)
+                return
+
+            now = datetime.datetime.utcnow()
+            accepted = []
+            skipped = []
+
+            lock = _get_submission_lock(self.submitter_id)
+            async with lock:
+                for i, line in enumerate(lines, 1):
+                    parts = [p.strip() for p in line.split("|")]
+                    if len(parts) < 4:
+                        skipped.append(f"Line {i}: need at least 4 fields (Category | Question | free/mc | Answer)")
+                        continue
+                    category, question, qtype_raw = parts[0], parts[1], parts[2].lower()
+                    if qtype_raw not in ("free", "mc"):
+                        skipped.append(f"Line {i}: type must be 'free' or 'mc', got '{parts[2]}'")
+                        continue
+                    sub_type = "free_text" if qtype_raw == "free" else "multiple_choice"
+                    correct_answer = parts[3] if len(parts) > 3 else ""
+                    alternates_raw = parts[4] if len(parts) > 4 else ""
+
+                    cleaned, err = _validate_submission(category, question, correct_answer, alternates_raw, sub_type)
+                    if err:
+                        skipped.append(f"Line {i}: {err}")
+                        continue
+
+                    count_24h = await _count_submissions_last_24h(self.submitter_id)
+                    if count_24h >= MAX_SUBMISSIONS_PER_24H:
+                        skipped.append(f"Line {i}+: hit the {MAX_SUBMISSIONS_PER_24H}/24h limit")
+                        break
+
+                    if await _is_self_duplicate(self.submitter_id, cleaned["question"]):
+                        skipped.append(f"Line {i}: duplicate of a recent submission")
+                        continue
+
+                    doc = {
+                        "submitter_id": self.submitter_id,
+                        "submitter_name": self.submitter_name,
+                        "submitted_at": now,
+                        "type": sub_type,
+                        "category": cleaned["category"],
+                        "question": cleaned["question"],
+                        "correct_answer": cleaned["correct_answer"],
+                        "alternates": cleaned["alternates"],
+                        "status": "awaiting_mod",
+                        "ai_completed_at": None,
+                    }
+                    result = await db.question_submissions.insert_one(doc)
+                    doc["_id"] = result.inserted_id
+                    accepted.append(doc)
+
+            for doc in accepted:
+                await post_submission_to_mod_channel(doc["_id"])
+
+            lines_out = [f"✅ {len(accepted)} question(s) submitted for review."]
+            if skipped:
+                lines_out.append(f"⚠️ {len(skipped)} skipped:")
+                lines_out.extend(f"  • {s}" for s in skipped)
+            await interaction.followup.send("\n".join(lines_out), ephemeral=True)
+        except Exception as e:
+            sentry_sdk.capture_exception(e)
+            print(f"❌ BulkSubmitModal.on_submit: {e}")
+            try:
+                await interaction.followup.send("❌ Something went wrong.", ephemeral=True)
+            except Exception:
+                pass
+
+
+@bot.tree.command(name="submit_bulk", description="Submit multiple trivia questions at once", guild=discord.Object(id=OKRAN_GUILD_ID))
+async def submit_bulk_command(interaction: discord.Interaction):
+    try:
+        modal = BulkSubmitModal(
+            submitter_id=interaction.user.id,
+            submitter_name=interaction.user.display_name,
+        )
+        await interaction.response.send_modal(modal)
+    except Exception as e:
+        sentry_sdk.capture_exception(e)
+        try:
+            await interaction.response.send_message("❌ Something went wrong.", ephemeral=True)
+        except Exception:
+            pass
+
+
 @bot.tree.command(name="contributors", description="Top question contributors", guild=discord.Object(id=OKRAN_GUILD_ID))
 async def contributors_command(interaction: discord.Interaction):
     try:
