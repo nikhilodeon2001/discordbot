@@ -21322,6 +21322,34 @@ class SubmitTypeView(discord.ui.View):
             submitter_name=self.submitter_name,
         ))
 
+    @discord.ui.button(label="📋 Format Guide", style=discord.ButtonStyle.secondary)
+    async def guide_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        guide = (
+            "## Bulk Submit Format\n"
+            "One question per line, fields separated by `|`\n\n"
+            "**Free-text:**\n"
+            "```\n"
+            "Category | Question | free | Answer\n"
+            "Category | Question | free | Answer | Alt1, Alt2\n"
+            "```\n"
+            "**Multiple choice:**\n"
+            "```\n"
+            "Category | Question | mc | CorrectAnswer | Wrong1, Wrong2, Wrong3\n"
+            "```\n"
+            "**Rules:**\n"
+            "• `free` or `mc` in the 3rd field sets the type\n"
+            "• MC requires 1–3 wrong choices; free-text alternates are optional\n"
+            "• Question must be 15–300 characters\n"
+            "• Max 100 characters per answer\n"
+            "• Blank lines are ignored\n\n"
+            "**Example:**\n"
+            "```\n"
+            "History | Who was the first US president? | free | George Washington | Washington\n"
+            "Sports | How many players on a basketball team? | mc | 5 | 4, 6, 7\n"
+            "```"
+        )
+        await interaction.response.send_message(guide, ephemeral=True)
+
 
 @bot.tree.command(name="submit", description="Submit a trivia question for review", guild=discord.Object(id=OKRAN_GUILD_ID))
 async def submit_command(interaction: discord.Interaction):
