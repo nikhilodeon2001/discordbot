@@ -21326,17 +21326,15 @@ async def submit_command(interaction: discord.Interaction, type: discord.app_com
 async def contributors_command(interaction: discord.Interaction):
     try:
         await interaction.response.defer()
-        rows = await db.question_submission_stats.find().sort("points", -1).limit(15).to_list(length=15)
+        rows = await db.question_submission_stats.find().sort("approved", -1).limit(15).to_list(length=15)
         if not rows:
             await interaction.followup.send("No approved submissions yet.")
             return
         lines = []
         for i, r in enumerate(rows, 1):
-            pts = r.get("points", 0)
             ap = r.get("approved", 0)
-            rj = r.get("rejected", 0)
             name = r.get("display_name") or f"<@{r['_id']}>"
-            lines.append(f"**{i}.** {name} — {pts} pts ({ap} approved · {rj} rejected)")
+            lines.append(f"**{i}.** {name} — {ap}")
         embed = discord.Embed(
             title="🏆 Top Question Contributors",
             description="\n".join(lines),
