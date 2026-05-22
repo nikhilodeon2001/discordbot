@@ -21307,7 +21307,7 @@ class SubmitTypeView(discord.ui.View):
             sub_type="free_text",
         ))
 
-    @discord.ui.button(label="Multiple Choice", style=discord.ButtonStyle.primary)
+    @discord.ui.button(label="Multiple Choice", style=discord.ButtonStyle.success)
     async def mc_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_modal(SubmitQuestionModal(
             submitter_id=self.submitter_id,
@@ -21315,7 +21315,7 @@ class SubmitTypeView(discord.ui.View):
             sub_type="multiple_choice",
         ))
 
-    @discord.ui.button(label="Bulk Submit", style=discord.ButtonStyle.secondary)
+    @discord.ui.button(label="Bulk Submit", style=discord.ButtonStyle.danger)
     async def bulk_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_modal(BulkSubmitModal(
             submitter_id=self.submitter_id,
