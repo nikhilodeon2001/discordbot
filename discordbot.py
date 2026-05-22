@@ -21000,7 +21000,7 @@ class SubmissionReviewView(discord.ui.View):
         await interaction.response.send_modal(EditSubmissionModal(submission_id=sub_id, sub=sub))
 
 
-async def _dm_flaggers(guild, doc, notify_text):
+async def _dm_flaggers(guild, doc, notify_text, intro_text=None):
     """DM all flaggers in the audit array who have a stored user_id."""
     if not notify_text or not guild:
         return
@@ -21014,13 +21014,16 @@ async def _dm_flaggers(guild, doc, notify_text):
                 answers = doc.get("answers", [])
                 answer_str = ", ".join(str(a) for a in answers[:4]) if answers else "N/A"
                 flag_comment = entry.get("message_content", "")
-                body = (
-                    f"{notify_text}\n\n"
+                parts = []
+                if intro_text:
+                    parts.append(intro_text)
+                parts.append(notify_text)
+                parts.append(
                     f"**Question:** {doc.get('question', '')}\n"
                     f"**Answer(s):** {answer_str}\n"
                     f"**Your report:** {flag_comment}"
                 )
-                await member.send(body)
+                await member.send("\n\n".join(parts))
         except (discord.Forbidden, Exception):
             pass
 
@@ -21050,7 +21053,7 @@ class ApplyFlaggedModal(discord.ui.Modal, title="Apply Claude Changes"):
                 {"doc_id": doc_id, "collection_name": col}, {"$set": {"resolved": True}}
             )
             notify_text = (self.notify.value or "").strip() or None
-            await _dm_flaggers(interaction.guild, doc, notify_text)
+            await _dm_flaggers(interaction.guild, doc, notify_text, intro_text="✅ A question you flagged has been reviewed and updated.")
             embed = discord.Embed(title="🚩 Question Flagged", color=discord.Color.green())
             embed.set_footer(text=f"✅ Applied by {interaction.user.display_name}")
             await interaction.response.send_message("✅ Applied changes and cleared audit.", ephemeral=True)
@@ -21083,7 +21086,7 @@ class ClearFlaggedModal(discord.ui.Modal, title="Clear Audit"):
                 {"doc_id": doc_id, "collection_name": col}, {"$set": {"resolved": True}}
             )
             notify_text = (self.notify.value or "").strip() or None
-            await _dm_flaggers(interaction.guild, doc, notify_text)
+            await _dm_flaggers(interaction.guild, doc, notify_text, intro_text="✅ A question you flagged has been reviewed — no changes were needed.")
             embed = discord.Embed(title="🚩 Question Flagged", color=discord.Color.greyple())
             embed.set_footer(text=f"🧹 Audit cleared by {interaction.user.display_name}")
             await interaction.response.send_message("🧹 Audit cleared.", ephemeral=True)
@@ -21141,7 +21144,7 @@ class EditFlaggedQuestionModal(discord.ui.Modal, title="Edit & Apply Question Fi
             )
             notify_text = (self.notify.value or "").strip() or None
             if doc_before:
-                await _dm_flaggers(interaction.guild, doc_before, notify_text)
+                await _dm_flaggers(interaction.guild, doc_before, notify_text, intro_text="✅ A question you flagged has been reviewed and updated.")
             embed = discord.Embed(title="🚩 Question Flagged", color=discord.Color.green())
             embed.add_field(name="✏️ Edited & Applied", value=f"**{fields['category']}**: {fields['question']}", inline=False)
             embed.set_footer(text=f"✅ Edited & applied by {interaction.user.display_name}")
