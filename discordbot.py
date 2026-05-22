@@ -20998,8 +20998,16 @@ async def _dm_flaggers(guild, doc, notify_text):
         try:
             member = await guild.fetch_member(uid)
             if member:
-                q = doc.get("question", "")
-                await member.send(f"{notify_text}\n\n> {q}")
+                answers = doc.get("answers", [])
+                answer_str = ", ".join(str(a) for a in answers[:4]) if answers else "N/A"
+                flag_comment = entry.get("message_content", "")
+                body = (
+                    f"{notify_text}\n\n"
+                    f"**Question:** {doc.get('question', '')}\n"
+                    f"**Answer(s):** {answer_str}\n"
+                    f"**Your report:** {flag_comment}"
+                )
+                await member.send(body)
         except (discord.Forbidden, Exception):
             pass
 
