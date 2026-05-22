@@ -2798,6 +2798,7 @@ class TournamentManager:
         okran_role_id = getattr(discordbot, 'OKRAN_ROLE_ID', None)
         okran_role_id_2 = getattr(discordbot, 'OKRAN_ROLE_ID_2', None)
         bumper_king_role_id = getattr(discordbot, 'BUMPER_KING_ROLE_ID', None)
+        top_contributor_role_id = getattr(discordbot, 'TOP_CONTRIBUTOR_ROLE_ID', None)
 
         has_tournament_role = False
         if okran_role_id and any(role.id == okran_role_id for role in message.author.roles):
@@ -2805,6 +2806,8 @@ class TournamentManager:
         elif okran_role_id_2 and any(role.id == okran_role_id_2 for role in message.author.roles):
             has_tournament_role = True
         elif bumper_king_role_id and any(role.id == bumper_king_role_id for role in message.author.roles):
+            has_tournament_role = True
+        elif top_contributor_role_id and any(role.id == top_contributor_role_id for role in message.author.roles):
             has_tournament_role = True
 
         # Add to appropriate queue for processing

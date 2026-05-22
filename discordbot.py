@@ -359,6 +359,9 @@ bumper_king_id = ""
 bumper_king_name = ""
 last_bump_time = None
 
+# Global variable for top contributor
+top_contributor_id = None
+
 # Global shutdown flag for coordinating trivia loops during updates
 shutdown_initiated = False
 
@@ -520,6 +523,7 @@ TOP_CONTRIBUTOR_WINDOW_DAYS = 7
 SUBMIT_COMMAND_ID = None
 FLAG_COMMAND_ID = None
 PERKS_COMMAND_ID = None
+OKRAFX_COMMAND_ID = None
 
 _submission_locks = {}  # submitter_id -> asyncio.Lock (rate-limit TOCTOU guard)
 _submitter_attribution_cache = OrderedDict()  # (db_name, _id) -> attribution string; bounded LRU
@@ -14367,7 +14371,7 @@ async def get_coffees(user_id):
     try:
         member = await guild.fetch_member(user_id)
         # Check if user has any of the allowed roles
-        allowed_role_ids = {BUMPER_KING_ROLE_ID, OKRAN_ROLE_ID, OKRAN_ROLE_ID_2}
+        allowed_role_ids = {BUMPER_KING_ROLE_ID, TOP_CONTRIBUTOR_ROLE_ID, OKRAN_ROLE_ID, OKRAN_ROLE_ID_2}
         if any(role.id in allowed_role_ids for role in member.roles):
             return 5
         else:
@@ -16880,212 +16884,108 @@ async def sync_bumper_king_with_role():
         print(f"Error syncing bumper king with role: {e}")
 
 
-async def change_bumper_king_role_color(color_input):
-    global bumper_king_id
-    
-    # Color name to hex mapping
-    color_names = {
-        # Basic colors
-        'red': '#FF0000',
-        'green': '#00FF00',
-        'blue': '#0000FF',
-        'yellow': '#FFFF00',
-        'orange': '#FFA500',
-        'purple': '#800080',
-        'pink': '#FFC0CB',
-        'cyan': '#00FFFF',
-        'magenta': '#FF00FF',
-        'lime': '#00FF00',
-        'brown': '#A52A2A',
-        'black': '#000000',
-        'white': '#FFFFFF',
-        'gray': '#808080',
-        'grey': '#808080',
-        
-        # Extended colors
-        'crimson': '#DC143C',
-        'darkred': '#8B0000',
-        'lightcoral': '#F08080',
-        'salmon': '#FA8072',
-        'darksalmon': '#E9967A',
-        'lightsalmon': '#FFA07A',
-        'orangered': '#FF4500',
-        'tomato': '#FF6347',
-        'darkorange': '#FF8C00',
-        'gold': '#FFD700',
-        'lightyellow': '#FFFFE0',
-        'lemonchiffon': '#FFFACD',
-        'lightgoldenrodyellow': '#FAFAD2',
-        'papayawhip': '#FFEFD5',
-        'moccasin': '#FFE4B5',
-        'peachpuff': '#FFDAB9',
-        'palegreen': '#98FB98',
-        'lightgreen': '#90EE90',
-        'darkgreen': '#006400',
-        'forestgreen': '#228B22',
-        'limegreen': '#32CD32',
-        'aqua': '#00FFFF',
-        'lightcyan': '#E0FFFF',
-        'darkturquoise': '#00CED1',
-        'turquoise': '#40E0D0',
-        'mediumturquoise': '#48D1CC',
-        'darkblue': '#00008B',
-        'navy': '#000080',
-        'darkslateblue': '#483D8B',
-        'slateblue': '#6A5ACD',
-        'mediumslateblue': '#7B68EE',
-        'mediumpurple': '#9370DB',
-        'darkmagenta': '#8B008B',
-        'darkviolet': '#9400D3',
-        'darkorchid': '#9932CC',
-        'mediumorchid': '#BA55D3',
-        'thistle': '#D8BFD8',
-        'plum': '#DDA0DD',
-        'violet': '#EE82EE',
-        'hotpink': '#FF69B4',
-        'deeppink': '#FF1493',
-        'mediumvioletred': '#C71585',
-        'palevioletred': '#DB7093',
-        'lavender': '#E6E6FA',
-        'lavenderblush': '#FFF0F5',
-        'teal': '#008080',
-        'darkteal': '#008B8B',
-        'mint': '#98FB98',
-        'mintcream': '#F5FFFA',
-        'aquamarine': '#7FFFD4',
-        'mediumaquamarine': '#66CDAA',
-        'coral': '#FF7F50',
-        'lightcoral': '#F08080',
-        'indigo': '#4B0082',
-        'maroon': '#800000',
-        'olive': '#808000',
-        'darkolivegreen': '#556B2F',
-        'chartreuse': '#7FFF00',
-        'greenyellow': '#ADFF2F',
-        'springgreen': '#00FF7F',
-        'mediumspringgreen': '#00FA9A',
-        'seagreen': '#2E8B57',
-        'mediumseagreen': '#3CB371',
-        'lightseagreen': '#20B2AA',
-        'darkseagreen': '#8FBC8F',
-        'honeydew': '#F0FFF0',
-        'beige': '#F5F5DC',
-        'wheat': '#F5DEB3',
-        'sandybrown': '#F4A460',
-        'tan': '#D2B48C',
-        'chocolate': '#D2691E',
-        'firebrick': '#B22222',
-        'rosybrown': '#BC8F8F',
-        'goldenrod': '#DAA520',
-        'darkgoldenrod': '#B8860B',
-        'lightgoldenrod': '#EEDD82',
-        'palegoldenrod': '#EEE8AA',
-        'khaki': '#F0E68C',
-        'darkkhaki': '#BDB76B',
-        
-        # Neutral colors
-        'darkgray': '#A9A9A9',
-        'darkgrey': '#A9A9A9',
-        'silver': '#C0C0C0',
-        'lightgray': '#D3D3D3',
-        'lightgrey': '#D3D3D3',
-        'gainsboro': '#DCDCDC',
-        'whitesmoke': '#F5F5F5',
-        'dimgray': '#696969',
-        'dimgrey': '#696969',
-        'lightslategray': '#778899',
-        'lightslategrey': '#778899',
-        'slategray': '#708090',
-        'slategrey': '#708090',
-        'darkslategray': '#2F4F4F',
-        'darkslategrey': '#2F4F4F',
-        
-        # Fun/Discord colors
-        'blurple': '#5865F2',  # Discord's brand color
-        'discord': '#5865F2',
-        'nitro': '#FF73FA',
-        'boost': '#F47FFF',
-        'invisible': '#747F8D',
-    }
-    
+_ROLE_COLOR_NAMES = {
+    'red': '#FF0000', 'green': '#00FF00', 'blue': '#0000FF',
+    'yellow': '#FFFF00', 'orange': '#FFA500', 'purple': '#800080',
+    'pink': '#FFC0CB', 'cyan': '#00FFFF', 'magenta': '#FF00FF',
+    'lime': '#00FF00', 'brown': '#A52A2A', 'black': '#000000',
+    'white': '#FFFFFF', 'gray': '#808080', 'grey': '#808080',
+    'crimson': '#DC143C', 'darkred': '#8B0000', 'lightcoral': '#F08080',
+    'salmon': '#FA8072', 'darksalmon': '#E9967A', 'lightsalmon': '#FFA07A',
+    'orangered': '#FF4500', 'tomato': '#FF6347', 'darkorange': '#FF8C00',
+    'gold': '#FFD700', 'lightyellow': '#FFFFE0', 'lemonchiffon': '#FFFACD',
+    'papayawhip': '#FFEFD5', 'moccasin': '#FFE4B5', 'peachpuff': '#FFDAB9',
+    'palegreen': '#98FB98', 'lightgreen': '#90EE90', 'darkgreen': '#006400',
+    'forestgreen': '#228B22', 'limegreen': '#32CD32', 'aqua': '#00FFFF',
+    'lightcyan': '#E0FFFF', 'darkturquoise': '#00CED1', 'turquoise': '#40E0D0',
+    'mediumturquoise': '#48D1CC', 'darkblue': '#00008B', 'navy': '#000080',
+    'darkslateblue': '#483D8B', 'slateblue': '#6A5ACD', 'mediumslateblue': '#7B68EE',
+    'mediumpurple': '#9370DB', 'darkmagenta': '#8B008B', 'darkviolet': '#9400D3',
+    'darkorchid': '#9932CC', 'mediumorchid': '#BA55D3', 'thistle': '#D8BFD8',
+    'plum': '#DDA0DD', 'violet': '#EE82EE', 'hotpink': '#FF69B4',
+    'deeppink': '#FF1493', 'mediumvioletred': '#C71585', 'palevioletred': '#DB7093',
+    'lavender': '#E6E6FA', 'lavenderblush': '#FFF0F5', 'teal': '#008080',
+    'darkteal': '#008B8B', 'mint': '#98FB98', 'mintcream': '#F5FFFA',
+    'aquamarine': '#7FFFD4', 'mediumaquamarine': '#66CDAA', 'coral': '#FF7F50',
+    'indigo': '#4B0082', 'maroon': '#800000', 'olive': '#808000',
+    'darkolivegreen': '#556B2F', 'chartreuse': '#7FFF00', 'greenyellow': '#ADFF2F',
+    'springgreen': '#00FF7F', 'mediumspringgreen': '#00FA9A', 'seagreen': '#2E8B57',
+    'mediumseagreen': '#3CB371', 'lightseagreen': '#20B2AA', 'darkseagreen': '#8FBC8F',
+    'honeydew': '#F0FFF0', 'beige': '#F5F5DC', 'wheat': '#F5DEB3',
+    'sandybrown': '#F4A460', 'tan': '#D2B48C', 'chocolate': '#D2691E',
+    'firebrick': '#B22222', 'rosybrown': '#BC8F8F', 'goldenrod': '#DAA520',
+    'darkgoldenrod': '#B8860B', 'lightgoldenrod': '#EEDD82', 'palegoldenrod': '#EEE8AA',
+    'khaki': '#F0E68C', 'darkkhaki': '#BDB76B', 'darkgray': '#A9A9A9',
+    'darkgrey': '#A9A9A9', 'silver': '#C0C0C0', 'lightgray': '#D3D3D3',
+    'lightgrey': '#D3D3D3', 'gainsboro': '#DCDCDC', 'whitesmoke': '#F5F5F5',
+    'dimgray': '#696969', 'dimgrey': '#696969', 'lightslategray': '#778899',
+    'lightslategrey': '#778899', 'slategray': '#708090', 'slategrey': '#708090',
+    'darkslategray': '#2F4F4F', 'darkslategrey': '#2F4F4F',
+    'blurple': '#5865F2', 'discord': '#5865F2', 'nitro': '#FF73FA',
+    'boost': '#F47FFF', 'invisible': '#747F8D',
+}
+
+
+async def _change_role_color(role_id: int, color_input: str, success_message: str) -> tuple[bool, str]:
+    """Parse color_input and apply it to the given role. Returns (success, message)."""
     try:
-        # Check if input is a color name
-        if color_input.lower() in color_names:
-            hex_code = color_names[color_input.lower()]
-        else:
-            # Assume it's a hex code
-            hex_code = color_input
-            # Validate hex code format
-            if not hex_code.startswith('#'):
-                hex_code = '#' + hex_code
-        
-        # Convert hex to integer for Discord
+        hex_code = color_input.strip()
+        if hex_code.lower() in _ROLE_COLOR_NAMES:
+            hex_code = _ROLE_COLOR_NAMES[hex_code.lower()]
+        if not hex_code.startswith('#'):
+            hex_code = '#' + hex_code
         color_int = int(hex_code.replace('#', ''), 16)
-        color = discord.Color(color_int)
-        
-        # Check if there's a bumper king
-        if not bumper_king_id:
-            return "No bumper king currently set."
-        
-        # Get the guild (server)
         guild = get_bot().get_guild(OKRAN_GUILD_ID)
         if not guild:
-            return "Server not found."
-        
-        # Get the bumper king member
-        #member = guild.get_member(int(bumper_king_id))
-        #if not member:
-        #    return "Bumper king member not found."
-        
-        # Get the specific Bumper King role by ID
-        bumper_role = guild.get_role(BUMPER_KING_ROLE_ID)
-        
-        if not bumper_role:
-            return "Bumper King role not found in server."
-        
-        # Change the role color
-        await bumper_role.edit(color=color, reason=f"Bumper king color change to {hex_code}")
-        
-        return f"Your username color is now {color_input}, your highness."
-        
+            return False, "Server not found."
+        role = guild.get_role(role_id)
+        if not role:
+            return False, "Role not found in server."
+        await role.edit(color=discord.Color(color_int), reason=f"Role color change to {hex_code}")
+        return True, success_message
     except ValueError:
-        return "Invalid hex color code format. Use format like #FF0000 or FF0000"
+        return False, "Invalid color format. Use a color name or hex like #FF0000."
     except discord.Forbidden:
-        return "Bot doesn't have permission to modify roles."
+        return False, "Bot doesn't have permission to modify roles."
     except discord.HTTPException as e:
-        return f"Discord API error: {e}"
+        return False, f"Discord API error: {e}"
     except Exception as e:
-        return f"Error changing role color: {e}"
+        return False, f"Error changing role color: {e}"
 
 
-@bot.tree.command(name="okrafx", description="Change your username color (only for the current 👑🍔 Bumper King 🍔👑)", guild=discord.Object(id=OKRAN_GUILD_ID))
+@bot.tree.command(name="okrafx", description="Change your username color (Bumper King and Top Contributor only)", guild=discord.Object(id=OKRAN_GUILD_ID))
 @discord.app_commands.describe(color="Color name or hex code")
 async def change_color_command(interaction: discord.Interaction, color: str):
-    global bumper_king_id
-    
-    # Check if the user is the current bumper king
-    print(interaction.user.id)
-    print(bumper_king_id)
-    if not bumper_king_id or str(interaction.user.id) != bumper_king_id:
+    global bumper_king_id, top_contributor_id
+
+    user_id = interaction.user.id
+    is_bumper_king = bumper_king_id and str(user_id) == bumper_king_id
+    is_top_contributor = top_contributor_id and user_id == top_contributor_id
+
+    if not is_bumper_king and not is_top_contributor:
         await interaction.response.send_message(
-            "❌ You are NOT the current 👑🍔 **Bumper King** 🍔👑! Only their highness can change their name color.",
+            "❌ Only the current 👑🍔 **Bumper King** 🍔👑 or 🏆 **Top Contributor** can change their name color.",
             ephemeral=True
         )
         return
-    
-    # Defer the response since role editing might take a moment
+
     await interaction.response.defer(ephemeral=True)
-    
+
     try:
-        # Call the color change function
-        result = await change_bumper_king_role_color(color)
-        
-        # Send success or error message
-        if "your highness" in result:
+        if is_bumper_king:
+            success, result = await _change_role_color(
+                BUMPER_KING_ROLE_ID, color, f"Your username color is now {color}, your highness."
+            )
+        else:
+            success, result = await _change_role_color(
+                TOP_CONTRIBUTOR_ROLE_ID, color, f"Your username color is now {color}, champion."
+            )
+
+        if success:
             await interaction.followup.send(f"✅ {result}", ephemeral=True)
         else:
             await interaction.followup.send(f"❌ {result}", ephemeral=True)
-            
+
     except Exception as e:
         await interaction.followup.send(f"❌ An error occurred: {e}", ephemeral=True)
 
@@ -19839,13 +19739,16 @@ async def on_message(message):
             if bumper_king_name:
                 gif_url = "https://triviabotwebsite.s3.us-east-2.amazonaws.com/okra/okra-burger-king.png"
                 #await safe_send(channel, content =f"\u200b\n👑🍔 All hail **{bumper_king_name}**! They’ve claimed the **Bumper King** crown until the next bump!\n\u200b", embed=discord.Embed().set_image(url=gif_url))
+                okrafx_mention = f"</okrafx:{OKRAFX_COMMAND_ID}>" if OKRAFX_COMMAND_ID else "/okrafx"
                 crown_embed = discord.Embed(
                     title="👑🍔 A New Bumper King! 🍔👑",
                     description=(
                         f"All hail **<@{bumper_king_id}>**! They’ve claimed the **Bumper King** crown until the next bump!\n\n"
                         f"💎 As **Bumper King**, you now unlock:\n\n"
                         f"• Access to all exclusive perks 🎁\n"
-                        f"• Change your username color with `/okrafx` 🎨\n"
+                        f"• Change your username color with {okrafx_mention} 🎨\n"
+                        f"• Start tournaments 🏟️\n"
+                        f"• Access the mini-game arena 🎮\n"
                     ),
                     color=discord.Color.gold()
                 )
@@ -21253,6 +21156,7 @@ class FlaggedReviewView(discord.ui.View):
 
 
 async def sync_top_contributor_role():
+    global top_contributor_id
     if not TOP_CONTRIBUTOR_ROLE_ID:
         return
     guild = bot.get_guild(OKRAN_GUILD_ID)
@@ -21277,25 +21181,43 @@ async def sync_top_contributor_role():
             except (discord.Forbidden, Exception):
                 pass
     if target_id:
+        top_contributor_id = target_id
         member = guild.get_member(target_id)
         if member and role not in member.roles:
             try:
                 await member.add_roles(role, reason="Top contributor (last 7 days)")
                 trivia_channel = bot.get_channel(channel_id)
                 if trivia_channel:
-                    await trivia_channel.send(
-                        f"🏆 **{member.display_name}** is now the **Top Contributor** of the week! "
-                        f"Thanks for submitting questions to the pool! 🥒"
+                    okrafx_mention = f"</okrafx:{OKRAFX_COMMAND_ID}>" if OKRAFX_COMMAND_ID else "/okrafx"
+                    tc_embed = discord.Embed(
+                        title="🏆 New Top Contributor of the Week!",
+                        description=(
+                            f"**{member.display_name}** submitted the most approved questions this week!\n\n"
+                            f"💎 As **Top Contributor**, you now unlock:\n\n"
+                            f"• Access to all exclusive perks 🎁\n"
+                            f"• Change your username color with {okrafx_mention} 🎨\n"
+                            f"• Start tournaments 🏟️\n"
+                            f"• Access the mini-game arena 🎮\n"
+                        ),
+                        color=discord.Color.gold()
                     )
+                    await trivia_channel.send(embed=tc_embed)
                 try:
                     await member.send(
                         f"🏆 Congrats! You're now the **Top Contributor** of the week on Live Trivia!\n\n"
-                        f"You've submitted the most approved questions over the last 7 days. Keep it up! 🥒"
+                        f"You've submitted the most approved questions over the last 7 days. As a reward, you now unlock:\n\n"
+                        f"• Access to all exclusive perks 🎁\n"
+                        f"• Change your username color with `/okrafx` 🎨\n"
+                        f"• Start tournaments 🏟️\n"
+                        f"• Access the mini-game arena 🎮\n\n"
+                        f"Keep it up! 🥒"
                     )
                 except (discord.Forbidden, Exception):
                     pass
             except (discord.Forbidden, Exception):
                 pass
+    else:
+        top_contributor_id = None
 
 
 async def register_persistent_submission_views():
@@ -21777,7 +21699,7 @@ async def on_ready():
             print(f"✅ Synced {len(synced)} slash command(s) to OKRAN guild {OKRAN_GUILD_ID}")
             if synced:
                 print(f"🔍 OKRAN guild synced commands: {[cmd.name for cmd in synced]}")
-                global SUBMIT_COMMAND_ID, FLAG_COMMAND_ID, PERKS_COMMAND_ID
+                global SUBMIT_COMMAND_ID, FLAG_COMMAND_ID, PERKS_COMMAND_ID, OKRAFX_COMMAND_ID
                 for _cmd in synced:
                     if _cmd.name == "submit":
                         SUBMIT_COMMAND_ID = _cmd.id
@@ -21785,7 +21707,9 @@ async def on_ready():
                         FLAG_COMMAND_ID = _cmd.id
                     elif _cmd.name == "perks":
                         PERKS_COMMAND_ID = _cmd.id
-                print(f"✅ Captured command IDs — submit:{SUBMIT_COMMAND_ID} flag:{FLAG_COMMAND_ID} perks:{PERKS_COMMAND_ID}")
+                    elif _cmd.name == "okrafx":
+                        OKRAFX_COMMAND_ID = _cmd.id
+                print(f"✅ Captured command IDs — submit:{SUBMIT_COMMAND_ID} flag:{FLAG_COMMAND_ID} perks:{PERKS_COMMAND_ID} okrafx:{OKRAFX_COMMAND_ID}")
         except Exception as okran_e:
             print(f"❌ Failed to sync commands to OKRAN guild: {okran_e}")
             traceback.print_exc()
