@@ -21374,10 +21374,7 @@ async def submit_command(interaction: discord.Interaction):
 class BulkSubmitModal(discord.ui.Modal, title="Bulk Submit Questions"):
     questions_input = discord.ui.TextInput(
         label="One question per line (pipe-delimited)",
-        placeholder=(
-            "Category | Question | free | Answer | Alt1, Alt2\n"
-            "Category | Question | mc | CorrectAnswer | Wrong1, Wrong2, Wrong3"
-        ),
+        placeholder="See 📋 Format Guide for syntax. One question per line.",
         style=discord.TextStyle.paragraph,
         required=True,
         max_length=4000,
