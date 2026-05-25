@@ -1,4 +1,5 @@
 import os
+import uuid
 from dotenv import load_dotenv
 load_dotenv()
 
@@ -20093,6 +20094,35 @@ IMPORTANT:
 - Be conservative: approve borderline questions, reject only clear failures
 - Return valid JSON only, no markdown, no explanation outside the JSON"""
 
+BATCH_REVIEW_SYSTEM_PROMPT = """You are a trivia question quality reviewer evaluating user-submitted questions for a live Discord trivia game.
+
+Evaluate each question on:
+- Factual correctness: the stated answer must be verifiably true
+- Clarity: the question must be unambiguous with exactly one correct answer
+- Appropriateness: not NSFW, not purely opinion-based
+- For multiple_choice: wrong choices must be plausibly different from the correct answer
+
+Return ONLY a JSON object with this exact structure:
+{
+  "ai_action": "approve" | "reject" | "edit",
+  "ai_reasoning": "Brief explanation (1-2 sentences)",
+  "proposed_changes": {
+    "category": "new category if needed",
+    "question": "new question text if needed",
+    "correct_answer": "corrected answer if needed",
+    "alternates": ["alt1", "alt2"]
+  }
+}
+
+IMPORTANT:
+- Use "approve" for good questions ready to add as-is
+- Use "reject" for factually wrong, NSFW, or fundamentally broken questions
+- Use "edit" for questions that need minor fixes (include proposed_changes with only the fields that need changing)
+- Only include keys in proposed_changes for fields that actually need to change
+- If ai_action is "approve", proposed_changes should be {}
+- Be conservative: approve borderline questions, reject only clear failures
+- Return valid JSON only, no markdown, no explanation outside the JSON"""
+
 FLAGGED_REVIEW_SYSTEM_PROMPT = """You are a trivia question quality reviewer. You will be given a trivia question with user-submitted flag reports, and you must decide whether the question needs to be updated.
 
 ANSWER ARRAY RULES:
@@ -20908,6 +20938,482 @@ class SubmissionReviewView(discord.ui.View):
         await interaction.response.send_modal(EditSubmissionModal(submission_id=sub_id, sub=sub))
 
 
+# ──────────────────────────────────────────────────────────────────────────────
+# Batch Submission Review helpers and views
+# ──────────────────────────────────────────────────────────────────────────────
+
+async def _approve_submission_direct(submission_id, mod_id, mod_name, edited=False):
+    """DB-only approval (no Discord response). Returns (success: bool, error: str)."""
+    try:
+        sub = await db.question_submissions.find_one({"_id": _to_object_id(submission_id)})
+        if not sub or sub.get("status") != "awaiting_mod":
+            return False, "Submission no longer pending"
+        now = datetime.datetime.utcnow()
+        is_mc = sub.get("type") == "multiple_choice"
+        if is_mc:
+            answers = _build_mc_answers(sub["correct_answer"], sub.get("alternates", []))
+            url_val = "multiple choice"
+            target_pool = "mysterybox_questions"
+        else:
+            answers = [sub["correct_answer"], *(sub.get("alternates") or [])]
+            url_val = ""
+            target_pool = "trivia_questions"
+        approved_doc = {
+            "category": sub["category"],
+            "question": sub["question"],
+            "url": url_val,
+            "answers": answers,
+            "submitter_id": sub["submitter_id"],
+            "submitter_name": sub.get("submitter_name", "unknown"),
+            "submitted_at": sub["submitted_at"],
+            "approved_at": now,
+            "user_submission_id": sub["_id"],
+        }
+        ins = await db[target_pool].insert_one(approved_doc)
+        await db.question_submissions.update_one(
+            {"_id": sub["_id"]},
+            {"$set": {
+                "status": "approved",
+                "mod_decision": ("edit_approve" if edited else "approve"),
+                "mod_id": mod_id,
+                "mod_name": mod_name,
+                "decided_at": now,
+                "approved_pool": target_pool,
+                "approved_question_id": ins.inserted_id,
+            }},
+        )
+        await db.question_submission_stats.update_one(
+            {"_id": sub["submitter_id"]},
+            {
+                "$inc": {"submissions_total": 1, "approved": 1, "points": POINTS_FOR_APPROVAL},
+                "$set": {"display_name": sub.get("submitter_name", "unknown"), "last_updated": now},
+                "$setOnInsert": {"first_approved_at": now},
+            },
+            upsert=True,
+        )
+        _invalidate_attribution_cache(target_pool, ins.inserted_id)
+        return True, ""
+    except Exception as e:
+        sentry_sdk.capture_exception(e)
+        return False, str(e)
+
+
+async def _bulk_approve_submissions(session_id, mod_id, mod_name):
+    """Approve all session items where claude_action='approve' and mod_decision='pending'.
+    Returns (approved_count, failed_count)."""
+    session = await db.review_sessions.find_one({"_id": session_id})
+    if not session:
+        return 0, 0
+    approved = 0
+    failed = 0
+    for i, item in enumerate(session.get("items", [])):
+        if item.get("claude_action") != "approve" or item.get("mod_decision") != "pending":
+            continue
+        sub_id = item["submission_id"]
+        proposed = item.get("proposed_changes") or {}
+        if proposed:
+            updates = {k: proposed[k] for k in ("category", "question", "correct_answer", "alternates") if k in proposed}
+            if updates:
+                await db.question_submissions.update_one(
+                    {"_id": _to_object_id(sub_id)}, {"$set": updates}
+                )
+        success, _ = await _approve_submission_direct(sub_id, mod_id, mod_name)
+        if success:
+            approved += 1
+            await db.review_sessions.update_one(
+                {"_id": session_id}, {"$set": {f"items.{i}.mod_decision": "applied"}}
+            )
+        else:
+            failed += 1
+    try:
+        await sync_top_contributor_role()
+    except Exception:
+        pass
+    return approved, failed
+
+
+async def _run_batch_claude_review(sub):
+    """Call Claude on a single submission dict. Returns (action, reasoning, proposed_changes)."""
+    if not anthropic_client:
+        return "edit", "Claude client not configured.", {}
+    type_label = "multiple_choice" if sub.get("type") == "multiple_choice" else "free_text"
+    user_content = (
+        f"TYPE: {type_label}\n"
+        f"CATEGORY: {sub.get('category', '')}\n"
+        f"QUESTION: {sub.get('question', '')}\n"
+        f"CORRECT ANSWER: {sub.get('correct_answer', '')}\n"
+        f"ALTERNATES/WRONG CHOICES: {', '.join(sub.get('alternates') or []) or 'none'}\n"
+    )
+    for attempt in range(2):
+        try:
+            response = await anthropic_client.messages.create(
+                model=CLAUDE_MODEL,
+                max_tokens=512,
+                system=[{"type": "text", "text": BATCH_REVIEW_SYSTEM_PROMPT,
+                         "cache_control": {"type": "ephemeral"}}],
+                messages=[{"role": "user", "content": user_content}],
+            )
+            parsed = json.loads(response.content[0].text.strip())
+            action = parsed.get("ai_action", "edit")
+            if action not in ("approve", "reject", "edit"):
+                action = "edit"
+            return action, parsed.get("ai_reasoning", ""), parsed.get("proposed_changes") or {}
+        except json.JSONDecodeError:
+            if attempt == 0:
+                await asyncio.sleep(1)
+        except Exception as e:
+            sentry_sdk.capture_exception(e)
+            return "edit", f"Claude API error: {e}", {}
+    return "edit", "Claude returned unparseable response.", {}
+
+
+def _build_batch_page_embed(item, pos, total):
+    """Build the per-page embed for BatchPageView."""
+    action_emoji = {"approve": "✅", "reject": "❌", "edit": "✏️"}.get(item.get("claude_action", "edit"), "✏️")
+    action_label = {"approve": "APPROVE", "reject": "REJECT", "edit": "EDIT"}.get(item.get("claude_action", "edit"), "EDIT")
+    decision_emoji = {"pending": "🟡", "approve": "✅", "reject": "❌", "applied": "🔧"}.get(
+        item.get("mod_decision", "pending"), "🟡"
+    )
+    decision_label = {"pending": "Pending", "approve": "Marked Approve", "reject": "Marked Reject",
+                      "applied": "Applied (edit)"}.get(item.get("mod_decision", "pending"), "Pending")
+    is_mc = item.get("type") == "multiple_choice"
+    type_label = "Multiple Choice" if is_mc else "Free Text"
+    embed = discord.Embed(
+        title=f"📋 Review {pos + 1} of {total} — {item.get('category', 'Unknown')}",
+        color=discord.Color.blurple(),
+    )
+    q_text = item.get("question", "")
+    embed.add_field(name="Question", value=q_text[:1024], inline=False)
+    if is_mc:
+        answer_text = f"✓ {item.get('correct_answer', '')}"
+        alts = item.get("alternates") or []
+        if alts:
+            answer_text += f"\n✗ {' / '.join(alts)}"
+        embed.add_field(name=f"Type: {type_label}", value=answer_text[:512], inline=False)
+    else:
+        alts = item.get("alternates") or []
+        answer_text = item.get("correct_answer", "")
+        if alts:
+            answer_text += f"\nAlternates: {', '.join(alts)}"
+        embed.add_field(name=f"Type: {type_label}", value=answer_text[:512], inline=False)
+    reasoning = item.get("claude_reasoning", "")
+    embed.add_field(
+        name=f"{action_emoji} Claude: {action_label}",
+        value=(reasoning[:500] if reasoning else "No reasoning provided"),
+        inline=False,
+    )
+    proposed = item.get("proposed_changes") or {}
+    if proposed:
+        changes_text = "\n".join(f"**{k}:** {v}" for k, v in proposed.items())
+        embed.add_field(name="💡 Proposed Changes", value=changes_text[:512], inline=False)
+    embed.set_footer(text=f"{decision_emoji} Mod decision: {decision_label}")
+    return embed
+
+
+class BatchEditModal(discord.ui.Modal, title="Edit & Approve"):
+    def __init__(self, submission_id, sub, session_id, global_idx, page_view):
+        super().__init__()
+        self.submission_id = submission_id
+        self.session_id = session_id
+        self.global_idx = global_idx
+        self.page_view = page_view
+        self.sub_type = sub.get("type", "free_text")
+        self.category_input = discord.ui.TextInput(
+            label="Category", default=sub.get("category", ""),
+            style=discord.TextStyle.short, required=True, max_length=40,
+        )
+        self.question_input = discord.ui.TextInput(
+            label="Question", default=sub.get("question", ""),
+            style=discord.TextStyle.paragraph, required=True, max_length=300,
+        )
+        ca_label = "Correct Answer" if self.sub_type == "multiple_choice" else "Primary Answer"
+        alt_label = "Wrong Choices (1–3)" if self.sub_type == "multiple_choice" else "Alternate Spellings (max 3)"
+        self.correct_input = discord.ui.TextInput(
+            label=ca_label, default=sub.get("correct_answer", ""),
+            style=discord.TextStyle.short, required=True, max_length=100,
+        )
+        self.alts_input = discord.ui.TextInput(
+            label=alt_label,
+            default="\n".join(sub.get("alternates", []) or []),
+            style=discord.TextStyle.paragraph,
+            required=(self.sub_type == "multiple_choice"),
+            max_length=300,
+        )
+        for item in (self.category_input, self.question_input, self.correct_input, self.alts_input):
+            self.add_item(item)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        cleaned, err = _validate_submission(
+            self.category_input.value, self.question_input.value,
+            self.correct_input.value, self.alts_input.value, self.sub_type,
+        )
+        if err:
+            await interaction.response.send_message(f"❌ {err}", ephemeral=True)
+            return
+        await interaction.response.defer(ephemeral=True)
+        try:
+            await db.question_submissions.update_one(
+                {"_id": _to_object_id(self.submission_id)},
+                {"$set": {
+                    "category": cleaned["category"],
+                    "question": cleaned["question"],
+                    "correct_answer": cleaned["correct_answer"],
+                    "alternates": cleaned["alternates"],
+                }},
+            )
+            success, err_msg = await _approve_submission_direct(
+                self.submission_id, interaction.user.id, interaction.user.display_name, edited=True
+            )
+            if success:
+                await db.review_sessions.update_one(
+                    {"_id": self.session_id},
+                    {"$set": {f"items.{self.global_idx}.mod_decision": "applied"}},
+                )
+                if self.page_view and self.global_idx < len(self.page_view.items):
+                    self.page_view.items[self.global_idx]["mod_decision"] = "applied"
+                await interaction.followup.send("✅ Edited & approved. Navigate with ← → to continue.", ephemeral=True)
+                try:
+                    await sync_top_contributor_role()
+                except Exception:
+                    pass
+            else:
+                await interaction.followup.send(f"❌ Approval failed: {err_msg}", ephemeral=True)
+        except Exception as e:
+            sentry_sdk.capture_exception(e)
+            await interaction.followup.send(f"❌ Error: {e}", ephemeral=True)
+
+
+class BatchPageView(discord.ui.View):
+    def __init__(self, session_id, indices, pos, items):
+        super().__init__(timeout=7200)
+        self.session_id = session_id
+        self.indices = indices
+        self.pos = pos
+        self.items = items
+        self._sync_nav()
+
+    def _current_item(self):
+        return self.items[self.indices[self.pos]]
+
+    def _global_idx(self):
+        return self.indices[self.pos]
+
+    def _sync_nav(self):
+        self.prev_btn.disabled = (self.pos == 0)
+        self.next_btn.disabled = (self.pos >= len(self.indices) - 1)
+        self.pos_btn.label = f"{self.pos + 1} of {len(self.indices)}"
+
+    async def _refresh_items(self):
+        session = await db.review_sessions.find_one({"_id": self.session_id})
+        if session:
+            self.items = session["items"]
+
+    async def _check_mod(self, interaction):
+        if not any(r.id == SUBMISSION_MOD_ROLE_ID for r in getattr(interaction.user, "roles", [])):
+            await interaction.response.send_message("❌ Only moderators can use these buttons.", ephemeral=True)
+            return False
+        return True
+
+    @discord.ui.button(label="✅ Approve", style=discord.ButtonStyle.success, row=0)
+    async def approve_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not await self._check_mod(interaction):
+            return
+        global_idx = self._global_idx()
+        await db.review_sessions.update_one(
+            {"_id": self.session_id}, {"$set": {f"items.{global_idx}.mod_decision": "approve"}}
+        )
+        self.items[global_idx]["mod_decision"] = "approve"
+        self._sync_nav()
+        await interaction.response.edit_message(
+            embed=_build_batch_page_embed(self._current_item(), self.pos, len(self.indices)), view=self
+        )
+
+    @discord.ui.button(label="✏️ Edit", style=discord.ButtonStyle.secondary, row=0)
+    async def edit_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not await self._check_mod(interaction):
+            return
+        item = self._current_item()
+        sub = await db.question_submissions.find_one({"_id": _to_object_id(item["submission_id"])})
+        if not sub or sub.get("status") != "awaiting_mod":
+            await interaction.response.send_message("❌ Submission no longer pending.", ephemeral=True)
+            return
+        modal = BatchEditModal(
+            submission_id=item["submission_id"],
+            sub=sub,
+            session_id=self.session_id,
+            global_idx=self._global_idx(),
+            page_view=self,
+        )
+        await interaction.response.send_modal(modal)
+
+    @discord.ui.button(label="❌ Reject", style=discord.ButtonStyle.danger, row=0)
+    async def reject_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not await self._check_mod(interaction):
+            return
+        global_idx = self._global_idx()
+        await db.review_sessions.update_one(
+            {"_id": self.session_id}, {"$set": {f"items.{global_idx}.mod_decision": "reject"}}
+        )
+        self.items[global_idx]["mod_decision"] = "reject"
+        self._sync_nav()
+        await interaction.response.edit_message(
+            embed=_build_batch_page_embed(self._current_item(), self.pos, len(self.indices)), view=self
+        )
+
+    @discord.ui.button(label="◀ Prev", style=discord.ButtonStyle.secondary, row=1)
+    async def prev_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not await self._check_mod(interaction):
+            return
+        self.pos = max(0, self.pos - 1)
+        await self._refresh_items()
+        self._sync_nav()
+        await interaction.response.edit_message(
+            embed=_build_batch_page_embed(self._current_item(), self.pos, len(self.indices)), view=self
+        )
+
+    @discord.ui.button(label="1 of N", style=discord.ButtonStyle.secondary, row=1, disabled=True)
+    async def pos_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        pass
+
+    @discord.ui.button(label="Next ▶", style=discord.ButtonStyle.secondary, row=1)
+    async def next_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not await self._check_mod(interaction):
+            return
+        self.pos = min(len(self.indices) - 1, self.pos + 1)
+        await self._refresh_items()
+        self._sync_nav()
+        await interaction.response.edit_message(
+            embed=_build_batch_page_embed(self._current_item(), self.pos, len(self.indices)), view=self
+        )
+
+    @discord.ui.button(label="✔️ Apply All & Finish", style=discord.ButtonStyle.primary, row=2)
+    async def apply_all_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not await self._check_mod(interaction):
+            return
+        await interaction.response.defer(ephemeral=True)
+        await self._refresh_items()
+        approved_count = 0
+        rejected_count = 0
+        failed_count = 0
+        now = datetime.datetime.utcnow()
+        for i, item in enumerate(self.items):
+            decision = item.get("mod_decision", "pending")
+            if decision == "approve":
+                proposed = item.get("proposed_changes") or {}
+                if proposed:
+                    updates = {k: proposed[k] for k in ("category", "question", "correct_answer", "alternates") if k in proposed}
+                    if updates:
+                        await db.question_submissions.update_one(
+                            {"_id": _to_object_id(item["submission_id"])}, {"$set": updates}
+                        )
+                success, _ = await _approve_submission_direct(
+                    item["submission_id"], interaction.user.id, interaction.user.display_name
+                )
+                if success:
+                    approved_count += 1
+                    await db.review_sessions.update_one(
+                        {"_id": self.session_id}, {"$set": {f"items.{i}.mod_decision": "applied"}}
+                    )
+                else:
+                    failed_count += 1
+            elif decision == "reject":
+                sub = await db.question_submissions.find_one({"_id": _to_object_id(item["submission_id"])})
+                if sub and sub.get("status") == "awaiting_mod":
+                    await db.question_submissions.update_one(
+                        {"_id": _to_object_id(item["submission_id"])},
+                        {"$set": {
+                            "status": "rejected",
+                            "mod_decision": "reject",
+                            "mod_id": interaction.user.id,
+                            "mod_name": interaction.user.display_name,
+                            "decided_at": now,
+                        }},
+                    )
+                    rejected_count += 1
+                    await db.review_sessions.update_one(
+                        {"_id": self.session_id}, {"$set": {f"items.{i}.mod_decision": "applied"}}
+                    )
+        try:
+            await sync_top_contributor_role()
+        except Exception:
+            pass
+        result = f"✔️ Applied — ✅ {approved_count} approved, ❌ {rejected_count} rejected"
+        if failed_count:
+            result += f", ⚠️ {failed_count} failed"
+        await interaction.followup.send(result, ephemeral=True)
+
+
+class BatchSummaryView(discord.ui.View):
+    def __init__(self, session_id, items):
+        super().__init__(timeout=86400)
+        self.session_id = session_id
+        self.items = items
+
+    def _build_embed(self):
+        total = len(self.items)
+        approve_n = sum(1 for i in self.items if i.get("claude_action") == "approve")
+        reject_n = sum(1 for i in self.items if i.get("claude_action") == "reject")
+        edit_n = sum(1 for i in self.items if i.get("claude_action") == "edit")
+        decided = sum(1 for i in self.items if i.get("mod_decision", "pending") != "pending")
+        embed = discord.Embed(
+            title=f"🤖 Batch Review — {total} Submissions",
+            description=(
+                f"✅ **Approve:** {approve_n}   ❌ **Reject:** {reject_n}   ✏️ **Edit:** {edit_n}\n\n"
+                f"Mod decisions made: {decided}/{total}"
+            ),
+            color=discord.Color.blurple(),
+        )
+        return embed
+
+    async def _check_mod(self, interaction):
+        if not any(r.id == SUBMISSION_MOD_ROLE_ID for r in getattr(interaction.user, "roles", [])):
+            await interaction.response.send_message("❌ Only moderators can use this.", ephemeral=True)
+            return False
+        return True
+
+    @discord.ui.button(label="✅ Approve All Recommended", style=discord.ButtonStyle.success, row=0)
+    async def approve_all_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not await self._check_mod(interaction):
+            return
+        await interaction.response.defer()
+        approved, failed = await _bulk_approve_submissions(
+            self.session_id, interaction.user.id, interaction.user.display_name
+        )
+        session = await db.review_sessions.find_one({"_id": self.session_id})
+        if session:
+            self.items = session["items"]
+        embed = self._build_embed()
+        result = f"✅ {approved} approved"
+        if failed:
+            result += f" | ⚠️ {failed} failed"
+        embed.add_field(name="Bulk Approval Result", value=result, inline=False)
+        await interaction.edit_original_response(embed=embed, view=self)
+
+    @discord.ui.button(label="📋 Review All", style=discord.ButtonStyle.secondary, row=0)
+    async def review_all_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not await self._check_mod(interaction):
+            return
+        if not self.items:
+            await interaction.response.send_message("No submissions in this session.", ephemeral=True)
+            return
+        indices = list(range(len(self.items)))
+        view = BatchPageView(self.session_id, indices, 0, self.items)
+        embed = _build_batch_page_embed(self.items[0], 0, len(indices))
+        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+
+    @discord.ui.button(label="🔴 Review Rejections/Edits", style=discord.ButtonStyle.danger, row=0)
+    async def review_bad_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not await self._check_mod(interaction):
+            return
+        indices = [i for i, item in enumerate(self.items) if item.get("claude_action") in ("reject", "edit")]
+        if not indices:
+            await interaction.response.send_message("✅ No rejections or edits — Claude approved everything!", ephemeral=True)
+            return
+        view = BatchPageView(self.session_id, indices, 0, self.items)
+        embed = _build_batch_page_embed(self.items[indices[0]], 0, len(indices))
+        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+
+
 async def _dm_flaggers(guild, doc, notify_text, intro_text=None):
     """DM all flaggers in the audit array who have a stored user_id."""
     if not notify_text or not guild:
@@ -21400,6 +21906,62 @@ class BulkSubmitModal(discord.ui.Modal, title="Bulk Submit Questions"):
             except Exception:
                 pass
 
+
+
+@bot.tree.command(name="submissions_review", description="Batch Claude review of pending submissions (mods only)", guild=discord.Object(id=OKRAN_GUILD_ID))
+async def submissions_review_command(interaction: discord.Interaction):
+    if not any(r.id == SUBMISSION_MOD_ROLE_ID for r in getattr(interaction.user, "roles", [])):
+        await interaction.response.send_message("❌ Only moderators can use this command.", ephemeral=True)
+        return
+    await interaction.response.defer(ephemeral=True)
+    try:
+        pending_cursor = db.question_submissions.find({"status": "awaiting_mod"})
+        pending_subs = await pending_cursor.to_list(length=200)
+        if not pending_subs:
+            await interaction.followup.send("✅ No pending submissions to review.", ephemeral=True)
+            return
+        total = len(pending_subs)
+        await interaction.followup.send(
+            f"🤖 Running Claude review on {total} submissions — this may take a moment...",
+            ephemeral=True,
+        )
+        session_id = str(uuid.uuid4())
+        items = []
+        for sub in pending_subs:
+            action, reasoning, proposed = await _run_batch_claude_review(sub)
+            items.append({
+                "submission_id": str(sub["_id"]),
+                "question": sub.get("question", ""),
+                "category": sub.get("category", ""),
+                "type": sub.get("type", "free_text"),
+                "correct_answer": sub.get("correct_answer", ""),
+                "alternates": sub.get("alternates") or [],
+                "claude_action": action,
+                "claude_reasoning": reasoning,
+                "proposed_changes": proposed,
+                "mod_decision": "pending",
+            })
+        await db.review_sessions.insert_one({
+            "_id": session_id,
+            "created_at": datetime.datetime.utcnow(),
+            "created_by": interaction.user.id,
+            "items": items,
+        })
+        view = BatchSummaryView(session_id=session_id, items=items)
+        embed = view._build_embed()
+        channel = interaction.channel
+        if channel:
+            await channel.send(embed=embed, view=view)
+            await interaction.followup.send("✅ Review session posted above.", ephemeral=True)
+        else:
+            await interaction.followup.send(embed=embed, view=view, ephemeral=False)
+    except Exception as e:
+        sentry_sdk.capture_exception(e)
+        print(f"❌ submissions_review_command: {e}")
+        try:
+            await interaction.followup.send(f"❌ Something went wrong: {e}", ephemeral=True)
+        except Exception:
+            pass
 
 
 @bot.tree.command(name="contributors", description="Top question contributors", guild=discord.Object(id=OKRAN_GUILD_ID))
