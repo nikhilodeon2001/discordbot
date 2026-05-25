@@ -21945,11 +21945,34 @@ class BulkSubmitModal(discord.ui.Modal, title="Bulk Submit Questions"):
 
 
 
-@bot.tree.command(name="submissions_review", description="Batch Claude review of pending submissions (mods only)", guild=discord.Object(id=OKRAN_GUILD_ID))
-async def submissions_review_command(interaction: discord.Interaction):
+@bot.tree.command(name="submissions", description="Manage pending question submissions (mods only)", guild=discord.Object(id=OKRAN_GUILD_ID))
+@discord.app_commands.describe(action="What to do with pending submissions")
+@discord.app_commands.choices(action=[
+    discord.app_commands.Choice(name="review — batch review all pending submissions", value="review"),
+    discord.app_commands.Choice(name="cleanup — clear all messages from the submissions channel", value="cleanup"),
+])
+async def submissions_command(interaction: discord.Interaction, action: str):
     if not any(r.id == SUBMISSION_MOD_ROLE_ID for r in getattr(interaction.user, "roles", [])):
         await interaction.response.send_message("❌ Only moderators can use this command.", ephemeral=True)
         return
+
+    if action == "cleanup":
+        channel = interaction.guild.get_channel(SUBMISSION_REVIEW_CHANNEL_ID) if interaction.guild else None
+        if not channel:
+            await interaction.response.send_message("❌ Submissions channel not found.", ephemeral=True)
+            return
+        await interaction.response.defer(ephemeral=True)
+        try:
+            deleted = await channel.purge(limit=None, reason=f"Purged by {interaction.user.display_name}")
+            await interaction.followup.send(f"✅ Deleted {len(deleted)} messages from {channel.mention}.", ephemeral=True)
+        except discord.Forbidden:
+            await interaction.followup.send("❌ Bot lacks permission to delete messages in that channel.", ephemeral=True)
+        except Exception as e:
+            sentry_sdk.capture_exception(e)
+            await interaction.followup.send(f"❌ Error: {e}", ephemeral=True)
+        return
+
+    # action == "review"
     await interaction.response.defer(ephemeral=True)
     try:
         pending_cursor = db.question_submissions.find({"status": "awaiting_mod"})
@@ -21959,7 +21982,7 @@ async def submissions_review_command(interaction: discord.Interaction):
             return
         total = len(pending_subs)
         await interaction.followup.send(
-            f"🤖 Running Claude review on {total} submissions (~30 seconds)...",
+            f"🤖 Reviewing {total} pending submissions (~30 seconds)...",
             ephemeral=True,
         )
         session_id = str(uuid.uuid4())
@@ -21968,9 +21991,9 @@ async def submissions_review_command(interaction: discord.Interaction):
 
         async def _review_one(sub):
             async with _sem:
-                action, reasoning, proposed = await _run_batch_claude_review(sub)
+                claude_action, reasoning, proposed = await _run_batch_claude_review(sub)
                 _done[0] += 1
-                print(f"[submissions_review] {_done[0]}/{total} — {sub.get('category', '')} | {action}")
+                print(f"[submissions] {_done[0]}/{total} — {sub.get('category', '')} | {claude_action}")
                 return {
                     "submission_id": str(sub["_id"]),
                     "question": sub.get("question", ""),
@@ -21978,18 +22001,18 @@ async def submissions_review_command(interaction: discord.Interaction):
                     "type": sub.get("type", "free_text"),
                     "correct_answer": sub.get("correct_answer", ""),
                     "alternates": sub.get("alternates") or [],
-                    "claude_action": action,
+                    "claude_action": claude_action,
                     "claude_reasoning": reasoning,
                     "proposed_changes": proposed,
                     "mod_decision": "pending",
                 }
 
-        print(f"[submissions_review] Starting {total} reviews (concurrency=15)...")
+        print(f"[submissions] Starting {total} reviews (concurrency=15)...")
         items = list(await asyncio.gather(*[_review_one(sub) for sub in pending_subs]))
         approve_n = sum(1 for i in items if i["claude_action"] == "approve")
         reject_n = sum(1 for i in items if i["claude_action"] == "reject")
         edit_n = sum(1 for i in items if i["claude_action"] == "edit")
-        print(f"[submissions_review] Done — approve={approve_n} reject={reject_n} edit={edit_n}")
+        print(f"[submissions] Done — approve={approve_n} reject={reject_n} edit={edit_n}")
         await db.review_sessions.insert_one({
             "_id": session_id,
             "created_at": datetime.datetime.utcnow(),
@@ -22006,7 +22029,7 @@ async def submissions_review_command(interaction: discord.Interaction):
             await interaction.followup.send(embed=embed, view=view, ephemeral=False)
     except Exception as e:
         sentry_sdk.capture_exception(e)
-        print(f"❌ submissions_review_command: {e}")
+        print(f"❌ submissions_command: {e}")
         try:
             await interaction.followup.send(f"❌ Something went wrong: {e}", ephemeral=True)
         except Exception:
