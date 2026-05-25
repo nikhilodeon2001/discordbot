@@ -19244,7 +19244,7 @@ async def start_trivia():
 
             await sync_bumper_king_with_role()
             try:
-                await sync_top_contributor_role()
+                await sync_top_contributor_role(announce_channel=channel)
             except Exception as _e:
                 sentry_sdk.capture_exception(_e)
             #await get_survey_results()
@@ -21698,7 +21698,7 @@ class FlaggedReviewView(discord.ui.View):
         await interaction.response.send_modal(ClearFlaggedModal(col, doc_id))
 
 
-async def sync_top_contributor_role():
+async def sync_top_contributor_role(announce_channel=None):
     global top_contributor_id
     if not TOP_CONTRIBUTOR_ROLE_ID:
         return
@@ -21726,10 +21726,19 @@ async def sync_top_contributor_role():
     if target_id:
         top_contributor_id = target_id
         member = guild.get_member(target_id)
+        if not member:
+            try:
+                member = await guild.fetch_member(target_id)
+            except Exception:
+                member = None
         if member and role not in member.roles:
             try:
                 await member.add_roles(role, reason="Top contributor (last 7 days)")
-                trivia_channel = bot.get_channel(channel_id)
+            except (discord.Forbidden, Exception) as e:
+                print(f"⚠️ sync_top_contributor_role: failed to add role: {e}")
+                return
+            try:
+                trivia_channel = announce_channel or bot.get_channel(channel_id)
                 if trivia_channel:
                     okrafx_mention = f"</okrafx:{OKRAFX_COMMAND_ID}>" if OKRAFX_COMMAND_ID else "/okrafx"
                     tc_embed = discord.Embed(
@@ -21745,18 +21754,18 @@ async def sync_top_contributor_role():
                         color=discord.Color.gold()
                     )
                     await trivia_channel.send(embed=tc_embed)
-                try:
-                    await member.send(
-                        f"🏆 Congrats! You're now the **Top Contributor** of the week on Live Trivia!\n\n"
-                        f"You've submitted the most approved questions over the last 7 days. As a reward, you now unlock:\n\n"
-                        f"• Access to all exclusive perks 🎁\n"
-                        f"• Change your username color with `/okrafx` 🎨\n"
-                        f"• Start tournaments 🏟️\n"
-                        f"• Access the mini-game arena 🎮\n\n"
-                        f"Keep it up! 🥒"
-                    )
-                except (discord.Forbidden, Exception):
-                    pass
+            except Exception as e:
+                print(f"⚠️ sync_top_contributor_role: failed to send announcement: {e}")
+            try:
+                await member.send(
+                    f"🏆 Congrats! You're now the **Top Contributor** of the week on Live Trivia!\n\n"
+                    f"You've submitted the most approved questions over the last 7 days. As a reward, you now unlock:\n\n"
+                    f"• Access to all exclusive perks 🎁\n"
+                    f"• Change your username color with `/okrafx` 🎨\n"
+                    f"• Start tournaments 🏟️\n"
+                    f"• Access the mini-game arena 🎮\n\n"
+                    f"Keep it up! 🥒"
+                )
             except (discord.Forbidden, Exception):
                 pass
     else:
