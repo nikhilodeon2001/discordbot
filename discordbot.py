@@ -22058,7 +22058,7 @@ async def contributors_command(interaction: discord.Interaction):
         for i, r in enumerate(rows, 1):
             ap = r.get("approved", 0)
             name = r.get("display_name") or f"<@{r['_id']}>"
-            lines.append(f"**{i}.** {name} — ✅ {ap}")
+            lines.append(f"**{i}.** {name} — {ap}")
         embed = discord.Embed(
             title="🏆 Top Question Contributors",
             description="\n".join(lines),
