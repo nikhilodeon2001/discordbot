@@ -20943,10 +20943,16 @@ class SubmissionReviewView(discord.ui.View):
 # ──────────────────────────────────────────────────────────────────────────────
 
 async def _approve_submission_direct(submission_id, mod_id, mod_name, edited=False):
-    """DB-only approval (no Discord response). Returns (success: bool, error: str)."""
+    """DB-only approval (no Discord response). Returns (success: bool, error: str).
+    Uses atomic find_one_and_update to prevent double-approval race conditions."""
     try:
-        sub = await db.question_submissions.find_one({"_id": _to_object_id(submission_id)})
-        if not sub or sub.get("status") != "awaiting_mod":
+        # Atomically claim: only one concurrent caller can win this update
+        sub = await db.question_submissions.find_one_and_update(
+            {"_id": _to_object_id(submission_id), "status": "awaiting_mod"},
+            {"$set": {"status": "processing"}},
+            return_document=False,
+        )
+        if not sub:
             return False, "Submission no longer pending"
         now = datetime.datetime.utcnow()
         is_mc = sub.get("type") == "multiple_choice"
@@ -20992,6 +20998,22 @@ async def _approve_submission_direct(submission_id, mod_id, mod_name, edited=Fal
             upsert=True,
         )
         _invalidate_attribution_cache(target_pool, ins.inserted_id)
+        # Update the individual mod channel embed (best-effort)
+        try:
+            msg_id = sub.get("mod_message_id")
+            if msg_id:
+                guild = get_bot().get_guild(OKRAN_GUILD_ID)
+                channel_id = sub.get("mod_channel_id", SUBMISSION_REVIEW_CHANNEL_ID)
+                channel = guild.get_channel(channel_id) if guild else None
+                if channel:
+                    msg = await channel.fetch_message(msg_id)
+                    fresh = await db.question_submissions.find_one({"_id": sub["_id"]})
+                    updated_embed = _build_submission_embed(fresh)
+                    verb = "Edited & Approved" if edited else "Approved (batch)"
+                    updated_embed.set_footer(text=f"✅ {verb} by {mod_name}")
+                    await msg.edit(embed=updated_embed, view=None)
+        except Exception:
+            pass
         return True, ""
     except Exception as e:
         sentry_sdk.capture_exception(e)
@@ -21318,7 +21340,7 @@ class BatchPageView(discord.ui.View):
                     failed_count += 1
             elif decision == "reject":
                 sub = await db.question_submissions.find_one({"_id": _to_object_id(item["submission_id"])})
-                if sub and sub.get("status") == "awaiting_mod":
+                if sub and sub.get("status") in ("awaiting_mod", "processing"):
                     await db.question_submissions.update_one(
                         {"_id": _to_object_id(item["submission_id"])},
                         {"$set": {
@@ -21333,6 +21355,21 @@ class BatchPageView(discord.ui.View):
                     await db.review_sessions.update_one(
                         {"_id": self.session_id}, {"$set": {f"items.{i}.mod_decision": "applied"}}
                     )
+                    # Update the individual mod channel embed to red
+                    try:
+                        msg_id = sub.get("mod_message_id")
+                        if msg_id:
+                            guild = get_bot().get_guild(OKRAN_GUILD_ID)
+                            channel_id = sub.get("mod_channel_id", SUBMISSION_REVIEW_CHANNEL_ID)
+                            channel = guild.get_channel(channel_id) if guild else None
+                            if channel:
+                                msg = await channel.fetch_message(msg_id)
+                                fresh = await db.question_submissions.find_one({"_id": _to_object_id(item["submission_id"])})
+                                updated_embed = _build_submission_embed(fresh)
+                                updated_embed.set_footer(text=f"❌ Rejected (batch) by {interaction.user.display_name}")
+                                await msg.edit(embed=updated_embed, view=None)
+                    except Exception:
+                        pass
         try:
             await sync_top_contributor_role()
         except Exception:
@@ -21922,25 +21959,37 @@ async def submissions_review_command(interaction: discord.Interaction):
             return
         total = len(pending_subs)
         await interaction.followup.send(
-            f"🤖 Running Claude review on {total} submissions — this may take a moment...",
+            f"🤖 Running Claude review on {total} submissions (~30 seconds)...",
             ephemeral=True,
         )
         session_id = str(uuid.uuid4())
-        items = []
-        for sub in pending_subs:
-            action, reasoning, proposed = await _run_batch_claude_review(sub)
-            items.append({
-                "submission_id": str(sub["_id"]),
-                "question": sub.get("question", ""),
-                "category": sub.get("category", ""),
-                "type": sub.get("type", "free_text"),
-                "correct_answer": sub.get("correct_answer", ""),
-                "alternates": sub.get("alternates") or [],
-                "claude_action": action,
-                "claude_reasoning": reasoning,
-                "proposed_changes": proposed,
-                "mod_decision": "pending",
-            })
+        _sem = asyncio.Semaphore(15)
+        _done = [0]
+
+        async def _review_one(sub):
+            async with _sem:
+                action, reasoning, proposed = await _run_batch_claude_review(sub)
+                _done[0] += 1
+                print(f"[submissions_review] {_done[0]}/{total} — {sub.get('category', '')} | {action}")
+                return {
+                    "submission_id": str(sub["_id"]),
+                    "question": sub.get("question", ""),
+                    "category": sub.get("category", ""),
+                    "type": sub.get("type", "free_text"),
+                    "correct_answer": sub.get("correct_answer", ""),
+                    "alternates": sub.get("alternates") or [],
+                    "claude_action": action,
+                    "claude_reasoning": reasoning,
+                    "proposed_changes": proposed,
+                    "mod_decision": "pending",
+                }
+
+        print(f"[submissions_review] Starting {total} reviews (concurrency=15)...")
+        items = list(await asyncio.gather(*[_review_one(sub) for sub in pending_subs]))
+        approve_n = sum(1 for i in items if i["claude_action"] == "approve")
+        reject_n = sum(1 for i in items if i["claude_action"] == "reject")
+        edit_n = sum(1 for i in items if i["claude_action"] == "edit")
+        print(f"[submissions_review] Done — approve={approve_n} reject={reject_n} edit={edit_n}")
         await db.review_sessions.insert_one({
             "_id": session_id,
             "created_at": datetime.datetime.utcnow(),
