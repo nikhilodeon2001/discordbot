@@ -22054,22 +22054,11 @@ async def contributors_command(interaction: discord.Interaction):
             await interaction.followup.send("No approved submissions yet.")
             return
 
-        # Count how many of each contributor's trivia_questions have been asked
-        asked_pipeline = [
-            {"$match": {"submitter_id": {"$exists": True}}},
-            {"$lookup": {"from": "asked_general_questions_discord", "localField": "_id", "foreignField": "_id", "as": "asked"}},
-            {"$group": {"_id": "$submitter_id", "asked_count": {"$sum": {"$cond": [{"$gt": [{"$size": "$asked"}, 0]}, 1, 0]}}}},
-        ]
-        asked_results = await db.trivia_questions.aggregate(asked_pipeline).to_list(length=None)
-        asked_by_user = {r["_id"]: r["asked_count"] for r in asked_results}
-
         lines = []
         for i, r in enumerate(rows, 1):
             ap = r.get("approved", 0)
-            user_id = r["_id"]
-            asked = asked_by_user.get(user_id, 0)
-            name = r.get("display_name") or f"<@{user_id}>"
-            lines.append(f"**{i}.** {name} — {ap} approved, {asked} asked")
+            name = r.get("display_name") or f"<@{r['_id']}>"
+            lines.append(f"**{i}.** {name} — ✅ {ap}")
         embed = discord.Embed(
             title="🏆 Top Question Contributors",
             description="\n".join(lines),
