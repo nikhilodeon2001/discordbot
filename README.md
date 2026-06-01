@@ -1,5 +1,7 @@
 # OkraStrut — Discord Trivia & Games Bot
 
+[Join the Discord](https://discord.gg/VwCAwugmtw)
+
 A feature-rich Discord bot built in Python with continuous trivia, 38 mini-games, a full tournament system, a multi-level escape room, and a self-deploying update mechanism. Runs in production on Heroku with MongoDB, AWS S3, and a suite of third-party APIs.
 
 ---
