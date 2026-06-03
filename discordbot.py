@@ -21665,7 +21665,7 @@ async def submissions_command(interaction: discord.Interaction, action: str):
 async def contributors_command(interaction: discord.Interaction):
     try:
         await interaction.response.defer()
-        rows = await db.question_submission_stats.find().sort("approved", -1).limit(15).to_list(length=15)
+        rows = await db.question_submission_stats.find({"approved": {"$gt": 0}}).sort("approved", -1).limit(15).to_list(length=15)
         if not rows:
             await interaction.followup.send("No approved submissions yet.")
             return
