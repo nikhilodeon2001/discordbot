@@ -169,10 +169,12 @@ async def end_of_round():
             global shutdown_initiated
             shutdown_initiated = True
 
+            blurb = await get_update_blurb()
+
             # Send update notification to main channel
             if channel:
                 try:
-                    await safe_send(channel, "🔄 **Update detected!** I'll be back shortly...")
+                    await safe_send(channel, blurb)
                     print(f"✅ Sent update notification to main channel {channel.id}")
                 except Exception as e:
                     print(f"❌ Failed to send update notification to main channel: {e}")
@@ -181,7 +183,7 @@ async def end_of_round():
             tournament_channel = bot.get_channel(TOURNAMENT_GUILD_ID)
             if tournament_channel:
                 try:
-                    await safe_send(tournament_channel, "🔄 **Update detected!** I'll be back shortly...")
+                    await safe_send(tournament_channel, blurb)
                     print(f"✅ Sent update notification to tournament channel {TOURNAMENT_GUILD_ID}")
                 except Exception as e:
                     print(f"❌ Failed to send update notification to tournament channel: {e}")
@@ -190,7 +192,7 @@ async def end_of_round():
             mini_game_lobby = bot.get_channel(THE_LODGE_CHANNEL_ID)
             if mini_game_lobby:
                 try:
-                    await safe_send(mini_game_lobby, "🔄 **Update detected!** I'll be back shortly...")
+                    await safe_send(mini_game_lobby, blurb)
                     print(f"✅ Sent update notification to The Lodge {THE_LODGE_CHANNEL_ID}")
                 except Exception as e:
                     print(f"❌ Failed to send update notification to The Lodge: {e}")
@@ -199,7 +201,7 @@ async def end_of_round():
             mini_game_arena = bot.get_channel(MINI_GAME_ARENA_CHANNEL_ID)
             if mini_game_arena:
                 try:
-                    await safe_send(mini_game_arena, "🔄 **Update detected!** I'll be back shortly...")
+                    await safe_send(mini_game_arena, blurb)
                     print(f"✅ Sent update notification to Mini-Game Arena {MINI_GAME_ARENA_CHANNEL_ID}")
                 except Exception as e:
                     print(f"❌ Failed to send update notification to Mini-Game Arena: {e}")
@@ -218,6 +220,88 @@ async def end_of_round():
     except Exception as e:
         print(f"Self-update failed: {e}")
         return False
+
+_BLURB_THEMES = [
+    "a bizarre but true historical fact",
+    "a one-liner philosophical paradox",
+    "an absurd hypothetical that makes you think",
+    "a counterintuitive science fact",
+    "a terrible pun that's secretly clever",
+    "a weird animal behavior fact",
+    "a mind-bending math or logic tidbit",
+    "an unexpected food fact",
+    "a short existential observation",
+    "a funny 'what if' question with a real answer",
+    "a strange law that actually exists somewhere in the world",
+    "a surprising fact about the human body",
+    "a weird coincidence from history",
+    "a mind-bending optical illusion described in words",
+    "an unexpected origin story of a common word or phrase",
+    "a fact about space that makes Earth feel tiny",
+    "a philosophical thought experiment in one sentence",
+    "a counterintuitive economic or game theory principle",
+    "a bizarre record someone actually holds",
+    "a fact about language or linguistics that surprises people",
+    "a weird fact about how animals perceive time or reality",
+    "a short riddle with a satisfying answer",
+    "a surprising invention that changed the world but nobody talks about",
+    "a fact about ancient civilizations that feels impossibly modern",
+    "a creepy but fascinating natural phenomenon",
+    "a thought-provoking moral dilemma in one sentence",
+    "a surprising fact about color, light, or perception",
+    "an unexpected mathematical truth",
+    "a bizarre but real medical or psychological phenomenon",
+    "a fun fact about music, sound, or acoustics",
+]
+
+async def _pick_theme() -> str:
+    recent = await get_recent_question_ids_from_mongo("blurb_theme")
+    available = [t for t in _BLURB_THEMES if t not in recent]
+    if not available:
+        available = _BLURB_THEMES
+    theme = random.choice(available)
+    await store_question_ids_in_mongo([theme], "blurb_theme")
+    return theme
+
+async def get_round_blurb() -> str:
+    try:
+        theme = await _pick_theme()
+        resp = await openai_client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{
+                "role": "user",
+                "content": (
+                    f"Give me {theme}. "
+                    "One or two sentences max. No intro or label, just the content."
+                )
+            }],
+            max_tokens=80,
+        )
+        blurb = resp.choices[0].message.content.strip()
+        return f"🌿 {blurb} 🥬"
+    except Exception:
+        return "🥬"
+
+async def get_update_blurb() -> str:
+    try:
+        theme = await _pick_theme()
+        resp = await openai_client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{
+                "role": "user",
+                "content": (
+                    f"Give me {theme} in one sentence. "
+                    "Then on a new line, add a short playful sign-off (1 sentence) saying "
+                    "the bot is stepping away to level up / patch itself / evolve / upgrade. "
+                    "Okra flair welcome. No intro or labels."
+                )
+            }],
+            max_tokens=100,
+        )
+        blurb = resp.choices[0].message.content.strip()
+        return f"🌿 {blurb} 🥬"
+    except Exception:
+        return "🥬 Heading off to level up — back in a flash, Okrans!"
 
 def randomize_embed_color():
     """
@@ -531,7 +615,7 @@ _submission_locks = {}  # submitter_id -> asyncio.Lock (rate-limit TOCTOU guard)
 _submitter_attribution_cache = OrderedDict()  # (db_name, _id) -> attribution string; bounded LRU
 _SUBMITTER_CACHE_MAX = 256
 
-id_limits = {"general": 2000, "mysterybox": 2000, "crossword": 5000, "jeopardy": 5000, "wof": 1500, "list": 20, "feud": 1000, "posters": 2000, "movie_scenes": 5000, "missing_link": 2500, "people": 2500, "ranker_list": 4000, "animal": 2000, "riddle": 2500, "dictionary": 5000, "flags": 150, "lyric": 500, "polyglottery": 80, "book": 80, "element": 100, "jigsaw": 5000, "border": 100, "faceoff": 5000, "president": 80, "wordle": 1400, "myopic": 5000, "fusion": 5000, "microscopic": 5000, "chess": 5000, "stock": 800, "currency": 100, "search": 10, "billboard": 40, "soundfx": 500, "audio_music":100, "audio_question": 2000, "sports_logos": 20}
+id_limits = {"general": 2000, "mysterybox": 2000, "crossword": 5000, "jeopardy": 5000, "wof": 1500, "list": 20, "feud": 1000, "posters": 2000, "movie_scenes": 5000, "missing_link": 2500, "people": 2500, "ranker_list": 4000, "animal": 2000, "riddle": 2500, "dictionary": 5000, "flags": 150, "blurb_theme": 10, "lyric": 500, "polyglottery": 80, "book": 80, "element": 100, "jigsaw": 5000, "border": 100, "faceoff": 5000, "president": 80, "wordle": 1400, "myopic": 5000, "fusion": 5000, "microscopic": 5000, "chess": 5000, "stock": 800, "currency": 100, "search": 10, "billboard": 40, "soundfx": 500, "audio_music":100, "audio_question": 2000, "sports_logos": 20}
 max_retries = 3
 delay_between_retries = 3
 first_place_bonus = 0
@@ -19046,8 +19130,10 @@ async def start_trivia():
 
             if len(active_tournaments) == 0 and _active_game_bot is None and _active_game_channel is None:
                 await end_of_round()
-            
-            await asyncio.sleep(4)  # Adjust this time to whatever delay you need between rounds
+
+            # Fetch round blurb concurrently with the between-round pause
+            blurb, _ = await asyncio.gather(get_round_blurb(), asyncio.sleep(4))
+            await safe_send(channel, blurb)
             
             await check_bump_status()
             if bumped_status == False:
