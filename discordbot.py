@@ -19134,7 +19134,8 @@ async def start_trivia():
             # Fetch round blurb concurrently with the between-round pause
             blurb, _ = await asyncio.gather(get_round_blurb(), asyncio.sleep(4))
             await safe_send(channel, blurb)
-            
+            await asyncio.sleep(5)
+
             await check_bump_status()
             if bumped_status == False:
                 await get_bump_url_from_s3()
@@ -22091,7 +22092,7 @@ async def on_ready():
         # Always notify main channel
         if channel:
             try:
-                await safe_send(channel, "✅ **I'm back online!** Ready to continue.")
+                await safe_send(channel, "🥬 And we're back. Let's go, Okrans!")
                 print(f"✅ Sent startup notification to main channel {channel.id}")
             except Exception as e:
                 print(f"❌ Failed to send notification to main channel: {e}")
@@ -22100,7 +22101,7 @@ async def on_ready():
         tournament_channel = bot.get_channel(TOURNAMENT_GUILD_ID)
         if tournament_channel:
             try:
-                await safe_send(tournament_channel, "✅ **I'm back online!** Ready to continue.")
+                await safe_send(tournament_channel, "🥬 And we're back. Let's go, Okrans!")
                 print(f"✅ Sent startup notification to tournament channel {TOURNAMENT_GUILD_ID}")
             except Exception as e:
                 print(f"❌ Failed to send notification to tournament channel: {e}")
@@ -22112,7 +22113,7 @@ async def on_ready():
         mini_game_arena = bot.get_channel(MINI_GAME_ARENA_CHANNEL_ID)
         if mini_game_arena:
             try:
-                await safe_send(mini_game_arena, "✅ **I'm back online!** Ready to continue.")
+                await safe_send(mini_game_arena, "🥬 And we're back. Let's go, Okrans!")
                 print(f"✅ Sent startup notification to Mini-Game Arena {MINI_GAME_ARENA_CHANNEL_ID}")
             except Exception as e:
                 print(f"❌ Failed to send notification to Mini-Game Arena: {e}")
@@ -22121,7 +22122,7 @@ async def on_ready():
         simply_trivia_channel = bot.get_channel(SIMPLY_TRIVIA_CHANNEL_ID)
         if simply_trivia_channel:
             try:
-                await safe_send(simply_trivia_channel, "✅ **I'm back online!** Ready to continue.")
+                await safe_send(simply_trivia_channel, "🥬 And we're back. Let's go, Okrans!")
                 print(f"✅ Sent startup notification to Simply Trivia {SIMPLY_TRIVIA_CHANNEL_ID}")
             except Exception as e:
                 print(f"❌ Failed to send notification to Simply Trivia: {e}")
