@@ -265,21 +265,23 @@ async def _pick_theme() -> str:
 
 async def get_round_blurb() -> str:
     try:
-        theme = await _pick_theme()
-        resp = await openai_client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[{
-                "role": "user",
-                "content": (
-                    f"Give me {theme}. "
-                    "One or two sentences max. No intro or label, just the content."
-                )
-            }],
-            max_tokens=80,
-        )
-        blurb = resp.choices[0].message.content.strip()
-        return f"🌿 {blurb} 🥬"
-    except Exception:
+        db = await connect_to_mongodb()
+        collection = db["fun_facts"]
+        recent_ids = await get_recent_question_ids_from_mongo("fun_fact")
+        recent_object_ids = [ObjectId(i) for i in recent_ids if ObjectId.is_valid(i)]
+        fact = await collection.aggregate([
+            {"$match": {"_id": {"$nin": recent_object_ids}}},
+            {"$sample": {"size": 1}}
+        ]).to_list(length=1)
+        if not fact:
+            fact = await collection.aggregate([{"$sample": {"size": 1}}]).to_list(length=1)
+        if not fact:
+            return "🥬"
+        chosen = fact[0]
+        await store_question_ids_in_mongo([str(chosen["_id"])], "fun_fact")
+        return f"🌿 {chosen['text']} 🥬"
+    except Exception as e:
+        print(f"Error fetching fun fact: {e}")
         return "🥬"
 
 async def get_update_blurb() -> str:
@@ -519,6 +521,7 @@ if prod_or_stage == "stage":
     SIMPLY_STREAKS_CHANNEL_ID = 1447107992657854586
     FLAGGED_QUESTIONS_CHANNEL_ID = 1448901996257083493
     SUBMISSION_REVIEW_CHANNEL_ID = 1507145799698612446
+    DM_RELAY_CHANNEL_ID = 1516676523547955301
     SUBMISSION_MOD_ROLE_ID = 1416587636709134408
     TOP_CONTRIBUTOR_ROLE_ID = 1507142100892778740
 
@@ -560,6 +563,7 @@ elif prod_or_stage == "prod":
     SIMPLY_STREAKS_CHANNEL_ID = 1447107455376035881
     FLAGGED_QUESTIONS_CHANNEL_ID = 1448895124183453696
     SUBMISSION_REVIEW_CHANNEL_ID = 1507247678004924477
+    DM_RELAY_CHANNEL_ID = 1516676355482452018
     SUBMISSION_MOD_ROLE_ID = 1411059745774764193
     TOP_CONTRIBUTOR_ROLE_ID = 1507246658688254064
 
@@ -615,7 +619,7 @@ _submission_locks = {}  # submitter_id -> asyncio.Lock (rate-limit TOCTOU guard)
 _submitter_attribution_cache = OrderedDict()  # (db_name, _id) -> attribution string; bounded LRU
 _SUBMITTER_CACHE_MAX = 256
 
-id_limits = {"general": 2000, "mysterybox": 2000, "crossword": 5000, "jeopardy": 5000, "wof": 1500, "list": 20, "feud": 1000, "posters": 2000, "movie_scenes": 5000, "missing_link": 2500, "people": 2500, "ranker_list": 4000, "animal": 2000, "riddle": 2500, "dictionary": 5000, "flags": 150, "blurb_theme": 10, "lyric": 500, "polyglottery": 80, "book": 80, "element": 100, "jigsaw": 5000, "border": 100, "faceoff": 5000, "president": 80, "wordle": 1400, "myopic": 5000, "fusion": 5000, "microscopic": 5000, "chess": 5000, "stock": 800, "currency": 100, "search": 10, "billboard": 40, "soundfx": 500, "audio_music":100, "audio_question": 2000, "sports_logos": 20}
+id_limits = {"general": 2000, "mysterybox": 2000, "crossword": 5000, "jeopardy": 5000, "wof": 1500, "list": 20, "feud": 1000, "posters": 2000, "movie_scenes": 5000, "missing_link": 2500, "people": 2500, "ranker_list": 4000, "animal": 2000, "riddle": 2500, "dictionary": 5000, "flags": 150, "blurb_theme": 10, "lyric": 500, "polyglottery": 80, "book": 80, "element": 100, "jigsaw": 5000, "border": 100, "faceoff": 5000, "president": 80, "wordle": 1400, "myopic": 5000, "fusion": 5000, "microscopic": 5000, "chess": 5000, "stock": 800, "currency": 100, "search": 10, "billboard": 40, "soundfx": 500, "audio_music":100, "audio_question": 2000, "sports_logos": 20, "fun_fact": 75}
 max_retries = 3
 delay_between_retries = 3
 first_place_bonus = 0
@@ -19387,7 +19391,40 @@ async def on_message(message):
 
     if is_self:
         return
-    
+
+    if message.guild is None:
+        relay_channel = bot.get_channel(DM_RELAY_CHANNEL_ID)
+        if relay_channel:
+            embed = discord.Embed(
+                description=message.content or "*(no text content)*",
+                color=discord.Color.blurple(),
+                timestamp=message.created_at,
+            )
+            embed.set_author(
+                name=f"{message.author.display_name} ({message.author})",
+                icon_url=message.author.display_avatar.url,
+            )
+            embed.set_footer(text=f"User ID: {message.author.id}")
+            if message.reference:
+                try:
+                    original = await message.channel.fetch_message(message.reference.message_id)
+                    if original.content:
+                        embed.add_field(
+                            name="Replying to",
+                            value=original.content[:1024],
+                            inline=False,
+                        )
+                except Exception:
+                    pass
+            if message.attachments:
+                embed.add_field(
+                    name="Attachments",
+                    value="\n".join(a.url for a in message.attachments),
+                    inline=False,
+                )
+            await relay_channel.send("📬 **DM received:**", embed=embed)
+        return
+
     if "okra" in message.content.strip().lower() and emoji_mode == True and message.author.id != get_bot().user.id:
         if emoji_mode == True:
             await message.add_reaction("🥒")
