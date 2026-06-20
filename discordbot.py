@@ -17747,7 +17747,7 @@ async def check_correct_responses_delete(question_ask_time, trivia_answer_list, 
                     points *= discount_factor
                     points = round(points / 5) * 5
 
-            correct_responses.append((display_name, points, response_time, message_content, sender_id, message))
+            correct_responses.append((display_name, points, response_time, message_content, sender_id, message, None))
     
             # Check if this is the fastest/slowest correct response so far
             if golf_mode:
@@ -17769,21 +17769,25 @@ async def check_correct_responses_delete(question_ask_time, trivia_answer_list, 
                 first_correct_found = True
 
     closest_answer_delta = None
-    if is_number(trivia_answer) and len(trivia_answer_list) == 1:
+    if not correct_responses and is_number(trivia_answer) and len(trivia_answer_list) == 1:
         numeric_subs = {uid: c for uid, c in user_first_response.items() if is_number(c)}
         if len(numeric_subs) >= 2:
             correct_val = float(trivia_answer)
-            closest_uid = min(numeric_subs,
-                key=lambda uid: abs(float(numeric_subs[uid]) - correct_val))
-            closest_content = numeric_subs[closest_uid]
-            closest_answer_delta = abs(float(closest_content) - correct_val)
-            closest_msg = None
-            for resp in collected_responses:
-                if resp["message"].author.id == closest_uid:
-                    closest_msg = resp["message"]
-                    closest_ts = closest_msg.created_at.timestamp()
-                    break
-            if closest_msg:
+            min_delta = min(abs(float(c) - correct_val) for c in numeric_subs.values())
+            closest_uids = [uid for uid, c in numeric_subs.items() if abs(float(c) - correct_val) == min_delta]
+            closest_answer_delta = min_delta
+
+            for closest_uid in closest_uids:
+                closest_content = numeric_subs[closest_uid]
+                closest_msg = None
+                for resp in collected_responses:
+                    if resp["message"].author.id == closest_uid:
+                        closest_msg = resp["message"]
+                        closest_ts = closest_msg.created_at.timestamp()
+                        break
+                if not closest_msg:
+                    continue
+
                 closest_name = closest_msg.author.display_name
                 response_time = (closest_ts - question_ask_time) if (closest_ts and question_ask_time) else float('inf')
                 points = calculate_points(response_time)
@@ -17794,11 +17798,21 @@ async def check_correct_responses_delete(question_ask_time, trivia_answer_list, 
                     if discount_percentage > 0:
                         points *= (1 - discount_percentage / 100.0)
                         points = round(points / 5) * 5
-                correct_responses = [(closest_name, points, response_time, closest_content, closest_uid, closest_msg)]
-                fastest_correct_user = closest_name
-                fastest_correct_user_id = closest_uid
-                fastest_response_time = response_time
-                fastest_correct_message = closest_msg
+
+                correct_responses.append((closest_name, points, response_time, closest_content, closest_uid, closest_msg, closest_answer_delta))
+
+                if golf_mode:
+                    if fastest_correct_user is None or response_time > fastest_response_time:
+                        fastest_correct_user_id = closest_uid
+                        fastest_correct_user = closest_name
+                        fastest_response_time = response_time
+                        fastest_correct_message = closest_msg
+                else:
+                    if fastest_correct_user is None or response_time < fastest_response_time:
+                        fastest_correct_user_id = closest_uid
+                        fastest_correct_user = closest_name
+                        fastest_response_time = response_time
+                        fastest_correct_message = closest_msg
 
     if emoji_mode == True and fastest_response_time is not None and blind_mode == False and marx_mode == False:
         try:
@@ -17813,7 +17827,7 @@ async def check_correct_responses_delete(question_ask_time, trivia_answer_list, 
     # Now that we know the fastest responder, iterate over correct_responses to:
     # - Assign the extra 500 points to the fastest user
     # - Update the scoreboard for all users
-    for i, (display_name, points, response_time, message_content, sender_id, discord_message) in enumerate(correct_responses):
+    for i, (display_name, points, response_time, message_content, sender_id, discord_message, _delta) in enumerate(correct_responses):
         if sender_id == fastest_correct_user_id:
             if sender_id in fastest_answers_count:
                 fastest_answers_count[sender_id] += 1
@@ -17845,8 +17859,7 @@ async def check_correct_responses_delete(question_ask_time, trivia_answer_list, 
         else:
             message = f"\u200b\n✅ **Answer** ({len(question_responders)}) ✅\n{trivia_answer}\n\u200b"
             if closest_answer_delta is not None:
-                delta_display = int(closest_answer_delta) if closest_answer_delta == int(closest_answer_delta) else closest_answer_delta
-                message += f"\n🎯 Closest answer wins! (off by {delta_display})"
+                message += f"\n🎯 Closest answer wins!"
 
 
     # Notify the chat
@@ -17854,18 +17867,24 @@ async def check_correct_responses_delete(question_ask_time, trivia_answer_list, 
         correct_responses_length = len(correct_responses)
         
         # Loop through the responses and append to the message
-        for display_name, points, response_time, message_content, sender_id, discord_message in correct_responses:
+        for display_name, points, response_time, message_content, sender_id, discord_message, delta in correct_responses:
             time_diff = response_time - fastest_response_time
             
             name_str = display_name
             if current_longest_round_streak["user_id"] == sender_id and discount_percentage is not None and discount_percentage > 0:
                 name_str += f" (-{discount_percentage}%)"
-        
+
+            delta_suffix = ""
+            if delta is not None:
+                delta_display = int(delta) if delta == int(delta) else delta
+                delta_suffix = f" (off by {delta_display})"
+
             # Display the formatted message based on yolo_mode
             if time_diff == 0:
                 message += f"\u200b\n⚡ **{display_name}**"
                 if not yolo_mode:
                     message += f": {points}"
+                message += delta_suffix
                 if points == 420:
                     message += " 🌿"
                 if points == 690:
@@ -17876,6 +17895,7 @@ async def check_correct_responses_delete(question_ask_time, trivia_answer_list, 
                 message += f"\n\u200b👥 **{display_name}**"
                 if not yolo_mode:
                     message += f": {points}"
+                message += delta_suffix
                 if points == 420:
                     message += " 🌿"
                 if points == 690:
