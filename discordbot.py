@@ -12224,7 +12224,7 @@ def update_audit_question(question, message_content, display_name):
                 print(f"Failed to update audit for document '{document_id}' in {question['db']}.")
 
 
-async def send_flag_notification(question, flag_reason, display_name, flag_message):
+async def send_flag_notification(question, flag_reason, display_name, flag_message, user_id=None):
     """
     Send a notification to the flagged questions channel when a question is flagged
 
@@ -12233,6 +12233,7 @@ async def send_flag_notification(question, flag_reason, display_name, flag_messa
         flag_reason: The reason the user provided for flagging
         display_name: User's display name
         flag_message: The Discord message object (can be None for slash commands)
+        user_id: Discord user ID of the flagger (used to DM them later, even for runtime-generated questions with no persisted document)
     """
     try:
         # Get the guild using OKRAN_GUILD_ID (works for both slash commands and message flags)
@@ -12322,7 +12323,15 @@ async def send_flag_notification(question, flag_reason, display_name, flag_messa
         try:
             await db.flag_notifications.update_one(
                 {"doc_id": str(document_id), "collection_name": collection_name},
-                {"$set": {"message_id": msg.id, "resolved": False, "posted_at": datetime.datetime.utcnow()}},
+                {
+                    "$set": {
+                        "message_id": msg.id,
+                        "resolved": False,
+                        "posted_at": datetime.datetime.utcnow(),
+                        "question_snapshot": {"question": question_text, "answers": answers},
+                    },
+                    "$push": {"flaggers": {"user_id": user_id, "display_name": display_name, "message_content": flag_reason}},
+                },
                 upsert=True,
             )
         except Exception:
@@ -12360,7 +12369,7 @@ async def update_audit_question(question, message_content, display_name, flag_me
                 await collection.update_one({"_id": document_id}, update, upsert=False)
 
                 # Send notification to flagged questions channel (works for both slash commands and message flags)
-                await send_flag_notification(question, message_content, display_name, flag_message)
+                await send_flag_notification(question, message_content, display_name, flag_message, user_id=user_id)
 
                 break  # Success
 
@@ -20027,6 +20036,8 @@ async def _run_flagged_review(collection_name, doc_id, mod_user_id):
     """Call Claude to evaluate a flagged question. Stores result in ai_review sub-doc."""
     if not anthropic_client:
         return {"ai_action": "no_change", "ai_reasoning": "Claude client not configured", "proposed_changes": {}}
+    if collection_name in {"math_questions", "stats_questions"}:
+        return {"ai_action": "no_change", "ai_reasoning": "Math/stats questions are generated at runtime — skipping.", "proposed_changes": {}}
     try:
         doc = await db[collection_name].find_one({"_id": ObjectId(doc_id)})
     except Exception:
@@ -21211,18 +21222,20 @@ class BatchSummaryView(discord.ui.View):
         await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
 
-async def _dm_flaggers(guild, doc, notify_text, intro_text=None):
-    """DM all flaggers in the audit array who have a stored user_id."""
+async def _dm_flaggers(guild, flaggers, context, notify_text, intro_text=None):
+    """DM all flaggers who have a stored user_id. `flaggers` is a list of audit-style entries
+    ({"user_id", "message_content", ...}); `context` supplies the question/answers to quote.
+    """
     if not notify_text or not guild:
         return
-    for entry in doc.get("audit", []):
+    for entry in flaggers or []:
         uid = entry.get("user_id")
         if not uid:
             continue
         try:
             member = await guild.fetch_member(uid)
             if member:
-                answers = doc.get("answers", [])
+                answers = context.get("answers", [])
                 answer_str = ", ".join(str(a) for a in answers[:4]) if answers else "N/A"
                 flag_comment = entry.get("message_content", "")
                 parts = []
@@ -21230,7 +21243,7 @@ async def _dm_flaggers(guild, doc, notify_text, intro_text=None):
                     parts.append(intro_text)
                 parts.append(notify_text)
                 parts.append(
-                    f"**Question:** {doc.get('question', '')}\n"
+                    f"**Question:** {context.get('question', '')}\n"
                     f"**Answer(s):** {answer_str}\n"
                     f"**Your report:** {flag_comment}"
                 )
@@ -21254,6 +21267,12 @@ class ApplyFlaggedModal(discord.ui.Modal, title="Apply Claude Changes"):
     async def on_submit(self, interaction: discord.Interaction):
         col, doc_id = self.collection_name, self.doc_id
         try:
+            if col in {"math_questions", "stats_questions"}:
+                await interaction.response.send_message(
+                    "❌ This question type is generated fresh each round and has no saved record to update — use Clear Audit instead.",
+                    ephemeral=True,
+                )
+                return
             doc = await db[col].find_one({"_id": ObjectId(doc_id)})
             proposed = (doc.get("ai_review") or {}).get("proposed_changes", {})
             update_op = {"$unset": {"audit": ""}}
@@ -21264,7 +21283,7 @@ class ApplyFlaggedModal(discord.ui.Modal, title="Apply Claude Changes"):
                 {"doc_id": doc_id, "collection_name": col}, {"$set": {"resolved": True}}
             )
             notify_text = (self.notify.value or "").strip() or None
-            await _dm_flaggers(interaction.guild, doc, notify_text, intro_text="✅ A question you flagged has been reviewed and updated.")
+            await _dm_flaggers(interaction.guild, doc.get("audit", []), doc, notify_text, intro_text="✅ A question you flagged has been reviewed and updated.")
             embed = discord.Embed(title="🚩 Question Flagged", color=discord.Color.green())
             embed.set_footer(text=f"✅ Applied by {interaction.user.display_name}")
             await interaction.response.send_message("✅ Applied changes and cleared audit.", ephemeral=True)
@@ -21291,13 +21310,21 @@ class ClearFlaggedModal(discord.ui.Modal, title="Clear Audit"):
     async def on_submit(self, interaction: discord.Interaction):
         col, doc_id = self.collection_name, self.doc_id
         try:
-            doc = await db[col].find_one({"_id": ObjectId(doc_id)})
-            await db[col].update_one({"_id": ObjectId(doc_id)}, {"$unset": {"audit": ""}})
+            doc = None
+            if col not in {"math_questions", "stats_questions"} and ObjectId.is_valid(doc_id):
+                doc = await db[col].find_one({"_id": ObjectId(doc_id)})
+                await db[col].update_one({"_id": ObjectId(doc_id)}, {"$unset": {"audit": ""}})
+
+            flag_record = await db.flag_notifications.find_one({"doc_id": doc_id, "collection_name": col})
             await db.flag_notifications.update_one(
                 {"doc_id": doc_id, "collection_name": col}, {"$set": {"resolved": True}}
             )
+
+            flaggers = doc.get("audit", []) if doc else (flag_record or {}).get("flaggers", [])
+            context = doc if doc else (flag_record or {}).get("question_snapshot", {})
+
             notify_text = (self.notify.value or "").strip() or None
-            await _dm_flaggers(interaction.guild, doc, notify_text, intro_text="❌ Your flag was reviewed but the question was found to be correct as-is.")
+            await _dm_flaggers(interaction.guild, flaggers, context, notify_text, intro_text="❌ Your flag was reviewed but the question was found to be correct as-is.")
             embed = discord.Embed(title="🚩 Question Flagged", color=discord.Color.greyple())
             embed.set_footer(text=f"🧹 Audit cleared by {interaction.user.display_name}")
             await interaction.response.send_message("🧹 Audit cleared.", ephemeral=True)
@@ -21355,7 +21382,7 @@ class EditFlaggedQuestionModal(discord.ui.Modal, title="Edit & Apply Question Fi
             )
             notify_text = (self.notify.value or "").strip() or None
             if doc_before:
-                await _dm_flaggers(interaction.guild, doc_before, notify_text, intro_text="✅ A question you flagged has been reviewed and updated.")
+                await _dm_flaggers(interaction.guild, doc_before.get("audit", []), doc_before, notify_text, intro_text="✅ A question you flagged has been reviewed and updated.")
             embed = discord.Embed(title="🚩 Question Flagged", color=discord.Color.green())
             embed.add_field(name="✏️ Edited & Applied", value=f"**{fields['category']}**: {fields['question']}", inline=False)
             embed.set_footer(text=f"✅ Edited & applied by {interaction.user.display_name}")
@@ -21404,6 +21431,11 @@ class FlaggedReviewView(discord.ui.View):
         ai_action = result.get("ai_action", "no_change")
         ai_reasoning = result.get("ai_reasoning", "")
         proposed = result.get("proposed_changes", {})
+
+        flag_record = await db.flag_notifications.find_one({"doc_id": doc_id, "collection_name": col})
+        flaggers = (flag_record or {}).get("flaggers", [])
+        flagged_by = ", ".join(f.get("display_name", "Unknown") for f in flaggers if f.get("display_name")) or "Unknown"
+
         # Rebuild embed with verdict
         try:
             doc = await db[col].find_one({"_id": ObjectId(doc_id)})
@@ -21413,6 +21445,7 @@ class FlaggedReviewView(discord.ui.View):
                 color=discord.Color.red(),
                 timestamp=datetime.datetime.now(timezone.utc),
             )
+            embed.add_field(name="👤 Flagged By", value=flagged_by, inline=True)
             embed.add_field(name="❓ Question", value=f"**{doc.get('category','')}**: {doc.get('question','')}", inline=False)
             embed.add_field(name="Answers", value=", ".join(str(a) for a in answers)[:512] or "—", inline=False)
             action_emoji = "🔄" if ai_action == "update" else "✅"
@@ -21420,7 +21453,11 @@ class FlaggedReviewView(discord.ui.View):
             if proposed:
                 embed.add_field(name="📝 Proposed changes", value="\n".join(f"**{k}:** {v}" for k, v in proposed.items())[:1024], inline=False)
         except Exception:
+            snapshot = (flag_record or {}).get("question_snapshot", {})
             embed = discord.Embed(title="🚩 Question Flagged (Claude reviewed)", color=discord.Color.red())
+            embed.add_field(name="👤 Flagged By", value=flagged_by, inline=True)
+            if snapshot.get("question"):
+                embed.add_field(name="❓ Question", value=snapshot["question"], inline=False)
             embed.add_field(name="Verdict", value=f"{ai_action}: {ai_reasoning[:512]}", inline=False)
         new_view = FlaggedReviewView(collection_name=col, doc_id=doc_id, apply_enabled=(ai_action == "update"))
         new_view.claude_btn.disabled = True
@@ -21441,6 +21478,12 @@ class FlaggedReviewView(discord.ui.View):
         col, doc_id = self._parse_custom_id(button.custom_id)
         if not col or not doc_id:
             await interaction.response.send_message("❌ Could not parse document ID.", ephemeral=True)
+            return
+        if col in {"math_questions", "stats_questions"}:
+            await interaction.response.send_message(
+                "❌ This question type is generated fresh each round and has no saved record to edit — use Clear Audit to message the flagger instead.",
+                ephemeral=True,
+            )
             return
         doc = await db[col].find_one({"_id": ObjectId(doc_id)})
         if not doc:
