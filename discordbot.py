@@ -12849,9 +12849,10 @@ async def ask_survey_question():
             img_prompt = f"Create a hyperrealistic futuristic okra themed environment described as: {safe_words}."
 
             image = await client.images.generate(
-                model="gpt-image-1",
+                model="gpt-image-1-mini",
                 prompt=img_prompt,
                 size="1024x1024",
+                quality="medium",
             )
             image_bytes = base64.b64decode(image.data[0].b64_json)
             await safe_send(channel, "🥒🌀 Behold, your Okraverse:")
@@ -12868,9 +12869,10 @@ async def generate_themed_country_image(country, city):
 
     try:
         response = await openai_client.images.generate(
-            model="gpt-image-1",
+            model="gpt-image-1-mini",
             prompt=prompt,
             size="1024x1024",
+            quality="medium",
         )
         return io.BytesIO(base64.b64decode(response.data[0].b64_json))
 
@@ -12881,9 +12883,10 @@ async def generate_themed_country_image(country, city):
             default_prompt = f"Generate an image of an okra in {country}."
             try:
                 response = await openai_client.images.generate(
-                    model="gpt-image-1",
+                    model="gpt-image-1-mini",
                     prompt=default_prompt,
                     size="1024x1024",
+                    quality="medium",
                 )
                 return io.BytesIO(base64.b64decode(response.data[0].b64_json))
             except openai.OpenAIError as e2:
@@ -14281,9 +14284,10 @@ async def generate_round_summary_image(round_data, winner, winner_id):
     
     try:
         response = await openai_client.images.generate(
-            model="gpt-image-1",
+            model="gpt-image-1-mini",
             prompt=prompt,
             size="1024x1024",
+            quality="medium",
         )
         b64 = response.data[0].b64_json
         image_data = base64.b64decode(b64)
@@ -14326,9 +14330,10 @@ async def generate_round_summary_image(round_data, winner, winner_id):
             default_prompt = f"A Renaissance painting of what you think {winner} looks like holding an okra. Make the painting elegant and refined."
             try:
                 response = await openai_client.images.generate(
-                    model="gpt-image-1",
+                    model="gpt-image-1-mini",
                     prompt=default_prompt,
                     size="1024x1024",
+                    quality="medium",
                 )
 
                 b64 = response.data[0].b64_json
