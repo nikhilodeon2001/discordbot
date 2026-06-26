@@ -58,6 +58,7 @@ import operator
 from itertools import product
 import io
 import os
+import gzip
 import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'vendor'))
 from word_search_generator import WordSearch
@@ -207,6 +208,9 @@ async def end_of_round():
                     print(f"❌ Failed to send update notification to Mini-Game Arena: {e}")
 
             # Note: Simply Trivia will send its own update message when it detects shutdown_initiated flag
+
+            # Flush any buffered off-question chat before the bot goes quiet for deploy
+            await flush_offquestion_chat_buffer()
 
             # Now deploy and wait (this blocks until SIGTERM)
             print("Deploying new build...")
@@ -441,6 +445,15 @@ round_responders = []
 submission_queue = []
 max_queue_size = 100  # Number of submissions to accumulate before flushing
 
+# Off-question chat capture buffer (flushed to S3, never written to MongoDB)
+offquestion_chat_buffer = []
+offquestion_chat_buffer_lock = asyncio.Lock()
+offquestion_chat_last_flush = time.time()
+OFFQUESTION_CHAT_MAX_BUFFER = 200
+OFFQUESTION_CHAT_FLUSH_INTERVAL_SECONDS = 120
+offquestion_chat_flush_task = None
+offquestion_chat_compaction_task = None
+
 # Global variables for bump data
 bumped_status = False
 bumper_king_id = ""
@@ -468,6 +481,14 @@ currency_api_key = os.getenv("currency_api_key")
 deepgram_api_key = os.getenv("deepgram_api_key")
 user_agent_email = os.getenv("USER_AGENT_EMAIL")
 channel_id = int(os.getenv("channel_id"))
+offquestion_chat_capture_enabled = os.getenv("OFFQUESTION_CHAT_CAPTURE_ENABLED", "false").lower() == "true"
+offquestion_chat_compaction_enabled = os.getenv("OFFQUESTION_CHAT_COMPACTION_ENABLED", "false").lower() == "true"
+OFFQUESTION_CHAT_S3_BUCKET = 'triviabotwebsite'
+OFFQUESTION_CHAT_RAW_PREFIX = 'offquestion-chat/raw'
+OFFQUESTION_CHAT_ARCHIVE_PREFIX = 'offquestion-chat/archive'
+OFFQUESTION_CHAT_COMPACTION_INTERVAL_SECONDS = 1800
+OFFQUESTION_CHAT_COMPACTION_MIN_AGE_SECONDS = 300
+OFFQUESTION_CHAT_ARCHIVE_MAX_MESSAGES = 1000  # per-user retention cap, tune here
 facebook_page_id = os.getenv("FACEBOOK_PAGE_ID")
 facebook_page_access_token = os.getenv("FACEBOOK_PAGE_ACCESS_TOKEN")
 facebook_graph_api_version = os.getenv("FACEBOOK_GRAPH_API_VERSION", "v23.0")
@@ -524,6 +545,8 @@ if prod_or_stage == "stage":
     DM_RELAY_CHANNEL_ID = 1516676523547955301
     SUBMISSION_MOD_ROLE_ID = 1416587636709134408
     TOP_CONTRIBUTOR_ROLE_ID = 1507142100892778740
+    CHAT_CHANNEL_ID = 1423894429466366032
+    PICS_CHANNEL_ID = 1423894752419385344
 
 elif prod_or_stage == "prod":
     okrag_id = 591861826690613248
@@ -566,7 +589,10 @@ elif prod_or_stage == "prod":
     DM_RELAY_CHANNEL_ID = 1516676355482452018
     SUBMISSION_MOD_ROLE_ID = 1411059745774764193
     TOP_CONTRIBUTOR_ROLE_ID = 1507246658688254064
+    CHAT_CHANNEL_ID = 1386209234319839282
+    PICS_CHANNEL_ID = 1412831156105121986
 
+AMBIENT_CHAT_CHANNEL_IDS = {channel_id, CHAT_CHANNEL_ID, PICS_CHANNEL_ID}
 
 
 
@@ -13656,6 +13682,189 @@ async def run_museum_archive_backfill_loop():
         await asyncio.sleep(30)
 
 
+def _merge_user_archive(existing_records, new_records):
+    """
+    CPU-bound merge step run off the event loop via run_in_executor: dedupe by
+    message_id, sort by ts, then trim to the most recent
+    OFFQUESTION_CHAT_ARCHIVE_MAX_MESSAGES so a user's archive never grows
+    unbounded. Returns the gzip-compressed JSONL bytes ready to upload.
+    """
+    seen_ids = {r["message_id"] for r in existing_records}
+    merged = existing_records[:]
+    for rec in new_records:
+        if rec["message_id"] not in seen_ids:
+            merged.append(rec)
+            seen_ids.add(rec["message_id"])
+    merged.sort(key=lambda r: r["ts"])
+    merged = merged[-OFFQUESTION_CHAT_ARCHIVE_MAX_MESSAGES:]
+
+    body = io.BytesIO()
+    with gzip.GzipFile(fileobj=body, mode="wb") as gz:
+        for rec in merged:
+            gz.write((json.dumps(rec) + "\n").encode("utf-8"))
+    return body.getvalue()
+
+
+async def compact_offquestion_chat_once():
+    """
+    List raw off-question chat shards older than OFFQUESTION_CHAT_COMPACTION_MIN_AGE_SECONDS,
+    group their records by user_id, merge each user's new records into that
+    user's existing per-user archive (deduped, trimmed to the retention cap),
+    then delete the consumed raw shards. Archives are written before raw
+    shards are deleted, so a failure mid-cycle never loses data -- the
+    unconsumed shard just gets retried on the next cycle.
+    """
+    if not offquestion_chat_compaction_enabled:
+        return
+
+    loop = asyncio.get_running_loop()
+
+    session = aioboto3.Session()
+    async with session.client("s3") as s3_client:
+        cutoff = time.time() - OFFQUESTION_CHAT_COMPACTION_MIN_AGE_SECONDS
+        candidate_keys = []
+        continuation_token = None
+        while True:
+            kwargs = {"Bucket": OFFQUESTION_CHAT_S3_BUCKET, "Prefix": f"{OFFQUESTION_CHAT_RAW_PREFIX}/"}
+            if continuation_token:
+                kwargs["ContinuationToken"] = continuation_token
+            response = await s3_client.list_objects_v2(**kwargs)
+            for item in response.get("Contents", []):
+                if item["LastModified"].timestamp() <= cutoff:
+                    candidate_keys.append(item["Key"])
+            if response.get("IsTruncated"):
+                continuation_token = response.get("NextContinuationToken")
+            else:
+                break
+
+        if not candidate_keys:
+            return
+
+        records_by_user = defaultdict(list)
+        consumed_keys = []
+        for key in candidate_keys:
+            try:
+                obj = await s3_client.get_object(Bucket=OFFQUESTION_CHAT_S3_BUCKET, Key=key)
+                raw_bytes = await obj["Body"].read()
+                text = await loop.run_in_executor(None, lambda b=raw_bytes: gzip.decompress(b).decode("utf-8"))
+                for line in text.splitlines():
+                    if line.strip():
+                        rec = json.loads(line)
+                        records_by_user[rec["user_id"]].append(rec)
+                consumed_keys.append(key)
+            except Exception as e:
+                sentry_sdk.capture_exception(e)
+                print(f"⚠️ Skipping unreadable off-question chat shard {key}: {e}")
+                # Not added to consumed_keys -- leave it for manual inspection / retry
+
+        if not records_by_user:
+            return
+
+        for user_id, new_records in records_by_user.items():
+            archive_key = f"{OFFQUESTION_CHAT_ARCHIVE_PREFIX}/{user_id}.jsonl.gz"
+            existing_records = []
+            try:
+                existing_obj = await s3_client.get_object(Bucket=OFFQUESTION_CHAT_S3_BUCKET, Key=archive_key)
+                existing_bytes = await existing_obj["Body"].read()
+                existing_text = await loop.run_in_executor(None, lambda b=existing_bytes: gzip.decompress(b).decode("utf-8"))
+                for line in existing_text.splitlines():
+                    if line.strip():
+                        existing_records.append(json.loads(line))
+            except s3_client.exceptions.NoSuchKey:
+                pass  # first time archiving this user
+            except Exception as e:
+                sentry_sdk.capture_exception(e)
+                print(f"⚠️ Failed reading existing archive for user {user_id}, skipping this cycle: {e}")
+                continue
+
+            merged_body = await loop.run_in_executor(None, _merge_user_archive, existing_records, new_records)
+            await s3_client.put_object(
+                Bucket=OFFQUESTION_CHAT_S3_BUCKET,
+                Key=archive_key,
+                Body=merged_body,
+                ContentType="application/gzip",
+                ContentEncoding="gzip",
+            )
+
+        for i in range(0, len(consumed_keys), 1000):
+            chunk = consumed_keys[i:i + 1000]
+            await s3_client.delete_objects(
+                Bucket=OFFQUESTION_CHAT_S3_BUCKET,
+                Delete={"Objects": [{"Key": k} for k in chunk]},
+            )
+
+        print(f"🗜️ Compacted {len(consumed_keys)} raw off-question chat shard(s) into {len(records_by_user)} user archive(s)")
+
+
+async def run_offquestion_chat_compaction_loop():
+    """Periodic compaction of raw off-question chat shards into per-user archives."""
+    while True:
+        try:
+            await compact_offquestion_chat_once()
+        except Exception as e:
+            sentry_sdk.capture_exception(e)
+            print(f"❌ Off-question chat compaction loop failed: {e}")
+        await asyncio.sleep(OFFQUESTION_CHAT_COMPACTION_INTERVAL_SECONDS)
+
+
+async def get_user_offquestion_chat_history(user_id: int, *, include_unarchived: bool = True, limit: int | None = None) -> list:
+    """
+    Fetch a single user's accumulated off-question chat history for downstream
+    LLM personalization. Returns a list of {"message_id", "user_id",
+    "display_name", "message_content", "ts"} dicts sorted ascending by "ts".
+    """
+    records = []
+    session = aioboto3.Session()
+    async with session.client("s3") as s3_client:
+        archive_key = f"{OFFQUESTION_CHAT_ARCHIVE_PREFIX}/{user_id}.jsonl.gz"
+        try:
+            obj = await s3_client.get_object(Bucket=OFFQUESTION_CHAT_S3_BUCKET, Key=archive_key)
+            raw_bytes = await obj["Body"].read()
+            text = gzip.decompress(raw_bytes).decode("utf-8")
+            for line in text.splitlines():
+                if line.strip():
+                    records.append(json.loads(line))
+        except s3_client.exceptions.NoSuchKey:
+            pass
+
+        if include_unarchived:
+            today_prefix = f"{OFFQUESTION_CHAT_RAW_PREFIX}/{datetime.datetime.now(datetime.UTC).strftime('%Y/%m/%d')}/"
+            continuation_token = None
+            shard_keys = []
+            while True:
+                kwargs = {"Bucket": OFFQUESTION_CHAT_S3_BUCKET, "Prefix": today_prefix}
+                if continuation_token:
+                    kwargs["ContinuationToken"] = continuation_token
+                response = await s3_client.list_objects_v2(**kwargs)
+                shard_keys.extend(item["Key"] for item in response.get("Contents", []))
+                if response.get("IsTruncated"):
+                    continuation_token = response.get("NextContinuationToken")
+                else:
+                    break
+
+            seen_ids = {r["message_id"] for r in records}
+            for key in shard_keys:
+                try:
+                    obj = await s3_client.get_object(Bucket=OFFQUESTION_CHAT_S3_BUCKET, Key=key)
+                    raw_bytes = await obj["Body"].read()
+                    text = gzip.decompress(raw_bytes).decode("utf-8")
+                    for line in text.splitlines():
+                        if not line.strip():
+                            continue
+                        rec = json.loads(line)
+                        if rec["user_id"] == user_id and rec["message_id"] not in seen_ids:
+                            records.append(rec)
+                            seen_ids.add(rec["message_id"])
+                except Exception as e:
+                    sentry_sdk.capture_exception(e)
+                    print(f"⚠️ Skipping unreadable shard {key} during retrieval: {e}")
+
+    records.sort(key=lambda r: r["ts"])
+    if limit is not None:
+        records = records[-limit:]
+    return records
+
+
 async def _query_leaderboard_counts(collection, start_time=None, limit=10):
     """Aggregate count-per-user from a Discord stats collection."""
     pipeline = []
@@ -16765,6 +16974,93 @@ def flush_submission_queue():
         print(f"Failed to flush submission queue: {e}")
 
 
+def queue_offquestion_chat_message(message):
+    """
+    Buffer a non-question-window chat message from the trivia/chat/pics channels
+    for later S3 flush. Mirrors log_user_submission()/submission_queue, but
+    targets S3 instead of MongoDB (per-message Mongo writes are too expensive).
+    """
+    global offquestion_chat_buffer
+
+    offquestion_chat_buffer.append({
+        "message_id": message.id,
+        "user_id": message.author.id,
+        "display_name": message.author.display_name,
+        "message_content": message.content,
+        "ts": message.created_at.timestamp(),
+    })
+
+    if len(offquestion_chat_buffer) >= OFFQUESTION_CHAT_MAX_BUFFER:
+        asyncio.create_task(flush_offquestion_chat_buffer())
+
+
+async def flush_offquestion_chat_buffer():
+    """
+    Atomically swap out the in-memory off-question chat buffer and write it as
+    one gzip-compressed JSONL object to S3 (a "raw shard"). One PUT per flush
+    regardless of how many distinct users contributed messages -- PUT count,
+    not bytes, is the actual S3 cost driver at this volume.
+    """
+    global offquestion_chat_buffer, offquestion_chat_last_flush
+
+    async with offquestion_chat_buffer_lock:
+        if not offquestion_chat_buffer:
+            offquestion_chat_last_flush = time.time()
+            return
+        batch = offquestion_chat_buffer
+        offquestion_chat_buffer = []
+
+    offquestion_chat_last_flush = time.time()
+
+    try:
+        body = io.BytesIO()
+        with gzip.GzipFile(fileobj=body, mode="wb") as gz:
+            for rec in batch:
+                gz.write((json.dumps(rec) + "\n").encode("utf-8"))
+
+        now_utc = datetime.datetime.now(datetime.UTC)
+        shard_key = (
+            f"{OFFQUESTION_CHAT_RAW_PREFIX}/"
+            f"{now_utc.strftime('%Y/%m/%d')}/"
+            f"{now_utc.strftime('%Y%m%dT%H%M%S')}-{uuid.uuid4().hex[:8]}.jsonl.gz"
+        )
+
+        session = aioboto3.Session()
+        async with session.client("s3") as s3_client:
+            await s3_client.put_object(
+                Bucket=OFFQUESTION_CHAT_S3_BUCKET,
+                Key=shard_key,
+                Body=body.getvalue(),
+                ContentType="application/gzip",
+                ContentEncoding="gzip",
+            )
+        print(f"💬 Flushed {len(batch)} off-question chat message(s) to s3://{OFFQUESTION_CHAT_S3_BUCKET}/{shard_key}")
+    except (BotoCoreError, ClientError) as boto_err:
+        sentry_sdk.capture_exception(boto_err)
+        print(f"❌ Failed to flush off-question chat buffer to S3: {boto_err}")
+        # Put the batch back so it isn't silently lost; cap to avoid unbounded
+        # growth if S3 stays down (e.g. an outage) -- drop oldest past a ceiling.
+        async with offquestion_chat_buffer_lock:
+            offquestion_chat_buffer = batch + offquestion_chat_buffer
+            ceiling = OFFQUESTION_CHAT_MAX_BUFFER * 10
+            if len(offquestion_chat_buffer) > ceiling:
+                overflow = len(offquestion_chat_buffer) - ceiling
+                offquestion_chat_buffer = offquestion_chat_buffer[overflow:]
+                print(f"⚠️ Off-question chat buffer overflowed; dropped {overflow} oldest record(s)")
+
+
+async def run_offquestion_chat_flush_loop():
+    """Time-based safety net: flush the buffer even if it never hits the size threshold."""
+    while True:
+        try:
+            if offquestion_chat_buffer and (time.time() - offquestion_chat_last_flush) >= OFFQUESTION_CHAT_FLUSH_INTERVAL_SECONDS:
+                await flush_offquestion_chat_buffer()
+        except Exception as e:
+            sentry_sdk.capture_exception(e)
+            print(f"❌ Off-question chat flush loop failed: {e}")
+        await asyncio.sleep(30)
+
+
 def download_image_from_url(url, add_okra, okra_path): 
     global max_retries, delay_between_retries
 
@@ -17920,7 +18216,8 @@ async def check_correct_responses_delete(question_ask_time, trivia_answer_list, 
         message += "\n\u200b"
         await safe_send(channel, message)
 
-    flush_submission_queue() 
+    flush_submission_queue()
+    await flush_offquestion_chat_buffer()
     return None
 
 
@@ -19563,6 +19860,7 @@ async def on_message(message):
         return
     
     # Only collect trivia responses if in the main trivia channel during an active question
+    captured_as_answer = False
     if message.channel.id == channel_id and question_asked_start is not None and question_asked_end is not None:
         # Check if the message is during the active question window
         now = message.created_at.timestamp()
@@ -19574,6 +19872,7 @@ async def on_message(message):
                 "response_time": now,
                 "message": message  # Save the original message object for deletion if needed
             })
+            captured_as_answer = True
 
             ESCAPE_PREFIXES = (".", ",", "~")
 
@@ -19584,6 +19883,13 @@ async def on_message(message):
                     print("Bot lacks permission to delete messages.")
                 except discord.HTTPException as e:
                     print(f"Failed to delete message: {e}")
+
+    # Capture off-question ambient chat (trivia/chat/pics channels + their threads)
+    # for later personalization use, stored cheaply in S3 instead of MongoDB.
+    if not captured_as_answer and offquestion_chat_capture_enabled and message.content.strip():
+        effective_channel_id = message.channel.parent_id if isinstance(message.channel, discord.Thread) else message.channel.id
+        if effective_channel_id in AMBIENT_CHAT_CHANNEL_IDS:
+            queue_offquestion_chat_message(message)
 
     # Always process commands regardless of channel
     await bot.process_commands(message)
@@ -21988,7 +22294,7 @@ async def flag_command(interaction: discord.Interaction):
 
 @bot.event
 async def on_ready():
-    global channel, db, museum_backfill_task
+    global channel, db, museum_backfill_task, offquestion_chat_flush_task, offquestion_chat_compaction_task
     print(f"✅ Logged in as {bot.user}")
     db =  await connect_to_mongodb()
     await load_parameters()
@@ -22007,6 +22313,14 @@ async def on_ready():
     if museum_backfill_enabled and (museum_backfill_task is None or museum_backfill_task.done()):
         museum_backfill_task = asyncio.create_task(run_museum_archive_backfill_loop())
         print("🏛️ Museum archive backfill loop started")
+
+    if offquestion_chat_capture_enabled and (offquestion_chat_flush_task is None or offquestion_chat_flush_task.done()):
+        offquestion_chat_flush_task = asyncio.create_task(run_offquestion_chat_flush_loop())
+        print("💬 Off-question chat flush loop started")
+
+    if offquestion_chat_compaction_enabled and (offquestion_chat_compaction_task is None or offquestion_chat_compaction_task.done()):
+        offquestion_chat_compaction_task = asyncio.create_task(run_offquestion_chat_compaction_loop())
+        print("🗜️ Off-question chat compaction loop started")
 
     # Clean up tournament roles from previous sessions
     await cleanup_tournament_roles()
