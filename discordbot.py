@@ -481,8 +481,8 @@ currency_api_key = os.getenv("currency_api_key")
 deepgram_api_key = os.getenv("deepgram_api_key")
 user_agent_email = os.getenv("USER_AGENT_EMAIL")
 channel_id = int(os.getenv("channel_id"))
-offquestion_chat_capture_enabled = os.getenv("OFFQUESTION_CHAT_CAPTURE_ENABLED", "false").lower() == "true"
-offquestion_chat_compaction_enabled = os.getenv("OFFQUESTION_CHAT_COMPACTION_ENABLED", "false").lower() == "true"
+offquestion_chat_capture_enabled = True
+offquestion_chat_compaction_enabled = True
 OFFQUESTION_CHAT_S3_BUCKET = 'triviabotwebsite'
 OFFQUESTION_CHAT_RAW_PREFIX = 'offquestion-chat/raw'
 OFFQUESTION_CHAT_ARCHIVE_PREFIX = 'offquestion-chat/archive'
