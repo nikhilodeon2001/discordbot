@@ -13814,6 +13814,17 @@ async def get_user_offquestion_chat_history(user_id: int, *, include_unarchived:
     Fetch a single user's accumulated off-question chat history for downstream
     LLM personalization. Returns a list of {"message_id", "user_id",
     "display_name", "message_content", "ts"} dicts sorted ascending by "ts".
+
+    include_unarchived defaults to True: for personalization, the most recent
+    messages are the highest-signal ones (what the user remembers saying), so
+    freshness is prioritized over minimizing request count. The archive alone
+    is only updated every OFFQUESTION_CHAT_COMPACTION_INTERVAL_SECONDS (30 min)
+    and would otherwise systematically miss exactly the most recent chat. The
+    extra cost is bounded, not unbounded: compaction continuously drains
+    today's raw shards, so in steady state "today's unarchived shards" only
+    ever covers the time since the last successful compaction cycle (normally
+    <=30 min of activity), not the whole day. Only set this False if you
+    specifically want the cheaper, staler, archive-only read.
     """
     records = []
     session = aioboto3.Session()
@@ -17037,7 +17048,11 @@ async def flush_offquestion_chat_buffer():
                 ContentEncoding="gzip",
             )
         print(f"💬 Flushed {len(batch)} off-question chat message(s) to s3://{OFFQUESTION_CHAT_S3_BUCKET}/{shard_key}")
-    except (BotoCoreError, ClientError) as boto_err:
+    except Exception as boto_err:
+        # Broad catch (not just BotoCoreError/ClientError): this function is awaited
+        # directly from end_of_round() and check_correct_responses_delete() with no
+        # enclosing try/except, so any failure here -- AWS-related or not -- must be
+        # contained, or it could propagate into the main trivia round loop.
         sentry_sdk.capture_exception(boto_err)
         print(f"❌ Failed to flush off-question chat buffer to S3: {boto_err}")
         # Put the batch back so it isn't silently lost; cap to avoid unbounded
