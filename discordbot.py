@@ -547,6 +547,7 @@ if prod_or_stage == "stage":
     TOP_CONTRIBUTOR_ROLE_ID = 1507142100892778740
     CHAT_CHANNEL_ID = 1423894429466366032
     PICS_CHANNEL_ID = 1423894752419385344
+    HOST_USER_ID = 1375325051506655284
 
 elif prod_or_stage == "prod":
     okrag_id = 591861826690613248
@@ -591,6 +592,7 @@ elif prod_or_stage == "prod":
     TOP_CONTRIBUTOR_ROLE_ID = 1507246658688254064
     CHAT_CHANNEL_ID = 1386209234319839282
     PICS_CHANNEL_ID = 1412831156105121986
+    HOST_USER_ID = 1357587097246236794
 
 AMBIENT_CHAT_CHANNEL_IDS = {channel_id, CHAT_CHANNEL_ID, PICS_CHANNEL_ID}
 
@@ -19886,7 +19888,8 @@ async def on_message(message):
 
     # Capture off-question ambient chat (trivia/chat/pics channels + their threads)
     # for later personalization use, stored cheaply in S3 instead of MongoDB.
-    if not captured_as_answer and offquestion_chat_capture_enabled and message.content.strip():
+    # Excludes the host account -- their messages are game-running narration, not a player's chat.
+    if not captured_as_answer and offquestion_chat_capture_enabled and message.content.strip() and message.author.id != HOST_USER_ID:
         effective_channel_id = message.channel.parent_id if isinstance(message.channel, discord.Thread) else message.channel.id
         if effective_channel_id in AMBIENT_CHAT_CHANNEL_IDS:
             queue_offquestion_chat_message(message)
