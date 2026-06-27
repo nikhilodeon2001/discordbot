@@ -17851,21 +17851,19 @@ def is_number(s):
 
 
 def derivative_checker(response, answer):
-    response = response.lower()
-    answer = answer.lower()
-    response = response.replace(" ", "")      
-    answer = answer.replace(" ", "")
-    response = response.replace("^", "")      
-    answer = answer.replace("^", "")
-    response = response.replace("*", "")      
-    answer = answer.replace("*", "")
+    response = response.lower().replace(" ", "").replace("^", "").replace("*", "")
+    answer = answer.lower().replace(" ", "").replace("^", "").replace("*", "")
     response = normalize_superscripts(response)
     answer = normalize_superscripts(answer)
 
-    if (response == answer or jaccard_similarity(response, answer) == 1) and len(response) == len(answer):
-        return True
-    else:
-        return False
+    def term_set(expr):
+        terms = re.findall(r'[+-]?[^+-]+', expr)
+        cleaned = (t[1:] if t.startswith('+') else t for t in terms if t)
+        # Drop zero-valued terms (e.g. a constant's vanished derivative written out as "+0")
+        # so an optional explicit "0" term doesn't cause a mismatch either way.
+        return {t for t in cleaned if t.lstrip('-') != '0'}
+
+    return term_set(response) == term_set(answer)
 
 
 def factors_checker(response, answer):
@@ -19021,20 +19019,37 @@ def generate_and_render_derivative_image():
 
     # Construct polynomial and derivative terms for the selected powers
     for power in powers:
-        coef = random.randint(1, 9)  # Coefficients between 1 and 9
-        coef_str = str(coef) if coef != 1 else ""  # Omit "1" as a coefficient unless constant
+        coef = random.randint(1, 9) * random.choice([-1, 1])  # Coefficients between -9 and 9, excluding 0
+        sign = "-" if coef < 0 else "+"
+        abs_coef = abs(coef)
+        coef_str = str(abs_coef) if abs_coef != 1 else ""  # Omit "1" as a coefficient unless constant
 
         # Construct polynomial term with superscript exponents
         if power == 1:
-            terms.append(f"{coef_str}x")  # No exponent shown for power of 1
-            derivative_terms.append(f"{coef}")
+            terms.append((sign, f"{coef_str}x"))  # No exponent shown for power of 1
+            derivative_terms.append((sign, f"{abs_coef}"))
         else:
-            terms.append(f"{coef_str}x{to_superscript(power)}")  # Display higher powers with superscript
-            derivative_terms.append(f"{coef * power}x{to_superscript(power - 1) if power > 2 else ''}")
+            terms.append((sign, f"{coef_str}x{to_superscript(power)}"))  # Display higher powers with superscript
+            derivative_terms.append((sign, f"{abs_coef * power}x{to_superscript(power - 1) if power > 2 else ''}"))
+
+    # Throw in a constant term too -- its derivative is always 0, so it's part of the
+    # polynomial only and never appears in derivative_terms.
+    const = random.randint(1, 9) * random.choice([-1, 1])
+    const_sign = "-" if const < 0 else "+"
+    terms.append((const_sign, str(abs(const))))
+
+    def join_signed_terms(signed_terms):
+        if not signed_terms:
+            return "0"
+        first_sign, first_text = signed_terms[0]
+        result = f"-{first_text}" if first_sign == "-" else first_text
+        for sign, text in signed_terms[1:]:
+            result += f" {sign} {text}"
+        return result
 
     # Join the terms for both polynomial and derivative strings
-    polynomial = " + ".join(terms)
-    derivative = " + ".join(derivative_terms) if derivative_terms else "0"
+    polynomial = join_signed_terms(terms)
+    derivative = join_signed_terms(derivative_terms)
 
     print(f"Polynomial: {polynomial}")
     print(f"Derivative: {derivative}")
