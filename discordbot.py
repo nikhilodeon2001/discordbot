@@ -489,6 +489,8 @@ OFFQUESTION_CHAT_ARCHIVE_PREFIX = 'offquestion-chat/archive'
 OFFQUESTION_CHAT_COMPACTION_INTERVAL_SECONDS = 1800
 OFFQUESTION_CHAT_COMPACTION_MIN_AGE_SECONDS = 300
 OFFQUESTION_CHAT_ARCHIVE_MAX_MESSAGES = 1000  # per-user retention cap, tune here
+roast_dark_mode_enabled = True
+ROAST_MIN_MESSAGES = 5  # skip roast generation if a winner has fewer captured messages than this
 facebook_page_id = os.getenv("FACEBOOK_PAGE_ID")
 facebook_page_access_token = os.getenv("FACEBOOK_PAGE_ACCESS_TOKEN")
 facebook_graph_api_version = os.getenv("FACEBOOK_GRAPH_API_VERSION", "v23.0")
@@ -548,6 +550,7 @@ if prod_or_stage == "stage":
     CHAT_CHANNEL_ID = 1423894429466366032
     PICS_CHANNEL_ID = 1423894752419385344
     HOST_USER_ID = 1375325051506655284
+    ROAST_TEST_CHANNEL_ID = 1520266511481049099
 
 elif prod_or_stage == "prod":
     okrag_id = 591861826690613248
@@ -593,6 +596,7 @@ elif prod_or_stage == "prod":
     CHAT_CHANNEL_ID = 1386209234319839282
     PICS_CHANNEL_ID = 1412831156105121986
     HOST_USER_ID = 1357587097246236794
+    ROAST_TEST_CHANNEL_ID = 1449497884931395755
 
 AMBIENT_CHAT_CHANNEL_IDS = {channel_id, CHAT_CHANNEL_ID, PICS_CHANNEL_ID}
 
@@ -13878,6 +13882,75 @@ async def get_user_offquestion_chat_history(user_id: int, *, include_unarchived:
     return records
 
 
+async def generate_winner_roast(winner_display_name, history):
+    """
+    Generate a short, savage, sarcastic roast of the round winner using their
+    recent off-question chat as material. Mirrors get_update_blurb()'s
+    single-turn gpt-4o-mini pattern (discordbot.py:291-310).
+    """
+    transcript = "\n".join(rec["message_content"] for rec in history)
+    try:
+        resp = await openai_client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "You are OkraStrut, the savage mascot of a Discord trivia bot. "
+                        "Write a short, brutal, sarcastic roast of the trivia round winner "
+                        "using snippets of their recent chat as material. Go for maximum "
+                        "laughs -- biting, insulting, comedy-roast energy, don't hold back. "
+                        "2-4 sentences. Okra puns welcome but not required. Their display "
+                        "name is fair game too -- mock it if it's roastable. Stay in "
+                        "roast-comedy territory: mock their chat habits, word choices, "
+                        "display name, and personality quirks specifically -- skip slurs, "
+                        "hate speech, or attacks on protected characteristics (race, "
+                        "religion, etc.), since that's lazy writing, not a good roast."
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": f"The winner is {winner_display_name}. Recent things they've said in chat:\n\n{transcript}\n\nWrite the roast.",
+                },
+            ],
+            max_tokens=200,
+            temperature=0.9,
+        )
+        return resp.choices[0].message.content.strip()
+    except Exception as e:
+        sentry_sdk.capture_exception(e)
+        print(f"❌ Roast generation failed: {e}")
+        return f"🥬 {winner_display_name} won this round, which is about the most interesting thing about them. Lucky okra."
+
+
+async def post_winner_roast_dark_mode(winner_display_name, winner_id):
+    """
+    Dark-mode phase 1 of the AI roast feature: generate a real roast and post
+    it to a private test channel instead of the live trivia channel, so output
+    quality can be reviewed before this goes public.
+    """
+    if not roast_dark_mode_enabled or winner_id is None:
+        return
+    try:
+        test_channel = bot.get_channel(ROAST_TEST_CHANNEL_ID)
+        if not test_channel:
+            return
+
+        history = await get_user_offquestion_chat_history(winner_id, limit=100)
+        if len(history) < ROAST_MIN_MESSAGES:
+            await safe_send(test_channel, f"\U0001f9ea Roast test: **{winner_display_name}** ({winner_id}) won this round but only has {len(history)} captured message(s) -- need at least {ROAST_MIN_MESSAGES} to roast.")
+            return
+
+        roast = await generate_winner_roast(winner_display_name, history)
+        await safe_send(
+            test_channel,
+            content=f"\U0001f9ea **Roast test** for **{winner_display_name}** ({winner_id}) -- based on {len(history)} captured message(s):\n\n{roast}",
+        )
+    except Exception as e:
+        sentry_sdk.capture_exception(e)
+        print(f"❌ Roast dark-mode post failed: {e}")
+
+
 async def _query_leaderboard_counts(collection, start_time=None, limit=10):
     """Aggregate count-per-user from a Discord stats collection."""
     pipeline = []
@@ -19444,6 +19517,7 @@ async def start_trivia():
             round_winner, winner_points, round_winner_id = await determine_round_winner()
             await clear_round_options()
             await update_round_streaks(round_winner, round_winner_id)
+            await post_winner_roast_dark_mode(round_winner, round_winner_id)
             asyncio.create_task(write_leaderboard_to_s3())
 
             round_count += 1
