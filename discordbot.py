@@ -503,7 +503,7 @@ OFFQUESTION_CHAT_ARCHIVE_PREFIX = 'offquestion-chat/archive'
 OFFQUESTION_CHAT_COMPACTION_INTERVAL_SECONDS = 1800
 OFFQUESTION_CHAT_COMPACTION_MIN_AGE_SECONDS = 300
 OFFQUESTION_CHAT_ARCHIVE_MAX_MESSAGES = 1000  # per-user retention cap, tune here
-roast_dark_mode_enabled = True
+roast_dark_mode_enabled = False
 ROAST_MIN_MESSAGES = 5  # skip roast generation if a winner has fewer captured messages than this
 facebook_page_id = os.getenv("FACEBOOK_PAGE_ID")
 facebook_page_access_token = os.getenv("FACEBOOK_PAGE_ACCESS_TOKEN")
@@ -19019,7 +19019,7 @@ def generate_and_render_derivative_image():
 
     # Construct polynomial and derivative terms for the selected powers
     for power in powers:
-        coef = random.randint(1, 9) * random.choice([-1, 1])  # Coefficients between -9 and 9, excluding 0
+        coef = random.randint(1, 20) * random.choice([-1, 1])  # Coefficients between -20 and 20, excluding 0
         sign = "-" if coef < 0 else "+"
         abs_coef = abs(coef)
         coef_str = str(abs_coef) if abs_coef != 1 else ""  # Omit "1" as a coefficient unless constant
@@ -19034,7 +19034,7 @@ def generate_and_render_derivative_image():
 
     # Throw in a constant term too -- its derivative is always 0, so it's part of the
     # polynomial only and never appears in derivative_terms.
-    const = random.randint(1, 9) * random.choice([-1, 1])
+    const = random.randint(1, 20) * random.choice([-1, 1])
     const_sign = "-" if const < 0 else "+"
     terms.append((const_sign, str(abs(const))))
 
