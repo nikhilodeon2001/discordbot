@@ -20758,11 +20758,15 @@ class RejectReasonModal(discord.ui.Modal, title="Reject submission"):
         placeholder="Optional note included with the rejection notice.",
         style=discord.TextStyle.paragraph, required=False, max_length=300,
     )
+    notify_label = discord.ui.Label(
+        text="Notify submitter",
+        description="Uncheck to reject silently.",
+        component=discord.ui.Checkbox(default=True),
+    )
 
-    def __init__(self, submission_id, notify=True):
+    def __init__(self, submission_id):
         super().__init__()
         self.submission_id = submission_id
-        self.notify = notify
 
     async def on_submit(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
@@ -20772,6 +20776,7 @@ class RejectReasonModal(discord.ui.Modal, title="Reject submission"):
                 await interaction.followup.send("❌ Submission no longer pending.", ephemeral=True)
                 return
             now = datetime.datetime.utcnow()
+            notify = self.notify_label.component.value
             notify_text = (self.dm_text.value or "").strip()
             await db.question_submissions.update_one(
                 {"_id": sub["_id"]},
@@ -20802,7 +20807,7 @@ class RejectReasonModal(discord.ui.Modal, title="Reject submission"):
                 pass
             dm_status = await _send_submission_decision_dm(
                 interaction.guild, sub["submitter_id"], decision="reject",
-                notify=self.notify, notify_text=notify_text or None, sub=sub,
+                notify=notify, notify_text=notify_text or None, sub=sub,
             )
             await interaction.followup.send(f"Rejected.{dm_status}", ephemeral=True)
         except Exception as e:
@@ -20815,10 +20820,9 @@ class RejectReasonModal(discord.ui.Modal, title="Reject submission"):
 
 
 class EditSubmissionModal(discord.ui.Modal, title="Edit & Approve"):
-    def __init__(self, submission_id, sub, notify=True):
+    def __init__(self, submission_id, sub):
         super().__init__()
         self.submission_id = submission_id
-        self.notify = notify
         self.sub_type = sub.get("type", "free_text")
         self.category_input = discord.ui.TextInput(
             label="Category", default=sub.get("category", ""),
@@ -20828,33 +20832,35 @@ class EditSubmissionModal(discord.ui.Modal, title="Edit & Approve"):
             label="Question", default=sub.get("question", ""),
             style=discord.TextStyle.paragraph, required=True, max_length=300,
         )
-        if self.sub_type == "multiple_choice":
-            ca_label, alt_label = "Correct Answer", "Wrong Choices (1–3)"
-        else:
-            ca_label, alt_label = "Primary Answer", "Alternate Spellings (max 3)"
-        self.correct_input = discord.ui.TextInput(
-            label=ca_label, default=sub.get("correct_answer", ""),
-            style=discord.TextStyle.short, required=True, max_length=100,
-        )
-        self.alts_input = discord.ui.TextInput(
-            label=alt_label,
-            default="\n".join(sub.get("alternates", []) or []),
+        combined_answers = "\n".join([sub.get("correct_answer", ""), *(sub.get("alternates", []) or [])])
+        self.answers_input = discord.ui.TextInput(
+            label="Answers (one per line)",
+            placeholder="First line = correct/primary answer. Remaining lines = wrong choices/alternates.",
+            default=combined_answers,
             style=discord.TextStyle.paragraph,
-            required=(self.sub_type == "multiple_choice"),
-            max_length=300,
+            required=True,
+            max_length=400,
         )
         self.dm_text = discord.ui.TextInput(
             label="Note to submitter (optional)",
             placeholder="e.g. Fixed a small wording issue — great question!",
             style=discord.TextStyle.short, required=False, max_length=300,
         )
-        for item in (self.category_input, self.question_input, self.correct_input, self.alts_input, self.dm_text):
+        self.notify_label = discord.ui.Label(
+            text="Notify submitter",
+            description="Uncheck to approve silently.",
+            component=discord.ui.Checkbox(default=True),
+        )
+        for item in (self.category_input, self.question_input, self.answers_input, self.dm_text, self.notify_label):
             self.add_item(item)
 
     async def on_submit(self, interaction: discord.Interaction):
+        answer_lines = [line.strip() for line in self.answers_input.value.splitlines() if line.strip()]
+        correct_answer = answer_lines[0] if answer_lines else ""
+        alternates_raw = "\n".join(answer_lines[1:])
         cleaned, err = _validate_submission(
             self.category_input.value, self.question_input.value,
-            self.correct_input.value, self.alts_input.value, self.sub_type,
+            correct_answer, alternates_raw, self.sub_type,
         )
         if err:
             await interaction.response.send_message(f"❌ {err}", ephemeral=True)
@@ -20881,7 +20887,8 @@ class EditSubmissionModal(discord.ui.Modal, title="Edit & Approve"):
             }},
         )
         notify_text = (self.dm_text.value or "").strip() or None
-        await _approve_submission(interaction, sub["_id"], edited=True, notify_text=notify_text, notify=self.notify, before=mod_edits)
+        notify = self.notify_label.component.value
+        await _approve_submission(interaction, sub["_id"], edited=True, notify_text=notify_text, notify=notify, before=mod_edits)
 
 
 def _to_object_id(val):
@@ -20989,36 +20996,34 @@ class ApproveWithNoteModal(discord.ui.Modal, title="Approve submission"):
         placeholder="e.g. Great question! It'll appear in the rotation soon.",
         style=discord.TextStyle.paragraph, required=False, max_length=300,
     )
+    notify_label = discord.ui.Label(
+        text="Notify submitter",
+        description="Uncheck to approve silently.",
+        component=discord.ui.Checkbox(default=True),
+    )
 
-    def __init__(self, submission_id, notify=True):
+    def __init__(self, submission_id):
         super().__init__()
         self.submission_id = submission_id
-        self.notify = notify
 
     async def on_submit(self, interaction: discord.Interaction):
         notify_text = (self.note.value or "").strip() or None
-        await _approve_submission(interaction, self.submission_id, edited=False, notify_text=notify_text, notify=self.notify)
+        notify = self.notify_label.component.value
+        await _approve_submission(interaction, self.submission_id, edited=False, notify_text=notify_text, notify=notify)
 
 
 class SubmissionReviewView(discord.ui.View):
-    def __init__(self, submission_id=None, ai_done=False, notify=True):
+    def __init__(self, submission_id=None, ai_done=False):
         super().__init__(timeout=None)
-        self.notify = notify
         # NOTE: submission_id is encoded in the custom_id so the view survives restarts
         if submission_id is not None:
             self.claude_btn.custom_id = f"submit:claude:{submission_id}"
             self.approve_btn.custom_id = f"submit:approve:{submission_id}"
             self.reject_btn.custom_id = f"submit:reject:{submission_id}"
             self.edit_btn.custom_id = f"submit:edit:{submission_id}"
-            self.notify_btn.custom_id = f"submit:notify:{submission_id}"
         if ai_done:
             self.claude_btn.disabled = True
             self.claude_btn.label = "🤖 Reviewed"
-        self._sync_notify_label()
-
-    def _sync_notify_label(self):
-        self.notify_btn.label = "🔔 Notify: ON" if self.notify else "🔕 Notify: OFF"
-        self.notify_btn.style = discord.ButtonStyle.success if self.notify else discord.ButtonStyle.secondary
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if not any(r.id == SUBMISSION_MOD_ROLE_ID for r in getattr(interaction.user, "roles", [])):
@@ -21065,12 +21070,12 @@ class SubmissionReviewView(discord.ui.View):
     @discord.ui.button(label="Approve", style=discord.ButtonStyle.success, custom_id="submit:approve:_")
     async def approve_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         sub_id = self._extract_id(button.custom_id)
-        await interaction.response.send_modal(ApproveWithNoteModal(submission_id=sub_id, notify=self.notify))
+        await interaction.response.send_modal(ApproveWithNoteModal(submission_id=sub_id))
 
     @discord.ui.button(label="Reject", style=discord.ButtonStyle.danger, custom_id="submit:reject:_")
     async def reject_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         sub_id = self._extract_id(button.custom_id)
-        await interaction.response.send_modal(RejectReasonModal(submission_id=sub_id, notify=self.notify))
+        await interaction.response.send_modal(RejectReasonModal(submission_id=sub_id))
 
     @discord.ui.button(label="Edit & Approve", style=discord.ButtonStyle.secondary, custom_id="submit:edit:_")
     async def edit_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -21079,13 +21084,7 @@ class SubmissionReviewView(discord.ui.View):
         if not sub or sub.get("status") != "awaiting_mod":
             await interaction.response.send_message("❌ Submission no longer pending.", ephemeral=True)
             return
-        await interaction.response.send_modal(EditSubmissionModal(submission_id=sub_id, sub=sub, notify=self.notify))
-
-    @discord.ui.button(label="🔔 Notify: ON", style=discord.ButtonStyle.success, custom_id="submit:notify:_", row=1)
-    async def notify_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        self.notify = not self.notify
-        self._sync_notify_label()
-        await interaction.response.edit_message(view=self)
+        await interaction.response.send_modal(EditSubmissionModal(submission_id=sub_id, sub=sub))
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -21289,13 +21288,12 @@ def _build_batch_page_embed(item, pos, total):
 
 
 class BatchEditModal(discord.ui.Modal, title="Edit & Approve"):
-    def __init__(self, submission_id, sub, session_id, global_idx, page_view, notify=True):
+    def __init__(self, submission_id, sub, session_id, global_idx, page_view):
         super().__init__()
         self.submission_id = submission_id
         self.session_id = session_id
         self.global_idx = global_idx
         self.page_view = page_view
-        self.notify = notify
         self.sub_type = sub.get("type", "free_text")
         self.category_input = discord.ui.TextInput(
             label="Category", default=sub.get("category", ""),
@@ -21305,31 +21303,35 @@ class BatchEditModal(discord.ui.Modal, title="Edit & Approve"):
             label="Question", default=sub.get("question", ""),
             style=discord.TextStyle.paragraph, required=True, max_length=300,
         )
-        ca_label = "Correct Answer" if self.sub_type == "multiple_choice" else "Primary Answer"
-        alt_label = "Wrong Choices (1–3)" if self.sub_type == "multiple_choice" else "Alternate Spellings (max 3)"
-        self.correct_input = discord.ui.TextInput(
-            label=ca_label, default=sub.get("correct_answer", ""),
-            style=discord.TextStyle.short, required=True, max_length=100,
-        )
-        self.alts_input = discord.ui.TextInput(
-            label=alt_label,
-            default="\n".join(sub.get("alternates", []) or []),
+        combined_answers = "\n".join([sub.get("correct_answer", ""), *(sub.get("alternates", []) or [])])
+        self.answers_input = discord.ui.TextInput(
+            label="Answers (one per line)",
+            placeholder="First line = correct/primary answer. Remaining lines = wrong choices/alternates.",
+            default=combined_answers,
             style=discord.TextStyle.paragraph,
-            required=(self.sub_type == "multiple_choice"),
-            max_length=300,
+            required=True,
+            max_length=400,
         )
         self.dm_text = discord.ui.TextInput(
             label="Note to submitter (optional)",
             placeholder="e.g. Fixed a small wording issue — great question!",
             style=discord.TextStyle.short, required=False, max_length=300,
         )
-        for item in (self.category_input, self.question_input, self.correct_input, self.alts_input, self.dm_text):
+        self.notify_label = discord.ui.Label(
+            text="Notify submitter",
+            description="Uncheck to approve silently.",
+            component=discord.ui.Checkbox(default=True),
+        )
+        for item in (self.category_input, self.question_input, self.answers_input, self.dm_text, self.notify_label):
             self.add_item(item)
 
     async def on_submit(self, interaction: discord.Interaction):
+        answer_lines = [line.strip() for line in self.answers_input.value.splitlines() if line.strip()]
+        correct_answer = answer_lines[0] if answer_lines else ""
+        alternates_raw = "\n".join(answer_lines[1:])
         cleaned, err = _validate_submission(
             self.category_input.value, self.question_input.value,
-            self.correct_input.value, self.alts_input.value, self.sub_type,
+            correct_answer, alternates_raw, self.sub_type,
         )
         if err:
             await interaction.response.send_message(f"❌ {err}", ephemeral=True)
@@ -21368,7 +21370,7 @@ class BatchEditModal(discord.ui.Modal, title="Edit & Approve"):
                 fresh_sub = await db.question_submissions.find_one({"_id": _to_object_id(self.submission_id)})
                 await _send_submission_decision_dm(
                     interaction.guild, sub_before["submitter_id"], decision="edit_approve",
-                    notify=self.notify, notify_text=notify_text, sub=fresh_sub, before=before,
+                    notify=self.notify_label.component.value, notify_text=notify_text, sub=fresh_sub, before=before,
                 )
                 await interaction.followup.send("✅ Edited & approved. Navigate with ← → to continue.", ephemeral=True)
                 try:
@@ -21448,7 +21450,6 @@ class BatchPageView(discord.ui.View):
             session_id=self.session_id,
             global_idx=self._global_idx(),
             page_view=self,
-            notify=self.notify,
         )
         await interaction.response.send_modal(modal)
 
@@ -21771,12 +21772,16 @@ class ApplyFlaggedModal(discord.ui.Modal, title="Apply Claude Changes"):
         placeholder="e.g. Good catch! We updated that question.",
         style=discord.TextStyle.paragraph, required=False, max_length=300,
     )
+    notify_label = discord.ui.Label(
+        text="Notify flagger(s)",
+        description="Uncheck to apply silently.",
+        component=discord.ui.Checkbox(default=True),
+    )
 
-    def __init__(self, collection_name, doc_id, notify_enabled=True):
+    def __init__(self, collection_name, doc_id):
         super().__init__()
         self.collection_name = collection_name
         self.doc_id = doc_id
-        self.notify_enabled = notify_enabled
 
     async def on_submit(self, interaction: discord.Interaction):
         col, doc_id = self.collection_name, self.doc_id
@@ -21800,7 +21805,7 @@ class ApplyFlaggedModal(discord.ui.Modal, title="Apply Claude Changes"):
             after_doc = {**doc, **proposed}
             await _dm_flaggers(
                 interaction.guild, doc.get("audit", []),
-                notify=self.notify_enabled, notify_text=notify_text,
+                notify=self.notify_label.component.value, notify_text=notify_text,
                 intro_text="✅ A question you flagged has been reviewed and updated.",
                 before=doc, after=after_doc,
             )
@@ -21821,12 +21826,16 @@ class ClearFlaggedModal(discord.ui.Modal, title="Clear Audit"):
         placeholder="e.g. We reviewed this — the question is correct as-is.",
         style=discord.TextStyle.paragraph, required=False, max_length=300,
     )
+    notify_label = discord.ui.Label(
+        text="Notify flagger(s)",
+        description="Uncheck to clear silently.",
+        component=discord.ui.Checkbox(default=True),
+    )
 
-    def __init__(self, collection_name, doc_id, notify_enabled=True):
+    def __init__(self, collection_name, doc_id):
         super().__init__()
         self.collection_name = collection_name
         self.doc_id = doc_id
-        self.notify_enabled = notify_enabled
 
     async def on_submit(self, interaction: discord.Interaction):
         col, doc_id = self.collection_name, self.doc_id
@@ -21847,7 +21856,7 @@ class ClearFlaggedModal(discord.ui.Modal, title="Clear Audit"):
             notify_text = (self.notify.value or "").strip() or None
             await _dm_flaggers(
                 interaction.guild, flaggers,
-                notify=self.notify_enabled, notify_text=notify_text,
+                notify=self.notify_label.component.value, notify_text=notify_text,
                 intro_text="⚠️ Your flag was reviewed!", before=context,
             )
             embed = discord.Embed(title="🚩 Question Flagged", color=discord.Color.greyple())
@@ -21876,12 +21885,16 @@ class EditFlaggedQuestionModal(discord.ui.Modal, title="Edit & Apply Question Fi
         placeholder="e.g. Good catch! We updated that question.",
         style=discord.TextStyle.short, required=False, max_length=300,
     )
+    notify_label = discord.ui.Label(
+        text="Notify flagger(s)",
+        description="Uncheck to apply silently.",
+        component=discord.ui.Checkbox(default=True),
+    )
 
-    def __init__(self, collection_name, doc_id, doc, proposed, notify_enabled=True):
+    def __init__(self, collection_name, doc_id, doc, proposed):
         super().__init__()
         self.collection_name = collection_name
         self.doc_id = doc_id
-        self.notify_enabled = notify_enabled
         self.original_message = None
         answers = proposed.get("answers") or doc.get("answers", [])
         self.category_input.default = proposed.get("category") or doc.get("category", "")
@@ -21910,7 +21923,7 @@ class EditFlaggedQuestionModal(discord.ui.Modal, title="Edit & Apply Question Fi
             if doc_before:
                 await _dm_flaggers(
                     interaction.guild, doc_before.get("audit", []),
-                    notify=self.notify_enabled, notify_text=notify_text,
+                    notify=self.notify_label.component.value, notify_text=notify_text,
                     intro_text="✅ A question you flagged has been reviewed and updated.",
                     before=doc_before, after=fields,
                 )
@@ -21927,22 +21940,15 @@ class EditFlaggedQuestionModal(discord.ui.Modal, title="Edit & Apply Question Fi
 
 
 class FlaggedReviewView(discord.ui.View):
-    def __init__(self, collection_name=None, doc_id=None, apply_enabled=False, notify=True):
+    def __init__(self, collection_name=None, doc_id=None, apply_enabled=False):
         super().__init__(timeout=None)
-        self.notify = notify
         if collection_name and doc_id:
             self.claude_btn.custom_id = f"flagged:claude:{collection_name}:{doc_id}"
             self.apply_btn.custom_id = f"flagged:apply:{collection_name}:{doc_id}"
             self.edit_btn.custom_id = f"flagged:edit:{collection_name}:{doc_id}"
             self.clear_btn.custom_id = f"flagged:clear:{collection_name}:{doc_id}"
-            self.notify_btn.custom_id = f"flagged:notify:{collection_name}:{doc_id}"
             self.edit_btn.disabled = False
         self.apply_btn.disabled = not apply_enabled
-        self._sync_notify_label()
-
-    def _sync_notify_label(self):
-        self.notify_btn.label = "🔔 Notify: ON" if self.notify else "🔕 Notify: OFF"
-        self.notify_btn.style = discord.ButtonStyle.success if self.notify else discord.ButtonStyle.secondary
 
     @staticmethod
     def _parse_custom_id(custom_id):
@@ -22009,7 +22015,7 @@ class FlaggedReviewView(discord.ui.View):
         if not col or not doc_id:
             await interaction.response.send_message("❌ Could not parse document ID.", ephemeral=True)
             return
-        await interaction.response.send_modal(ApplyFlaggedModal(col, doc_id, notify_enabled=self.notify))
+        await interaction.response.send_modal(ApplyFlaggedModal(col, doc_id))
 
     @discord.ui.button(label="✏️ Edit & Apply", style=discord.ButtonStyle.secondary, custom_id="flagged:edit:_:_", disabled=True)
     async def edit_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -22028,7 +22034,7 @@ class FlaggedReviewView(discord.ui.View):
             await interaction.response.send_message("❌ Question not found.", ephemeral=True)
             return
         proposed = (doc.get("ai_review") or {}).get("proposed_changes", {})
-        await interaction.response.send_modal(EditFlaggedQuestionModal(col, doc_id, doc, proposed, notify_enabled=self.notify))
+        await interaction.response.send_modal(EditFlaggedQuestionModal(col, doc_id, doc, proposed))
 
     @discord.ui.button(label="🧹 Clear Audit", style=discord.ButtonStyle.secondary, custom_id="flagged:clear:_:_")
     async def clear_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -22036,13 +22042,7 @@ class FlaggedReviewView(discord.ui.View):
         if not col or not doc_id:
             await interaction.response.send_message("❌ Could not parse document ID.", ephemeral=True)
             return
-        await interaction.response.send_modal(ClearFlaggedModal(col, doc_id, notify_enabled=self.notify))
-
-    @discord.ui.button(label="🔔 Notify: ON", style=discord.ButtonStyle.success, custom_id="flagged:notify:_:_", row=1)
-    async def notify_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        self.notify = not self.notify
-        self._sync_notify_label()
-        await interaction.response.edit_message(view=self)
+        await interaction.response.send_modal(ClearFlaggedModal(col, doc_id))
 
 
 async def sync_top_contributor_role(announce_channel=None):
@@ -22396,21 +22396,42 @@ async def submissions_command(interaction: discord.Interaction, action: str):
 async def contributors_command(interaction: discord.Interaction):
     try:
         await interaction.response.defer()
-        rows = await db.question_submission_stats.find({"approved": {"$gt": 0}}).sort("approved", -1).limit(15).to_list(length=15)
-        if not rows:
+
+        all_time_rows = await db.question_submission_stats.find({"approved": {"$gt": 0}}).sort("approved", -1).limit(15).to_list(length=15)
+
+        cutoff = datetime.datetime.utcnow() - datetime.timedelta(days=TOP_CONTRIBUTOR_WINDOW_DAYS)
+        weekly_pipeline = [
+            {"$match": {"status": "approved", "decided_at": {"$gte": cutoff}}},
+            {"$group": {"_id": "$submitter_id", "count": {"$sum": 1}, "display_name": {"$first": "$submitter_name"}}},
+            {"$sort": {"count": -1, "_id": 1}},
+            {"$limit": 15},
+        ]
+        weekly_rows = await db.question_submissions.aggregate(weekly_pipeline).to_list(length=15)
+
+        if not all_time_rows and not weekly_rows:
             await interaction.followup.send("No approved submissions yet.")
             return
 
-        lines = []
-        for i, r in enumerate(rows, 1):
-            ap = r.get("approved", 0)
-            name = r.get("display_name") or f"<@{r['_id']}>"
-            lines.append(f"**{i}.** {name} — {ap}")
-        embed = discord.Embed(
-            title="🏆 Top Question Contributors",
-            description="\n".join(lines),
-            color=discord.Color.gold(),
-        )
+        embed = discord.Embed(title="🏆 Top Question Contributors", color=discord.Color.gold())
+
+        if weekly_rows:
+            lines = []
+            for i, r in enumerate(weekly_rows, 1):
+                name = r.get("display_name") or f"<@{r['_id']}>"
+                crown = " 👑" if i == 1 else ""
+                lines.append(f"**{i}.** {name} — {r.get('count', 0)}{crown}")
+            embed.add_field(name=f"Past {TOP_CONTRIBUTOR_WINDOW_DAYS} Days", value="\n".join(lines), inline=False)
+        else:
+            embed.add_field(name=f"Past {TOP_CONTRIBUTOR_WINDOW_DAYS} Days", value="No approved submissions in this window.", inline=False)
+
+        if all_time_rows:
+            lines = []
+            for i, r in enumerate(all_time_rows, 1):
+                ap = r.get("approved", 0)
+                name = r.get("display_name") or f"<@{r['_id']}>"
+                lines.append(f"**{i}.** {name} — {ap}")
+            embed.add_field(name="All-Time", value="\n".join(lines), inline=False)
+
         await interaction.followup.send(embed=embed)
     except Exception as e:
         sentry_sdk.capture_exception(e)
