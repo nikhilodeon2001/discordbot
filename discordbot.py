@@ -656,6 +656,7 @@ CLAUDE_MODEL = "claude-opus-4-7"
 MAX_SUBMISSIONS_PER_24H = 100
 POINTS_FOR_APPROVAL = 1
 TOP_CONTRIBUTOR_WINDOW_DAYS = 7
+QUESTION_SUBMISSIONS_RETENTION_DAYS = 7
 SUBMIT_COMMAND_ID = None
 FLAG_COMMAND_ID = None
 PERKS_COMMAND_ID = None
@@ -20597,6 +20598,15 @@ async def ensure_submission_indexes():
     try:
         await db.question_submissions.create_index([("submitter_id", 1), ("status", 1)])
         await db.question_submissions.create_index([("status", 1), ("submitted_at", 1)])
+        await db.question_submissions.create_index([("status", 1), ("decided_at", 1)])
+        # TTL index: MongoDB auto-deletes decided submissions once decided_at is past the
+        # retention window -- no bot-side cleanup loop needed. partialFilterExpression scopes
+        # expiry to decided (approved/rejected) docs only; "awaiting_mod"/"processing" never expire.
+        await db.question_submissions.create_index(
+            [("decided_at", 1)],
+            expireAfterSeconds=QUESTION_SUBMISSIONS_RETENTION_DAYS * 86400,
+            partialFilterExpression={"status": {"$in": ["approved", "rejected"]}},
+        )
         await db.question_submission_stats.create_index([("points", -1)])
     except Exception as e:
         sentry_sdk.capture_exception(e)
