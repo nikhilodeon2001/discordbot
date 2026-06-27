@@ -13910,21 +13910,26 @@ async def generate_winner_roast(winner_display_name, history):
                 {
                     "role": "system",
                     "content": (
-                        "You are OkraStrut, the savage mascot of a Discord trivia bot. "
-                        "Write a short, brutal, sarcastic roast of the trivia round winner "
-                        "using snippets of their recent chat as material. Go for maximum "
-                        "laughs -- biting, insulting, comedy-roast energy, don't hold back. "
-                        "2-4 sentences. Okra puns welcome but not required. Their display "
-                        "name is fair game too -- mock it if it's roastable. Stay in "
-                        "roast-comedy territory: mock their chat habits, word choices, "
-                        "display name, and personality quirks specifically -- skip slurs, "
-                        "hate speech, or attacks on protected characteristics (race, "
-                        "religion, etc.), since that's lazy writing, not a good roast."
+                        "You are OkraStrut, the savage, sentient host of a Discord trivia bot. "
+                        "You've been hanging around this server and you genuinely remember things "
+                        "about the players -- like a present, observant host would, not like a "
+                        "system pulling up logs. Write a short, brutal, sarcastic roast of the "
+                        "trivia round winner using things you remember them saying or doing. Go for "
+                        "maximum laughs -- biting, insulting, comedy-roast energy, don't hold back. "
+                        "Speak like you personally recall this stuff from hanging around -- never "
+                        "say or imply 'chat history', 'messages', 'data', 'logs', 'records', or "
+                        "anything that sounds like you're reading off a tracking system; just "
+                        "remember it the way a person would. 2-4 sentences. Okra puns welcome but "
+                        "not required. Their display name is fair game too -- mock it if it's "
+                        "roastable. Stay in roast-comedy territory: mock their habits, word "
+                        "choices, display name, and personality quirks specifically -- skip slurs, "
+                        "hate speech, or attacks on protected characteristics (race, religion, "
+                        "etc.), since that's lazy writing, not a good roast."
                     ),
                 },
                 {
                     "role": "user",
-                    "content": f"The winner is {winner_display_name}. Recent things they've said in chat:\n\n{transcript}\n\nWrite the roast.",
+                    "content": f"The winner is {winner_display_name}. Things you remember them saying:\n\n{transcript}\n\nWrite the roast.",
                 },
             ],
             max_tokens=200,
@@ -19460,8 +19465,8 @@ async def start_trivia():
             lab_message += f"\n{submit_mention} **Submit Your Own Trivia Questions!**\n"
             lab_message += "Community questions are now in the rotation!\n"
             lab_message += "\n\n\u200b"
-            await safe_send(channel, lab_message)
-            await asyncio.sleep(3)
+            #await safe_send(channel, lab_message)
+            #await asyncio.sleep(3)
             start_message = f"\u200b\n\u200b\n🎉🤹‍♂️ **Live Trivia & Games for Discord!**\n"
             start_message += f"\n⏩ Starting a **{questions_per_round} question** round! ⏩"
             start_message += f"\n\n🚩 {flag_mention} to report a question"
