@@ -309,6 +309,20 @@ async def get_update_blurb() -> str:
     except Exception:
         return "🥬 Heading off to level up — back in a flash, Okrans!"
 
+
+async def send_question_queen_submit_ad():
+    """Round-end /submit ad, also calling out whoever currently holds the Question Queen title."""
+    submit_mention = f"</submit:{SUBMIT_COMMAND_ID}>" if SUBMIT_COMMAND_ID else "/submit"
+    message = "\u200b\n"
+    message += f"{submit_mention} **Submit Your Own Trivia Questions!**\n"
+    message += "Community questions are now in the rotation!\n\n"
+    if top_contributor_id:
+        message += f"👑 This week's **Question Queen**: <@{top_contributor_id}> — Access to all perks! 🎁\n"
+    else:
+        message += "👑 No **Question Queen** crowned yet this week — get a question **approved** to claim the crown!\n"
+    message += "\n\u200b"
+    await safe_send(channel, message)
+
 def randomize_embed_color():
     """
     Changes the global embed_color to a random Discord color different from current one.
@@ -18293,7 +18307,7 @@ async def check_correct_responses_delete(question_ask_time, trivia_answer_list, 
             delta_suffix = ""
             if delta is not None:
                 delta_display = int(delta) if delta == int(delta) else delta
-                delta_suffix = f" (off by {delta_display})"
+                delta_suffix = f" ({message_content}, off by {delta_display})"
 
             # Display the formatted message based on yolo_mode
             if time_diff == 0:
@@ -19385,7 +19399,7 @@ async def start_trivia():
 
             await sync_bumper_king_with_role()
             try:
-                await sync_top_contributor_role(announce_channel=channel)
+                await sync_top_contributor_role()
             except Exception as _e:
                 sentry_sdk.capture_exception(_e)
             #await get_survey_results()
@@ -19582,6 +19596,9 @@ async def start_trivia():
             if bumped_status == False:
                 await get_bump_url_from_s3()
                 await asyncio.sleep(4)
+
+            await asyncio.sleep(2)
+            await send_question_queen_submit_ad()
 
     except Exception as e:
         sentry_sdk.capture_exception(e)
@@ -19934,7 +19951,7 @@ async def on_message(message):
                 crown_embed.set_image(url=gif_url)
 
                 # Send as a separate message object you can manage
-                crown_message = await channel.send(embed=crown_embed)
+                crown_message = await message.channel.send(embed=crown_embed)
                 await asyncio.sleep(3)
 
             # assign the crown role in this guild
@@ -22061,7 +22078,7 @@ class FlaggedReviewView(discord.ui.View):
         await interaction.response.send_modal(ClearFlaggedModal(col, doc_id))
 
 
-async def sync_top_contributor_role(announce_channel=None):
+async def sync_top_contributor_role():
     global top_contributor_id
     if not TOP_CONTRIBUTOR_ROLE_ID:
         return
@@ -22073,7 +22090,7 @@ async def sync_top_contributor_role(announce_channel=None):
         return
     cutoff = datetime.datetime.utcnow() - datetime.timedelta(days=TOP_CONTRIBUTOR_WINDOW_DAYS)
     pipeline = [
-        {"$match": {"status": "approved", "decided_at": {"$gte": cutoff}}},
+        {"$match": {"status": "approved", "decided_at": {"$gte": cutoff}, "submitter_id": {"$ne": okrag_id}}},
         {"$group": {"_id": "$submitter_id", "count": {"$sum": 1}}},
         {"$sort": {"count": -1, "_id": 1}},
         {"$limit": 1},
@@ -22083,7 +22100,7 @@ async def sync_top_contributor_role(announce_channel=None):
     for member in list(role.members):
         if member.id != target_id:
             try:
-                await member.remove_roles(role, reason="No longer top weekly contributor")
+                await member.remove_roles(role, reason="No longer this week's Question Queen")
             except (discord.Forbidden, Exception):
                 pass
     if target_id:
@@ -22096,32 +22113,13 @@ async def sync_top_contributor_role(announce_channel=None):
                 member = None
         if member and role not in member.roles:
             try:
-                await member.add_roles(role, reason="Top contributor (last 7 days)")
+                await member.add_roles(role, reason="Question Queen (last 7 days)")
             except (discord.Forbidden, Exception) as e:
                 print(f"⚠️ sync_top_contributor_role: failed to add role: {e}")
                 return
             try:
-                trivia_channel = announce_channel or bot.get_channel(channel_id)
-                if trivia_channel:
-                    okrafx_mention = f"</okrafx:{OKRAFX_COMMAND_ID}>" if OKRAFX_COMMAND_ID else "/okrafx"
-                    tc_embed = discord.Embed(
-                        title="🏆 New Top Contributor of the Week!",
-                        description=(
-                            f"**{member.display_name}** submitted the most approved questions this week!\n\n"
-                            f"💎 As **Top Contributor**, you now unlock:\n\n"
-                            f"• Access to all exclusive perks 🎁\n"
-                            f"• Change your username color with {okrafx_mention} 🎨\n"
-                            f"• Start tournaments 🏟️\n"
-                            f"• Access the mini-game arena 🎮\n"
-                        ),
-                        color=discord.Color.gold()
-                    )
-                    await trivia_channel.send(embed=tc_embed)
-            except Exception as e:
-                print(f"⚠️ sync_top_contributor_role: failed to send announcement: {e}")
-            try:
                 await member.send(
-                    f"🏆 Congrats! You're now the **Top Contributor** of the week on Live Trivia!\n\n"
+                    f"👑 Congrats! You're this week's **Question Queen** on Live Trivia!\n\n"
                     f"You've submitted the most approved questions over the last 7 days. As a reward, you now unlock:\n\n"
                     f"• Access to all exclusive perks 🎁\n"
                     f"• Change your username color with `/okrafx` 🎨\n"
@@ -22413,11 +22411,11 @@ async def contributors_command(interaction: discord.Interaction):
     try:
         await interaction.response.defer()
 
-        all_time_rows = await db.question_submission_stats.find({"approved": {"$gt": 0}}).sort("approved", -1).limit(15).to_list(length=15)
+        all_time_rows = await db.question_submission_stats.find({"approved": {"$gt": 0}, "_id": {"$ne": okrag_id}}).sort("approved", -1).limit(15).to_list(length=15)
 
         cutoff = datetime.datetime.utcnow() - datetime.timedelta(days=TOP_CONTRIBUTOR_WINDOW_DAYS)
         weekly_pipeline = [
-            {"$match": {"status": "approved", "decided_at": {"$gte": cutoff}}},
+            {"$match": {"status": "approved", "decided_at": {"$gte": cutoff}, "submitter_id": {"$ne": okrag_id}}},
             {"$group": {"_id": "$submitter_id", "count": {"$sum": 1}, "display_name": {"$first": "$submitter_name"}}},
             {"$sort": {"count": -1, "_id": 1}},
             {"$limit": 15},
