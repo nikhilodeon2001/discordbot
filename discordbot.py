@@ -15323,7 +15323,7 @@ async def select_wof_questions(winner, winner_id):
             message = f"{display_string}\n{wof_clue}\n{fixed_letters_str}\n"
             await safe_send(channel, message)
 
-        wof_letters = await ask_wof_letters(winner, wof_answer, 5, winner_id)
+        wof_letters = await ask_wof_letters(winner, wof_answer, 5, winner_id, wof_clue)
         
         if wf_winner == False:
             await asyncio.sleep(1.5)
@@ -15338,7 +15338,7 @@ async def select_wof_questions(winner, winner_id):
                 message = f"{display_string}\n{wof_clue}\n{wof_letters_str}\n"
                 await safe_send(channel, message)
 
-            await process_wof_guesses(winner, wof_answer, 5, winner_id)
+            await process_wof_guesses(winner, wof_answer, 5, winner_id, wof_clue)
 
         if selected_wof_category == "5":
             await asyncio.sleep(1.5)
@@ -15373,10 +15373,10 @@ async def select_wof_questions(winner, winner_id):
         return None  
 
     
-async def process_wof_guesses(winner, answer, extra_time, winner_id):
+async def process_wof_guesses(winner, answer, extra_time, winner_id, clue):
     global wf_winner
 
-    answer = answer.upper() 
+    answer = answer.upper()
     await safe_send(channel, f"\u200b\n\u200b\n**<@{winner_id}>** ❓**Your Answer**❓\n\u200b")
 
     def check(m):
@@ -15394,6 +15394,7 @@ async def process_wof_guesses(winner, answer, extra_time, winner_id):
 
             if message_content == answer:
                 await message.add_reaction("🎉")
+                await send_wof_solved_board(answer, clue)
                 await safe_send(channel, f"\n✅🎉 Correct: **{answer}**\n\u200b")
                 wf_winner = True
                 return
@@ -15407,10 +15408,11 @@ async def process_wof_guesses(winner, answer, extra_time, winner_id):
             print(f"Error collecting WOF guesses: {e}")
             break
 
+    await send_wof_solved_board(answer, clue)
     await safe_send(channel, f"⏰ Time's up! The answer was: {answer}")
 
 
-async def ask_wof_letters(winner, answer, extra_time, winner_id):
+async def ask_wof_letters(winner, answer, extra_time, winner_id, clue):
     global wf_winner
 
     revealed_count = sum(ch.lower() in "okra" for ch in answer)
@@ -15440,6 +15442,7 @@ async def ask_wof_letters(winner, answer, extra_time, winner_id):
 
             if message_content == answer:
                 await message.add_reaction("🎉")
+                await send_wof_solved_board(answer, clue)
                 await safe_send(channel, f"\n✅🎉 Correct **<@{winner_id}>**! {answer}\n\u200b")
                 wf_winner = True
                 return True
@@ -15791,6 +15794,19 @@ def generate_wof_image(
         return image_file, img_width, img_height, display_string
     else:
         return True, img_width, img_height, display_string
+
+
+async def send_wof_solved_board(answer, clue):
+    """Reveal the fully-solved WoF board as an image, then a short pause, if image_questions is on."""
+    if not image_questions:
+        return
+    image_file, _, _, _ = generate_wof_image(answer, clue, answer)
+    if not image_file:
+        return
+    embed = discord.Embed()
+    embed.set_image(url="attachment://image.png")
+    await safe_send(channel, embed=embed, file=image_file)
+    await asyncio.sleep(1)
 
 
 async def send_magic_image(input_text):
