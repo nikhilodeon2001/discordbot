@@ -17019,8 +17019,8 @@ async def generate_round_summary(round_data, winner, winner_id):
         joke = await generate_okra_joke(winner)
         return joke
     
-    if message_type == "nothing":
-        return "\u200b\n🥒🌱🥒🌱🥒\n\u200b"
+    #if message_type == "nothing":
+    #    return "\u200b\n🥒🌱🥒🌱🥒\n\u200b"
     
     # Get unified prompt and system role
     prompt, system_role = create_summary_prompt_and_role(winner, message_type, is_sovereign, round_data, magic_number_correct, wf_winner, creep_okra)
