@@ -13945,14 +13945,14 @@ async def generate_winner_roast(winner_display_name, history):
 
 async def get_winner_roast_text(winner_id, winner_display_name):
     """
-    Returns a roast string for the round winner if they're eligible, else
-    None. Never raises -- callers can await this without their own try/except.
-    Eligibility: roast_enabled is True, winner_id is set, the winner hasn't
-    been roasted in the last 24h (enforced by a TTL index on
+    Returns (roast, history_count) for the round winner if they're eligible,
+    else None. Never raises -- callers can await this without their own
+    try/except. Eligibility: roast_enabled is True, winner_id is set, the
+    winner hasn't been roasted in the last 24h (enforced by a TTL index on
     roast_state_discord.roasted_at), and they have at least ROAST_MIN_MESSAGES
-    of captured off-question chat to work with. Every roast that's actually
-    generated is also mirrored to ROAST_TEST_CHANNEL_ID for monitoring, at
-    the same time it's handed back to the caller for live delivery.
+    of captured off-question chat to work with. Mirroring this roast to
+    ROAST_TEST_CHANNEL_ID is the caller's job, done after the live message
+    sends so the mirror can link straight to it.
     """
     if not roast_enabled or winner_id is None:
         return None
@@ -13973,14 +13973,7 @@ async def get_winner_roast_text(winner_id, winner_display_name):
             upsert=True,
         )
 
-        test_channel = bot.get_channel(ROAST_TEST_CHANNEL_ID)
-        if test_channel:
-            await safe_send(
-                test_channel,
-                content=f"\U0001f9ea **Live roast** for **{winner_display_name}** ({winner_id}) -- based on {len(history)} captured message(s):\n\n{roast}",
-            )
-
-        return roast
+        return roast, len(history)
     except Exception as e:
         sentry_sdk.capture_exception(e)
         print(f"❌ Roast lookup/generation failed: {e}")
@@ -18437,7 +18430,8 @@ async def update_round_streaks(user, user_id, roast_task=None):
 
     # Generate the round summary if the user is not None
     if user is not None:
-        roast_text = await roast_task if roast_task is not None else None
+        roast_result = await roast_task if roast_task is not None else None
+        roast_text, roast_message_count = roast_result if roast_result else (None, None)
         roast_block = f"\n{roast_text}\n" if roast_text else ""
 
         streak = current_longest_round_streak["streak"]
@@ -18457,9 +18451,22 @@ async def update_round_streaks(user, user_id, roast_task=None):
             message += roast_block
             message += f"\n▶️ **[Live Stats](https://clubokra.com/leaderboard)**\n\u200b\n\u200b"
 
-        await safe_send(channel, message)
+        sent_message = await safe_send(channel, message)
+
+        if roast_text and sent_message is not None:
+            test_channel = bot.get_channel(ROAST_TEST_CHANNEL_ID)
+            if test_channel:
+                await safe_send(
+                    test_channel,
+                    content=(
+                        f"\U0001f9ea **Live roast** for **{user}** ({user_id}) -- "
+                        f"based on {roast_message_count} captured message(s) -- "
+                        f"[Jump to message]({sent_message.jump_url}):\n\n{roast_text}"
+                    ),
+                )
+
         await asyncio.sleep(2)
-        
+
         await select_wof_questions(user, user_id)
 
         reset_embed_color()
