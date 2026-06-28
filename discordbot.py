@@ -503,8 +503,8 @@ OFFQUESTION_CHAT_ARCHIVE_PREFIX = 'offquestion-chat/archive'
 OFFQUESTION_CHAT_COMPACTION_INTERVAL_SECONDS = 1800
 OFFQUESTION_CHAT_COMPACTION_MIN_AGE_SECONDS = 300
 OFFQUESTION_CHAT_ARCHIVE_MAX_MESSAGES = 1000  # per-user retention cap, tune here
-roast_dark_mode_enabled = False
-ROAST_MIN_MESSAGES = 5  # skip roast generation if a winner has fewer captured messages than this
+roast_enabled = True  # kill switch: set False to disable all roast work (no Mongo check, no S3 fetch, no GPT call)
+ROAST_MIN_MESSAGES = 10  # skip roast generation if a winner has fewer captured messages than this
 facebook_page_id = os.getenv("FACEBOOK_PAGE_ID")
 facebook_page_access_token = os.getenv("FACEBOOK_PAGE_ACCESS_TOKEN")
 facebook_graph_api_version = os.getenv("FACEBOOK_GRAPH_API_VERSION", "v23.0")
@@ -13943,32 +13943,48 @@ async def generate_winner_roast(winner_display_name, history):
         return f"🥬 {winner_display_name} won this round, which is about the most interesting thing about them. Lucky okra."
 
 
-async def post_winner_roast_dark_mode(winner_display_name, winner_id):
+async def get_winner_roast_text(winner_id, winner_display_name):
     """
-    Dark-mode phase 1 of the AI roast feature: generate a real roast and post
-    it to a private test channel instead of the live trivia channel, so output
-    quality can be reviewed before this goes public.
+    Returns a roast string for the round winner if they're eligible, else
+    None. Never raises -- callers can await this without their own try/except.
+    Eligibility: roast_enabled is True, winner_id is set, the winner hasn't
+    been roasted in the last 24h (enforced by a TTL index on
+    roast_state_discord.roasted_at), and they have at least ROAST_MIN_MESSAGES
+    of captured off-question chat to work with. Every roast that's actually
+    generated is also mirrored to ROAST_TEST_CHANNEL_ID for monitoring, at
+    the same time it's handed back to the caller for live delivery.
     """
-    if not roast_dark_mode_enabled or winner_id is None:
-        return
+    if not roast_enabled or winner_id is None:
+        return None
     try:
-        test_channel = bot.get_channel(ROAST_TEST_CHANNEL_ID)
-        if not test_channel:
-            return
+        existing = await db.roast_state_discord.find_one({"_id": winner_id})
+        if existing:
+            return None  # roasted within the last 24h
 
         history = await get_user_offquestion_chat_history(winner_id, limit=100)
         if len(history) < ROAST_MIN_MESSAGES:
-            await safe_send(test_channel, f"\U0001f9ea Roast test: **{winner_display_name}** ({winner_id}) won this round but only has {len(history)} captured message(s) -- need at least {ROAST_MIN_MESSAGES} to roast.")
-            return
+            return None  # not enough material -- not marked as roasted, stays eligible on a later win
 
         roast = await generate_winner_roast(winner_display_name, history)
-        await safe_send(
-            test_channel,
-            content=f"\U0001f9ea **Roast test** for **{winner_display_name}** ({winner_id}) -- based on {len(history)} captured message(s):\n\n{roast}",
+
+        await db.roast_state_discord.update_one(
+            {"_id": winner_id},
+            {"$set": {"roasted_at": datetime.datetime.now(datetime.UTC)}},
+            upsert=True,
         )
+
+        test_channel = bot.get_channel(ROAST_TEST_CHANNEL_ID)
+        if test_channel:
+            await safe_send(
+                test_channel,
+                content=f"\U0001f9ea **Live roast** for **{winner_display_name}** ({winner_id}) -- based on {len(history)} captured message(s):\n\n{roast}",
+            )
+
+        return roast
     except Exception as e:
         sentry_sdk.capture_exception(e)
-        print(f"❌ Roast dark-mode post failed: {e}")
+        print(f"❌ Roast lookup/generation failed: {e}")
+        return None
 
 
 async def _query_leaderboard_counts(collection, start_time=None, limit=10):
@@ -18368,7 +18384,7 @@ async def update_answer_streaks(user, user_id):
         })
 
 
-async def update_round_streaks(user, user_id):
+async def update_round_streaks(user, user_id, roast_task=None):
     """Update the current longest round streak for the user who answered correctly."""
     global current_longest_round_streak
 
@@ -18421,19 +18437,25 @@ async def update_round_streaks(user, user_id):
 
     # Generate the round summary if the user is not None
     if user is not None:
+        roast_text = await roast_task if roast_task is not None else None
+        roast_block = f"\n{roast_text}\n" if roast_text else ""
+
         streak = current_longest_round_streak["streak"]
         if streak > 1:
             message = f"\u200b\n\u200b\n🏆 **Winner**: **<@{user_id}>**...🔥{current_longest_round_streak['streak']} in a row!\n"
-            
+            message += roast_block
+
             if streak % discount_streak_amount == 0:
                 discount_fraction = min((streak // discount_streak_amount) * discount_step_amount, 90)
                 message += f"\n⚖️ Going forward **<@{user_id}>** will incur a **-{discount_fraction}%** handicap.\n"
-                
+
             message += f"\n▶️ **[Discord Stats](https://clubokra.com/leaderboard)**\n\u200b\n\u200b"
             message += f"\u200b"
         else:
             #message = f"\u200b\n\u200b\n🏆 **Winner**: **<@{user_id}>**!\n\n▶️ **[Discord Stats](https://clubokra.com/discord)**\n\u200b\n\u200b"
-            message = f"\u200b\n\u200b\n🏆 **Winner**: **<@{user_id}>**!\n\n▶️ **[Live Stats](https://clubokra.com/leaderboard)**\n\u200b\n\u200b"
+            message = f"\u200b\n\u200b\n🏆 **Winner**: **<@{user_id}>**!\n"
+            message += roast_block
+            message += f"\n▶️ **[Live Stats](https://clubokra.com/leaderboard)**\n\u200b\n\u200b"
 
         await safe_send(channel, message)
         await asyncio.sleep(2)
@@ -18445,9 +18467,9 @@ async def update_round_streaks(user, user_id):
         if ai_on:
             winner_coffees = await get_coffees(user_id)
             if winner_coffees > 0:
-                gpt_summary = await generate_round_summary(round_data, user, user_id)
-                gpt_message = f"\u200b\n{gpt_summary}\n\u200b"
-                await safe_send(channel, gpt_message)
+                #gpt_summary = await generate_round_summary(round_data, user, user_id)
+                #gpt_message = f"\u200b\n{gpt_summary}\n\u200b"
+                #await safe_send(channel, gpt_message)
 
                 highest_score_player = max(scoreboard, key=lambda uid: scoreboard[uid]["score"])
                 highest_score = scoreboard[highest_score_player]["score"]
@@ -19566,9 +19588,9 @@ async def start_trivia():
                 
             reset_embed_color()
             round_winner, winner_points, round_winner_id = await determine_round_winner()
+            roast_task = asyncio.create_task(get_winner_roast_text(round_winner_id, round_winner))
             await clear_round_options()
-            await update_round_streaks(round_winner, round_winner_id)
-            await post_winner_roast_dark_mode(round_winner, round_winner_id)
+            await update_round_streaks(round_winner, round_winner_id, roast_task)
             asyncio.create_task(write_leaderboard_to_s3())
 
             round_count += 1
@@ -20611,6 +20633,17 @@ async def ensure_submission_indexes():
     except Exception as e:
         sentry_sdk.capture_exception(e)
         print(f"⚠️ ensure_submission_indexes: {e}")
+
+
+async def ensure_roast_indexes():
+    try:
+        # TTL index: a winner's roast_state_discord doc auto-deletes 24h after
+        # roasted_at, which is what makes them eligible for a roast again --
+        # no bot-side cleanup loop or date bookkeeping needed.
+        await db.roast_state_discord.create_index("roasted_at", expireAfterSeconds=86400)
+    except Exception as e:
+        sentry_sdk.capture_exception(e)
+        print(f"⚠️ ensure_roast_indexes: {e}")
 
 
 async def _count_submissions_last_24h(submitter_id):
@@ -22598,6 +22631,12 @@ async def on_ready():
     await load_parameters()
     await load_round_options_from_db()
     channel = bot.get_channel(channel_id)
+
+    try:
+        await ensure_roast_indexes()
+    except Exception as _e:
+        sentry_sdk.capture_exception(_e)
+        print(f"⚠️ roast index startup hook: {_e}")
 
     # User-submission feature: indexes + persistent views + initial role sync
     try:
