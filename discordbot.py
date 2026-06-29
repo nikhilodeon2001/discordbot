@@ -17831,6 +17831,11 @@ def is_number(s):
         return False
 
 
+def extract_leading_number(text):
+    match = re.match(r'^-?\d+(?:\.\d+)?', text.strip())
+    return match.group(0) if match else None
+
+
 def derivative_checker(response, answer):
     response = response.lower().replace(" ", "").replace("^", "").replace("*", "")
     answer = answer.lower().replace(" ", "").replace("^", "").replace("*", "")
@@ -17967,7 +17972,8 @@ def fuzzy_match(user_answer, correct_answer, category, url, _skip_alias_check=Fa
     
         
     if is_number(correct_answer):
-        return user_answer == correct_answer  # Only accept exact match if the correct answer is a number
+        leading_number = extract_leading_number(user_answer)
+        return leading_number is not None and leading_number == correct_answer  # Match on the leading numeral, not the full raw string
     
     user_answer = normalize_text(str(user_answer))
     correct_answer = normalize_text(str(correct_answer))
@@ -17979,7 +17985,8 @@ def fuzzy_match(user_answer, correct_answer, category, url, _skip_alias_check=Fa
             return False
     
     if is_number(correct_answer):
-        return user_answer == correct_answer  # Only accept exact match if the correct answer is a number
+        leading_number = extract_leading_number(user_answer)
+        return leading_number is not None and leading_number == correct_answer  # Match on the leading numeral, not the full raw string
 
     no_spaces_user = user_answer.replace(" ", "")      
     no_spaces_correct = correct_answer.replace(" ", "") 
