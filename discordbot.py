@@ -225,87 +225,41 @@ async def end_of_round():
         print(f"Self-update failed: {e}")
         return False
 
-_BLURB_THEMES = [
-    "a bizarre but true historical fact",
-    "a one-liner philosophical paradox",
-    "an absurd hypothetical that makes you think",
-    "a counterintuitive science fact",
-    "a terrible pun that's secretly clever",
-    "a weird animal behavior fact",
-    "a mind-bending math or logic tidbit",
-    "an unexpected food fact",
-    "a short existential observation",
-    "a funny 'what if' question with a real answer",
-    "a strange law that actually exists somewhere in the world",
-    "a surprising fact about the human body",
-    "a weird coincidence from history",
-    "a mind-bending optical illusion described in words",
-    "an unexpected origin story of a common word or phrase",
-    "a fact about space that makes Earth feel tiny",
-    "a philosophical thought experiment in one sentence",
-    "a counterintuitive economic or game theory principle",
-    "a bizarre record someone actually holds",
-    "a fact about language or linguistics that surprises people",
-    "a weird fact about how animals perceive time or reality",
-    "a short riddle with a satisfying answer",
-    "a surprising invention that changed the world but nobody talks about",
-    "a fact about ancient civilizations that feels impossibly modern",
-    "a creepy but fascinating natural phenomenon",
-    "a thought-provoking moral dilemma in one sentence",
-    "a surprising fact about color, light, or perception",
-    "an unexpected mathematical truth",
-    "a bizarre but real medical or psychological phenomenon",
-    "a fun fact about music, sound, or acoustics",
-]
-
-async def _pick_theme() -> str:
-    recent = await get_recent_question_ids_from_mongo("blurb_theme")
-    available = [t for t in _BLURB_THEMES if t not in recent]
-    if not available:
-        available = _BLURB_THEMES
-    theme = random.choice(available)
-    await store_question_ids_in_mongo([theme], "blurb_theme")
-    return theme
+async def _sample_recent_text(db, collection_name, tracking_type):
+    collection = db[collection_name]
+    recent_ids = await get_recent_question_ids_from_mongo(tracking_type)
+    recent_object_ids = [ObjectId(i) for i in recent_ids if ObjectId.is_valid(i)]
+    doc = await collection.aggregate([
+        {"$match": {"_id": {"$nin": recent_object_ids}}},
+        {"$sample": {"size": 1}}
+    ]).to_list(length=1)
+    if not doc:
+        doc = await collection.aggregate([{"$sample": {"size": 1}}]).to_list(length=1)
+    if not doc:
+        return None
+    chosen = doc[0]
+    await store_question_ids_in_mongo([str(chosen["_id"])], tracking_type)
+    return chosen.get("text")
 
 async def get_round_blurb() -> str:
     try:
         db = await connect_to_mongodb()
-        collection = db["fun_facts"]
-        recent_ids = await get_recent_question_ids_from_mongo("fun_fact")
-        recent_object_ids = [ObjectId(i) for i in recent_ids if ObjectId.is_valid(i)]
-        fact = await collection.aggregate([
-            {"$match": {"_id": {"$nin": recent_object_ids}}},
-            {"$sample": {"size": 1}}
-        ]).to_list(length=1)
-        if not fact:
-            fact = await collection.aggregate([{"$sample": {"size": 1}}]).to_list(length=1)
+        fact = await _sample_recent_text(db, "fun_facts", "fun_fact")
         if not fact:
             return "🥬"
-        chosen = fact[0]
-        await store_question_ids_in_mongo([str(chosen["_id"])], "fun_fact")
-        return f"🌿 {chosen['text']} 🥬"
+        return f"🌿 {fact} 🥬"
     except Exception as e:
         print(f"Error fetching fun fact: {e}")
         return "🥬"
 
 async def get_update_blurb() -> str:
     try:
-        theme = await _pick_theme()
-        resp = await openai_client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[{
-                "role": "user",
-                "content": (
-                    f"Give me {theme} in one sentence. "
-                    "Then on a new line, add a short playful sign-off (1 sentence) saying "
-                    "the bot is stepping away to level up / patch itself / evolve / upgrade. "
-                    "Okra flair welcome. No intro or labels."
-                )
-            }],
-            max_tokens=100,
-        )
-        blurb = resp.choices[0].message.content.strip()
-        return f"🌿 {blurb} 🥬"
+        db = await connect_to_mongodb()
+        fact = await _sample_recent_text(db, "fun_facts", "fun_fact")
+        signoff = await _sample_recent_text(db, "update_blurbs", "update_blurb")
+        if not fact or not signoff:
+            return "🥬 Heading off to level up — back in a flash, Okrans!"
+        return f"🌿 {fact}\n\n{signoff} 🥬"
     except Exception:
         return "🥬 Heading off to level up — back in a flash, Okrans!"
 
@@ -666,7 +620,7 @@ _submission_locks = {}  # submitter_id -> asyncio.Lock (rate-limit TOCTOU guard)
 _submitter_attribution_cache = OrderedDict()  # (db_name, _id) -> attribution string; bounded LRU
 _SUBMITTER_CACHE_MAX = 256
 
-id_limits = {"general": 2000, "mysterybox": 2000, "crossword": 5000, "jeopardy": 5000, "wof": 1500, "list": 20, "feud": 1000, "posters": 2000, "movie_scenes": 5000, "missing_link": 2500, "people": 2500, "ranker_list": 4000, "animal": 2000, "riddle": 2500, "dictionary": 5000, "flags": 150, "blurb_theme": 10, "lyric": 500, "polyglottery": 80, "book": 80, "element": 100, "jigsaw": 5000, "border": 100, "faceoff": 5000, "president": 80, "wordle": 1400, "myopic": 5000, "fusion": 5000, "microscopic": 5000, "chess": 5000, "stock": 800, "currency": 100, "search": 10, "billboard": 40, "soundfx": 500, "audio_music":100, "audio_question": 2000, "sports_logos": 20, "fun_fact": 75}
+id_limits = {"general": 2000, "mysterybox": 2000, "crossword": 5000, "jeopardy": 5000, "wof": 1500, "list": 20, "feud": 1000, "posters": 2000, "movie_scenes": 5000, "missing_link": 2500, "people": 2500, "ranker_list": 4000, "animal": 2000, "riddle": 2500, "dictionary": 5000, "flags": 150, "update_blurb": 150, "lyric": 500, "polyglottery": 80, "book": 80, "element": 100, "jigsaw": 5000, "border": 100, "faceoff": 5000, "president": 80, "wordle": 1400, "myopic": 5000, "fusion": 5000, "microscopic": 5000, "chess": 5000, "stock": 800, "currency": 100, "search": 10, "billboard": 40, "soundfx": 500, "audio_music":100, "audio_question": 2000, "sports_logos": 20, "fun_fact": 75}
 max_retries = 3
 delay_between_retries = 3
 first_place_bonus = 0
