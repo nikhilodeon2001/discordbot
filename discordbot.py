@@ -219,7 +219,14 @@ async def end_of_round():
                 except Exception as e:
                     print(f"❌ Failed to send update notification to Mini-Game Arena: {e}")
 
-            # Note: Simply Trivia will send its own update message when it detects shutdown_initiated flag
+            # Send to Simply Trivia channel
+            simply_trivia_channel = bot.get_channel(SIMPLY_TRIVIA_CHANNEL_ID)
+            if simply_trivia_channel:
+                try:
+                    await safe_send(simply_trivia_channel, blurb)
+                    print(f"✅ Sent update notification to Simply Trivia {SIMPLY_TRIVIA_CHANNEL_ID}")
+                except Exception as e:
+                    print(f"❌ Failed to send update notification to Simply Trivia: {e}")
 
             # Flush any buffered off-question chat before the bot goes quiet for deploy
             await flush_offquestion_chat_buffer()
@@ -19535,8 +19542,8 @@ async def start_trivia():
             start_message = f"\u200b\n\u200b\n🎉🤹‍♂️ **Live Trivia & Games for Discord!**\n"
             start_message += f"\n⏩ Starting a **{questions_per_round} question** round! ⏩"
             start_message += f"\n\n🚩 {flag_mention} to report a question"
-            start_message += f"\n🗝️ {perks_mention} to unlock perks"
-            start_message += f"\n❓ {submit_mention} to submit questions"
+            start_message += f"\n🗝️ {perks_mention} to enable all content"
+            start_message += f"\n❓ {submit_mention} to suggest questions"
 
             if current_longest_round_streak["user"] is not None and await get_coffees(current_longest_round_streak["user_id"]) > 0:
                 start_message += f"\n\n🕹️ **{current_longest_round_streak['user']}** can toggle modes mid-game"
@@ -19639,7 +19646,7 @@ async def start_trivia():
                 "\U0001f49a [Unlock Perks](https://discord.com/channels/1367682586079395902/role-subscriptions)\n"
                 "\U0001f4a1 [Submit Feedback](https://forms.gle/iWvmN24pfGEGSy7n7)\n"
                 "\u2b50 [Leave a Review](https://disboard.org/review/create/1367682586079395902)\n"
-                f"\u2753 {submit_mention} to submit questions\n\n"
+                f"\u2753 {submit_mention} to suggest questions\n\n"
                 "\U0001f3a8 Live Trivia is a pure hobby effort.\n"
                 "\u200b"
             )
