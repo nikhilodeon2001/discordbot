@@ -170,6 +170,18 @@ async def end_of_round():
             global shutdown_initiated
             shutdown_initiated = True
 
+            # Persist whether this round had active players, so the next
+            # process can auto-continue instead of prompting to start
+            try:
+                await db.parameters_discord.update_one(
+                    {"_id": "had_active_players_before_restart"},
+                    {"$set": {"value": int(len(round_responders) > 0)}},
+                    upsert=True
+                )
+            except Exception as e:
+                sentry_sdk.capture_exception(e)
+                print(f"❌ Failed to persist active-player state before restart: {e}")
+
             blurb = await get_update_blurb()
 
             # Send update notification to main channel
@@ -433,6 +445,10 @@ top_contributor_id = None
 
 # Global shutdown flag for coordinating trivia loops during updates
 shutdown_initiated = False
+
+# One-shot override: set from Mongo at startup if the round before an
+# update-triggered restart had active players, consumed by the first round
+resume_no_players_override = None
 
 
 
@@ -19388,7 +19404,8 @@ async def start_trivia():
     global db
     global question_responders, round_responders
     global question_asked_start, question_asked_end
-    
+    global resume_no_players_override
+
     try:
 
         #await sync_bumper_king_with_role()  # Only sync at startup
@@ -19446,11 +19463,14 @@ async def start_trivia():
             #await ask_okra_says_challenge("TheOkraG", 591861826690613248, 1)
             #await ask_custom_trivia_challenge("TheOkraG", 591861826690613248, 10)
 
-            if len(round_responders) == 0:
+            if resume_no_players_override is not None:
+                no_players = resume_no_players_override
+                resume_no_players_override = None
+            elif len(round_responders) == 0:
                 no_players = True
             else:
                 no_players = False
-                
+
             round_responders.clear()  # Reset round responders
             round_data["questions"] = []
 
@@ -22656,10 +22676,21 @@ async def flag_command(interaction: discord.Interaction):
 @bot.event
 async def on_ready():
     global channel, db, museum_backfill_task, offquestion_chat_flush_task, offquestion_chat_compaction_task
+    global resume_no_players_override
     print(f"✅ Logged in as {bot.user}")
     db =  await connect_to_mongodb()
     await load_parameters()
     await load_round_options_from_db()
+
+    try:
+        doc = await db.parameters_discord.find_one({"_id": "had_active_players_before_restart"})
+        if doc is not None:
+            resume_no_players_override = not bool(doc.get("value", 0))
+            await db.parameters_discord.delete_one({"_id": "had_active_players_before_restart"})
+    except Exception as e:
+        sentry_sdk.capture_exception(e)
+        print(f"❌ Failed to load active-player resume state: {e}")
+
     channel = bot.get_channel(channel_id)
 
     try:
