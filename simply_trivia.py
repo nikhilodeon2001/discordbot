@@ -19,6 +19,7 @@ active_question = None
 first_answer_time = None
 first_answerer = None
 additional_answerers = []
+any_guess_received = False
 
 # Question tracking for /flag functionality (shared with discordbot.py)
 simply_current_question = None
@@ -373,11 +374,13 @@ async def handle_answer(message, bot, db, fuzzy_match_func):
         db: MongoDB database instance
         fuzzy_match_func: Reference to fuzzy_match function from discordbot
     """
-    global active_question, first_answer_time, first_answerer, additional_answerers
+    global active_question, first_answer_time, first_answerer, additional_answerers, any_guess_received
 
     # Ignore if no active question or message is from bot
     if not active_question or message.author.bot:
         return
+
+    any_guess_received = True
 
     # Check if answer is correct against any valid answer
     for correct_answer in active_question["answers"]:
@@ -448,7 +451,7 @@ async def start_simply_trivia(bot, db, channel_id, fuzzy_match_func):
                 continue
 
             # Move current question to previous before setting new question
-            global active_question, first_answerer, first_answer_time, additional_answerers
+            global active_question, first_answerer, first_answer_time, additional_answerers, any_guess_received
             global simply_current_question, simply_previous_question
 
             if simply_current_question is not None:
@@ -461,6 +464,8 @@ async def start_simply_trivia(bot, db, channel_id, fuzzy_match_func):
             first_answerer = None
             first_answer_time = None
             additional_answerers = []
+            any_guess_received = False
+            await discordbot.record_question_asked(question.get("db"), question.get("_id"))
 
             # Build question embed
             category = question.get("category", "Trivia")
@@ -586,6 +591,8 @@ async def start_simply_trivia(bot, db, channel_id, fuzzy_match_func):
                     question.get("_id")
                 )
 
+                await discordbot.record_question_outcome(question.get("db"), question.get("_id"), True, any_guess_received)
+
                 answer_text = f"**Answer:** {main_answer}\n\n"
                 if streak > 1:
                     answer_text += f"🏆 {first_answerer.mention} got it first! 🔥 Streak: {streak}"
@@ -626,6 +633,8 @@ async def start_simply_trivia(bot, db, channel_id, fuzzy_match_func):
                     )
                 except Exception as e:
                     print(f"❌ Failed to reset streaks: {e}")
+
+                await discordbot.record_question_outcome(question.get("db"), question.get("_id"), False, any_guess_received)
 
                 answer_text = f"**Answer:** {main_answer}"
                 embed = discord.Embed(description=answer_text, color=discord.Color.red())
