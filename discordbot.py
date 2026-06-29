@@ -17610,6 +17610,7 @@ def apply_glyphs(text):
 
 async def ask_question(trivia_category, trivia_question, trivia_url, trivia_answer_list, question_number, trivia_db=None, trivia_id=None):
     """Ask the trivia question."""
+    await record_question_asked(trivia_db, trivia_id)
     # Define the numbered block emojis for questions 1 to 10
     numbered_blocks = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"]
     if exact_mode:
@@ -18072,7 +18073,7 @@ def fuzzy_match(user_answer, correct_answer, category, url, _skip_alias_check=Fa
     return False  # No match found
 
 
-async def check_correct_responses_delete(question_ask_time, trivia_answer_list, question_number, collected_responses, trivia_category, trivia_url):
+async def check_correct_responses_delete(question_ask_time, trivia_answer_list, question_number, collected_responses, trivia_category, trivia_url, trivia_db=None, trivia_id=None):
     """Check and respond to users who answered the trivia question correctly."""
     global max_retries, delay_between_retries, current_longest_answer_streak
     global question_responders, round_responders, discount_percentage
@@ -18210,6 +18211,8 @@ async def check_correct_responses_delete(question_ask_time, trivia_answer_list, 
 
             if blitz_mode:
                 first_correct_found = True
+
+    had_correct_answer = bool(correct_responses)
 
     closest_answer_delta = None
     if not correct_responses and is_number(trivia_answer) and len(trivia_answer_list) == 1:
@@ -18351,6 +18354,7 @@ async def check_correct_responses_delete(question_ask_time, trivia_answer_list, 
 
     flush_submission_queue()
     await flush_offquestion_chat_buffer()
+    await record_question_outcome(trivia_db, trivia_id, had_correct_answer, has_responses)
     return None
 
 
@@ -19572,7 +19576,7 @@ async def start_trivia():
                 else:
                     solution_list = [new_solution]        
                     
-                await check_correct_responses_delete(question_ask_time, solution_list, question_number, collected_responses, trivia_category, trivia_url)
+                await check_correct_responses_delete(question_ask_time, solution_list, question_number, collected_responses, trivia_category, trivia_url, trivia_db=trivia_db, trivia_id=trivia_id)
                 
                 if not yolo_mode or question_number == questions_per_round:
                     await show_standings()
@@ -20597,6 +20601,36 @@ def _build_mc_answers(correct_answer, wrong_choices):
     labeled = [f"{letter}. {choice}" for letter, choice in zip(letters, choices)]
     correct_idx = choices.index(correct_answer)
     return [labeled[correct_idx], *labeled]
+
+
+QUESTION_COUNTER_SKIP_DBS = {"math_questions", "stats_questions"}
+
+
+async def record_question_asked(trivia_db, trivia_id):
+    """Increment asked_count on the source question doc. No-op for pseudo-collections."""
+    if not trivia_db or trivia_id is None or trivia_db in QUESTION_COUNTER_SKIP_DBS:
+        return
+    try:
+        await db[trivia_db].update_one({"_id": trivia_id}, {"$inc": {"asked_count": 1}})
+    except Exception as e:
+        print(f"❌ Failed to record question asked: {e}")
+
+
+async def record_question_outcome(trivia_db, trivia_id, had_correct_answer, had_any_guess):
+    """Increment correct_count or incorrect_count. No-op for pseudo-collections
+    and for the silent (zero-guess) case, which is intentionally unstored."""
+    if not trivia_db or trivia_id is None or trivia_db in QUESTION_COUNTER_SKIP_DBS:
+        return
+    if had_correct_answer:
+        field = "correct_count"
+    elif had_any_guess:
+        field = "incorrect_count"
+    else:
+        return
+    try:
+        await db[trivia_db].update_one({"_id": trivia_id}, {"$inc": {field: 1}})
+    except Exception as e:
+        print(f"❌ Failed to record question outcome: {e}")
 
 
 async def get_submitter_attribution(db_name, _id):
