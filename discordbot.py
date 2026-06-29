@@ -19368,6 +19368,18 @@ async def get_random_trivia_question():
         return None  # Return an empty list in case of failure
 
 
+class StartRoundView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+        self.future = asyncio.get_event_loop().create_future()
+
+    @discord.ui.button(label="Start Round", style=discord.ButtonStyle.success, emoji="🥒")
+    async def start_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not self.future.done():
+            self.future.set_result(interaction)
+        await interaction.response.defer()
+
+
 async def start_trivia():
     global target_room_id, bot_user_id, bearer_token, question_time, questions_per_round, time_between_questions, filler_words
     global scoreboard, current_longest_round_streak, current_longest_answer_streak
@@ -19451,13 +19463,36 @@ async def start_trivia():
                 selected_gif_url = await select_intro_image_url()
             # Wait for a player to be present before starting
             if no_players:
-                await safe_send(channel, "\u200b\n👥 ***Send any message to start!*** 👥\n\u200b")
+                view = StartRoundView()
+                prompt_msg = await safe_send(
+                    channel,
+                    "\u200b\n👥 ***Send any message or click below to start!*** 👥\n\u200b",
+                    view=view,
+                )
 
                 def check(m):
                     return m.author.id != get_bot().user.id and m.channel.id == channel.id
 
-                msg = await get_bot().wait_for('message', check=check)
-                await msg.add_reaction("🥒")
+                message_task = asyncio.ensure_future(get_bot().wait_for('message', check=check))
+                done, pending = await asyncio.wait([message_task, view.future], return_when=asyncio.FIRST_COMPLETED)
+
+                for task in pending:
+                    task.cancel()
+                view.stop()
+
+                if message_task in done:
+                    msg = message_task.result()
+                    await msg.add_reaction("🥒")
+                    try:
+                        await prompt_msg.edit(view=None)
+                    except (discord.NotFound, discord.HTTPException):
+                        pass
+                else:
+                    interaction = view.future.result()
+                    try:
+                        await prompt_msg.edit(content=f"\u200b\n🥒 ***Started by {interaction.user.mention}!*** 🥒\n\u200b", view=None)
+                    except (discord.NotFound, discord.HTTPException):
+                        pass
             else:
                 await asyncio.sleep(5)
 
