@@ -438,8 +438,6 @@ async def start_simply_trivia(bot, db, channel_id, fuzzy_match_func):
         try:
             # Check if bot is shutting down for update
             if discordbot.shutdown_initiated:
-                # Send shutdown notification to Simply Trivia channel
-                await channel.send("🔄 **Update detected!** I'll be back shortly...")
                 print("🔄 Simply Trivia stopping - update detected")
                 break
 
@@ -505,7 +503,6 @@ async def start_simply_trivia(bot, db, channel_id, fuzzy_match_func):
             while not answer_revealed:
                 # Check for shutdown during answer wait
                 if discordbot.shutdown_initiated:
-                    await channel.send("🔄 **Update detected!** I'll be back shortly...")
                     print("🔄 Simply Trivia stopping - update detected during answer wait")
                     return  # Exit the entire function/loop
 
