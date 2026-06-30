@@ -304,6 +304,32 @@ async def send_question_queen_submit_ad():
     message += "\n\u200b"
     return await safe_send(channel, message)
 
+
+async def sync_okra_lab_announcement(content):
+    """Post the Okra Lab feature list to the announcements channel, but only when
+    this exact content has never been posted before \u2014 checked against full history,
+    not just the most recent post, so reverting to an older feature list doesn't
+    trigger a duplicate announcement. Removes the need to manually copy it over."""
+    try:
+        already_posted = await db.okra_lab_announcements.find_one({"content": content})
+        if already_posted:
+            return
+        guild = bot.get_guild(OKRAN_GUILD_ID)
+        if not guild:
+            return
+        announce_channel = guild.get_channel(ANNOUNCEMENTS_CHANNEL_ID)
+        if not announce_channel:
+            return
+        await announce_channel.send(content)
+        await db.okra_lab_announcements.insert_one({
+            "content": content,
+            "posted_at": datetime.datetime.utcnow(),
+        })
+    except Exception as e:
+        sentry_sdk.capture_exception(e)
+        print(f"\u26a0\ufe0f sync_okra_lab_announcement: {e}")
+
+
 def randomize_embed_color():
     """
     Changes the global embed_color to a random Discord color different from current one.
@@ -551,6 +577,7 @@ if prod_or_stage == "stage":
     PICS_CHANNEL_ID = 1423894752419385344
     HOST_USER_ID = 1375325051506655284
     ROAST_TEST_CHANNEL_ID = 1520266511481049099
+    ANNOUNCEMENTS_CHANNEL_ID = 1521519888546529301
 
 elif prod_or_stage == "prod":
     okrag_id = 591861826690613248
@@ -597,6 +624,7 @@ elif prod_or_stage == "prod":
     PICS_CHANNEL_ID = 1412831156105121986
     HOST_USER_ID = 1357587097246236794
     ROAST_TEST_CHANNEL_ID = 1449497884931395755
+    ANNOUNCEMENTS_CHANNEL_ID = 1409217728388141206
 
 AMBIENT_CHAT_CHANNEL_IDS = {channel_id, CHAT_CHANNEL_ID, PICS_CHANNEL_ID}
 
@@ -12683,6 +12711,15 @@ async def send_flag_notification(question, flag_reason, display_name, flag_messa
             inline=False
         )
 
+        # Jump link to where the question was actually asked in the trivia channel
+        question_message_link = question.get("trivia_message_link")
+        if question_message_link:
+            embed.add_field(
+                name="🔗 Jump to Question",
+                value=f"[View in chat]({question_message_link})",
+                inline=False
+            )
+
         # Flag reason
         embed.add_field(
             name="💬 Flag Reason",
@@ -12809,6 +12846,7 @@ async def load_previous_question():
                     "trivia_answer_list": previous_question_retrieved.get("trivia_answer_list"),
                     "trivia_db": previous_question_retrieved.get("trivia_db"),
                     "trivia_id": previous_question_retrieved.get("trivia_id"),
+                    "trivia_message_link": previous_question_retrieved.get("trivia_message_link"),
                 }
             else:
                 # If the document is not found, set default values
@@ -12818,10 +12856,11 @@ async def load_previous_question():
                     "trivia_url": None,
                     "trivia_answer_list": None,
                     "trivia_db": None,
-                    "trivia_id": None
+                    "trivia_id": None,
+                    "trivia_message_link": None
                 }
             break
-                
+
         except Exception as e:
             sentry_sdk.capture_exception(e)
             print(f"Attempt {attempt + 1} failed: {e}")
@@ -12837,7 +12876,8 @@ async def load_previous_question():
                     "trivia_url": None,
                     "trivia_answer_list": None,
                     "trivia_db": None,
-                    "trivia_id": None
+                    "trivia_id": None,
+                    "trivia_message_link": None
                 }
 
 
@@ -20022,10 +20062,11 @@ async def start_trivia():
             flag_mention = f"</flag:{FLAG_COMMAND_ID}>" if FLAG_COMMAND_ID else "/flag"
             perks_mention = f"</perks:{PERKS_COMMAND_ID}>" if PERKS_COMMAND_ID else "/perks"
             submit_mention = f"</submit:{SUBMIT_COMMAND_ID}>" if SUBMIT_COMMAND_ID else "/submit"
-            lab_message = "\u200b\n✨🧪 **NEW** from the **Okra Lab**! 🧪✨\n"
+            lab_message = "\u200b\n✨🧪 **NEW from the Okra Lab**! 🧪✨\n"
             lab_message += "\n🎓📝 **Valedictorian**: Back to High School [Mini Game]"
             lab_message += "\n🤓📝 **Nerd**: Add SAT/ACT questions [Game Mode]"
             lab_message += "\n🖱️🔢 **Clickable** multiple choice options [Game Mechanic]\n"
+            await sync_okra_lab_announcement(lab_message)
             lab_message += "\n\n\u200b"
             await safe_send(channel, lab_message)
             await asyncio.sleep(3)
@@ -20081,6 +20122,8 @@ async def start_trivia():
                 question_asked_start = time.time()
                 question_asked_end = question_asked_start + question_time
                 question_ask_time, new_question, new_solution = await ask_question(trivia_category, trivia_question, trivia_url, trivia_answer_list, question_number, trivia_db=trivia_db, trivia_id=trivia_id, trivia_paragraph=trivia_paragraph)
+                question_message_link = current_answer_message.jump_url if current_answer_message else None
+                current_question["trivia_message_link"] = question_message_link
                 await asyncio.sleep(question_time)
                 #await safe_send(channel, "\u200b\n🛑 TIME 🛑\n\u200b")
                 
@@ -20121,7 +20164,8 @@ async def start_trivia():
                     "trivia_url": trivia_url,
                     "trivia_answer_list": trivia_answer_list,
                     "trivia_db": trivia_db,
-                    "trivia_id": trivia_id
+                    "trivia_id": trivia_id,
+                    "trivia_message_link": question_message_link
                 }
 
                 await save_data_to_mongo("previous_question_discord", "previous_question", previous_question)
@@ -22237,6 +22281,7 @@ class BatchPageView(discord.ui.View):
             await sync_crown_roles()
         except Exception:
             pass
+        await _finalize_batch_summary(self.session_id, interaction.guild)
         result = f"✔️ Applied — ✅ {approved_count} approved, ❌ {rejected_count} rejected"
         if failed_count:
             result += f", ⚠️ {failed_count} failed"
@@ -22338,6 +22383,32 @@ class BatchSummaryView(discord.ui.View):
         self._sync_notify_label()
         embed = self._build_embed()
         await interaction.response.edit_message(embed=embed, view=self)
+
+
+async def _finalize_batch_summary(session_id, guild):
+    """Refresh the public BatchSummaryView message with final counts and drop its
+    buttons, once a mod has clicked 'Apply All & Finish' on a separate BatchPageView.
+    Without this the summary message is orphaned and never reflects what happened."""
+    try:
+        session = await db.review_sessions.find_one({"_id": session_id})
+        if not session:
+            return
+        channel_id = session.get("summary_channel_id")
+        message_id = session.get("summary_message_id")
+        if not channel_id or not message_id:
+            return
+        channel = guild.get_channel(channel_id) if guild else None
+        if not channel:
+            return
+        message = await channel.fetch_message(message_id)
+        view = BatchSummaryView(session_id=session_id, items=session.get("items", []))
+        embed = view._build_embed()
+        embed.set_footer(text="✅ Batch finished")
+        await message.edit(embed=embed, view=None)
+    except (discord.NotFound, discord.Forbidden):
+        pass
+    except Exception as e:
+        sentry_sdk.capture_exception(e)
 
 
 def _format_submission_fields(sub, *, answer_label="Answer"):
@@ -23067,7 +23138,11 @@ async def submissions_command(interaction: discord.Interaction, action: str):
         embed = view._build_embed()
         channel = interaction.channel
         if channel:
-            await channel.send(embed=embed, view=view)
+            summary_msg = await channel.send(embed=embed, view=view)
+            await db.review_sessions.update_one(
+                {"_id": session_id},
+                {"$set": {"summary_channel_id": summary_msg.channel.id, "summary_message_id": summary_msg.id}},
+            )
             await interaction.followup.send("✅ Review session posted above.", ephemeral=True)
         else:
             await interaction.followup.send(embed=embed, view=view, ephemeral=False)
