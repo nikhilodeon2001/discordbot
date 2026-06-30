@@ -20292,7 +20292,7 @@ async def start_trivia():
                                         ltr = m.group(1).upper()
                                         voters = clicks.get(ltr, [])
                                         check = " ✅" if ltr == correct_letter else " ❌"
-                                        line = f"{choice}{check}" + (f" → {', '.join(voters)}" if voters else "")
+                                        line = f"{ltr}{check}" + (f" → {', '.join(voters)}" if voters else "")
                                         lines.append(line)
                                 if lines and current_answer_message.embeds:
                                     embed = current_answer_message.embeds[0]
