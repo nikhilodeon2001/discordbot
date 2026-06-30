@@ -4985,7 +4985,7 @@ class AnswerButtonView(discord.ui.View):
 
         user_id = interaction.user.id
 
-        if user_id in self.answered_user_ids:
+        if user_id in self.answered_user_ids or any(r["user_id"] == user_id for r in collected_responses):
             await interaction.response.send_message("✅ You already answered!", ephemeral=True)
             return
 
@@ -10234,7 +10234,7 @@ async def ask_valedictorian_challenge(winner, winner_id, num=1):
         "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/valedictorian3.gif",
     ]
     gif_url = random.choice(valed_gifs)
-    await safe_send(channel, content="\u200b\n🎓📚 **VALEDICTORIAN**: Answer correctly or you're out!\n\u200b", embed=discord.Embed().set_image(url=gif_url))
+    await safe_send(channel, content="\u200b\n🎓📝 **VALEDICTORIAN**: Answer correctly or you're out!\n\u200b", embed=discord.Embed().set_image(url=gif_url))
     await asyncio.sleep(3)
 
     VALED_ROTATION = ["Math", "Verbal", "Science", "Grammar", "English"]
@@ -10340,7 +10340,7 @@ async def ask_valedictorian_challenge(winner, winner_id, num=1):
                 await asyncio.sleep(0.5)
 
         try:
-            await button_msg.delete()
+            await button_msg.edit(view=None)
         except:
             pass
 
@@ -15333,6 +15333,8 @@ async def select_wof_questions(winner, winner_id):
         message += f"{counter}.\u200b 🧠🥒 Okra Says\n"
         counter = counter + 1
         message += f"{counter}.\u200b 🧞‍♂️🪔 The Genie\n"
+        counter = counter + 1
+        message += f"{counter}.\u200b 🎓📚 Valedictorian\n"
         message += f"99.\u200b 🌀🤯 CHAOS\n"
         
         message += f"\n⚙️ **Other Options**\n"
@@ -16587,7 +16589,7 @@ async def process_round_options(round_winner, winner_points, round_winner_id):
         "📰❌ **Cross** No Crossword clues\n"
         "🟦✋ **Alex** More Jeopardy questions\n"
         "📰✋ **Word** More Crossword clues\n"
-        "🎓📝 **Nerd** Add SAT questions\n"
+        "🤓📝 **Nerd** Add SAT questions\n"
         "🎖🥒 **Dicktator** Choose the categories\n"
     )
 
@@ -16680,11 +16682,11 @@ async def prompt_user_for_response(round_winner, winner_points, winner_coffees, 
             if (not keyword_config["freedom"]["exclude_hashtag"] or "#freedom" not in message_content) and await coffee_gate("freedom", f"🇺🇸🗽 **<@{round_winner_id}>** has broken the chains. No multiple choice.", "Freedom"):
                 num_mysterybox_clues = 0
 
-            if (not keyword_config["alex"]["exclude_hashtag"] or "#alex" not in message_content) and await coffee_gate("alex", f"🟦✋ **<@{round_winner_id}>** wants 5 Jeopardy-style questions.", "Alex"):
+            if (not keyword_config["alex"]["exclude_hashtag"] or "#alex" not in message_content) and await coffee_gate("alex", f"🟦✋ **<@{round_winner_id}>** wants more Jeopardy questions.", "Alex"):
                 num_jeopardy_clues = 5
                 jeopardy_boosted = True
 
-            if (not keyword_config["xela"]["exclude_hashtag"] or "#xela" not in message_content) and await coffee_gate("xela", f"🟦❌ **<@{round_winner_id}>** doesn't like Jeopardy-style. Sorry Alex.", "Xela"):
+            if (not keyword_config["xela"]["exclude_hashtag"] or "#xela" not in message_content) and await coffee_gate("xela", f"🟦❌ **<@{round_winner_id}>** doesn't like Jeopardy. Sorry Alex.", "Xela"):
                 num_jeopardy_clues = 0
                 jeopardy_boosted = False
 
@@ -16695,11 +16697,11 @@ async def prompt_user_for_response(round_winner, winner_points, winner_coffees, 
                 num_crossword_clues = 0
                 crossword_boosted = False
 
-            if (not keyword_config["word"]["exclude_hashtag"] or "#word" not in message_content) and await coffee_gate("word", f"📰✏️ Word. **<@{round_winner_id}>** wants 5 Crossword questions.", "Word"):
+            if (not keyword_config["word"]["exclude_hashtag"] or "#word" not in message_content) and await coffee_gate("word", f"📰✏️ Word. **<@{round_winner_id}>** wants more Crossword questions.", "Word"):
                 num_crossword_clues = 5
                 crossword_boosted = True
 
-            if (not keyword_config["nerd"]["exclude_hashtag"] or "#nerd" not in message_content) and await coffee_gate("nerd", f"🤓✋ Nerd. **<@{round_winner_id}>** wants 5 SAT questions.", "Nerd"):
+            if (not keyword_config["nerd"]["exclude_hashtag"] or "#nerd" not in message_content) and await coffee_gate("nerd", f"🤓📝  Nerd. **<@{round_winner_id}>** wants some SAT questions.", "Nerd"):
                 num_sat_questions = 5
                 sat_boosted = True
 
@@ -19668,7 +19670,10 @@ async def round_preview(selected_questions):
 
 
 def get_category_title(trivia_category, trivia_url):
-    emojis = CATEGORY_EMOJIS.get(trivia_category, "❓❔")
+    emojis = CATEGORY_EMOJIS.get(trivia_category)
+    if emojis is None:
+        prefix = trivia_category.split(":")[0].strip()
+        emojis = CATEGORY_EMOJIS.get(prefix, "❓❔")
     if trivia_url.lower() == "jeopardy":
         return f"Jeopardy: {trivia_category} {emojis}"
     return f"{trivia_category} {emojis}"
@@ -19934,11 +19939,12 @@ async def start_trivia():
             perks_mention = f"</perks:{PERKS_COMMAND_ID}>" if PERKS_COMMAND_ID else "/perks"
             submit_mention = f"</submit:{SUBMIT_COMMAND_ID}>" if SUBMIT_COMMAND_ID else "/submit"
             lab_message = "\u200b\n✨🧪 **NEW** from the **Okra Lab**! 🧪✨\n"
-            lab_message += f"\n{submit_mention} **Submit Your Own Trivia Questions!**\n"
-            lab_message += "Community questions are now in the rotation!\n"
+            lab_message += "\n**[Mini Game]** 🎓📝 **Valedictorian**: Back to High School\n"
+            lab_message += "\n**[Game Mode]** 🤓📝 **Nerd**: Add SAT/ACT questions\n"
+            lab_message += "\n**[Game Mechanic]** 🖱️🔢 Clickable multiple choice options\n"
             lab_message += "\n\n\u200b"
-            #await safe_send(channel, lab_message)
-            #await asyncio.sleep(3)
+            await safe_send(channel, lab_message)
+            await asyncio.sleep(3)
             start_message = f"\u200b\n\u200b\n🎉🤹‍♂️ **Live Trivia & Games for Discord!**\n"
             start_message += f"\n⏩ Starting a **{questions_per_round} question** round! ⏩"
             start_message += f"\n\n🚩 {flag_mention} to report a question"
@@ -20475,14 +20481,15 @@ async def on_message(message):
         # Check if the message is during the active question window
         now = message.created_at.timestamp()
         if question_asked_start <= now <= question_asked_end:
-            collected_responses.append({
-                "user_id": message.author.id,
-                "display_name": message.author.display_name,
-                "message_content": message.content,
-                "response_time": now,
-                "message": message  # Save the original message object for deletion if needed
-            })
-            captured_as_answer = True
+            if current_answer_view is None or message.author.id not in current_answer_view.answered_user_ids:
+                collected_responses.append({
+                    "user_id": message.author.id,
+                    "display_name": message.author.display_name,
+                    "message_content": message.content,
+                    "response_time": now,
+                    "message": message  # Save the original message object for deletion if needed
+                })
+                captured_as_answer = True
 
             ESCAPE_PREFIXES = (".", ",", "~")
 
@@ -20584,6 +20591,7 @@ def get_minigame_name(number):
         "46": "30 for 30",
         "47": "Okra Says",
         "48": "The Genie",
+        "49": "Valedictorian",
         "99": "CHAOS",
         "x": "Skip Mini Game"
     }
