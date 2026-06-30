@@ -10,3 +10,11 @@ __pycache__/
 nltk_data/
 .venv/
 flagged_review.json
+
+# Game asset files - fetched from S3 at startup, see ensure_game_assets() in discordbot.py
+okra.png
+periodic_table.svg
+usa.png
+wordlist.txt
+4letterwords.csv
+5letterwords.csv

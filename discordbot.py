@@ -124,6 +124,29 @@ s3_client = boto3.client(
     region_name=AWS_REGION
 )
 
+# Static game asset files - no longer tracked in git, fetched from S3 on demand
+GAME_ASSET_FILES = ["okra.png", "periodic_table.svg", "usa.png", "wordlist.txt", "4letterwords.csv", "5letterwords.csv"]
+GAME_ASSETS_S3_PREFIX = "private_assets/"
+
+
+def ensure_game_assets():
+    """Download any game asset files missing from local disk from S3, since they're
+    no longer tracked in git. Runs once at import, before anything reads them."""
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    for filename in GAME_ASSET_FILES:
+        local_path = os.path.join(base_dir, filename)
+        if os.path.exists(local_path):
+            continue
+        try:
+            s3_client.download_file(S3_BUCKET_NAME, GAME_ASSETS_S3_PREFIX + filename, local_path)
+            print(f"✅ Downloaded missing game asset from S3: {filename}")
+        except Exception as e:
+            print(f"❌ Failed to download game asset '{filename}' from S3: {e}")
+
+
+ensure_game_assets()
+
+
 def generate_presigned_url(s3_url, expiration=3600):
     """
     Generate a presigned URL for a private S3 file.
