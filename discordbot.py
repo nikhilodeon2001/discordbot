@@ -20912,6 +20912,7 @@ Evaluate the question on these criteria:
 - Appropriate: not NSFW, no slurs, not purely opinion-based
 - Not a duplicate: not substantially the same as questions in the provided similar-question list
 - For multiple-choice: wrong choices should be plausibly distinguishable from the correct answer
+- For free-text: not a giveaway — if the question names the answer's general category (e.g. "Which bridge...", "Which street...", "Which policy...", "Which treaty..."), and that category word also appears in the correct answer, a player could type just that generic word and be marked correct (this game's answer matching accepts partial/substring answers). Suggest rewording the question so it doesn't hand away the category
 
 Return ONLY a JSON object with this exact structure:
 {
@@ -20937,6 +20938,7 @@ Evaluate each question on:
 - Clarity: the question must be unambiguous with exactly one correct answer
 - Appropriateness: not NSFW, not purely opinion-based
 - For multiple_choice: wrong choices must be plausibly different from the correct answer
+- For free_text: not a giveaway — if the question names the answer's general category (e.g. "Which bridge...", "Which street...", "Which policy...", "Which treaty..."), and that category word also appears in the correct answer, a player could type just that generic word and be marked correct (this game's answer matching accepts partial/substring answers). Use "edit" to reword the question so it doesn't hand away the category
 
 Return ONLY a JSON object with this exact structure:
 {
@@ -20969,6 +20971,15 @@ ANSWER ARRAY RULES:
 - For free-text questions:
   - answers[0] = the primary correct answer
   - answers[1:] = accepted alternate answers
+
+GIVEAWAY CHECK (free-text questions only):
+- If the question names the answer's general category (e.g. "Which bridge...", "Which street...", "Which policy...", "Which treaty..."), and that category word also appears in the correct answer, flag this even if no user flag mentions it — a player could type just that generic word and be marked correct, since this game's answer matching accepts partial/substring answers. Propose a reworded question that doesn't hand away the category.
+
+TOO NICHE FLAGS:
+- If a user flag includes "(Too Niche)", don't just tweak the existing question — propose a full replacement: a different question and answer in the same category that's more generally known/mainstream. The replacement doesn't need to relate to the original question's specific facts at all; it just needs to stay in the same category and be clearly less obscure. Set "question" and "answers" in proposed_changes (and "category" only if it also needs to change), with ai_action "update".
+
+MISSING INFORMATION:
+- If the question references something it doesn't actually provide (e.g. "...say the following:" with no quote given, "...shown in this image:" with no image, a name/date/detail alluded to but never stated), don't just flag it as incomplete — fill in the missing piece directly in the question text using your own knowledge. Only fall back to a full replacement (per TOO NICHE FLAGS above) or "no_change" if you can't confidently determine what's missing.
 
 YOUR TASK:
 1. Analyze the question, category, answers, and all user flag comments
