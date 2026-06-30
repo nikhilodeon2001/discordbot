@@ -12807,10 +12807,12 @@ async def record_edit_credits(collection_name, doc_id, audit_entries):
     now = datetime.datetime.utcnow()
     for entry in audit_entries or []:
         user_id = entry.get("user_id")
-        if user_id is None or user_id in seen_user_ids:
+        if user_id is None or user_id in seen_user_ids or user_id == okrag_id:
             continue
         seen_user_ids.add(user_id)
         display_name = entry.get("display_name", "")
+        if display_name.endswith(" (Discord)"):
+            display_name = display_name[: -len(" (Discord)")]
         try:
             await db.edit_credits.insert_one({
                 "user_id": user_id,

@@ -24,6 +24,7 @@ load_dotenv()
 
 MONGO_URI = os.getenv("mongo_db_string")
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
+OKRAG_ID = 591861826690613248  # TheOkraG admin account - excluded from editor credit
 MODEL = "claude-opus-4-7"
 COLLECTIONS = [
     "trivia_questions",
@@ -218,10 +219,12 @@ def mode2_apply(input_path):
                 now = datetime.datetime.utcnow()
                 for audit_entry in entry.get("audit", []) or []:
                     user_id = audit_entry.get("user_id")
-                    if user_id is None or user_id in seen_user_ids:
+                    if user_id is None or user_id in seen_user_ids or user_id == OKRAG_ID:
                         continue
                     seen_user_ids.add(user_id)
                     display_name = audit_entry.get("display_name", "")
+                    if display_name.endswith(" (Discord)"):
+                        display_name = display_name[: -len(" (Discord)")]
                     db.edit_credits.insert_one({
                         "user_id": user_id,
                         "display_name": display_name,
