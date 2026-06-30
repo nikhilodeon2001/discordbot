@@ -125,16 +125,21 @@ s3_client = boto3.client(
 )
 
 # Static game asset files - no longer tracked in git, fetched from S3 on demand
-GAME_ASSET_FILES = ["okra.png", "periodic_table.svg", "usa.png", "wordlist.txt", "4letterwords.csv", "5letterwords.csv"]
+GAME_ASSET_FILES = ["okra.png", "periodic_table.svg", "wordlist.txt", "4letterwords.csv", "5letterwords.csv"]
 GAME_ASSETS_S3_PREFIX = "private_assets/"
+PRIVATE_ASSETS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "private-assets")
+
+
+def private_asset_path(filename):
+    return os.path.join(PRIVATE_ASSETS_DIR, filename)
 
 
 def ensure_game_assets():
     """Download any game asset files missing from local disk from S3, since they're
     no longer tracked in git. Runs once at import, before anything reads them."""
-    base_dir = os.path.dirname(os.path.abspath(__file__))
+    os.makedirs(PRIVATE_ASSETS_DIR, exist_ok=True)
     for filename in GAME_ASSET_FILES:
-        local_path = os.path.join(base_dir, filename)
+        local_path = private_asset_path(filename)
         if os.path.exists(local_path):
             continue
         try:
@@ -145,6 +150,54 @@ def ensure_game_assets():
 
 
 ensure_game_assets()
+
+# Fonts (183 .ttf files, ~98MB) are also no longer tracked in git. Most usage is
+# heavily skewed toward a couple of files (NotoSans-Regular.ttf alone backs ~150
+# LANGUAGE_FONT_MAP entries), so those are pre-fetched at startup; everything else
+# is fetched lazily on first use via get_font(), which also caches loaded font
+# objects in memory (keyed by size, since ImageFont.truetype objects are size-bound).
+POPULAR_FONTS = ["NotoSans-Regular.ttf", "DejaVuSans.ttf"]
+_font_cache = {}
+
+
+def ensure_popular_fonts():
+    """Pre-fetch the handful of fonts used in the vast majority of calls so their
+    first real use never pays an S3 round-trip. Everything else stays lazy."""
+    os.makedirs(private_asset_path("fonts"), exist_ok=True)
+    for font_name in POPULAR_FONTS:
+        local_path = private_asset_path(os.path.join("fonts", font_name))
+        if os.path.exists(local_path):
+            continue
+        try:
+            s3_client.download_file(S3_BUCKET_NAME, f"{GAME_ASSETS_S3_PREFIX}fonts/{font_name}", local_path)
+            print(f"✅ Pre-fetched popular font from S3: {font_name}")
+        except Exception as e:
+            print(f"❌ Failed to pre-fetch font '{font_name}' from S3: {e}")
+
+
+ensure_popular_fonts()
+
+
+def ensure_font_file(font_name):
+    """Return the local path to font_name, fetching it from S3 first if missing."""
+    local_path = private_asset_path(os.path.join("fonts", font_name))
+    if not os.path.exists(local_path):
+        os.makedirs(os.path.dirname(local_path), exist_ok=True)
+        s3_client.download_file(S3_BUCKET_NAME, f"{GAME_ASSETS_S3_PREFIX}fonts/{font_name}", local_path)
+    return local_path
+
+
+def get_font(font_name, size):
+    """Return a cached PIL ImageFont for (font_name, size). The two popular fonts
+    are pre-fetched to disk at startup; everything else (and every first use of a
+    new size) fetches from S3 on demand here. Either way, the parsed font object is
+    cached in memory afterward so repeat calls never re-read or re-parse the file."""
+    cache_key = (font_name, size)
+    if cache_key in _font_cache:
+        return _font_cache[cache_key]
+    font = ImageFont.truetype(ensure_font_file(font_name), size)
+    _font_cache[cache_key] = font
+    return font
 
 
 def generate_presigned_url(s3_url, expiration=3600):
@@ -1044,14 +1097,9 @@ def create_family_feud_board_image(total_answers, user_answers, num_of_xs=0):
     img = Image.new("RGB", (width, height), bg_color)
     draw = ImageDraw.Draw(img)
 
-    # Assuming this is at the top of your script
-    base_dir = os.path.dirname(os.path.abspath(__file__))
-    font_dir = os.path.join(base_dir, "fonts")
-
     def load_font(font_name, size):
         try:
-            font_path = os.path.join(font_dir, font_name)
-            return ImageFont.truetype(font_path, size)
+            return get_font(font_name, size)
         except:
             return ImageFont.load_default()
 
@@ -1747,8 +1795,7 @@ def create_word_search_image(puzzle_text, found_words=None, is_solution=False, w
         
         # Try to use Monaco font from fonts directory first, then system fonts
         try:
-            font_path = os.path.join(os.path.dirname(__file__), "fonts", "Monaco.ttf")
-            font = ImageFont.truetype(font_path, 24)
+            font = get_font("Monaco.ttf", 24)
             print("Monaco from fonts folder")
         except:
             try:
@@ -2902,18 +2949,18 @@ async def ask_okra_says_challenge(winner, winner_id, num=1):
     return None
 
 
-def get_largest_fitting_font(draw, text, box_width, box_height, font_path, padding=6):
+def get_largest_fitting_font(draw, text, box_width, box_height, font_name, padding=6):
     max_width = box_width - padding
     max_height = box_height - padding
 
     for size in range(100, 1, -1):  # Try from large to small
-        font = ImageFont.truetype(font_path, size)
+        font = get_font(font_name, size)
         bbox = draw.textbbox((0, 0), text, font=font)
         text_w = bbox[2] - bbox[0]
         text_h = bbox[3] - bbox[1]
         if text_w <= max_width and text_h <= max_height:
             return font
-    return ImageFont.truetype(font_path, 12)  # fallback
+    return get_font(font_name, 12)  # fallback
 
 
 def get_text_color_for_background(rgb_color):
@@ -2930,8 +2977,8 @@ def highlight_element(x, y, width, height, hex_color, blank=True, symbol="", hig
     OUTPUT_HEIGHT = 750
 
     base_dir = os.path.dirname(os.path.abspath(__file__))
-    svg_path = os.path.join(base_dir, SVG_FILENAME)
-    okra_path = os.path.join(base_dir, OKRA_FILENAME)
+    svg_path = private_asset_path(SVG_FILENAME)
+    okra_path = private_asset_path(OKRA_FILENAME)
 
     temp_png_path = os.path.join(base_dir, "temp_rendered.png")
     cairosvg.svg2png(url=svg_path, write_to=temp_png_path, output_width=OUTPUT_WIDTH, output_height=OUTPUT_HEIGHT)
@@ -2975,8 +3022,7 @@ def highlight_element(x, y, width, height, hex_color, blank=True, symbol="", hig
 
     if not blank and symbol:
         try:
-            font_path = os.path.join(base_dir, "fonts", "DejaVuSans.ttf")
-            font = get_largest_fitting_font(draw, symbol, width, height, font_path)
+            font = get_largest_fitting_font(draw, symbol, width, height, "DejaVuSans.ttf")
         except:
             font = ImageFont.load_default()
 
@@ -3904,15 +3950,14 @@ def generate_text_image(question_text, red_value_bk, green_value_bk, blue_value_
 
     img_width, img_height = 800, 600
     font_file = LANGUAGE_FONT_MAP.get(lang_code, LANGUAGE_FONT_MAP["default"])
-    font_path = os.path.join(os.path.dirname(__file__), "fonts", font_file)
     #font_size = 60
     img = Image.new('RGB', (img_width, img_height), color=background_color)
     draw = ImageDraw.Draw(img)
 
     try:
-        font = ImageFont.truetype(font_path, font_size)
+        font = get_font(font_file, font_size)
     except IOError:
-        print(f"Error: Font file not found at {font_path}")
+        print(f"Error: Font file not found for {font_file}")
         return None
 
     if highlight_missing_operator:
@@ -9484,7 +9529,6 @@ def generate_wordle_image(wordle_word, guesses):
     num_rows = word_length
     box_size = 80
     margin = 10
-    font_path = os.path.join(os.path.dirname(__file__), "DejaVuSerif.ttf")
     font_size = 36
 
     img_width = word_length * (box_size + margin) + margin
@@ -9494,9 +9538,9 @@ def generate_wordle_image(wordle_word, guesses):
     draw = ImageDraw.Draw(img)
 
     try:
-        font = ImageFont.truetype(font_path, font_size)
+        font = get_font("DejaVuSans.ttf", font_size)
     except IOError:
-        print(f"Font not found at {font_path}")
+        print("Font not found: DejaVuSans.ttf")
         return None
 
     for row in range(num_rows):
@@ -9620,11 +9664,11 @@ async def ask_wordle_challenge(winner, winner_id, num=1):
             wordle_guesses = []
 
             if wordle_word_length == 4:
-                valid_words_file = "4letterwords.csv"
+                valid_words_file = private_asset_path("4letterwords.csv")
             elif wordle_word_length == 5:
-                valid_words_file = "5letterwords.csv"
+                valid_words_file = private_asset_path("5letterwords.csv")
             else:
-                valid_words_file = "45letterwords.csv"
+                valid_words_file = private_asset_path("45letterwords.csv")
 
             with open(valid_words_file, "r") as f:
                 VALID_WORDS = set(line.strip().lower() for line in f)
@@ -9832,7 +9876,9 @@ def _load_font(square_px: int, font_path: Optional[str]) -> Tuple[ImageFont.Free
     ])
     for path in candidates:
         try:
-            return ImageFont.truetype(path, size=size), True
+            if os.path.isabs(path):
+                return ImageFont.truetype(path, size=size), True
+            return get_font(path, size), True
         except Exception:
             continue
     # Fallback bitmap font (no proper chess glyphs)
@@ -9977,7 +10023,7 @@ def generate_chess_board(
         # Create a larger font for coordinates - about 1/3 of square size
         coord_size = max(12, int(square_px * 0.33))
         try:
-            coord_font = ImageFont.truetype(os.path.join("fonts", "DejaVuSans.ttf"), size=coord_size)
+            coord_font = get_font("DejaVuSans.ttf", coord_size)
         except:
             coord_font = ImageFont.load_default()
 
@@ -10083,7 +10129,7 @@ def generate_chess_board(
         # Use much larger font for move indicator - about half the square size
         move_text_size = max(24, int(square_px * 0.5))
         try:
-            move_font = ImageFont.truetype(os.path.join("fonts", "DejaVuSans.ttf"), size=move_text_size)
+            move_font = get_font("DejaVuSans.ttf", move_text_size)
         except:
             move_font = ImageFont.load_default()
         
@@ -12574,7 +12620,7 @@ async def load_words_from_file(filepath):
 
 
 async def get_random_word(min_length=5, max_length=12):
-    words = await load_words_from_file("wordlist.txt")
+    words = await load_words_from_file(private_asset_path("wordlist.txt"))
     valid_words = [w for w in words if min_length <= len(w) <= max_length]
     if not valid_words:
         return None
@@ -16106,13 +16152,12 @@ def generate_wof_image(
     draw = ImageDraw.Draw(img)
 
     # Load base fonts
-    font_path = os.path.join(os.path.dirname(__file__), "fonts", "DejaVuSans.ttf")
     try:
-        font           = ImageFont.truetype(font_path, base_font_size)
-        clue_font      = ImageFont.truetype(font_path, base_clue_font_size)
-        revealed_font  = ImageFont.truetype(font_path, base_revealed_font_size)
+        font           = get_font("DejaVuSans.ttf", base_font_size)
+        clue_font      = get_font("DejaVuSans.ttf", base_clue_font_size)
+        revealed_font  = get_font("DejaVuSans.ttf", base_revealed_font_size)
     except IOError:
-        print(f"Error: Font file not found at {font_path}")
+        print(f"Error: Font file not found: DejaVuSans.ttf")
         return None, None, None, None
 
     chunks = re.findall(r'\S+|\s+', phrase)
@@ -16144,9 +16189,9 @@ def generate_wof_image(
         scaled_revealed_font_size  = max(8,  int(base_revealed_font_size * scale_factor))
 
         # Reload the fonts with scaled sizes
-        font          = ImageFont.truetype(font_path, scaled_font_size)
-        clue_font     = ImageFont.truetype(font_path, scaled_clue_font_size)
-        revealed_font = ImageFont.truetype(font_path, scaled_revealed_font_size)
+        font          = get_font("DejaVuSans.ttf", scaled_font_size)
+        clue_font     = get_font("DejaVuSans.ttf", scaled_clue_font_size)
+        revealed_font = get_font("DejaVuSans.ttf", scaled_revealed_font_size)
     else:
         tile_width  = base_tile_width
         tile_height = base_tile_height
@@ -16286,7 +16331,7 @@ async def send_wof_solved_board(answer, clue):
 
 async def send_magic_image(input_text):
     script_dir = os.path.dirname(os.path.abspath(__file__))
-    font_path = os.path.join(script_dir, "fonts", "DejaVuSans.ttf")
+    font_path = ensure_font_file("DejaVuSans.ttf")
 
     command = [
         "python", "main.py",
@@ -16447,7 +16492,6 @@ def generate_jeopardy_image(question_text):
     
     # Define image size and font properties
     img_width, img_height = 800, 600
-    font_path = os.path.join(os.path.dirname(__file__), "fonts", "DejaVuSans.ttf")
     font_size = 60
 
     # Create a blank image with blue background
@@ -16456,9 +16500,9 @@ def generate_jeopardy_image(question_text):
     
     # Load the font
     try:
-        font = ImageFont.truetype(font_path, font_size)
+        font = get_font("DejaVuSans.ttf", font_size)
     except IOError:
-        print(f"Error: Font file not found at {font_path}")
+        print(f"Error: Font file not found: DejaVuSans.ttf")
         return None
     
     # Prepare the text for drawing (wrap text if too long)
@@ -16499,7 +16543,6 @@ def generate_mc_image(answers):
     
     # Define image size and font properties
     img_width, img_height = 800, 600
-    font_path = os.path.join(os.path.dirname(__file__), "fonts", "DejaVuSans.ttf")
     font_size = 60  # Use this font size for both title and answers
 
     # Create a blank image with a black background
@@ -16508,9 +16551,9 @@ def generate_mc_image(answers):
     
     # Load the font
     try:
-        font = ImageFont.truetype(font_path, font_size)
+        font = get_font("DejaVuSans.ttf", font_size)
     except IOError:
-        print(f"Error: Font file not found at {font_path}")
+        print(f"Error: Font file not found: DejaVuSans.ttf")
         return None
 
     # Calculate the vertical starting position for the answers
@@ -16610,8 +16653,7 @@ def generate_crossword_image(answer, prefill=0.5):
     draw = ImageDraw.Draw(img)
 
     # Load the font
-    font_path = os.path.join(os.path.dirname(__file__), "fonts", "DejaVuSans.ttf")
-    font = ImageFont.truetype(font_path, 30)
+    font = get_font("DejaVuSans.ttf", 30)
 
     # Determine prefilled letter count and positions
     if answer_length > 2:
@@ -17036,7 +17078,6 @@ def generate_base_question():
     img = Image.new('RGB', (img_width, img_height), color=(0, 0, 0))
     draw = ImageDraw.Draw(img)
 
-    font_path = os.path.join(os.path.dirname(__file__), "fonts", "DejaVuSans.ttf")
     
     if len(base_number) > 3:
         font_size = 48  
@@ -17044,9 +17085,9 @@ def generate_base_question():
         font_size = 64  
 
     try:
-        font = ImageFont.truetype(font_path, font_size)
+        font = get_font("DejaVuSans.ttf", font_size)
     except IOError:
-        print(f"Error: Font file not found at {font_path}")
+        print(f"Error: Font file not found: DejaVuSans.ttf")
         return None, None, None, None
 
     text_bbox = draw.textbbox((0, 0), base_number, font=font)
@@ -17082,7 +17123,6 @@ def generate_median_question():
     draw = ImageDraw.Draw(img)
 
     # Load the font
-    font_path = os.path.join(os.path.dirname(__file__), "fonts", "DejaVuSans.ttf")
     
     # Adjust the font size based on the length of the numbers text
     numbers_text = ', '.join(map(str, random_numbers))
@@ -17092,9 +17132,9 @@ def generate_median_question():
         font_size = 48  # Use larger font for smaller sets
 
     try:
-        font = ImageFont.truetype(font_path, font_size)
+        font = get_font("DejaVuSans.ttf", font_size)
     except IOError:
-        print(f"Error: Font file not found at {font_path}")
+        print(f"Error: Font file not found: DejaVuSans.ttf")
         return None, None, None
 
     # Convert numbers to a string and draw them on the image
@@ -17154,7 +17194,6 @@ def generate_mean_question():
     draw = ImageDraw.Draw(img)
 
     # Load the font
-    font_path = os.path.join(os.path.dirname(__file__), "fonts", "DejaVuSans.ttf")
     
     # Adjust the font size based on the length of the numbers text
     numbers_text = ', '.join(map(str, random_numbers))
@@ -17164,9 +17203,9 @@ def generate_mean_question():
         font_size = 48  # Use larger font for smaller sets
 
     try:
-        font = ImageFont.truetype(font_path, font_size)
+        font = get_font("DejaVuSans.ttf", font_size)
     except IOError:
-        print(f"Error: Font file not found at {font_path}")
+        print(f"Error: Font file not found: DejaVuSans.ttf")
         return None, None, None
 
     # Convert numbers to a string and draw them on the image
@@ -17193,7 +17232,6 @@ def generate_scrambled_image(scrambled_text):
     Generate an image with scrambled words using PIL (Pillow).
     """
     # Define the font path and size
-    font_path = os.path.join(os.path.dirname(__file__), "fonts", "DejaVuSans.ttf")
     font_size = 48
     content_uri = True
     
@@ -17204,9 +17242,9 @@ def generate_scrambled_image(scrambled_text):
 
     # Load the font
     try:
-        font = ImageFont.truetype(font_path, font_size)
+        font = get_font("DejaVuSans.ttf", font_size)
     except IOError:
-        print(f"Error: Font file not found at {font_path}")
+        print(f"Error: Font file not found: DejaVuSans.ttf")
         return None, None
 
     # Draw the scrambled text in the center of the image
@@ -19619,7 +19657,6 @@ def generate_and_render_derivative_image():
     print(f"Derivative: {derivative}")
 
     # Define the font path relative to the current script
-    font_path = os.path.join(os.path.dirname(__file__), "fonts", "DejaVuSans.ttf")
 
     # Create a blank image
     img_width, img_height = 600, 150
@@ -19629,9 +19666,9 @@ def generate_and_render_derivative_image():
     # Load the font
     font_size = 48
     try:
-        font = ImageFont.truetype(font_path, font_size)
+        font = get_font("DejaVuSans.ttf", font_size)
     except IOError:
-        print(f"Error: Font file not found at {font_path}")
+        print(f"Error: Font file not found: DejaVuSans.ttf")
         return None, None, None
 
     # Draw the polynomial text in the center
@@ -19680,7 +19717,6 @@ def generate_and_render_linear_problem():
     print(f"Solution: {solution}")
 
     # Define the font path relative to the current script
-    font_path = os.path.join(os.path.dirname(__file__), "fonts", "DejaVuSans.ttf")
 
     # Create a blank image
     img_width, img_height = 600, 150
@@ -19690,9 +19726,9 @@ def generate_and_render_linear_problem():
     # Load the font
     font_size = 48
     try:
-        font = ImageFont.truetype(font_path, font_size)
+        font = get_font("DejaVuSans.ttf", font_size)
     except IOError:
-        print(f"Error: Font file not found at {font_path}")
+        print(f"Error: Font file not found: DejaVuSans.ttf")
         return None, None, None, None
 
     # Draw the problem text in the center in light purple
@@ -19746,7 +19782,6 @@ def generate_and_render_polynomial(type):
     else:
         print("Wrong type passed in to polynomial function")
 
-    font_path = os.path.join(os.path.dirname(__file__), "fonts", "DejaVuSans.ttf")
 
     img_width, img_height = 600, 150
     img = Image.new('RGB', (img_width, img_height), color=(0, 0, 0))
@@ -19754,9 +19789,9 @@ def generate_and_render_polynomial(type):
 
     font_size = 48
     try:
-        font = ImageFont.truetype(font_path, font_size)
+        font = get_font("DejaVuSans.ttf", font_size)
     except IOError:
-        print(f"Error: Font file not found at {font_path}")
+        print(f"Error: Font file not found: DejaVuSans.ttf")
         return None, None, None
 
     text_bbox = draw.textbbox((0, 0), polynomial, font=font)
