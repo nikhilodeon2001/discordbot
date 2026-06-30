@@ -1,7 +1,6 @@
 import os
 import uuid
 from dotenv import load_dotenv
-from category_emojis import CATEGORY_EMOJIS
 load_dotenv()
 
 prod_or_stage = os.environ.get('ENVIRONMENT', 'prod')
@@ -484,6 +483,11 @@ last_bump_time = None
 # Global variable for top contributor
 top_contributor_id = None
 top_editor_id = None
+
+# Lazily-populated cache of category -> emoji pair, backed by the MongoDB
+# category_emojis collection. Warmed per-round rather than bulk-loaded so we
+# only ever hold the categories actually in play, not the full ~49k set.
+category_emoji_cache = {}
 
 # Global shutdown flag for coordinating trivia loops during updates
 shutdown_initiated = False
@@ -19321,7 +19325,9 @@ async def select_trivia_questions(questions_per_round):
             (doc["category"], doc["question"], doc["url"], doc["answers"], doc["db"], doc["_id"], doc.get("paragraph"))
             for doc in selected_questions
         ]
-                
+
+        await warm_category_emoji_cache(q[0] for q in final_selected_questions)
+
         return final_selected_questions
 
     except Exception as e:
@@ -19785,11 +19791,66 @@ async def round_preview(selected_questions):
     await safe_send(channel, message.rstrip())
 
 
+async def warm_category_emoji_cache(categories):
+    """Fetch emoji pairs for any of `categories` not already cached, in one batched
+    query. Call this right after picking a round's questions (or a god-mode refill)
+    so get_category_title() can stay a synchronous in-memory lookup."""
+    missing = {c for c in categories if c and c not in category_emoji_cache}
+    if not missing:
+        return
+    try:
+        docs = await db.category_emojis.find({"_id": {"$in": list(missing)}}).to_list(length=None)
+        for doc in docs:
+            category_emoji_cache[doc["_id"]] = doc["emojis"]
+    except Exception as e:
+        sentry_sdk.capture_exception(e)
+        print(f"⚠️ warm_category_emoji_cache: failed: {e}")
+
+
+async def ensure_category_emoji(category):
+    """If `category` has no emoji pair yet (checked against MongoDB, the source of
+    truth — not just the local cache, since another process may have already added
+    it), ask Claude for two fitting emojis and persist them, updating the cache
+    immediately so get_category_title() picks it up right away."""
+    if not category or category in category_emoji_cache:
+        return
+    try:
+        existing = await db.category_emojis.find_one({"_id": category})
+        if existing:
+            category_emoji_cache[category] = existing["emojis"]
+            return
+    except Exception as e:
+        sentry_sdk.capture_exception(e)
+        return
+    if not anthropic_client:
+        return
+    try:
+        response = await anthropic_client.messages.create(
+            model=CLAUDE_MODEL,
+            max_tokens=20,
+            system=[{"type": "text", "text": "Reply with exactly two emoji characters, nothing else (no spaces, no words, no explanation) that best represent the given trivia category."}],
+            messages=[{"role": "user", "content": category}],
+        )
+        emojis = response.content[0].text.strip()
+        if not emojis:
+            return
+        await db.category_emojis.update_one(
+            {"_id": category},
+            {"$set": {"emojis": emojis, "created_at": datetime.datetime.utcnow()}},
+            upsert=True,
+        )
+        category_emoji_cache[category] = emojis
+        print(f"✨ Generated new category emoji for '{category}': {emojis}")
+    except Exception as e:
+        sentry_sdk.capture_exception(e)
+        print(f"⚠️ ensure_category_emoji: failed for '{category}': {e}")
+
+
 def get_category_title(trivia_category, trivia_url):
-    emojis = CATEGORY_EMOJIS.get(trivia_category)
+    emojis = category_emoji_cache.get(trivia_category)
     if emojis is None:
         prefix = trivia_category.split(":")[0].strip()
-        emojis = CATEGORY_EMOJIS.get(prefix, "❓❔")
+        emojis = category_emoji_cache.get(prefix, "❓❔")
     if trivia_url.lower() == "jeopardy":
         return f"Jeopardy: {trivia_category} {emojis}"
     return f"{trivia_category} {emojis}"
@@ -19844,6 +19905,8 @@ async def refill_question_slot(questions, old_question):
     questions.remove(old_question)
     new_question = await get_random_trivia_question()
     questions.append(new_question)
+    if new_question:
+        await warm_category_emoji_cache([new_question[0]])
 
 
 async def get_random_trivia_question():
@@ -19962,6 +20025,8 @@ async def start_trivia():
         # If no saved questions, select new ones
         if selected_questions is None or len(selected_questions) == 0:
             selected_questions = await select_trivia_questions(questions_per_round)  #Pick the initial question set
+        else:
+            await warm_category_emoji_cache(q[0] for q in selected_questions)
 
         last_round_end_msg = None
         while True:  # Endless loop
@@ -21653,6 +21718,7 @@ async def _approve_submission(interaction, submission_id, edited=False, notify_t
             "approved_at": now,
             "user_submission_id": sub["_id"],
         }
+        await ensure_category_emoji(approved_doc["category"])
         ins = await db[target_pool].insert_one(approved_doc)
         await db.question_submissions.update_one(
             {"_id": sub["_id"]},
@@ -21849,6 +21915,7 @@ async def _approve_submission_direct(submission_id, mod_id, mod_name, edited=Fal
             "approved_at": now,
             "user_submission_id": sub["_id"],
         }
+        await ensure_category_emoji(approved_doc["category"])
         ins = await db[target_pool].insert_one(approved_doc)
         await db.question_submissions.update_one(
             {"_id": sub["_id"]},
