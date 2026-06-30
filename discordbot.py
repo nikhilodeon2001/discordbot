@@ -370,9 +370,11 @@ async def send_question_queen_submit_ad():
     if top_contributor_id or top_editor_id:
         message += "👑 This week's Question Queens: \n"
         if top_contributor_id:
-            message += f"<@{top_contributor_id}> [New Questions]\n"
+            count_str = f" ({top_contributor_count} questions)" if top_contributor_count else ""
+            message += f"<@{top_contributor_id}>{count_str}\n"
         if top_editor_id:
-            message += f"<@{top_editor_id}> [Edits]\n"
+            count_str = f" ({top_editor_count} edits)" if top_editor_count else ""
+            message += f"<@{top_editor_id}>{count_str}\n"
         message += f"\nThanks for your contributions. You get access to all {perks_mention}! 🎁\n"
     else:
         message += f"👑 No Question Queens crowned yet this week. Snag a crown for free {perks_mention}!\n"
@@ -559,6 +561,8 @@ last_bump_time = None
 # Global variable for top contributor
 top_contributor_id = None
 top_editor_id = None
+top_contributor_count = None
+top_editor_count = None
 
 # Lazily-populated cache of category -> emoji pair, backed by the MongoDB
 # category_emojis collection. Warmed per-round rather than bulk-loaded so we
@@ -22932,7 +22936,7 @@ async def sync_crown_roles():
     """Sync the Question Queen role for both crowns: top submitter and top editor.
     Both use the same TOP_CONTRIBUTOR_ROLE_ID and can be held simultaneously by the
     same or different people without one sync stripping the other's holder."""
-    global top_contributor_id, top_editor_id
+    global top_contributor_id, top_editor_id, top_contributor_count, top_editor_count
     if not TOP_CONTRIBUTOR_ROLE_ID:
         return
     guild = bot.get_guild(OKRAN_GUILD_ID)
@@ -23014,6 +23018,8 @@ async def sync_crown_roles():
 
     top_contributor_id = new_contributor_id
     top_editor_id = new_editor_id
+    top_contributor_count = submit_top[0]["count"] if submit_top else None
+    top_editor_count = edit_top[0]["count"] if edit_top else None
 
 
 async def register_persistent_submission_views():
