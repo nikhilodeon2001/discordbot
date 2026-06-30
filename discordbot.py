@@ -20273,7 +20273,33 @@ async def start_trivia():
                 if current_answer_view is not None:
                     current_answer_view.stop()
                     try:
-                        await current_answer_message.edit(view=None)
+                        edit_kwargs = {"view": None}
+                        choices = trivia_answer_list[1:] if len(trivia_answer_list) > 1 else []
+                        correct_letter = trivia_answer_list[0][0].upper() if trivia_answer_list else ""
+                        is_letter_mc = correct_letter.isalpha() and len(correct_letter) == 1
+
+                        if is_letter_mc and choices and collected_responses:
+                            clicks = {}
+                            for r in collected_responses:
+                                ltr = r.get("message_content", "").strip().upper()
+                                if len(ltr) == 1 and ltr.isalpha():
+                                    clicks.setdefault(ltr, []).append(r.get("display_name", "?"))
+                            if clicks:
+                                lines = []
+                                for choice in choices:
+                                    m = re.match(r'^\s*([A-Za-z])[.\)]', choice)
+                                    if m:
+                                        ltr = m.group(1).upper()
+                                        voters = clicks.get(ltr, [])
+                                        check = " ✅" if ltr == correct_letter else " ❌"
+                                        line = f"{choice}{check}" + (f" → {', '.join(voters)}" if voters else "")
+                                        lines.append(line)
+                                if lines and current_answer_message.embeds:
+                                    embed = current_answer_message.embeds[0]
+                                    embed.add_field(name="Votes", value="\n".join(lines), inline=False)
+                                    edit_kwargs["embed"] = embed
+
+                        await current_answer_message.edit(**edit_kwargs)
                     except (discord.NotFound, discord.HTTPException):
                         pass
                     current_answer_view = None
