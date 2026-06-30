@@ -4723,6 +4723,8 @@ class FlagReasonModal(discord.ui.Modal, title="Flag Question"):
         "other": "Other",
     }
 
+    question_preview = discord.ui.TextDisplay("Loading question…")
+
     reason_label = discord.ui.Label(
         text="What's wrong with this question?",
         description="Select all that apply",
@@ -4741,7 +4743,7 @@ class FlagReasonModal(discord.ui.Modal, title="Flag Question"):
     )
     detail = discord.ui.TextInput(
         label="Provide more detail",
-        placeholder="Optional — required if you selected 'Other'",
+        placeholder="Optional — recommended if you selected 'Other'",
         style=discord.TextStyle.paragraph,
         required=False,
         max_length=500,
@@ -4755,15 +4757,13 @@ class FlagReasonModal(discord.ui.Modal, title="Flag Question"):
         self.flag_message = flag_message  # Original interaction/message (can be None for slash commands)
         self.embed_message = embed_message  # The embed message to delete after submission
 
+        category = (question or {}).get("trivia_category") or "Unknown category"
+        question_text = (question or {}).get("trivia_question") or ""
+        self.question_preview.content = f"**{category}**\n{question_text}"[:4000]
+
     async def on_submit(self, interaction: discord.Interaction):
         selected = self.reason_label.component.values
         detail_text = self.detail.value.strip()
-        if "other" in selected and not detail_text:
-            await interaction.response.send_message(
-                "❌ Please provide detail when selecting 'Other', then flag the question again.",
-                ephemeral=True,
-            )
-            return
         try:
             reasons_text = ", ".join(self.REASON_LABELS[v] for v in selected)
             reason_text = f"({reasons_text}) {detail_text}".strip()
@@ -20023,8 +20023,8 @@ async def start_trivia():
             perks_mention = f"</perks:{PERKS_COMMAND_ID}>" if PERKS_COMMAND_ID else "/perks"
             submit_mention = f"</submit:{SUBMIT_COMMAND_ID}>" if SUBMIT_COMMAND_ID else "/submit"
             lab_message = "\u200b\n✨🧪 **NEW** from the **Okra Lab**! 🧪✨\n"
-            lab_message += "\n🎓📝 **Valedictorian**: Back to High School [Mini Game]"
-            lab_message += "\n🤓📝 **Nerd**: Add SAT/ACT questions [Game Mode]"
+            lab_message += "\n🎓📝 **Valedictorian**: Back to High School [Mini Game]\n"
+            lab_message += "\n🤓📝 **Nerd**: Add SAT/ACT questions [Game Mode]\n"
             lab_message += "\n🖱️🔢 **Clickable** multiple choice options [Game Mechanic]\n"
             lab_message += "\n\n\u200b"
             await safe_send(channel, lab_message)
