@@ -643,7 +643,7 @@ _submission_locks = {}  # submitter_id -> asyncio.Lock (rate-limit TOCTOU guard)
 _submitter_attribution_cache = OrderedDict()  # (db_name, _id) -> attribution string; bounded LRU
 _SUBMITTER_CACHE_MAX = 256
 
-id_limits = {"general": 2000, "mysterybox": 2000, "crossword": 5000, "jeopardy": 5000, "wof": 1500, "list": 20, "feud": 1000, "posters": 2000, "movie_scenes": 5000, "missing_link": 2500, "people": 2500, "ranker_list": 4000, "animal": 2000, "riddle": 2500, "dictionary": 5000, "flags": 150, "update_blurb": 150, "lyric": 500, "polyglottery": 80, "book": 80, "element": 100, "jigsaw": 5000, "border": 100, "faceoff": 5000, "president": 80, "wordle": 1400, "myopic": 5000, "fusion": 5000, "microscopic": 5000, "chess": 5000, "stock": 800, "currency": 100, "search": 10, "billboard": 40, "soundfx": 500, "audio_music":100, "audio_question": 2000, "sports_logos": 20, "fun_fact": 75}
+id_limits = {"general": 2000, "mysterybox": 2000, "crossword": 5000, "jeopardy": 5000, "wof": 1500, "list": 20, "feud": 1000, "posters": 2000, "movie_scenes": 5000, "missing_link": 2500, "people": 2500, "ranker_list": 4000, "animal": 2000, "riddle": 2500, "dictionary": 5000, "flags": 150, "update_blurb": 150, "lyric": 500, "polyglottery": 80, "book": 80, "element": 100, "jigsaw": 5000, "border": 100, "faceoff": 5000, "president": 80, "wordle": 1400, "myopic": 5000, "fusion": 5000, "microscopic": 5000, "chess": 5000, "stock": 800, "currency": 100, "search": 10, "billboard": 40, "soundfx": 500, "audio_music":100, "audio_question": 2000, "sports_logos": 20, "fun_fact": 75, "sat": 10000, "sat_math": 2000, "sat_verbal": 5000, "sat_science": 2000, "sat_grammar": 3000, "sat_english": 1000}
 max_retries = 3
 delay_between_retries = 3
 first_place_bonus = 0
@@ -784,6 +784,12 @@ categories_to_exclude = []
 collected_responses = []
 current_question = None
 previous_question = None
+current_answer_view = None
+current_answer_message = None
+answer_buttons_enabled = True  # Feature flag: click-to-answer buttons on multiple-choice trivia questions
+jeopardy_boosted = False  # Set by "Alex"/"Xela" this round - signals 3-way coordination with crossword/SAT boosts
+crossword_boosted = False  # Set by "Word"/"Cross" this round
+sat_boosted = False  # Set by "Nerd" this round
 
 ops = {
     '+': operator.add,
@@ -4907,6 +4913,121 @@ class VoiceChannelJoinView(discord.ui.View):
             await interaction.response.send_message("❌ An error occurred.", ephemeral=True)
 
 
+class ValedictorianView(discord.ui.View):
+    """Shared A/B/C/D button grid for one round of Valedictorian.
+
+    eligible_players=None means anyone may click (round 1, roster not yet known).
+    A real set restricts clicks to that roster (round 2+).
+    """
+
+    def __init__(self, eligible_players, correct_letter: str):
+        super().__init__(timeout=20)
+        self.eligible_players = set(eligible_players) if eligible_players is not None else None
+        self.correct_letter = correct_letter
+        self.answers = {}  # user_id -> letter clicked
+        self.display_names = {}  # user_id -> display name (round 1 has no prior roster to draw names from)
+
+    async def handle_letter_click(self, interaction: discord.Interaction, letter: str):
+        user_id = interaction.user.id
+
+        if self.eligible_players is not None and user_id not in self.eligible_players:
+            await interaction.response.send_message("❌ You're not in this round!", ephemeral=True)
+            return
+
+        if user_id in self.answers:
+            await interaction.response.send_message("✅ You already answered!", ephemeral=True)
+            return
+
+        self.answers[user_id] = letter
+        self.display_names[user_id] = interaction.user.display_name
+        await interaction.response.send_message(f"✅ Locked in: **{letter}**", ephemeral=True)
+
+    @discord.ui.button(label="A", style=discord.ButtonStyle.primary, row=0)
+    async def a_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.handle_letter_click(interaction, "A")
+
+    @discord.ui.button(label="B", style=discord.ButtonStyle.primary, row=0)
+    async def b_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.handle_letter_click(interaction, "B")
+
+    @discord.ui.button(label="C", style=discord.ButtonStyle.primary, row=0)
+    async def c_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.handle_letter_click(interaction, "C")
+
+    @discord.ui.button(label="D", style=discord.ButtonStyle.primary, row=0)
+    async def d_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.handle_letter_click(interaction, "D")
+
+
+class AnswerButtonView(discord.ui.View):
+    """Click-to-answer buttons for a main-trivia-loop multiple-choice question.
+
+    Built with a dynamic option count (2 for True/False, N for letter-based),
+    so buttons are added via add_item() rather than the fixed @discord.ui.button
+    decorator style used elsewhere in this file.
+    """
+
+    def __init__(self, letters):
+        super().__init__(timeout=None)  # cleanup is explicit, see start_trivia()'s post-grading step
+        self.answered_user_ids = set()
+        for letter in letters:
+            button = discord.ui.Button(label=letter, style=discord.ButtonStyle.primary)
+            button.callback = self._make_callback(letter)
+            self.add_item(button)
+
+    def _make_callback(self, letter):
+        async def callback(interaction: discord.Interaction):
+            await self._handle_click(interaction, letter)
+        return callback
+
+    async def _handle_click(self, interaction: discord.Interaction, letter: str):
+        global collected_responses
+
+        user_id = interaction.user.id
+
+        if user_id in self.answered_user_ids:
+            await interaction.response.send_message("✅ You already answered!", ephemeral=True)
+            return
+
+        now = interaction.created_at.timestamp()
+        if question_asked_start is None or question_asked_end is None or not (question_asked_start <= now <= question_asked_end):
+            await interaction.response.send_message("⏰ That question's closed!", ephemeral=True)
+            return
+
+        self.answered_user_ids.add(user_id)
+        collected_responses.append({
+            "user_id": user_id,
+            "display_name": interaction.user.display_name,
+            "message_content": letter,
+            "response_time": now,
+            "message": None,
+        })
+        await interaction.response.send_message(f"✅ Locked in: **{letter}**", ephemeral=True)
+
+
+def build_answer_view(trivia_answer_list, trivia_url):
+    """Build a click-to-answer button view for a multiple-choice question, or None.
+
+    Buttons are an additional input method alongside typing - they're only built
+    when answer_buttons_enabled is on and the question is multiple-choice.
+    """
+    if not answer_buttons_enabled or not _is_multiple_choice_url(trivia_url):
+        return None
+
+    if trivia_answer_list[0].strip().lower() in {"true", "false"}:
+        letters = ["True", "False"]
+    else:
+        letters = []
+        for option_text in trivia_answer_list[1:]:
+            match = re.match(r'^\s*([A-Za-z])[.\)]', option_text)
+            if match:
+                letters.append(match.group(1).upper())
+        if not letters:
+            return None
+
+    return AnswerButtonView(letters[:25])  # Discord's per-message button cap
+
+
 class HTMLTextExtractor(HTMLParser):
     def __init__(self):
         super().__init__()
@@ -6887,7 +7008,8 @@ async def ask_chaos_challenge(winner, winner_id, num_of_games):
         ask_feud_question,
         ask_okrace_challenge,
         ask_sports_logos_challenge,
-        ask_rapidfire_challenge
+        ask_rapidfire_challenge,
+        ask_valedictorian_challenge  # full elimination game, not a single quick round like its CHAOS siblings
     ]
 
 
@@ -10088,9 +10210,201 @@ async def ask_chess_challenge(winner, winner_id, num=5):
     return chess_winner_id
 
 
+async def ask_valedictorian_challenge(winner, winner_id, num=1):
+    """
+    Valedictorian - single-elimination SAT/ACT trivia. Miss a question (or don't
+    answer) and you're out. Last one standing is the Valedictorian.
 
-        
-        
+    `num` is accepted only for call-signature parity with the other ask_*_challenge
+    functions (the dispatcher and CHAOS mode always pass an explicit value) but is
+    intentionally ignored - same precedent as ask_okra_says_challenge, which also
+    hardcodes its own round cap regardless of `num`.
+    """
+    global wf_winner
+    wf_winner = True
+
+    ALLOW_SOLO_TESTING = os.environ.get('ALLOW_SOLO_TESTING', '').lower() == 'true'
+    INPUT_TIMEOUT = 20
+    MAX_ROUNDS = 20
+    MIN_PLAYERS = 1 if ALLOW_SOLO_TESTING else 2
+
+    valed_gifs = [
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/valedictorian1.gif",
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/valedictorian2.gif",
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/valedictorian3.gif",
+    ]
+    gif_url = random.choice(valed_gifs)
+    await safe_send(channel, content="\u200b\n🎓📚 **VALEDICTORIAN**: Answer correctly or you're out!\n\u200b", embed=discord.Embed().set_image(url=gif_url))
+    await asyncio.sleep(3)
+
+    VALED_ROTATION = ["Math", "Verbal", "Science", "Grammar", "English"]
+    SAT_CAT_KEY = {
+        "Math": "sat_math",
+        "Verbal": "sat_verbal",
+        "Science": "sat_science",
+        "Grammar": "sat_grammar",
+        "English": "sat_english",
+    }
+
+    try:
+        sat_collection = db["sat_questions"]
+        per_cat_needed = MAX_ROUNDS // len(VALED_ROTATION) + 1  # 5
+        questions_by_cat = {}
+        for cat in VALED_ROTATION:
+            key = SAT_CAT_KEY[cat]
+            recent_ids = await get_recent_question_ids_from_mongo(key)
+            pipeline = [
+                {"$match": {"_id": {"$nin": list(recent_ids)}, "category": cat}},
+                {"$sample": {"size": per_cat_needed}},
+            ]
+            questions_by_cat[cat] = await sat_collection.aggregate(pipeline).to_list(length=per_cat_needed)
+
+        cat_iters = {cat: iter(questions_by_cat[cat]) for cat in VALED_ROTATION}
+        questions = []
+        for i in range(MAX_ROUNDS):
+            cat = VALED_ROTATION[i % len(VALED_ROTATION)]
+            q = next(cat_iters[cat], None)
+            if q is not None:
+                questions.append(q)
+    except Exception as e:
+        sentry_sdk.capture_exception(e)
+        print(f"Error selecting Valedictorian questions:\n{traceback.format_exc()}")
+        wf_winner = True
+        return None
+
+    if not questions:
+        await safe_send(channel, "\u200b\n😢 No SAT/ACT questions available right now.\n\u200b")
+        wf_winner = True
+        return None
+
+    for cat in VALED_ROTATION:
+        cat_ids = [q["_id"] for q in questions_by_cat[cat]]
+        if cat_ids:
+            await store_question_ids_in_mongo(cat_ids, SAT_CAT_KEY[cat])
+
+    active_players = None  # round-1 sentinel: roster not established yet
+    display_names = {}
+    eliminated_by_rank = {}  # rank -> [user_id, ...]
+    game_result = None  # "failure" only for a round-1 total wipeout
+    round_num = 0
+
+    def render_leaderboard():
+        lines = ["\u200b\n🏁 **Final Class Rank**\n"]
+        for rank, user_ids in sorted(eliminated_by_rank.items()):
+            names = ", ".join(f"**{display_names[uid]}**" for uid in user_ids)
+            if rank == 1:
+                if game_result == "failure":
+                    label = "❌ Failure"
+                else:
+                    label = "🎓 Co-Valedictorians" if len(user_ids) > 1 else "🎓 Valedictorian"
+            elif rank == 2:
+                label = "🥈 Co-Salutatorians" if len(user_ids) > 1 else "🥈 Salutatorian"
+            else:
+                label = f"Rank {rank}"
+            lines.append(f"{label}: {names}")
+        lines.append("\u200b")
+        return "\n".join(lines)
+
+    while round_num < len(questions) and round_num < MAX_ROUNDS:
+        round_num += 1
+        q = questions[round_num - 1]
+
+        correct_letter = q["answers"][0][0]
+        question_text = q.get("question", "").replace("$", "")
+        paragraph = q.get("paragraph")
+        options_text = "\n".join(opt.replace("$", "") for opt in q["answers"][1:5])
+
+        embed = discord.Embed(
+            title=f"📝 Round {round_num} • {q.get('category', '')}: {q.get('subcategory', '')}"
+        )
+        description = ""
+        if paragraph and paragraph != "null":
+            description += paragraph.replace("$", "")[:2500] + "\n\n"
+        description += question_text
+        embed.description = description[:4096]
+        embed.add_field(name="Options", value=options_text[:1024], inline=False)
+
+        eligible = None if round_num == 1 else set(active_players)
+        view = ValedictorianView(eligible, correct_letter)
+
+        button_msg = await safe_send(channel, embed=embed, view=view)
+
+        if round_num == 1:
+            # No known roster size yet, so there's nothing to early-exit against.
+            await asyncio.sleep(INPUT_TIMEOUT)
+        else:
+            start_time = asyncio.get_event_loop().time()
+            while asyncio.get_event_loop().time() - start_time < INPUT_TIMEOUT:
+                if len(view.answers) >= len(active_players):
+                    break
+                await asyncio.sleep(0.5)
+
+        try:
+            await button_msg.delete()
+        except:
+            pass
+
+        if round_num == 1:
+            active_players = list(view.answers.keys())
+            display_names.update(view.display_names)
+
+            if len(active_players) < MIN_PLAYERS:
+                await safe_send(channel, "\u200b\n😢 Not enough players joined Valedictorian!\n\u200b")
+                wf_winner = True
+                return None
+
+        survived = []
+        eliminated = []
+        for user_id in active_players:
+            if view.answers.get(user_id) == correct_letter:
+                survived.append(user_id)
+            else:
+                eliminated.append(user_id)
+
+        await safe_send(channel, f"\u200b\n✅ Correct answer: **{correct_letter}**\n\u200b")
+        for user_id in eliminated:
+            picked = view.answers.get(user_id, "nothing")
+            await safe_send(channel, f"❌ **{display_names[user_id]}** answered {picked} — eliminated!")
+
+        if len(survived) == 0:
+            eliminated_by_rank[1] = eliminated
+            if round_num == 1:
+                game_result = "failure"
+                await safe_send(channel, "\u200b\n💥 **Everyone missed the first question!** No Valedictorian this time.\n\u200b")
+            else:
+                await safe_send(channel, "\u200b\n🤝 **Everyone left got it wrong!** Co-Valedictorians!\n\u200b")
+            await asyncio.sleep(2)
+            await safe_send(channel, render_leaderboard())
+            wf_winner = True
+            return None
+
+        rank = len(survived) + 1
+        eliminated_by_rank.setdefault(rank, []).extend(eliminated)
+
+        if len(survived) == 1:
+            eliminated_by_rank[1] = survived
+            winner_name = display_names[survived[0]]
+            await safe_send(channel, f"\u200b\n🎉🎓 **{winner_name}** is the Valedictorian!\n\u200b")
+            await asyncio.sleep(2)
+            await safe_send(channel, render_leaderboard())
+            wf_winner = True
+            return survived[0]
+
+        active_players = survived
+        await safe_send(channel, f"\u200b\n🔥 **{len(active_players)} players remain!** Next round...\n\u200b")
+        await asyncio.sleep(2)
+
+    # Ran out of pre-fetched questions or hit the round cap with 2+ players still standing
+    if active_players and len(active_players) >= 2:
+        eliminated_by_rank[1] = active_players
+        await safe_send(channel, "\u200b\n⏰ **The contest is over!** Co-Valedictorians!\n\u200b")
+        await asyncio.sleep(2)
+        await safe_send(channel, render_leaderboard())
+
+    wf_winner = True
+    return None
+
+
 async def ask_microscopic_challenge(winner, winner_id, num=3):
     global wf_winner
     wf_winner = True
@@ -14125,6 +14439,8 @@ async def load_parameters():
     global num_math_questions
     global num_stats_questions_default
     global num_stats_questions
+    global num_sat_questions_default
+    global num_sat_questions
     global skip_summary
     global discount_step_amount
     global discount_streak_amount
@@ -14153,6 +14469,7 @@ async def load_parameters():
         "num_wf_letters": 3,
         "num_math_questions_default": 1,
         "num_stats_questions_default": 0,
+        "num_sat_questions_default": 0,
         "skip_summary": False,
         "ai_on": False,
         "sync_commands": True,
@@ -14191,6 +14508,7 @@ async def load_parameters():
             num_wf_letters = parameters["num_wf_letters"]
             num_math_questions_default = parameters["num_math_questions_default"]
             num_stats_questions_default = parameters["num_stats_questions_default"]
+            num_sat_questions_default = parameters["num_sat_questions_default"]
             skip_summary = parameters["skip_summary"]
             ai_on = parameters["ai_on"]
             sync_commands = parameters["sync_commands"]
@@ -14209,8 +14527,9 @@ async def load_parameters():
             num_wof_clues_final = num_wof_clues_final_default
             num_math_questions = num_math_questions_default
             num_stats_questions = num_stats_questions_default
+            num_sat_questions = num_sat_questions_default
             time_between_questions = time_between_questions_default
-            
+
             # Exit loop if successful
             break
 
@@ -14233,6 +14552,7 @@ async def load_parameters():
                 num_wf_letters = default_values["num_wf_letters"]
                 num_math_questions_default = default_values["num_math_questions_default"]
                 num_stats_questions_default = default_values["num_stats_questions_default"]
+                num_sat_questions_default = default_values["num_sat_questions_default"]
                 skip_summary = default_values["skip_summary"]
                 ai_on = default_values["ai_on"]
                 sync_commands = default_values["sync_commands"]
@@ -14251,6 +14571,7 @@ async def load_parameters():
                 num_wof_clues_final = num_wof_clues_final_default
                 num_math_questions = num_math_questions_default
                 num_stats_questions = num_stats_questions_default
+                num_sat_questions = num_sat_questions_default
                 time_between_questions = time_between_questions_default
 
 
@@ -15256,6 +15577,11 @@ async def select_wof_questions(winner, winner_id):
             await asyncio.sleep(3)
             return None
 
+        elif selected_wof_category == "49":
+            await ask_valedictorian_challenge(winner, winner_id, 1)
+            await asyncio.sleep(3)
+            return None
+
         elif selected_wof_category == "99":
             await ask_chaos_challenge(winner, winner_id, 5)
             await asyncio.sleep(3)
@@ -15529,10 +15855,11 @@ async def ask_wof_number(winner, winner_id):
         "46": "30 for 30",
         "47": "Okra Says",
         "48": "The Genie",
+        "49": "Valedictorian",
         "99": "CHAOS"
     }
     multiplayer_required = {k for k in unlocks if k not in {"5", "6", "7", "8", "9"}}
-    all_options = {str(i) for i in range(49)} | {"00", "x", "99"}
+    all_options = {str(i) for i in range(50)} | {"00", "x", "99"}
 
     start = asyncio.get_event_loop().time()
     selected_question = None
@@ -16181,7 +16508,7 @@ def generate_crossword_image(answer, prefill=0.5):
 
 
 async def clear_round_options():
-    global since_token, time_between_questions, time_between_questions_default, ghost_mode, since_token, categories_to_exclude, num_crossword_clues, num_jeopardy_clues, num_mysterybox_clues, num_wof_clues, god_mode, yolo_mode, magic_number, wf_winner, num_math_questions, num_stats_questions, image_questions, nice_okra, creep_okra, marx_mode, blind_mode, seductive_okra, joke_okra, sniper_mode, blitz_mode, exact_mode, golf_mode, glyph_mode, cloak_mode, cloaked_user, haiku_okra, trailer_okra, heist_okra, horoscope_okra, rap_okra, shakespeare_okra, pirate_okra, noir_okra, hype_okra, roast_okra
+    global since_token, time_between_questions, time_between_questions_default, ghost_mode, since_token, categories_to_exclude, num_crossword_clues, num_jeopardy_clues, num_mysterybox_clues, num_wof_clues, num_sat_questions, jeopardy_boosted, crossword_boosted, sat_boosted, god_mode, yolo_mode, magic_number, wf_winner, num_math_questions, num_stats_questions, image_questions, nice_okra, creep_okra, marx_mode, blind_mode, seductive_okra, joke_okra, sniper_mode, blitz_mode, exact_mode, golf_mode, glyph_mode, cloak_mode, cloaked_user, haiku_okra, trailer_okra, heist_okra, horoscope_okra, rap_okra, shakespeare_okra, pirate_okra, noir_okra, hype_okra, roast_okra
     time_between_questions = time_between_questions_default
     ghost_mode = ghost_mode_default
     categories_to_exclude.clear()
@@ -16189,6 +16516,10 @@ async def clear_round_options():
     num_jeopardy_clues = num_jeopardy_clues_default
     num_mysterybox_clues = num_mysterybox_clues_default
     num_wof_clues = num_wof_clues_default
+    num_sat_questions = num_sat_questions_default
+    jeopardy_boosted = False
+    crossword_boosted = False
+    sat_boosted = False
     god_mode = god_mode_default
     yolo_mode = yolo_mode_default
     magic_number_correct = False
@@ -16234,28 +16565,29 @@ async def process_round_options(round_winner, winner_points, round_winner_id):
     message += (
         "\u200b\n🎮⚙️ ***Gameplay Options***\n\n"
         "⏱️⏳ **<3 - 15>** Time (s) between questions\n"
-        "🔥🤘 **Yolo** No scores shown until the end\n"
-        "🙈🚫 **Blind** No question answers shown\n"
-        "🚩🔨 **Marx** No recognizing right answers\n"
+        "🔥🤘 **Yolo** No scores until the end\n"
+        "🙈🚫 **Blind** No answers shown\n"
+        "🚩🔨 **Marx** No recognizing answers\n"
         "📷❌ **Blank** No image questions\n"
         "👻🎃 **Ghost** All responses vanish\n"
         "🫥🕶️ **Cloak**: Your responses vanish\n"
         "🧢🎤 **Sniper**: One answer per player\n"
-        "🚀⚡  **Blitz**: One winner per question\n"
+        "🏆⚡  **Blitz**: One winner per question\n"
         "🤓🔍 **Poindexter**: Stricter answers\n"
         "⛳📉 **Golf**: Slowest answers win\n" 
-        "🔐🔍 **Glyph**: Add Googling countermeasures\n" 
+        "🔐🛡️ **Glyph**: Add anti-Google defenses\n" 
 
         "\n🕹️: Toggle mid-round with **#[command]**"
         "\n⛳: Golf excluded\n\n"
 
         "\n📝🔀 ***Question Options***\n\n"
         "🇺🇸🗽 **Freedom** No multiple choice\n"
-        "🔢❌ **Greg** No math questions\n"
-        "🟦❌ **Xela** No Jeopardy-style questions\n"
+        "🧮❌ **Greg** No math questions\n"
+        "🟦❌ **Xela** No Jeopardy questions\n"
         "📰❌ **Cross** No Crossword clues\n"
-        "🟦✋ **Alex** 5 Jeopardy-style questions\n"
-        "📰✋ **Word** 5 Crossword clues\n"
+        "🟦✋ **Alex** More Jeopardy questions\n"
+        "📰✋ **Word** More Crossword clues\n"
+        "🎓📝 **Nerd** Add SAT questions\n"
         "🎖🥒 **Dicktator** Choose the categories\n"
     )
 
@@ -16269,6 +16601,7 @@ async def process_round_options(round_winner, winner_points, round_winner_id):
 async def prompt_user_for_response(round_winner, winner_points, winner_coffees, round_winner_id):
     global since_token, time_between_questions, ghost_mode
     global num_jeopardy_clues, num_crossword_clues, num_mysterybox_clues, num_wof_clues
+    global num_sat_questions, jeopardy_boosted, crossword_boosted, sat_boosted
     global yolo_mode, god_mode, num_math_questions, num_stats_questions
     global image_questions, marx_mode, blind_mode, sniper_mode, blitz_mode, exact_mode, glyph_mode, golf_mode, cloak_mode, cloaked_user
 
@@ -16286,6 +16619,7 @@ async def prompt_user_for_response(round_winner, winner_points, winner_coffees, 
         "greg": {"requires_coffee": False, "exclude_hashtag": False},
         "cross": {"requires_coffee": False, "exclude_hashtag": False},
         "word": {"requires_coffee": False, "exclude_hashtag": False},
+        "nerd": {"requires_coffee": False, "exclude_hashtag": False},
         "dicktator": {"requires_coffee": False, "exclude_hashtag": True},
         "sniper": {"requires_coffee": False, "exclude_hashtag": True},
         "cloak": {"requires_coffee": False, "exclude_hashtag": True},
@@ -16348,18 +16682,26 @@ async def prompt_user_for_response(round_winner, winner_points, winner_coffees, 
 
             if (not keyword_config["alex"]["exclude_hashtag"] or "#alex" not in message_content) and await coffee_gate("alex", f"🟦✋ **<@{round_winner_id}>** wants 5 Jeopardy-style questions.", "Alex"):
                 num_jeopardy_clues = 5
+                jeopardy_boosted = True
 
             if (not keyword_config["xela"]["exclude_hashtag"] or "#xela" not in message_content) and await coffee_gate("xela", f"🟦❌ **<@{round_winner_id}>** doesn't like Jeopardy-style. Sorry Alex.", "Xela"):
                 num_jeopardy_clues = 0
+                jeopardy_boosted = False
 
             if (not keyword_config["greg"]["exclude_hashtag"] or "#greg" not in message_content) and await coffee_gate("greg", f"📰✏️ **<@{round_winner_id}>** hates math. What a 'Greg'.", "Greg"):
                 num_math_questions = 0
 
             if (not keyword_config["cross"]["exclude_hashtag"] or "#cross" not in message_content) and await coffee_gate("cross", f"📰❌ **<@{round_winner_id}>** has crossed off all Crossword questions.", "Cross"):
                 num_crossword_clues = 0
+                crossword_boosted = False
 
             if (not keyword_config["word"]["exclude_hashtag"] or "#word" not in message_content) and await coffee_gate("word", f"📰✏️ Word. **<@{round_winner_id}>** wants 5 Crossword questions.", "Word"):
                 num_crossword_clues = 5
+                crossword_boosted = True
+
+            if (not keyword_config["nerd"]["exclude_hashtag"] or "#nerd" not in message_content) and await coffee_gate("nerd", f"🤓✋ Nerd. **<@{round_winner_id}>** wants 5 SAT questions.", "Nerd"):
+                num_sat_questions = 5
+                sat_boosted = True
 
             if (not keyword_config["dicktator"]["exclude_hashtag"] or "#dicktator" not in message_content) and await coffee_gate("dicktator", f"🎖🍆 **<@{round_winner_id}>** is a dick.", "Dicktator"):
                 god_mode = True
@@ -16371,7 +16713,7 @@ async def prompt_user_for_response(round_winner, winner_points, winner_coffees, 
                 cloak_mode = True
                 cloaked_user = round_winner_id
 
-            if (not keyword_config["blitz"]["exclude_hashtag"] or "#blitz" not in message_content) and await coffee_gate("blitz", f"\n🤓🔍 **<@{round_winner_id}>** wants all the glory!", "Blitz"):
+            if (not keyword_config["blitz"]["exclude_hashtag"] or "#blitz" not in message_content) and await coffee_gate("blitz", f"\n🏆⚡ **<@{round_winner_id}>** wants all the glory!", "Blitz"):
                 blitz_mode = True
 
             if (not keyword_config["poindexter"]["exclude_hashtag"] or "#poindexter" not in message_content) and await coffee_gate("poindexter", f"\n🥇🤩 **<@{round_winner_id}>** demands perfection!", "Poindexter"):
@@ -16380,7 +16722,7 @@ async def prompt_user_for_response(round_winner, winner_points, winner_coffees, 
             if (not keyword_config["golf"]["exclude_hashtag"] or "#golf" not in message_content) and await coffee_gate("golf", f"\n⛳📉 **<@{round_winner_id}>** strives for the bottom!", "Golf"):
                 golf_mode = True
 
-            if (not keyword_config["glyph"]["exclude_hashtag"] or "#glyph" not in message_content) and await coffee_gate("glyph", f"\n🔐🔍 **<@{round_winner_id}>** has obscured the questions!", "Glyph"):
+            if (not keyword_config["glyph"]["exclude_hashtag"] or "#glyph" not in message_content) and await coffee_gate("glyph", f"\n🔐🛡️ **<@{round_winner_id}>** has obscured the questions!", "Glyph"):
                 glyph_mode = True
             
 
@@ -17587,6 +17929,7 @@ def apply_glyphs(text):
 
 async def ask_question(trivia_category, trivia_question, trivia_url, trivia_answer_list, question_number, trivia_db=None, trivia_id=None):
     """Ask the trivia question."""
+    global current_answer_view, current_answer_message
     await record_question_asked(trivia_db, trivia_id)
     # Define the numbered block emojis for questions 1 to 10
     numbered_blocks = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"]
@@ -17598,6 +17941,7 @@ async def ask_question(trivia_category, trivia_question, trivia_url, trivia_answ
     send_image_flag = False
     image_buffer = None
     image_url = None
+    answer_view = None
 
     # Apply glyph transformation if glyph_mode is enabled
     trivia_question = apply_glyphs(trivia_question)
@@ -17729,7 +18073,7 @@ async def ask_question(trivia_category, trivia_question, trivia_url, trivia_answ
         else:
             message_body += f"\u200b\n\u200b\n{number_block} **{get_category_title(trivia_category, trivia_url)}**\n\n[{len(trivia_answer_list[0])} Letters] {trivia_question}\n\n{string_representation}\n"
         
-    elif trivia_url == "multiple choice" or trivia_url == "multiple choice opentrivia" or trivia_url == "multiple choice oracle": 
+    elif trivia_url == "multiple choice" or trivia_url == "multiple choice opentrivia" or trivia_url == "multiple choice oracle" or trivia_url == "multiple choice sat":
         if trivia_answer_list[0] in {"True", "False"}:
             message_body += f"\u200b\n\u200b\n{number_block} **{get_category_title(trivia_category, trivia_url)}**\n\n🚨 **T/F - 1 GUESS** 🚨 {trivia_question}\n\n"
         else:
@@ -17739,6 +18083,7 @@ async def ask_question(trivia_category, trivia_question, trivia_url, trivia_answ
             for answer in trivia_answer_list[1:]:
                 message_body += f"{answer}\n"
             message_body += "\n"
+        answer_view = build_answer_view(trivia_answer_list, trivia_url)
         trivia_answer_list[:] = trivia_answer_list[:1]
 
     else:
@@ -17754,16 +18099,21 @@ async def ask_question(trivia_category, trivia_question, trivia_url, trivia_answ
 
     message_body += "\u200b"
     
+    view_kwargs = {"view": answer_view} if answer_view is not None else {}
+
     if send_image_flag:
-        if image_url:  
-            message = await safe_send(channel, content=message_body, embed=discord.Embed().set_image(url=image_url))
+        if image_url:
+            message = await safe_send(channel, content=message_body, embed=discord.Embed().set_image(url=image_url), **view_kwargs)
         elif image_buffer:
             image_file = discord.File(fp=image_buffer, filename="image.png")
             embed = discord.Embed()
             embed.set_image(url="attachment://image.png")
-            message = await safe_send(channel, content=message_body, embed=embed, file=image_file)
+            message = await safe_send(channel, content=message_body, embed=embed, file=image_file, **view_kwargs)
     else:
-        message = await safe_send(channel, message_body)
+        message = await safe_send(channel, message_body, **view_kwargs)
+
+    current_answer_view = answer_view
+    current_answer_message = message
 
     response_time = message.created_at.timestamp()
             
@@ -17985,7 +18335,7 @@ def fuzzy_match(user_answer, correct_answer, category, url, _skip_alias_check=Fa
     user_answer = normalize_text(str(user_answer))
     correct_answer = normalize_text(str(correct_answer))
 
-    if url in {"multiple choice", "multiple choice opentrivia", "multiple choice oracle"}:
+    if url in {"multiple choice", "multiple choice opentrivia", "multiple choice oracle", "multiple choice sat"}:
         if user_answer and correct_answer:
             return user_answer[0].lower() == correct_answer[0].lower()
         else:
@@ -18075,7 +18425,7 @@ async def check_correct_responses_delete(question_ask_time, trivia_answer_list, 
     single_answer = (
         (len(trivia_answer_list) == 1 and (is_number(trivia_answer) or len(trivia_answer) == 1)) or
         trivia_url in [
-            "multiple choice opentrivia", "multiple choice oracle", "multiple choice",
+            "multiple choice opentrivia", "multiple choice oracle", "multiple choice", "multiple choice sat",
             "median", "mean", "zeroes sum", "zeroes product", "zeroes", "base", "factors",
             "derivative", "trig", "algebra"
         ]
@@ -18095,10 +18445,17 @@ async def check_correct_responses_delete(question_ask_time, trivia_answer_list, 
         message = response["message"]
         #message_content = message.content
         message_content = response["message_content"]
-        sender_id = message.author.id
-        display_name = message.author.display_name
-        timestamp = message.created_at.timestamp()
-        message_id = message.id
+        if message is not None:
+            sender_id = message.author.id
+            display_name = message.author.display_name
+            timestamp = message.created_at.timestamp()
+            message_id = message.id
+        else:
+            # Button-originated response - no per-click discord.Message exists
+            sender_id = response["user_id"]
+            display_name = response["display_name"]
+            timestamp = response["response_time"]
+            message_id = None
         bot_user_id = get_bot().user.id
         
         message_content = message_content.replace("\uFFFC", "")  # Remove U+FFFC
@@ -18244,7 +18601,7 @@ async def check_correct_responses_delete(question_ask_time, trivia_answer_list, 
                         fastest_response_time = response_time
                         fastest_correct_message = closest_msg
 
-    if emoji_mode == True and fastest_response_time is not None and blind_mode == False and marx_mode == False:
+    if emoji_mode == True and fastest_response_time is not None and fastest_correct_message is not None and blind_mode == False and marx_mode == False:
         try:
             await fastest_correct_message.add_reaction("⬆️")
         except discord.NotFound:
@@ -18611,7 +18968,7 @@ async def get_recent_question_ids_from_mongo(question_type):
 
 async def get_all_recent_question_ids():
     recent_ids = {}
-    for question_type in ["general", "crossword", "jeopardy", "mysterybox", "wof"]:
+    for question_type in ["general", "crossword", "jeopardy", "mysterybox", "wof", "sat"]:
         collection_name = f"asked_{question_type}_questions_discord"
         questions_collection = db[collection_name]
         # Await the cursor and convert it to a list
@@ -18658,10 +19015,31 @@ async def select_trivia_questions(questions_per_round):
             "crossword": [],
             "jeopardy": [],
             "mysterybox": [],
-            "wof": []
+            "wof": [],
+            "sat": []
         }
-        
-        sample_size = min(num_crossword_clues, questions_per_round - len(selected_questions))
+
+        # Coordinate jeopardy/crossword/SAT clue counts when 2+ of Alex/Word/Nerd are boosted
+        # this round - the independent min(num_X, remaining) consumption below only produces
+        # the desired "5 of each" / "3 each + 1" split once these three are reconciled together,
+        # since jeopardy's passive default (3) would otherwise eat slots meant for the others.
+        boosted = [name for name, flag in
+                   [("jeopardy", jeopardy_boosted), ("crossword", crossword_boosted), ("sat", sat_boosted)]
+                   if flag]
+        effective_jeopardy_clues = num_jeopardy_clues
+        effective_crossword_clues = num_crossword_clues
+        effective_sat_questions = num_sat_questions
+        if len(boosted) == 2:
+            effective_jeopardy_clues = 5 if "jeopardy" in boosted else 0
+            effective_crossword_clues = 5 if "crossword" in boosted else 0
+            effective_sat_questions = 5 if "sat" in boosted else 0
+        elif len(boosted) == 3:
+            extra = random.choice(boosted)
+            effective_jeopardy_clues = 3 + (1 if extra == "jeopardy" else 0)
+            effective_crossword_clues = 3 + (1 if extra == "crossword" else 0)
+            effective_sat_questions = 3 + (1 if extra == "sat" else 0)
+
+        sample_size = min(effective_crossword_clues, questions_per_round - len(selected_questions))
         if sample_size > 0:
             crossword_collection = db["crossword_questions"]
             pipeline_crossword = [
@@ -18676,7 +19054,7 @@ async def select_trivia_questions(questions_per_round):
             selected_questions.extend(crossword_questions)
             question_ids_to_store["crossword"].extend(doc["_id"] for doc in crossword_questions)
 
-        sample_size = min(num_jeopardy_clues, questions_per_round - len(selected_questions))
+        sample_size = min(effective_jeopardy_clues, questions_per_round - len(selected_questions))
         if sample_size > 0:
             jeopardy_collection = db["jeopardy_questions"]
             pipeline_jeopardy = [
@@ -18687,11 +19065,32 @@ async def select_trivia_questions(questions_per_round):
 
             for doc in jeopardy_questions:
                 doc["db"] = "jeopardy_questions"
-                
+
             selected_questions.extend(jeopardy_questions)
             question_ids_to_store["jeopardy"].extend(doc["_id"] for doc in jeopardy_questions)
 
-        
+        sample_size = min(effective_sat_questions, questions_per_round - len(selected_questions))
+        if sample_size > 0:
+            sat_collection = db["sat_questions"]
+            sat_categories = ["Math", "Verbal", "Grammar"] if num_math_questions > 0 else ["Verbal", "Grammar"]
+            pipeline_sat = [
+                {"$match": {
+                    "_id": {"$nin": list(recent_question_ids["sat"])},
+                    "category": {"$in": sat_categories},
+                }},
+                {"$sample": {"size": sample_size}}
+            ]
+            sat_questions = await sat_collection.aggregate(pipeline_sat).to_list(length=sample_size)
+
+            for doc in sat_questions:
+                doc["db"] = "sat_questions"
+                if doc.get("subcategory"):
+                    doc["category"] = f"{doc['category']}: {doc['subcategory']}"
+
+            selected_questions.extend(sat_questions)
+            question_ids_to_store["sat"].extend(doc["_id"] for doc in sat_questions)
+
+
         num_math_questions_mod = random.randint(0, num_math_questions)
         sample_size = min(num_math_questions_mod, questions_per_round - len(selected_questions))
         if sample_size > 0:
@@ -19415,6 +19814,7 @@ async def start_trivia():
     global scoreboard, current_longest_round_streak, current_longest_answer_streak
     global headers, params, filter_json, since_token, round_count, selected_questions, magic_number
     global previous_question, current_question
+    global current_answer_view, current_answer_message
     global db
     global question_responders, round_responders
     global question_asked_start, question_asked_end
@@ -19600,7 +20000,16 @@ async def start_trivia():
                     solution_list = [new_solution]        
                     
                 await check_correct_responses_delete(question_ask_time, solution_list, question_number, collected_responses, trivia_category, trivia_url, trivia_db=trivia_db, trivia_id=trivia_id)
-                
+
+                if current_answer_view is not None:
+                    current_answer_view.stop()
+                    try:
+                        await current_answer_message.edit(view=None)
+                    except (discord.NotFound, discord.HTTPException):
+                        pass
+                    current_answer_view = None
+                    current_answer_message = None
+
                 if not yolo_mode or question_number == questions_per_round:
                     await show_standings()
 
@@ -19734,7 +20143,7 @@ async def reset_round_options(reset_command, winner_id):
     global time_between_questions, ghost_mode, god_mode, yolo_mode, mirror_mode, echo_mode, image_questions, marx_mode, blind_mode, zen_mode, sniper_mode, blitz_mode, exact_mode, golf_mode, glyph_mode, cloak_mode, cloaked_user
 
     reset_success = False
-    
+
     if "blind" in reset_command:
         blind_mode = not blind_mode
         reset_success = True
@@ -19795,7 +20204,7 @@ async def reset_round_options(reset_command, winner_id):
         blitz_mode = not blitz_mode
         reset_success = True
         if blitz_mode == True:
-            await safe_send(channel, content=f"\n🥇🤩 **{winner_id}** wants all the glory!\n")
+            await safe_send(channel, content=f"\n🏆⚡ **{winner_id}** wants all the glory!\n")
         else:
             await safe_send(channel, content=f"\n🥇🙌 **{winner_id}** welcomes all winners to the podium.\n")
 
@@ -19811,7 +20220,7 @@ async def reset_round_options(reset_command, winner_id):
         glyph_mode = not glyph_mode
         reset_success = True
         if glyph_mode == True:
-            await safe_send(channel, content=f"\n🔐🔍 **{winner_id}** has obscured the questions!\n")
+            await safe_send(channel, content=f"\n🔐🛡️ **{winner_id}** has obscured the questions!\n")
         else:
             await safe_send(channel, content=f"\n🔓✅ **{winner_id}** says Google it!\n")
 
@@ -20408,7 +20817,7 @@ IMPORTANT:
 FLAGGED_REVIEW_SYSTEM_PROMPT = """You are a trivia question quality reviewer. You will be given a trivia question with user-submitted flag reports, and you must decide whether the question needs to be updated.
 
 ANSWER ARRAY RULES:
-- For multiple choice questions (url = "multiple choice", "multiple choice opentrivia", or "multiple choice oracle"):
+- For multiple choice questions (url = "multiple choice", "multiple choice opentrivia", "multiple choice oracle", or "multiple choice sat"):
   - answers[0] = the full correct choice, formatted "Letter. Text" (e.g. "C. Washington D.C.")
   - answers[1:] = every labeled choice in the same "Letter. Text" format, in letter order (e.g. "A. Miami", "B. Kansas City", "C. Washington D.C.", "D. Boston") -- this includes the correct choice again, at its natural letter position
   - To fix a wrong answer, set answers[0] to the new correct choice's full "Letter. Text" string, and make sure that same choice also appears correctly within answers[1:]
@@ -20440,7 +20849,7 @@ IMPORTANT:
 
 
 def _is_multiple_choice_url(url):
-    return url in {"multiple choice", "multiple choice opentrivia", "multiple choice oracle"}
+    return url in {"multiple choice", "multiple choice opentrivia", "multiple choice oracle", "multiple choice sat"}
 
 
 def _format_flagged_question_for_claude(doc):
