@@ -4770,7 +4770,7 @@ class FlagReasonModal(discord.ui.Modal, title="Flag Question"):
             # Call update_audit_question with the selected question, reason, and message context
             await update_audit_question(
                 self.question,
-                f"[{self.question_type.upper()}] {reason_text}",
+                reason_text,
                 self.display_name,
                 self.flag_message,
                 user_id=interaction.user.id,
@@ -20087,7 +20087,10 @@ async def start_trivia():
                 solution_list = []
 
                 if new_solution is None:
-                    solution_list = trivia_answer_list
+                    if trivia_url in {"multiple choice", "multiple choice opentrivia", "multiple choice oracle", "multiple choice sat"}:
+                        solution_list = trivia_answer_list[:1]
+                    else:
+                        solution_list = trivia_answer_list
                 elif isinstance(new_solution, list):
                     solution_list = new_solution
                 else:
