@@ -284,15 +284,23 @@ async def get_update_blurb() -> str:
 
 
 async def send_question_queen_submit_ad():
-    """Round-end /submit ad, also calling out whoever currently holds the Question Queen title."""
+    """Round-end /submit ad, also calling out whoever currently holds the Question Queen crowns."""
     submit_mention = f"</submit:{SUBMIT_COMMAND_ID}>" if SUBMIT_COMMAND_ID else "/submit"
+    flag_mention = f"</flag:{FLAG_COMMAND_ID}>" if FLAG_COMMAND_ID else "/flag"
+    perks_mention = f"</perks:{PERKS_COMMAND_ID}>" if PERKS_COMMAND_ID else "/perks"
     message = "\u200b\n"
-    message += f"{submit_mention} **Submit Your Own Trivia Questions!**\n"
-    message += "Community questions are now in the rotation!\n\n"
-    if top_contributor_id:
-        message += f"👑 This week's **Question Queen**: <@{top_contributor_id}> — Access to all perks! 🎁\n"
+    message += "**Improve the game and get rewarded**\n"
+    message += f"{submit_mention} to suggest new trivia questions\n"
+    message += f"{flag_mention} inaccurate or niche questions\n\n"
+    if top_contributor_id or top_editor_id:
+        message += "👑 This week's Question Queens: \n"
+        if top_contributor_id:
+            message += f"<@{top_contributor_id}> [New Questions]\n"
+        if top_editor_id:
+            message += f"<@{top_editor_id}> [Edits]\n"
+        message += f"\nThanks for your contributions. You get access to all {perks_mention}! 🎁\n"
     else:
-        message += "👑 No **Question Queen** crowned yet this week — get a question **approved** to claim the crown!\n"
+        message += f"👑 No Question Queens crowned yet this week. Snag a crown for free {perks_mention}!\n"
     message += "\n\u200b"
     return await safe_send(channel, message)
 
@@ -449,6 +457,7 @@ last_bump_time = None
 
 # Global variable for top contributor
 top_contributor_id = None
+top_editor_id = None
 
 # Global shutdown flag for coordinating trivia loops during updates
 shutdown_initiated = False
@@ -4706,12 +4715,36 @@ async def ask_lyric_challenge(winner, winner_id, num=7):
 class FlagReasonModal(discord.ui.Modal, title="Flag Question"):
     """Modal for collecting the reason for flagging a question"""
 
-    reason = discord.ui.TextInput(
-        label="Why are you flagging this question?",
-        placeholder="Enter your reason here...",
+    REASON_LABELS = {
+        "category": "Category",
+        "question": "Question",
+        "answer": "Answer",
+        "too_niche": "Too Niche",
+        "other": "Other",
+    }
+
+    reason_label = discord.ui.Label(
+        text="What's wrong with this question?",
+        description="Select all that apply",
+        component=discord.ui.Select(
+            options=[
+                discord.SelectOption(label="Category", value="category"),
+                discord.SelectOption(label="Question", value="question"),
+                discord.SelectOption(label="Answer", value="answer"),
+                discord.SelectOption(label="Too Niche", value="too_niche"),
+                discord.SelectOption(label="Other", value="other"),
+            ],
+            min_values=1,
+            max_values=5,
+            required=True,
+        ),
+    )
+    detail = discord.ui.TextInput(
+        label="Provide more detail",
+        placeholder="Optional — required if you selected 'Other'",
         style=discord.TextStyle.paragraph,
-        required=True,
-        max_length=500
+        required=False,
+        max_length=500,
     )
 
     def __init__(self, question, question_type, display_name, flag_message, embed_message):
@@ -4723,8 +4756,17 @@ class FlagReasonModal(discord.ui.Modal, title="Flag Question"):
         self.embed_message = embed_message  # The embed message to delete after submission
 
     async def on_submit(self, interaction: discord.Interaction):
+        selected = self.reason_label.component.values
+        detail_text = self.detail.value.strip()
+        if "other" in selected and not detail_text:
+            await interaction.response.send_message(
+                "❌ Please provide detail when selecting 'Other', then flag the question again.",
+                ephemeral=True,
+            )
+            return
         try:
-            reason_text = self.reason.value
+            reasons_text = ", ".join(self.REASON_LABELS[v] for v in selected)
+            reason_text = f"({reasons_text}) {detail_text}".strip()
             # Call update_audit_question with the selected question, reason, and message context
             await update_audit_question(
                 self.question,
@@ -12722,6 +12764,34 @@ async def update_audit_question(question, message_content, display_name, flag_me
                     print(f"Failed to update audit for document '{document_id}' in {question['trivia_db']}'.")
 
 
+async def record_edit_credits(collection_name, doc_id, audit_entries):
+    """Credit each distinct flagger of a question that just got edited, for the editing Question Queen crown."""
+    seen_user_ids = set()
+    now = datetime.datetime.utcnow()
+    for entry in audit_entries or []:
+        user_id = entry.get("user_id")
+        if user_id is None or user_id in seen_user_ids:
+            continue
+        seen_user_ids.add(user_id)
+        display_name = entry.get("display_name", "")
+        try:
+            await db.edit_credits.insert_one({
+                "user_id": user_id,
+                "display_name": display_name,
+                "collection_name": collection_name,
+                "doc_id": str(doc_id),
+                "credited_at": now,
+            })
+            await db.edit_credit_stats.update_one(
+                {"_id": user_id},
+                {"$inc": {"edits": 1}, "$set": {"display_name": display_name, "last_updated": now}},
+                upsert=True,
+            )
+        except Exception as e:
+            sentry_sdk.capture_exception(e)
+            print(f"⚠️ record_edit_credits: failed to credit user {user_id}: {e}")
+
+
 async def load_previous_question():
     global previous_question
     
@@ -17813,11 +17883,11 @@ async def _change_role_color(role_id: int, color_input: str, success_message: st
 @bot.tree.command(name="okrafx", description="Change your username color (Bumper King and Top Contributor only)", guild=discord.Object(id=OKRAN_GUILD_ID))
 @discord.app_commands.describe(color="Color name or hex code")
 async def change_color_command(interaction: discord.Interaction, color: str):
-    global bumper_king_id, top_contributor_id
+    global bumper_king_id, top_contributor_id, top_editor_id
 
     user_id = interaction.user.id
     is_bumper_king = bumper_king_id and str(user_id) == bumper_king_id
-    is_top_contributor = top_contributor_id and user_id == top_contributor_id
+    is_top_contributor = (top_contributor_id and user_id == top_contributor_id) or (top_editor_id and user_id == top_editor_id)
 
     if not is_bumper_king and not is_top_contributor:
         await interaction.response.send_message(
@@ -19792,7 +19862,8 @@ async def get_random_trivia_question():
                 selected_question["url"],
                 selected_question["answers"],
                 "trivia_questions",
-                selected_question["_id"]
+                selected_question["_id"],
+                selected_question.get("paragraph"),
             )
             
             return final_selected_question
@@ -19859,7 +19930,7 @@ async def start_trivia():
 
             await sync_bumper_king_with_role()
             try:
-                await sync_top_contributor_role()
+                await sync_crown_roles()
             except Exception as _e:
                 sentry_sdk.capture_exception(_e)
             #await get_survey_results()
@@ -19990,7 +20061,11 @@ async def start_trivia():
                 else:
                     selected_question = selected_questions[0]
 
-                trivia_category, trivia_question, trivia_url, trivia_answer_list, trivia_db, trivia_id, trivia_paragraph = selected_question
+                trivia_paragraph = None
+                if len(selected_question) == 7:
+                    trivia_category, trivia_question, trivia_url, trivia_answer_list, trivia_db, trivia_id, trivia_paragraph = selected_question
+                else:
+                    trivia_category, trivia_question, trivia_url, trivia_answer_list, trivia_db, trivia_id = selected_question
 
                 current_question = {
                     "trivia_category": trivia_category,
@@ -21567,7 +21642,7 @@ async def _approve_submission(interaction, submission_id, edited=False, notify_t
                 pass
         # Update the Top Contributor role (best-effort)
         try:
-            await sync_top_contributor_role()
+            await sync_crown_roles()
         except Exception as e:
             sentry_sdk.capture_exception(e)
     except Exception as e:
@@ -21793,7 +21868,7 @@ async def _bulk_approve_submissions(session_id, mod_id, mod_name, guild=None, no
         else:
             failed += 1
     try:
-        await sync_top_contributor_role()
+        await sync_crown_roles()
     except Exception:
         pass
     return approved, failed
@@ -21964,7 +22039,7 @@ class BatchEditModal(discord.ui.Modal, title="Edit & Approve"):
                 )
                 await interaction.followup.send("✅ Edited & approved. Navigate with ← → to continue.", ephemeral=True)
                 try:
-                    await sync_top_contributor_role()
+                    await sync_crown_roles()
                 except Exception:
                     pass
             else:
@@ -22156,7 +22231,7 @@ class BatchPageView(discord.ui.View):
                     except Exception:
                         pass
         try:
-            await sync_top_contributor_role()
+            await sync_crown_roles()
         except Exception:
             pass
         result = f"✔️ Applied — ✅ {approved_count} approved, ❌ {rejected_count} rejected"
@@ -22387,10 +22462,14 @@ class ApplyFlaggedModal(discord.ui.Modal, title="Apply Claude Changes"):
             update_op = {"$unset": {"audit": ""}}
             if proposed:
                 update_op["$set"] = proposed
+                update_op["$unset"].update({"asked_count": "", "correct_count": "", "incorrect_count": ""})
             await db[col].update_one({"_id": ObjectId(doc_id)}, update_op)
             await db.flag_notifications.update_one(
                 {"doc_id": doc_id, "collection_name": col}, {"$set": {"resolved": True}}
             )
+            if proposed:
+                await record_edit_credits(col, doc_id, doc.get("audit", []))
+                await sync_crown_roles()
             notify_text = (self.notify.value or "").strip() or None
             after_doc = {**doc, **proposed}
             await _dm_flaggers(
@@ -22504,11 +22583,13 @@ class EditFlaggedQuestionModal(discord.ui.Modal, title="Edit & Apply Question Fi
             doc_before = await db[col].find_one({"_id": ObjectId(doc_id)})
             await db[col].update_one(
                 {"_id": ObjectId(doc_id)},
-                {"$set": fields, "$unset": {"audit": ""}},
+                {"$set": fields, "$unset": {"audit": "", "asked_count": "", "correct_count": "", "incorrect_count": ""}},
             )
             await db.flag_notifications.update_one(
                 {"doc_id": doc_id, "collection_name": col}, {"$set": {"resolved": True}}
             )
+            await record_edit_credits(col, doc_id, doc_before.get("audit", []) if doc_before else [])
+            await sync_crown_roles()
             notify_text = (self.notify.value or "").strip() or None
             if doc_before:
                 await _dm_flaggers(
@@ -22635,8 +22716,11 @@ class FlaggedReviewView(discord.ui.View):
         await interaction.response.send_modal(ClearFlaggedModal(col, doc_id))
 
 
-async def sync_top_contributor_role():
-    global top_contributor_id
+async def sync_crown_roles():
+    """Sync the Question Queen role for both crowns: top submitter and top editor.
+    Both use the same TOP_CONTRIBUTOR_ROLE_ID and can be held simultaneously by the
+    same or different people without one sync stripping the other's holder."""
+    global top_contributor_id, top_editor_id
     if not TOP_CONTRIBUTOR_ROLE_ID:
         return
     guild = bot.get_guild(OKRAN_GUILD_ID)
@@ -22646,22 +22730,36 @@ async def sync_top_contributor_role():
     if not role:
         return
     cutoff = datetime.datetime.utcnow() - datetime.timedelta(days=TOP_CONTRIBUTOR_WINDOW_DAYS)
-    pipeline = [
+
+    submit_pipeline = [
         {"$match": {"status": "approved", "decided_at": {"$gte": cutoff}, "submitter_id": {"$ne": okrag_id}}},
         {"$group": {"_id": "$submitter_id", "count": {"$sum": 1}}},
         {"$sort": {"count": -1, "_id": 1}},
         {"$limit": 1},
     ]
-    top = await db.question_submissions.aggregate(pipeline).to_list(length=1)
-    target_id = top[0]["_id"] if top else None
+    submit_top = await db.question_submissions.aggregate(submit_pipeline).to_list(length=1)
+    new_contributor_id = submit_top[0]["_id"] if submit_top else None
+
+    edit_pipeline = [
+        {"$match": {"credited_at": {"$gte": cutoff}, "user_id": {"$ne": okrag_id}}},
+        {"$group": {"_id": "$user_id", "count": {"$sum": 1}}},
+        {"$sort": {"count": -1, "_id": 1}},
+        {"$limit": 1},
+    ]
+    edit_top = await db.edit_credits.aggregate(edit_pipeline).to_list(length=1)
+    new_editor_id = edit_top[0]["_id"] if edit_top else None
+
+    keep_ids = {i for i in (new_contributor_id, new_editor_id) if i is not None}
     for member in list(role.members):
-        if member.id != target_id:
+        if member.id not in keep_ids:
             try:
                 await member.remove_roles(role, reason="No longer this week's Question Queen")
             except (discord.Forbidden, Exception):
                 pass
-    if target_id:
-        top_contributor_id = target_id
+
+    async def _grant(target_id, add_reason, dm_text):
+        if not target_id:
+            return
         member = guild.get_member(target_id)
         if not member:
             try:
@@ -22670,24 +22768,40 @@ async def sync_top_contributor_role():
                 member = None
         if member and role not in member.roles:
             try:
-                await member.add_roles(role, reason="Question Queen (last 7 days)")
+                await member.add_roles(role, reason=add_reason)
             except (discord.Forbidden, Exception) as e:
-                print(f"⚠️ sync_top_contributor_role: failed to add role: {e}")
+                print(f"⚠️ sync_crown_roles: failed to add role: {e}")
                 return
             try:
-                await member.send(
-                    f"👑 Congrats! You're this week's **Question Queen** on Live Trivia!\n\n"
-                    f"You've submitted the most approved questions over the last 7 days. As a reward, you now unlock:\n\n"
-                    f"• Access to all exclusive perks 🎁\n"
-                    f"• Change your username color with `/okrafx` 🎨\n"
-                    f"• Start tournaments 🏟️\n"
-                    f"• Access the mini-game arena 🎮\n\n"
-                    f"Keep it up! 🥒"
-                )
+                await member.send(dm_text)
             except (discord.Forbidden, Exception):
                 pass
-    else:
-        top_contributor_id = None
+
+    await _grant(
+        new_contributor_id,
+        "Question Queen — submitting (last 7 days)",
+        f"👑 Congrats! You've earned one of the Question Queen crowns on Live Trivia!\n\n"
+        f"You've submitted the most approved questions over the last 7 days. As a reward, you now unlock:\n\n"
+        f"• Access to all exclusive perks 🎁\n"
+        f"• Change your username color with `/okrafx` 🎨\n"
+        f"• Start tournaments 🏟️\n"
+        f"• Access the mini-game arena 🎮\n\n"
+        f"Keep it up! 🥒",
+    )
+    await _grant(
+        new_editor_id,
+        "Question Queen — editing (last 7 days)",
+        f"👑 Congrats! You've earned one of the Question Queen crowns on Live Trivia!\n\n"
+        f"You've had the most flags lead to an edited question over the last 7 days. As a reward, you now unlock:\n\n"
+        f"• Access to all exclusive perks 🎁\n"
+        f"• Change your username color with `/okrafx` 🎨\n"
+        f"• Start tournaments 🏟️\n"
+        f"• Access the mini-game arena 🎮\n\n"
+        f"Keep it up! 🥒",
+    )
+
+    top_contributor_id = new_contributor_id
+    top_editor_id = new_editor_id
 
 
 async def register_persistent_submission_views():
@@ -23017,6 +23131,55 @@ async def contributors_command(interaction: discord.Interaction):
 # ============================================================
 
 
+@bot.tree.command(name="editors", description="Top question editors", guild=discord.Object(id=OKRAN_GUILD_ID))
+async def editors_command(interaction: discord.Interaction):
+    try:
+        await interaction.response.defer()
+
+        all_time_rows = await db.edit_credit_stats.find({"edits": {"$gt": 0}, "_id": {"$ne": okrag_id}}).sort("edits", -1).limit(15).to_list(length=15)
+
+        cutoff = datetime.datetime.utcnow() - datetime.timedelta(days=TOP_CONTRIBUTOR_WINDOW_DAYS)
+        weekly_pipeline = [
+            {"$match": {"credited_at": {"$gte": cutoff}, "user_id": {"$ne": okrag_id}}},
+            {"$group": {"_id": "$user_id", "count": {"$sum": 1}, "display_name": {"$first": "$display_name"}}},
+            {"$sort": {"count": -1, "_id": 1}},
+            {"$limit": 15},
+        ]
+        weekly_rows = await db.edit_credits.aggregate(weekly_pipeline).to_list(length=15)
+
+        if not all_time_rows and not weekly_rows:
+            await interaction.followup.send("No edit credits yet.")
+            return
+
+        embed = discord.Embed(title="✏️ Top Editors", color=discord.Color.gold())
+
+        if weekly_rows:
+            lines = []
+            for i, r in enumerate(weekly_rows, 1):
+                name = r.get("display_name") or f"<@{r['_id']}>"
+                crown = " 👑" if i == 1 else ""
+                lines.append(f"**{i}.** {name} — {r.get('count', 0)}{crown}")
+            embed.add_field(name=f"Past {TOP_CONTRIBUTOR_WINDOW_DAYS} Days", value="\n".join(lines), inline=False)
+        else:
+            embed.add_field(name=f"Past {TOP_CONTRIBUTOR_WINDOW_DAYS} Days", value="No edit credits in this window.", inline=False)
+
+        if all_time_rows:
+            lines = []
+            for i, r in enumerate(all_time_rows, 1):
+                ed = r.get("edits", 0)
+                name = r.get("display_name") or f"<@{r['_id']}>"
+                lines.append(f"**{i}.** {name} — {ed}")
+            embed.add_field(name="All-Time", value="\n".join(lines), inline=False)
+
+        await interaction.followup.send(embed=embed)
+    except Exception as e:
+        sentry_sdk.capture_exception(e)
+        try:
+            await interaction.followup.send("❌ Something went wrong.", ephemeral=True)
+        except Exception:
+            pass
+
+
 @bot.tree.command(name="perks", description="See how to unlock Live Trivia perks", guild=discord.Object(id=OKRAN_GUILD_ID))
 async def perks_command(interaction: discord.Interaction):
     embed = discord.Embed(
@@ -23147,7 +23310,7 @@ async def on_ready():
     try:
         await ensure_submission_indexes()
         await register_persistent_submission_views()
-        await sync_top_contributor_role()
+        await sync_crown_roles()
     except Exception as _e:
         sentry_sdk.capture_exception(_e)
         print(f"⚠️ user-submission startup hook: {_e}")

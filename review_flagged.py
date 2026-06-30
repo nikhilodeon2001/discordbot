@@ -9,6 +9,7 @@ Mode 2 — apply:
 """
 
 import argparse
+import datetime
 import json
 import os
 import sys
@@ -204,6 +205,7 @@ def mode2_apply(input_path):
         update_op = {"$unset": {"audit": ""}}
         if changes:
             update_op["$set"] = changes
+            update_op["$unset"].update({"asked_count": "", "correct_count": "", "incorrect_count": ""})
 
         result = db[col_name].update_one({"_id": doc_id}, update_op)
         if result.modified_count:
@@ -212,6 +214,26 @@ def mode2_apply(input_path):
                 changed += 1
                 print(f"  ✅ Updated + audit cleared: {col_name} / {entry['id']}")
                 print(f"     Changes: {list(changes.keys())}")
+                seen_user_ids = set()
+                now = datetime.datetime.utcnow()
+                for audit_entry in entry.get("audit", []) or []:
+                    user_id = audit_entry.get("user_id")
+                    if user_id is None or user_id in seen_user_ids:
+                        continue
+                    seen_user_ids.add(user_id)
+                    display_name = audit_entry.get("display_name", "")
+                    db.edit_credits.insert_one({
+                        "user_id": user_id,
+                        "display_name": display_name,
+                        "collection_name": col_name,
+                        "doc_id": entry["id"],
+                        "credited_at": now,
+                    })
+                    db.edit_credit_stats.update_one(
+                        {"_id": user_id},
+                        {"$inc": {"edits": 1}, "$set": {"display_name": display_name, "last_updated": now}},
+                        upsert=True,
+                    )
             else:
                 print(f"  🧹 Audit cleared: {col_name} / {entry['id']}")
         else:
