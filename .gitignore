@@ -7,14 +7,14 @@ __pycache__/
 *.pyc
 *.pyo
 .DS_Store
-nltk_data/
 .venv/
-flagged_review.json
 
-# Game asset files - fetched from S3 at startup, see ensure_game_assets() in discordbot.py
-okra.png
-periodic_table.svg
-usa.png
-wordlist.txt
-4letterwords.csv
-5letterwords.csv
+# Game asset files - fetched from S3 at startup into here, see ensure_game_assets() in discordbot.py
+private-assets/
+
+# Fonts - fetched from S3 on demand, see ensure_popular_fonts()/get_font() in discordbot.py
+fonts/
+
+# Local dev instructions for Claude Code - not for the shared repo
+CLAUDE.md
+.claude/
