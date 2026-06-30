@@ -20152,7 +20152,7 @@ async def start_trivia():
                 if last_round_end_msg is not None:
                     base_text = last_round_end_msg.content
                     try:
-                        prompt_msg = await last_round_end_msg.edit(content=base_text + prompt_suffix, view=view)
+                        prompt_msg = await last_round_end_msg.edit(view=view)
                     except (discord.NotFound, discord.HTTPException):
                         base_text = ""
                         prompt_msg = await safe_send(channel, prompt_suffix, view=view)
