@@ -294,7 +294,7 @@ async def send_question_queen_submit_ad():
     else:
         message += "👑 No **Question Queen** crowned yet this week — get a question **approved** to claim the crown!\n"
     message += "\n\u200b"
-    await safe_send(channel, message)
+    return await safe_send(channel, message)
 
 def randomize_embed_color():
     """
@@ -14678,7 +14678,7 @@ async def save_selected_questions_to_db(selected_questions):
 
         # Convert tuple format to document format for MongoDB
         documents = []
-        for idx, (category, question, url, answers, db_name, question_id) in enumerate(selected_questions):
+        for idx, (category, question, url, answers, db_name, question_id, paragraph) in enumerate(selected_questions):
             doc = {
                 "_id": idx,
                 "category": category,
@@ -14686,7 +14686,8 @@ async def save_selected_questions_to_db(selected_questions):
                 "url": url,
                 "answers": answers,
                 "db": db_name,
-                "question_id": question_id
+                "question_id": question_id,
+                "paragraph": paragraph
             }
             documents.append(doc)
 
@@ -14711,7 +14712,7 @@ async def load_selected_questions_from_db():
 
         # Convert documents back to tuple format
         selected_questions = [
-            (doc["category"], doc["question"], doc["url"], doc["answers"], doc["db"], doc["question_id"])
+            (doc["category"], doc["question"], doc["url"], doc["answers"], doc["db"], doc["question_id"], doc.get("paragraph"))
             for doc in documents
         ]
 
@@ -17929,7 +17930,7 @@ def apply_glyphs(text):
     return ''.join(random.choice(GLYPH_MAP[char]) if char in GLYPH_MAP else char for char in text)
 
 
-async def ask_question(trivia_category, trivia_question, trivia_url, trivia_answer_list, question_number, trivia_db=None, trivia_id=None):
+async def ask_question(trivia_category, trivia_question, trivia_url, trivia_answer_list, question_number, trivia_db=None, trivia_id=None, trivia_paragraph=None):
     """Ask the trivia question."""
     global current_answer_view, current_answer_message
     await record_question_asked(trivia_db, trivia_id)
@@ -17947,6 +17948,9 @@ async def ask_question(trivia_category, trivia_question, trivia_url, trivia_answ
 
     # Apply glyph transformation if glyph_mode is enabled
     trivia_question = apply_glyphs(trivia_question)
+
+    if trivia_paragraph and trivia_paragraph != "null":
+        trivia_question = f"{trivia_paragraph.replace('$', '')[:1500]}\n\n{trivia_question}"
 
     trivia_answer = trivia_answer_list[0]  # The first item is the main answer
 
@@ -19202,7 +19206,7 @@ async def select_trivia_questions(questions_per_round):
         await store_all_question_ids(question_ids_to_store)
 
         final_selected_questions = [
-            (doc["category"], doc["question"], doc["url"], doc["answers"], doc["db"], doc["_id"])
+            (doc["category"], doc["question"], doc["url"], doc["answers"], doc["db"], doc["_id"], doc.get("paragraph"))
             for doc in selected_questions
         ]
                 
@@ -19846,8 +19850,8 @@ async def start_trivia():
         if selected_questions is None or len(selected_questions) == 0:
             selected_questions = await select_trivia_questions(questions_per_round)  #Pick the initial question set
 
-        
-        while True:  # Endless loop     
+        last_round_end_msg = None
+        while True:  # Endless loop
             reset_embed_color()  
             current_time = time.time()
             
@@ -19903,11 +19907,17 @@ async def start_trivia():
             # Wait for a player to be present before starting
             if no_players:
                 view = StartRoundView()
-                prompt_msg = await safe_send(
-                    channel,
-                    "\u200b\n👥 ***Send any message or click below to start!*** 👥\n\u200b",
-                    view=view,
-                )
+                prompt_suffix = "\u200b\n👥 ***Send any message or click below to start!*** 👥\n\u200b"
+                base_text = ""
+                if last_round_end_msg is not None:
+                    base_text = last_round_end_msg.content
+                    try:
+                        prompt_msg = await last_round_end_msg.edit(content=base_text + prompt_suffix, view=view)
+                    except (discord.NotFound, discord.HTTPException):
+                        base_text = ""
+                        prompt_msg = await safe_send(channel, prompt_suffix, view=view)
+                else:
+                    prompt_msg = await safe_send(channel, prompt_suffix, view=view)
 
                 def check(m):
                     return m.author.id != get_bot().user.id and m.channel.id == channel.id
@@ -19929,7 +19939,10 @@ async def start_trivia():
                 else:
                     interaction = view.future.result()
                     try:
-                        await prompt_msg.edit(content=f"\u200b\n🥒 ***Started by {interaction.user.mention}!*** 🥒\n\u200b", view=None)
+                        await prompt_msg.edit(
+                            content=base_text + f"\u200b\n🥒 ***Started by {interaction.user.mention}!*** 🥒\n\u200b",
+                            view=None,
+                        )
                     except (discord.NotFound, discord.HTTPException):
                         pass
             else:
@@ -19939,9 +19952,9 @@ async def start_trivia():
             perks_mention = f"</perks:{PERKS_COMMAND_ID}>" if PERKS_COMMAND_ID else "/perks"
             submit_mention = f"</submit:{SUBMIT_COMMAND_ID}>" if SUBMIT_COMMAND_ID else "/submit"
             lab_message = "\u200b\n✨🧪 **NEW** from the **Okra Lab**! 🧪✨\n"
-            lab_message += "\n🎓📝 Valedictorian: Back to High School [Mini Game]"
-            lab_message += "\n🤓📝 Nerd: Add SAT/ACT questions [Game Mode]"
-            lab_message += "\n🖱️🔢 Clickable multiple choice options [Game Mechanic]\n"
+            lab_message += "\n🎓📝 **Valedictorian**: Back to High School [Mini Game]\n"
+            lab_message += "\n🤓📝 **Nerd**: Add SAT/ACT questions [Game Mode]\n"
+            lab_message += "\n🖱️🔢 **Clickable** multiple choice options [Game Mechanic]\n"
             lab_message += "\n\n\u200b"
             await safe_send(channel, lab_message)
             await asyncio.sleep(3)
@@ -19977,7 +19990,7 @@ async def start_trivia():
                 else:
                     selected_question = selected_questions[0]
 
-                trivia_category, trivia_question, trivia_url, trivia_answer_list, trivia_db, trivia_id = selected_question
+                trivia_category, trivia_question, trivia_url, trivia_answer_list, trivia_db, trivia_id, trivia_paragraph = selected_question
 
                 current_question = {
                     "trivia_category": trivia_category,
@@ -19992,7 +20005,7 @@ async def start_trivia():
                 collected_responses.clear()
                 question_asked_start = time.time()
                 question_asked_end = question_asked_start + question_time
-                question_ask_time, new_question, new_solution = await ask_question(trivia_category, trivia_question, trivia_url, trivia_answer_list, question_number, trivia_db=trivia_db, trivia_id=trivia_id)
+                question_ask_time, new_question, new_solution = await ask_question(trivia_category, trivia_question, trivia_url, trivia_answer_list, question_number, trivia_db=trivia_db, trivia_id=trivia_id, trivia_paragraph=trivia_paragraph)
                 await asyncio.sleep(question_time)
                 #await safe_send(channel, "\u200b\n🛑 TIME 🛑\n\u200b")
                 
@@ -20090,7 +20103,7 @@ async def start_trivia():
                 await asyncio.sleep(4)
 
             await asyncio.sleep(2)
-            await send_question_queen_submit_ad()
+            last_round_end_msg = await send_question_queen_submit_ad()
 
     except Exception as e:
         sentry_sdk.capture_exception(e)
