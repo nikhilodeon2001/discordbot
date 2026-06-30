@@ -290,7 +290,7 @@ async def send_question_queen_submit_ad():
     perks_mention = f"</perks:{PERKS_COMMAND_ID}>" if PERKS_COMMAND_ID else "/perks"
     message = "\u200b\n"
     message += "**Improve the game and get rewarded**\n"
-    message += f"{submit_mention} to suggest new trivia questions\n"
+    message += f"{submit_mention} new trivia questions\n"
     message += f"{flag_mention} inaccurate or niche questions\n\n"
     if top_contributor_id or top_editor_id:
         message += "👑 This week's Question Queens: \n"
@@ -20196,7 +20196,7 @@ async def start_trivia():
                 "\U0001f49a [Unlock Perks](https://discord.com/channels/1367682586079395902/role-subscriptions)\n"
                 "\U0001f4a1 [Submit Feedback](https://forms.gle/iWvmN24pfGEGSy7n7)\n"
                 "\u2b50 [Leave a Review](https://disboard.org/review/create/1367682586079395902)\n"
-                f"\u2753 {submit_mention} to suggest questions\n\n"
+                f"\u2753 {submit_mention} new questions\n\n"
                 "\U0001f3a8 Live Trivia is a pure hobby effort.\n"
                 "\u200b"
             )
