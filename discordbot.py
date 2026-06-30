@@ -18993,7 +18993,7 @@ async def update_round_streaks(user, user_id, roast_task=None):
                     ),
                 )
 
-        await asyncio.sleep(2)
+        await asyncio.sleep(5)
 
         await select_wof_questions(user, user_id)
 
