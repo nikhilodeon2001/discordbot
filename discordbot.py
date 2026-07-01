@@ -5192,6 +5192,18 @@ def strip_html_tags(html):
     return parser.get_text()
 
 
+def jeopardy_html_to_discord(text):
+    if not text or ('<' not in text and '&' not in text):
+        return text
+    import html as _html
+    text = _html.unescape(text)
+    text = re.sub(r'<br\s*/?>', '\n', text, flags=re.IGNORECASE)
+    text = re.sub(r'<i>(.*?)</i>', r'*\1*', text, flags=re.IGNORECASE | re.DOTALL)
+    text = re.sub(r'<b>(.*?)</b>', r'**\1**', text, flags=re.IGNORECASE | re.DOTALL)
+    text = re.sub(r'<[^>]+>', '', text)
+    return text.strip()
+
+
 def clean_snippet_text(text):
     return re.sub(r'\s+', ' ', text).strip()
 
@@ -18130,6 +18142,9 @@ async def ask_question(trivia_category, trivia_question, trivia_url, trivia_answ
     # Apply glyph transformation if glyph_mode is enabled
     trivia_question = apply_glyphs(trivia_question)
 
+    if trivia_url.startswith("jeopardy"):
+        trivia_question = jeopardy_html_to_discord(trivia_question)
+
     if trivia_paragraph and trivia_paragraph != "null":
         trivia_question = f"{trivia_paragraph.replace('$', '')[:1500]}\n\n{trivia_question}"
 
@@ -18244,7 +18259,7 @@ async def ask_question(trivia_category, trivia_question, trivia_url, trivia_answ
         else:
             message_body += f"\u200b\n\u200b\n{number_block} **{get_category_title(trivia_category, trivia_url)}**\n\n{trivia_question}\n{num_set}\n"
 
-    elif trivia_url == "jeopardy":
+    elif trivia_url.startswith("jeopardy"):
         if image_questions == True: 
             image_buffer = generate_jeopardy_image(trivia_question)
             message_body += f"\u200b\n\u200b\n{number_block} **{get_category_title(trivia_category, trivia_url)}**\n\nAnd the answer is: \n"
@@ -18260,7 +18275,7 @@ async def ask_question(trivia_category, trivia_question, trivia_url, trivia_answ
         else:
             message_body += f"\u200b\n\u200b\n{number_block} **{get_category_title(trivia_category, trivia_url)}**\n\n[{len(trivia_answer_list[0])} Letters] {trivia_question}\n\n{string_representation}\n"
         
-    elif trivia_url == "multiple choice" or trivia_url == "multiple choice opentrivia" or trivia_url == "multiple choice oracle" or trivia_url == "multiple choice sat":
+    elif "multiple choice" in trivia_url:
         if trivia_answer_list[0] in {"True", "False"}:
             message_body += f"\u200b\n\u200b\n{number_block} **{get_category_title(trivia_category, trivia_url)}**\n\n🚨 **T/F - 1 GUESS** 🚨 {trivia_question}\n\n"
         else:
@@ -19916,7 +19931,8 @@ def get_category_title(trivia_category, trivia_url):
     if emojis is None:
         prefix = trivia_category.split(":")[0].strip()
         emojis = category_emoji_cache.get(prefix, "❓❔")
-    if trivia_url.lower() == "jeopardy":
+    trivia_category = trivia_category.upper()
+    if trivia_url.lower().startswith("jeopardy"):
         return f"Jeopardy: {trivia_category} {emojis}"
     return f"{trivia_category} {emojis}"
 
@@ -20262,7 +20278,7 @@ async def start_trivia():
                 solution_list = []
 
                 if new_solution is None:
-                    if trivia_url in {"multiple choice", "multiple choice opentrivia", "multiple choice oracle", "multiple choice sat"}:
+                    if "multiple choice" in trivia_url:
                         solution_list = trivia_answer_list[:1]
                     else:
                         solution_list = trivia_answer_list
@@ -21162,7 +21178,7 @@ IMPORTANT:
 
 
 def _is_multiple_choice_url(url):
-    return url in {"multiple choice", "multiple choice opentrivia", "multiple choice oracle", "multiple choice sat"}
+    return "multiple choice" in (url or "")
 
 
 def _format_flagged_question_for_claude(doc):
