@@ -18288,6 +18288,9 @@ async def ask_question(trivia_category, trivia_question, trivia_url, trivia_answ
     
     view_kwargs = {"view": answer_view} if answer_view is not None else {}
 
+    if len(message_body) > 4000:
+        message_body = message_body[:3997] + "…"
+
     if send_image_flag:
         if image_url:
             message = await safe_send(channel, content=message_body, embed=discord.Embed().set_image(url=image_url), **view_kwargs)
@@ -18302,7 +18305,7 @@ async def ask_question(trivia_category, trivia_question, trivia_url, trivia_answ
     current_answer_view = answer_view
     current_answer_message = message
 
-    response_time = message.created_at.timestamp()
+    response_time = message.created_at.timestamp() if message is not None else time.time()
             
     if new_solution is None:
     # Use the original trivia answer list if no new solution is provided
