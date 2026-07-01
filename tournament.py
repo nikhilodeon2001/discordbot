@@ -43,6 +43,12 @@ def _jeopardy_html_to_discord(text):
     text = _re.sub(r'<[^>]+>', '', text)
     return text.strip()
 
+_TITLE_CASE_SKIP = {"a", "an", "the", "of", "in", "on", "at", "to", "for", "and", "or", "but", "nor", "with", "by", "from"}
+
+def _jeopardy_title_case(text):
+    words = text.lower().split()
+    return " ".join(w if (i > 0 and w in _TITLE_CASE_SKIP) else w.capitalize() for i, w in enumerate(words))
+
 
 # Tournament Configuration Constants
 ACTIVE_STATUSES = {"signup", "rr", "points_race", "semis", "final"}
@@ -2552,7 +2558,7 @@ class TournamentManager:
                     "prompt": _jeopardy_html_to_discord(doc.get("question", doc.get("clue", ""))) if question_type == "jeopardy" else doc.get("question", doc.get("clue", "")),
                     "answer": first_answer,
                     "answers": answers,
-                    "category": doc.get("category", "").capitalize() if question_type == "jeopardy" else doc.get("category", ""),
+                    "category": _jeopardy_title_case(doc.get("category", "")) if question_type == "jeopardy" else doc.get("category", ""),
                     "url": doc.get("url", "")
                 }
 
