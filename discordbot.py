@@ -19926,13 +19926,19 @@ async def ensure_category_emoji(category):
         print(f"⚠️ ensure_category_emoji: failed for '{category}': {e}")
 
 
+_TITLE_CASE_SKIP = {"a", "an", "the", "of", "in", "on", "at", "to", "for", "and", "or", "but", "nor", "with", "by", "from"}
+
+def _jeopardy_title_case(text):
+    words = text.lower().split()
+    return " ".join(w if (i > 0 and w in _TITLE_CASE_SKIP) else w.capitalize() for i, w in enumerate(words))
+
 def get_category_title(trivia_category, trivia_url):
     emojis = category_emoji_cache.get(trivia_category)
     if emojis is None:
         prefix = trivia_category.split(":")[0].strip()
         emojis = category_emoji_cache.get(prefix, "❓❔")
     if trivia_url.lower().startswith("jeopardy"):
-        return f"Jeopardy: {trivia_category.capitalize()} {emojis}"
+        return f"Jeopardy: {_jeopardy_title_case(trivia_category)} {emojis}"
     return f"{trivia_category} {emojis}"
 
 
