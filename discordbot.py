@@ -19931,9 +19931,8 @@ def get_category_title(trivia_category, trivia_url):
     if emojis is None:
         prefix = trivia_category.split(":")[0].strip()
         emojis = category_emoji_cache.get(prefix, "❓❔")
-    trivia_category = trivia_category.upper()
     if trivia_url.lower().startswith("jeopardy"):
-        return f"Jeopardy: {trivia_category} {emojis}"
+        return f"Jeopardy: {trivia_category.capitalize()} {emojis}"
     return f"{trivia_category} {emojis}"
 
 

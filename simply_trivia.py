@@ -466,7 +466,7 @@ async def start_simply_trivia(bot, db, channel_id, fuzzy_match_func):
             await discordbot.record_question_asked(question.get("db"), question.get("_id"))
 
             # Build question embed
-            category = question.get("category", "Trivia").upper()
+            category = question.get("category", "Trivia")
             question_text = question.get("question", "")
             url = question.get("url", "")
             if url.startswith("jeopardy"):

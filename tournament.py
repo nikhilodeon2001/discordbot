@@ -2552,7 +2552,7 @@ class TournamentManager:
                     "prompt": _jeopardy_html_to_discord(doc.get("question", doc.get("clue", ""))) if question_type == "jeopardy" else doc.get("question", doc.get("clue", "")),
                     "answer": first_answer,
                     "answers": answers,
-                    "category": doc.get("category", "").upper(),
+                    "category": doc.get("category", "").capitalize() if question_type == "jeopardy" else doc.get("category", ""),
                     "url": doc.get("url", "")
                 }
 
