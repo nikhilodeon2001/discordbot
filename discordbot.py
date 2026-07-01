@@ -21134,7 +21134,7 @@ IMPORTANT:
 FLAGGED_REVIEW_SYSTEM_PROMPT = """You are a trivia question quality reviewer. You will be given a trivia question with user-submitted flag reports, and you must decide whether the question needs to be updated.
 
 ANSWER ARRAY RULES:
-- For multiple choice questions (url = "multiple choice", "multiple choice opentrivia", "multiple choice oracle", or "multiple choice sat"):
+- For multiple choice questions (url contains "multiple choice", e.g. "multiple choice", "multiple choice opentrivia", "multiple choice oracle", "multiple choice sat", "multiple choice opentdb", "multiple choice opentriviaqa"):
   - answers[0] = the full correct choice, formatted "Letter. Text" (e.g. "C. Washington D.C.")
   - answers[1:] = every labeled choice in the same "Letter. Text" format, in letter order (e.g. "A. Miami", "B. Kansas City", "C. Washington D.C.", "D. Boston") -- this includes the correct choice again, at its natural letter position
   - To fix a wrong answer, set answers[0] to the new correct choice's full "Letter. Text" string, and make sure that same choice also appears correctly within answers[1:]
