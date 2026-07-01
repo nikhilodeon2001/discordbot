@@ -18540,7 +18540,7 @@ def fuzzy_match(user_answer, correct_answer, category, url, _skip_alias_check=Fa
     user_answer = normalize_text(str(user_answer))
     correct_answer = normalize_text(str(correct_answer))
 
-    if url in {"multiple choice", "multiple choice opentrivia", "multiple choice oracle", "multiple choice sat"}:
+    if "multiple choice" in (url or ""):
         if user_answer and correct_answer:
             return user_answer[0].lower() == correct_answer[0].lower()
         else:
@@ -18629,8 +18629,8 @@ async def check_correct_responses_delete(question_ask_time, trivia_answer_list, 
     # Check if trivia_answer_list is a single-element list with a numeric answer  
     single_answer = (
         (len(trivia_answer_list) == 1 and (is_number(trivia_answer) or len(trivia_answer) == 1)) or
+        "multiple choice" in trivia_url or
         trivia_url in [
-            "multiple choice opentrivia", "multiple choice oracle", "multiple choice", "multiple choice sat",
             "median", "mean", "zeroes sum", "zeroes product", "zeroes", "base", "factors",
             "derivative", "trig", "algebra"
         ]
