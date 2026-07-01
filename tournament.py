@@ -19,6 +19,8 @@ Requirements:
 import asyncio
 import random
 import logging
+import html as _html
+import re as _re
 import time
 from datetime import datetime, timezone
 from typing import Dict, List, Optional, Tuple, Any, Callable, Set
@@ -30,6 +32,17 @@ from discord.ext import commands
 from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase
 from bson import ObjectId
 import pymongo
+
+def _jeopardy_html_to_discord(text):
+    if not text or ('<' not in text and '&' not in text):
+        return text
+    text = _html.unescape(text)
+    text = _re.sub(r'<br\s*/?>', '\n', text, flags=_re.IGNORECASE)
+    text = _re.sub(r'<i>(.*?)</i>', r'*\1*', text, flags=_re.IGNORECASE | _re.DOTALL)
+    text = _re.sub(r'<b>(.*?)</b>', r'**\1**', text, flags=_re.IGNORECASE | _re.DOTALL)
+    text = _re.sub(r'<[^>]+>', '', text)
+    return text.strip()
+
 
 # Tournament Configuration Constants
 ACTIVE_STATUSES = {"signup", "rr", "points_race", "semis", "final"}
@@ -2536,10 +2549,10 @@ class TournamentManager:
                 return {
                     "q_id": str(doc["_id"]),
                     "source": question_type,
-                    "prompt": doc.get("question", doc.get("clue", "")),
+                    "prompt": _jeopardy_html_to_discord(doc.get("question", doc.get("clue", ""))) if question_type == "jeopardy" else doc.get("question", doc.get("clue", "")),
                     "answer": first_answer,
                     "answers": answers,
-                    "category": doc.get("category", ""),
+                    "category": doc.get("category", "").upper(),
                     "url": doc.get("url", "")
                 }
 
