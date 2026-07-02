@@ -375,7 +375,7 @@ async def send_question_queen_submit_ad():
         if top_editor_id:
             count_str = f" ({top_editor_count} edits)" if top_editor_count else ""
             message += f"<@{top_editor_id}>{count_str}\n"
-        message += f"\nThanks for your contributions. You get access to all {perks_mention}! 🎁\n"
+        message += f"\nThanks for your contributions. You've unlocked all {perks_mention}! 🎁\n"
     else:
         message += f"👑 No Question Queens crowned yet this week. Snag a crown for free {perks_mention}!\n"
     message += "\n\u200b"
@@ -16765,11 +16765,11 @@ async def process_round_options(round_winner, winner_points, round_winner_id):
     message += (
         "\u200b\n🎮⚙️ ***Gameplay Options***\n\n"
         "⏱️⏳ **<3 - 15>** Time (s) between questions\n"
-        "🔥🤘 **Yolo** No scores until the end\n"
-        "🙈🚫 **Blind** No answers shown\n"
-        "🚩🔨 **Marx** No recognizing answers\n"
-        "📷❌ **Blank** No image questions\n"
-        "👻🎃 **Ghost** All responses vanish\n"
+        "🔥🤘 **Yolo**: No scores until the end\n"
+        "🙈🚫 **Blind**: No answers shown\n"
+        "🚩🔨 **Marx**: No recognizing answers\n"
+        "📷❌ **Blank**: No image questions\n"
+        "👻🎃 **Ghost**: All responses vanish\n"
         "🫥🕶️ **Cloak**: Your responses vanish\n"
         "🧢🎤 **Sniper**: One answer per player\n"
         "🏆⚡  **Blitz**: One winner per question\n"
@@ -16781,14 +16781,14 @@ async def process_round_options(round_winner, winner_points, round_winner_id):
         "\n⛳: Golf excluded\n\n"
 
         "\n📝🔀 ***Question Options***\n\n"
-        "🇺🇸🗽 **Freedom** No multiple choice\n"
-        "🧮❌ **Greg** No math questions\n"
-        "🟦❌ **Xela** No Jeopardy questions\n"
-        "📰❌ **Cross** No Crossword clues\n"
-        "🟦✋ **Alex** More Jeopardy questions\n"
-        "📰✋ **Word** More Crossword clues\n"
-        "🤓📝 **Nerd** Add SAT questions\n"
-        "🎖🥒 **Dicktator** Choose the categories\n"
+        "🇺🇸🗽 **Freedom**: No multiple choice\n"
+        "🧮❌ **Greg**: No math questions\n"
+        "🟦❌ **Xela**: No Jeopardy questions\n"
+        "📰❌ **Cross**: No Crossword clues\n"
+        "🟦✋ **Alex**: More Jeopardy questions\n"
+        "📰✋ **Word**: More Crossword clues\n"
+        "🤓📝 **Nerd**: Add SAT questions\n"
+        "🎖🥒 **Dicktator**: Choose the categories\n"
     )
 
     await safe_send(channel, message)
@@ -20223,13 +20223,13 @@ async def start_trivia():
             await asyncio.sleep(3)
             start_message = f"\u200b\n\u200b\n🎉🤹‍♂️ **Live Trivia & Games for Discord!**\n"
             start_message += f"\n⏩ Starting a **{questions_per_round} question** round! ⏩"
-            start_message += f"\n\n🚩 {flag_mention} to report a question"
-            start_message += f"\n🗝️ {perks_mention} to enable all content"
-            start_message += f"\n❓ {submit_mention} to suggest questions"
+            start_message += f"\n\n🚩 {flag_mention}: Report bad questions"
+            start_message += f"\n🗝️ {perks_mention}: Unlock all modes/games"
+            start_message += f"\n❓ {submit_mention}: Suggest new questions"
 
-            if current_longest_round_streak["user"] is not None and await get_coffees(current_longest_round_streak["user_id"]) > 0:
-                start_message += f"\n\n🕹️ **{current_longest_round_streak['user']}** can toggle modes mid-game"
-                start_message += "\n↔️ **#[command]** any time during round"
+            #if current_longest_round_streak["user"] is not None and await get_coffees(current_longest_round_streak["user_id"]) > 0:
+            #    start_message += f"\n\n🕹️ **{current_longest_round_streak['user']}** can toggle modes mid-game"
+            #    start_message += "\n↔️ **#[command]** any time during round"
 
             start_message += "\n\n🏁 **Get ready** 🏁\n\u200b"
             intro_embed = discord.Embed().set_image(url=selected_gif_url) if selected_gif_url else None
@@ -20746,7 +20746,7 @@ async def on_message(message):
                     description=(
                         f"All hail **<@{bumper_king_id}>**! They’ve claimed the **Bumper King** crown until the next bump!\n\n"
                         f"💎 As **Bumper King**, you now unlock:\n\n"
-                        f"• Access to all exclusive perks 🎁\n"
+                        f"• Unlock all exclusive perks 🎁\n"
                         f"• Change your username color with {okrafx_mention} 🎨\n"
                         f"• Start tournaments 🏟️\n"
                         f"• Access the mini-game arena 🎮\n"
@@ -23003,7 +23003,7 @@ async def sync_crown_roles():
         {"$limit": 1},
     ]
     submit_top = await db.question_submissions.aggregate(submit_pipeline).to_list(length=1)
-    new_contributor_id = submit_top[0]["_id"] if submit_top else None
+    new_contributor_id = submit_top[0]["_id"] if submit_top and submit_top[0]["count"] >= 5 else None
 
     edit_pipeline = [
         {"$match": {"credited_at": {"$gte": cutoff}, "user_id": {"$ne": okrag_id}}},
@@ -23012,7 +23012,7 @@ async def sync_crown_roles():
         {"$limit": 1},
     ]
     edit_top = await db.edit_credits.aggregate(edit_pipeline).to_list(length=1)
-    new_editor_id = edit_top[0]["_id"] if edit_top else None
+    new_editor_id = edit_top[0]["_id"] if edit_top and edit_top[0]["count"] >= 5 else None
 
     keep_ids = {i for i in (new_contributor_id, new_editor_id) if i is not None}
     for member in list(role.members):
@@ -23047,7 +23047,7 @@ async def sync_crown_roles():
         "Question Queen — submitting (last 7 days)",
         f"👑 Congrats! You've earned one of the Question Queen crowns on Live Trivia!\n\n"
         f"You've submitted the most approved questions over the last 7 days. As a reward, you now unlock:\n\n"
-        f"• Access to all exclusive perks 🎁\n"
+        f"• Unlock all Okran perks 🎁\n"
         f"• Change your username color with `/okrafx` 🎨\n"
         f"• Start tournaments 🏟️\n"
         f"• Access the mini-game arena 🎮\n\n"
@@ -23058,7 +23058,7 @@ async def sync_crown_roles():
         "Question Queen — editing (last 7 days)",
         f"👑 Congrats! You've earned one of the Question Queen crowns on Live Trivia!\n\n"
         f"You've had the most flags lead to an edited question over the last 7 days. As a reward, you now unlock:\n\n"
-        f"• Access to all exclusive perks 🎁\n"
+        f"• Unlock all Okran perks 🎁\n"
         f"• Change your username color with `/okrafx` 🎨\n"
         f"• Start tournaments 🏟️\n"
         f"• Access the mini-game arena 🎮\n\n"
