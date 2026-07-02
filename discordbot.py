@@ -378,7 +378,7 @@ async def send_question_queen_submit_ad():
         message += f"\nThanks for your contributions. You've unlocked all {perks_mention}! 🎁\n"
     else:
         message += f"👑 No Question Queens crowned yet this week. Snag a crown and unlock free {perks_mention}!\n"
-    message += f"*Most submissions/edits (min 5) in the past 7 days earns a title 👑*\n"
+    message += f"*👑 Most submissions/edits (min 5) in the past 7 days earns a title*\n"
     message += "\n\u200b"
     return await safe_send(channel, message)
 
