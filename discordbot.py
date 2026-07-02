@@ -377,7 +377,7 @@ async def send_question_queen_submit_ad():
             message += f"<@{top_editor_id}>{count_str}\n"
         message += f"\nThanks for your contributions. You've unlocked all {perks_mention}! 🎁\n"
     else:
-        message += f"👑 No Question Queens crowned yet this week. Snag a crown for free {perks_mention}!\n"
+        message += f"👑 No Question Queens crowned yet this week. Submit or edit at least 5 questions to snag a crown and unlock free {perks_mention}!\n"
     message += "\n\u200b"
     return await safe_send(channel, message)
 
