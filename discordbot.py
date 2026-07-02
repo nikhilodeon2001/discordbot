@@ -364,7 +364,7 @@ async def send_question_queen_submit_ad():
     flag_mention = f"</flag:{FLAG_COMMAND_ID}>" if FLAG_COMMAND_ID else "/flag"
     perks_mention = f"</perks:{PERKS_COMMAND_ID}>" if PERKS_COMMAND_ID else "/perks"
     message = "\u200b\n"
-    message += "**Help the game. Get rewarded. (5 min)**\n"
+    message += "**Help the game. Get rewarded.**\n"
     message += f"{submit_mention} new trivia questions\n"
     message += f"{flag_mention} inaccurate or niche questions\n\n"
     if top_contributor_id or top_editor_id:
