@@ -364,7 +364,7 @@ async def send_question_queen_submit_ad():
     flag_mention = f"</flag:{FLAG_COMMAND_ID}>" if FLAG_COMMAND_ID else "/flag"
     perks_mention = f"</perks:{PERKS_COMMAND_ID}>" if PERKS_COMMAND_ID else "/perks"
     message = "\u200b\n"
-    message += "**Improve the game and get rewarded**\n"
+    message += "**Help the game. Get rewarded. (5 min)**\n"
     message += f"{submit_mention} new trivia questions\n"
     message += f"{flag_mention} inaccurate or niche questions\n\n"
     if top_contributor_id or top_editor_id:
@@ -376,7 +376,6 @@ async def send_question_queen_submit_ad():
             count_str = f" ({top_editor_count} edits)" if top_editor_count else ""
             message += f"<@{top_editor_id}>{count_str}\n"
         message += f"\nThanks for your contributions. You've unlocked all {perks_mention}! 🎁\n"
-        message += f"Top the leaderboard this week to steal a crown 👑 (minimum 5 questions or edits)\n"
     else:
         message += f"👑 No Question Queens crowned yet this week. Submit or edit at least 5 questions to snag a crown and unlock free {perks_mention}!\n"
     message += "\n\u200b"
