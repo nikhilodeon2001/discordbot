@@ -366,8 +366,7 @@ async def send_question_queen_submit_ad():
     message = "\u200b\n"
     message += "**Help the game. Get rewarded. (5 min)**\n"
     message += f"{submit_mention} new trivia questions\n"
-    message += f"{flag_mention} inaccurate or niche questions\n"
-    message += f"Most submissions or edits (min 5) in the past 7 days earns a title 👑\n\n"
+    message += f"{flag_mention} inaccurate or niche questions\n\n"
     if top_contributor_id or top_editor_id:
         message += "👑 This week's Question Queens: \n"
         if top_contributor_id:
@@ -379,6 +378,7 @@ async def send_question_queen_submit_ad():
         message += f"\nThanks for your contributions. You've unlocked all {perks_mention}! 🎁\n"
     else:
         message += f"👑 No Question Queens crowned yet this week. Submit or edit at least 5 questions to snag a crown and unlock free {perks_mention}!\n"
+    message += f"\nMost submissions or edits (min 5) in the past 7 days earns a title 👑\n"
     message += "\n\u200b"
     return await safe_send(channel, message)
 
