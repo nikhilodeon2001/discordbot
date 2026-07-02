@@ -16783,11 +16783,12 @@ async def process_round_options(round_winner, winner_points, round_winner_id):
 
         "\n📝🔀 ***Question Options***\n\n"
         "🇺🇸🗽 **Freedom**: No multiple choice\n"
+        "⛓️🔐 **Bondage**: More multiple choice\n"
         "🧮❌ **Greg**: No math questions\n"
         "🟦❌ **Xela**: No Jeopardy questions\n"
         "📰❌ **Cross**: No Crossword clues\n"
-        "🟦✋ **Alex**: More Jeopardy questions\n"
         "📰✋ **Word**: More Crossword clues\n"
+        "🟦✋ **Alex**: More Jeopardy questions\n"
         "🤓📝 **Nerd**: Add SAT questions\n"
         "🎖🥒 **Dicktator**: Choose the categories\n"
     )
@@ -16815,6 +16816,7 @@ async def prompt_user_for_response(round_winner, winner_points, winner_coffees, 
         "blank": {"requires_coffee": False, "exclude_hashtag": True},
         "ghost": {"requires_coffee": False, "exclude_hashtag": True},
         "freedom": {"requires_coffee": False, "exclude_hashtag": False},
+        "bondage": {"requires_coffee": False, "exclude_hashtag": False},
         "alex": {"requires_coffee": False, "exclude_hashtag": False},
         "xela": {"requires_coffee": False, "exclude_hashtag": False},
         "greg": {"requires_coffee": False, "exclude_hashtag": False},
@@ -16880,6 +16882,9 @@ async def prompt_user_for_response(round_winner, winner_points, winner_coffees, 
             # Coffee-gated
             if (not keyword_config["freedom"]["exclude_hashtag"] or "#freedom" not in message_content) and await coffee_gate("freedom", f"🇺🇸🗽 **<@{round_winner_id}>** has broken the chains. No multiple choice.", "Freedom"):
                 num_mysterybox_clues = 0
+
+            if (not keyword_config["bondage"]["exclude_hashtag"] or "#bondage" not in message_content) and await coffee_gate("bondage", f"⛓️🔐 **<@{round_winner_id}>** has put on the cuffs. More multiple choice, less free will.", "Bondage"):
+                num_mysterybox_clues = max(questions_per_round - num_jeopardy_clues - num_crossword_clues, 1)
 
             if (not keyword_config["alex"]["exclude_hashtag"] or "#alex" not in message_content) and await coffee_gate("alex", f"🟦✋ **<@{round_winner_id}>** wants more Jeopardy questions.", "Alex"):
                 num_jeopardy_clues = 5
@@ -19990,7 +19995,7 @@ async def get_player_selected_question(questions, round_winner, winner_id):
 
 async def refill_question_slot(questions, old_question):
     questions.remove(old_question)
-    new_question = await get_random_trivia_question()
+    new_question = await get_random_question_for_refill()
     questions.append(new_question)
     if new_question:
         await warm_category_emoji_cache([new_question[0]])
@@ -20067,6 +20072,84 @@ async def get_random_trivia_question():
         sentry_sdk.capture_exception(e)
         print(f"Error selecting random replacement question: {e}")
         return None  # Return an empty list in case of failure
+
+
+async def get_random_jeopardy_question():
+    try:
+        recent_ids = await get_recent_question_ids_from_mongo("jeopardy")
+        pipeline = [
+            {"$match": {"_id": {"$nin": list(recent_ids)}}},
+            {"$sample": {"size": 1}}
+        ]
+        result = await db["jeopardy_questions"].aggregate(pipeline).to_list(length=1)
+        if result:
+            doc = result[0]
+            await store_question_ids_in_mongo([doc["_id"]], "jeopardy")
+            return (doc["category"], doc["question"], doc["url"], doc["answers"], "jeopardy_questions", doc["_id"], doc.get("paragraph"))
+        return None
+    except Exception as e:
+        sentry_sdk.capture_exception(e)
+        return None
+
+
+async def get_random_crossword_question():
+    try:
+        recent_ids = await get_recent_question_ids_from_mongo("crossword")
+        pipeline = [
+            {"$match": {"_id": {"$nin": list(recent_ids)}}},
+            {"$sample": {"size": 1}}
+        ]
+        result = await db["crossword_questions"].aggregate(pipeline).to_list(length=1)
+        if result:
+            doc = result[0]
+            await store_question_ids_in_mongo([doc["_id"]], "crossword")
+            return (doc["category"], doc["question"], doc["url"], doc["answers"], "crossword_questions", doc["_id"], doc.get("paragraph"))
+        return None
+    except Exception as e:
+        sentry_sdk.capture_exception(e)
+        return None
+
+
+async def get_random_mysterybox_question():
+    try:
+        recent_ids = await get_recent_question_ids_from_mongo("mysterybox")
+        pipeline = [
+            {"$match": {"_id": {"$nin": list(recent_ids)}}},
+            {"$sample": {"size": 1}}
+        ]
+        result = await db["mysterybox_questions"].aggregate(pipeline).to_list(length=1)
+        if result:
+            doc = result[0]
+            await store_question_ids_in_mongo([doc["_id"]], "mysterybox")
+            return (doc["category"], doc["question"], doc["url"], doc["answers"], "mysterybox_questions", doc["_id"], doc.get("paragraph"))
+        return None
+    except Exception as e:
+        sentry_sdk.capture_exception(e)
+        return None
+
+
+async def get_random_question_for_refill():
+    weights = {}
+    if num_jeopardy_clues > 0:
+        weights["jeopardy"] = num_jeopardy_clues
+    if num_crossword_clues > 0:
+        weights["crossword"] = num_crossword_clues
+    if num_mysterybox_clues > 0:
+        weights["mysterybox"] = num_mysterybox_clues
+    trivia_weight = max(questions_per_round - num_jeopardy_clues - num_crossword_clues - num_mysterybox_clues, 0)
+    if trivia_weight > 0:
+        weights["trivia"] = trivia_weight
+
+    if not weights:
+        return await get_random_trivia_question()
+
+    chosen = random.choices(list(weights.keys()), weights=list(weights.values()), k=1)[0]
+    return await {
+        "jeopardy": get_random_jeopardy_question,
+        "crossword": get_random_crossword_question,
+        "mysterybox": get_random_mysterybox_question,
+        "trivia": get_random_trivia_question,
+    }[chosen]()
 
 
 class StartRoundView(discord.ui.View):
@@ -20217,7 +20300,7 @@ async def start_trivia():
             perks_mention = f"</perks:{PERKS_COMMAND_ID}>" if PERKS_COMMAND_ID else "/perks"
             submit_mention = f"</submit:{SUBMIT_COMMAND_ID}>" if SUBMIT_COMMAND_ID else "/submit"
             lab_message = "\u200b\n✨🧪 **NEW from the Okra Lab**! 🧪✨\n"
-            lab_message += "\n🧠❓ **~75,000 new trivia questions** added to the database\n"
+            lab_message += "\n⛓️🔐 **Bondage**: More multiple choice [Game Mode]\n"
             await sync_okra_lab_announcement(lab_message)
             lab_message += "\n\n\u200b"
             await safe_send(channel, lab_message)
