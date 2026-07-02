@@ -376,6 +376,7 @@ async def send_question_queen_submit_ad():
             count_str = f" ({top_editor_count} edits)" if top_editor_count else ""
             message += f"<@{top_editor_id}>{count_str}\n"
         message += f"\nThanks for your contributions. You've unlocked all {perks_mention}! 🎁\n"
+        message += f"Submit or edit 5+ questions this week to claim a crown 👑\n"
     else:
         message += f"👑 No Question Queens crowned yet this week. Submit or edit at least 5 questions to snag a crown and unlock free {perks_mention}!\n"
     message += "\n\u200b"
