@@ -366,7 +366,8 @@ async def send_question_queen_submit_ad():
     message = "\u200b\n"
     message += "**Help the game. Get rewarded. (5 min)**\n"
     message += f"{submit_mention} new trivia questions\n"
-    message += f"{flag_mention} inaccurate or niche questions\n\n"
+    message += f"{flag_mention} inaccurate or niche questions\n"
+    message += f"Most submissions or edits (min 5) in the past 7 days earns a title 👑\n\n"
     if top_contributor_id or top_editor_id:
         message += "👑 This week's Question Queens: \n"
         if top_contributor_id:
