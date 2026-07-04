@@ -908,6 +908,7 @@ current_question = None
 previous_question = None
 current_answer_view = None
 current_answer_message = None
+previous_answer_message = None
 answer_buttons_enabled = True  # Feature flag: click-to-answer buttons on multiple-choice trivia questions
 jeopardy_boosted = False  # Set by "Alex"/"Xela" this round - signals 3-way coordination with crossword/SAT boosts
 crossword_boosted = False  # Set by "Word"/"Cross" this round
@@ -4967,6 +4968,22 @@ class FlagQuestionView(discord.ui.View):
                 ephemeral=True,
                 delete_after=3
             )
+
+
+class ReportQuestionView(discord.ui.View):
+    def __init__(self, question):
+        super().__init__(timeout=None)
+        self.question = question
+
+    @discord.ui.button(label="🚩 Report", style=discord.ButtonStyle.secondary, row=0)
+    async def report_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        modal = FlagReasonModal(
+            self.question, "current",
+            interaction.user.display_name,
+            interaction.message,
+            None,
+        )
+        await interaction.response.send_modal(modal)
 
 
 class SimonSaysView(discord.ui.View):
@@ -18305,9 +18322,29 @@ async def ask_question(trivia_category, trivia_question, trivia_url, trivia_answ
     except Exception:
         pass
 
+    _flag_link = f"</flag:{FLAG_COMMAND_ID}>" if FLAG_COMMAND_ID else "/flag"
+    message_body += f"\n-# \ud83d\udea9 {_flag_link}"
     message_body += "\u200b"
-    
-    view_kwargs = {"view": answer_view} if answer_view is not None else {}
+
+    _question_dict = {
+        "trivia_category": trivia_category,
+        "trivia_question": trivia_question,
+        "trivia_url": trivia_url,
+        "trivia_answer_list": trivia_answer_list,
+        "trivia_db": trivia_db,
+        "trivia_id": trivia_id,
+    }
+
+    if answer_view is not None:
+        report_btn = discord.ui.Button(label="🚩 Report", style=discord.ButtonStyle.secondary, row=1)
+        async def _report_cb(interaction, _q=_question_dict):
+            modal = FlagReasonModal(_q, "current", interaction.user.display_name, interaction.message, None)
+            await interaction.response.send_modal(modal)
+        report_btn.callback = _report_cb
+        answer_view.add_item(report_btn)
+        view_kwargs = {"view": answer_view}
+    else:
+        view_kwargs = {"view": ReportQuestionView(_question_dict)}
 
     if len(message_body) > 4000:
         message_body = message_body[:3997] + "…"
@@ -20169,7 +20206,7 @@ async def start_trivia():
     global scoreboard, current_longest_round_streak, current_longest_answer_streak
     global headers, params, filter_json, since_token, round_count, selected_questions, magic_number
     global previous_question, current_question
-    global current_answer_view, current_answer_message
+    global current_answer_view, current_answer_message, previous_answer_message
     global db
     global question_responders, round_responders
     global question_asked_start, question_asked_end
@@ -20409,6 +20446,7 @@ async def start_trivia():
                         await current_answer_message.edit(**edit_kwargs)
                     except (discord.NotFound, discord.HTTPException):
                         pass
+                    previous_answer_message = current_answer_message
                     current_answer_view = None
                     current_answer_message = None
 
@@ -21377,7 +21415,14 @@ async def _run_flagged_review(collection_name, doc_id, mod_user_id):
     if collection_name in {"math_questions", "stats_questions"}:
         return {"ai_action": "no_change", "ai_reasoning": "Math/stats questions are generated at runtime — skipping.", "proposed_changes": {}}
     try:
-        doc = await db[collection_name].find_one({"_id": ObjectId(doc_id)})
+        _id = ObjectId(doc_id)
+    except Exception:
+        try:
+            _id = int(doc_id)
+        except (ValueError, TypeError):
+            _id = doc_id
+    try:
+        doc = await db[collection_name].find_one({"_id": _id})
     except Exception:
         return {"ai_action": "no_change", "ai_reasoning": "Document not found", "proposed_changes": {}}
     if not doc:
@@ -23633,6 +23678,24 @@ async def flag_command(interaction: discord.Interaction):
     except Exception as e:
         print(f"Error showing flag selection: {e}")
         await interaction.response.send_message("❌ Error showing flag options.", ephemeral=True)
+
+
+@bot.tree.context_menu(name="Flag Question", guild=discord.Object(id=OKRAN_GUILD_ID))
+async def flag_question_context_menu(interaction: discord.Interaction, message: discord.Message):
+    question = None
+    if current_question and current_answer_message and message.id == current_answer_message.id:
+        question = current_question
+    elif previous_question and previous_answer_message and message.id == previous_answer_message.id:
+        question = previous_question
+
+    if not question:
+        await interaction.response.send_message(
+            "❌ This message isn't a recognized trivia question.", ephemeral=True
+        )
+        return
+
+    modal = FlagReasonModal(question, "current", interaction.user.display_name, message, None)
+    await interaction.response.send_modal(modal)
 
 
 @bot.event
