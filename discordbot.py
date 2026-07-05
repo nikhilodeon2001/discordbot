@@ -361,12 +361,10 @@ async def get_update_blurb() -> str:
 async def send_question_queen_submit_ad():
     """Round-end /submit ad, also calling out whoever currently holds the Question Queen crowns."""
     submit_mention = f"</submit:{SUBMIT_COMMAND_ID}>" if SUBMIT_COMMAND_ID else "/submit"
-    flag_mention = f"</flag:{FLAG_COMMAND_ID}>" if FLAG_COMMAND_ID else "/flag"
     perks_mention = f"</perks:{PERKS_COMMAND_ID}>" if PERKS_COMMAND_ID else "/perks"
     message = "\u200b\n"
     message += "**Help the game. Get rewarded.**\n"
-    message += f"{submit_mention} new trivia questions\n"
-    message += f"{flag_mention} inaccurate or niche questions\n\n"
+    message += f"{submit_mention} new trivia questions\n\n"
     if top_contributor_id or top_editor_id:
         message += "👑 This week's Question Queens: \n"
         if top_contributor_id:
@@ -20421,7 +20419,6 @@ async def start_trivia():
             else:
                 await asyncio.sleep(5)
 
-            flag_mention = f"</flag:{FLAG_COMMAND_ID}>" if FLAG_COMMAND_ID else "/flag"
             perks_mention = f"</perks:{PERKS_COMMAND_ID}>" if PERKS_COMMAND_ID else "/perks"
             submit_mention = f"</submit:{SUBMIT_COMMAND_ID}>" if SUBMIT_COMMAND_ID else "/submit"
             lab_message = "\u200b\n✨🧪 **NEW from the Okra Lab**! 🧪✨\n"
@@ -20432,8 +20429,7 @@ async def start_trivia():
             await asyncio.sleep(3)
             start_message = f"\u200b\n\u200b\n🎉🤹‍♂️ **Live Trivia & Games for Discord!**\n"
             start_message += f"\n⏩ Starting a **{questions_per_round} question** round! ⏩"
-            start_message += f"\n\n🚩 {flag_mention}: Report bad questions"
-            start_message += f"\n🗝️ {perks_mention}: Unlock all modes/games"
+            start_message += f"\n\n🗝️ {perks_mention}: Unlock all modes/games"
             start_message += f"\n❓ {submit_mention}: Suggest new questions"
 
             #if current_longest_round_streak["user"] is not None and await get_coffees(current_longest_round_streak["user_id"]) > 0:
