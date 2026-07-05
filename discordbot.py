@@ -377,8 +377,8 @@ async def send_question_queen_submit_ad():
             message += f"<@{top_editor_id}>{count_str}\n"
         message += f"\n🎁 Thanks for your contributions. You've unlocked all {perks_mention}!\n"
     else:
-        message += f"👑 No Question Queens crowned yet this week. Snag a crown and unlock free {perks_mention}!\n"
-    message += f"*👑 Most submissions/edits (min 5) in the past 7 days earns a title*\n"
+        message += f"👑 No Question Queens crowned. Snag a crown and unlock free {perks_mention}!\n"
+    message += f"*5️⃣ Submit or edit at least 5 to earn a crown*\n"
     message += "\n\u200b"
     return await safe_send(channel, message)
 
@@ -4924,7 +4924,7 @@ class FlagQuestionView(discord.ui.View):
             return False
         return True
 
-    @discord.ui.button(label="Current Question", style=discord.ButtonStyle.success, emoji="🚩")
+    @discord.ui.button(label="Current Question", style=discord.ButtonStyle.success, emoji="▶️")
     async def flag_current_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         """Button to flag the current question"""
         if self.current_question is None:
@@ -4938,7 +4938,7 @@ class FlagQuestionView(discord.ui.View):
         modal = FlagReasonModal(self.current_question, "current", self.display_name, self.flag_message, self.embed_message)
         await interaction.response.send_modal(modal)
 
-    @discord.ui.button(label="Previous Question", style=discord.ButtonStyle.danger, emoji="⏮️")
+    @discord.ui.button(label="Previous Question", style=discord.ButtonStyle.danger, emoji="◀️")
     async def flag_previous_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         """Button to flag the previous question"""
         if self.previous_question is None:
