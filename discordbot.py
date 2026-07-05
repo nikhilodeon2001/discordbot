@@ -4902,6 +4902,47 @@ class FlagReasonModal(discord.ui.Modal, title="Flag Question"):
             )
 
 
+class GrantImageCreditModal(discord.ui.Modal, title="Grant Image Credit"):
+    """Modal for mods to grant a user free image-generation credits"""
+
+    amount = discord.ui.TextInput(
+        label="How many generations?",
+        placeholder="e.g. 1",
+        required=True,
+        max_length=4,
+    )
+
+    def __init__(self, member: discord.Member):
+        super().__init__()
+        self.member = member
+
+    async def on_submit(self, interaction: discord.Interaction):
+        try:
+            amount = int(self.amount.value.strip())
+        except ValueError:
+            await interaction.response.send_message("❌ Enter a positive whole number.", ephemeral=True)
+            return
+        if amount <= 0:
+            await interaction.response.send_message("❌ Enter a positive whole number.", ephemeral=True)
+            return
+
+        new_balance = await add_image_credits(self.member.id, amount, self.member.display_name)
+
+        await interaction.response.send_message(
+            f"✅ Granted {amount} image generation(s) to {self.member.display_name}. New balance: {new_balance}.",
+            ephemeral=True
+        )
+
+        try:
+            plural = "generation" if amount == 1 else "generations"
+            await self.member.send(
+                f"🥒🎁 **OkraStrut** granted you **{amount}** image {plural}! "
+                f"Your balance is now **{new_balance}**. Win a round of trivia to cash one in."
+            )
+        except Exception as e:
+            print(f"Could not DM {self.member.id} about granted image credit: {e}")
+
+
 class FlagQuestionView(discord.ui.View):
     """View with buttons to select which question to flag"""
 
@@ -15063,155 +15104,161 @@ async def nice_creep_okra_option(winner, winner_id):
     
     
 async def generate_round_summary_image(round_data, winner, winner_id):
+    """Returns True if an image was successfully posted (or there was nothing to do), False on any failure."""
     if skip_summary == True:
-        message += "\nBe sure to drink your Okratine.\n"
+        message = "\nBe sure to drink your Okratine.\n"
         await safe_send(channel, message)
-        return None
-        
-    winner_coffees = await get_coffees(winner_id)
-    
-    if winner == "OkraStrut":
-        prompt = (
-            "The setting is a fiery Hell, where a giant and angry piece of okra holds a massive golden trophy while looking down on and smiting all other players. "
-            "The atmosphere is angry, scary, and full of malice."
-        )
-        message = "🥒OKRA!! 🥒OKRA!! 🥒OKRA!!\n"
-        
-    elif winner_coffees > 100:
-        prompt = (
-            f"Draw What you think {winner} looks like surrounded by okra and money. "
-            "Add glowing lights, hearts, and a festive atmosphere."
-        )
-        message = f"✊🔥 {winner}, thank you for your donation to the cause. And nice streak!\n"
-    
-    else:
-        categories = {
-            "0": "😠🥒 Okrap (Horror)",
-            "1": "🌹🏰 Okrenaissance",
-            "2": "😇✨ Okroly and Divine",
-            "3": "🎲🔀 (OK)Random",
-            "4": f"🖼️🔤 Provide the Prompt 🥒"
-        }
+        return True
 
-        # Ask the user to choose a category
-        selected_category, additional_prompt = await ask_category(winner, categories, winner_coffees, winner_id)
-                    
-        prompts_by_category = {
-            "0": [
-                f"A scary scene from a horror movie with what you think {winner} looks running from an okra."
-            ],
-            "1": [
-                f"A Renaissance painting of what you think {winner} looks like holding an okra. Make the painting elegant and refined."
-            ],
-            "2": [
-                f"An image of what you think {winner} looks like worshipping an okra. Make it appealing and accepting of religions of all types."
-            ],
-            "3": [
-                f"An image of what you think {winner} looks like intereracting with an okra in the most crazy, ridiculous, and over the top random way."
-            ],
-            "4": [
-                f"Draw an okra themed picture of {additional_prompt}.\n"  
-            ]
-        }
-
-        # Select a prompt based on the chosen category
-        if selected_category and selected_category in prompts_by_category:
-            prompt = random.choice(prompts_by_category[selected_category])
-        else:
-            prompt = f"A horror image of what you think {winner} looks like being pursued by something okra themed."
-
-            
-    print(prompt)
-    
-    # Generate the image
-    
     try:
-        response = await openai_client.images.generate(
-            model="gpt-image-1-mini",
-            prompt=prompt,
-            size="1024x1024",
-            quality="medium",
-        )
-        b64 = response.data[0].b64_json
-        image_data = base64.b64decode(b64)
-        image_url_for_vision = f"data:image/png;base64,{b64}"
+        winner_coffees = await get_coffees(winner_id)
 
-        if selected_category == "4":
-            image_description = await describe_image_with_vision(image_url_for_vision, "title", prompt)
+        if winner == "OkraStrut":
+            prompt = (
+                "The setting is a fiery Hell, where a giant and angry piece of okra holds a massive golden trophy while looking down on and smiting all other players. "
+                "The atmosphere is angry, scary, and full of malice."
+            )
+            message = "🥒OKRA!! 🥒OKRA!! 🥒OKRA!!\n"
+
+        elif winner_coffees > 100:
+            prompt = (
+                f"Draw What you think {winner} looks like surrounded by okra and money. "
+                "Add glowing lights, hearts, and a festive atmosphere."
+            )
+            message = f"✊🔥 {winner}, thank you for your donation to the cause. And nice streak!\n"
+
         else:
-            image_description = await describe_image_with_vision(image_url_for_vision, "title", prompt)
+            categories = {
+                "0": "😠🥒 Okrap (Horror)",
+                "1": "🌹🏰 Okrenaissance",
+                "2": "😇✨ Okroly and Divine",
+                "3": "🎲🔀 (OK)Random",
+                "4": f"🖼️🔤 Provide the Prompt 🥒"
+            }
 
-        message = f"🔥💖 **<@{winner_id}>**, you've done well. I drew this **for you**.\n"
-        await safe_send(channel, content=message, file=discord.File(io.BytesIO(image_data), filename="winner.png"))
+            # Ask the user to choose a category
+            selected_category, additional_prompt = await ask_category(winner, categories, winner_coffees, winner_id)
 
-        message = f"\n**I call it**...*{image_description}*\n"
-        message += f"\n🏛️👋 **Welcome to the Okra Museum**"
-        message += "\n🌐➡️ [Visit the Museum](https://clubokra.com/okra-museum)\n"
-        museum_message = await safe_send(channel, message)
+            prompts_by_category = {
+                "0": [
+                    f"A scary scene from a horror movie with what you think {winner} looks running from an okra."
+                ],
+                "1": [
+                    f"A Renaissance painting of what you think {winner} looks like holding an okra. Make the painting elegant and refined."
+                ],
+                "2": [
+                    f"An image of what you think {winner} looks like worshipping an okra. Make it appealing and accepting of religions of all types."
+                ],
+                "3": [
+                    f"An image of what you think {winner} looks like intereracting with an okra in the most crazy, ridiculous, and over the top random way."
+                ],
+                "4": [
+                    f"Draw an okra themed picture of {additional_prompt}.\n"
+                ]
+            }
 
-        loop = asyncio.get_running_loop()
+            # Select a prompt based on the chosen category
+            if selected_category and selected_category in prompts_by_category:
+                prompt = random.choice(prompts_by_category[selected_category])
+            else:
+                prompt = f"A horror image of what you think {winner} looks like being pursued by something okra themed."
 
-        def process_image():
-            img = Image.open(io.BytesIO(image_data)).resize((256, 256))
-            buffer = io.BytesIO()
-            img.save(buffer, format="PNG")
-            buffer.seek(0)
-            return buffer
+        print(prompt)
 
-        buffer = await loop.run_in_executor(None, process_image)
-        social_post = await upload_image_to_s3(buffer, winner, image_description)
-        share_view = build_museum_share_view(social_post)
-        if museum_message and share_view:
-            await museum_message.edit(view=share_view)
-        return None
-        
-    except openai.OpenAIError as e:
-        print(f"Error generating image: {e}")
-        # Check if the error is due to the safety system
-        if "Your request was rejected as a result of our safety system" in str(e):
-            # Use a default safe prompt
-            default_prompt = f"A Renaissance painting of what you think {winner} looks like holding an okra. Make the painting elegant and refined."
-            try:
-                response = await openai_client.images.generate(
-                    model="gpt-image-1-mini",
-                    prompt=default_prompt,
-                    size="1024x1024",
-                    quality="medium",
-                )
+        # Generate the image
 
-                b64 = response.data[0].b64_json
-                image_data = base64.b64decode(b64)
-                image_url_for_vision = f"data:image/png;base64,{b64}"
+        try:
+            response = await openai_client.images.generate(
+                model="gpt-image-1-mini",
+                prompt=prompt,
+                size="1024x1024",
+                quality="medium",
+            )
+            b64 = response.data[0].b64_json
+            image_data = base64.b64decode(b64)
+            image_url_for_vision = f"data:image/png;base64,{b64}"
+
+            if selected_category == "4":
+                image_description = await describe_image_with_vision(image_url_for_vision, "title", prompt)
+            else:
                 image_description = await describe_image_with_vision(image_url_for_vision, "title", prompt)
 
-                message = f"😈😉 <@{winner_id}> Naughty naughty, I'll have to pick another.\n\n"
-                await safe_send(channel, content=message, file=discord.File(io.BytesIO(image_data), filename="winner.png"))
-                message = f"\nI call it: '{image_description}'\n"
-                message += f"\n🏛️👋 Welcome to the Okra Museum"
-                message += "\n🌐➡️ [Visit the Museum](https://clubokra.com/okra-museum)\n"
-                museum_message = await safe_send(channel, message)
+            message = f"🔥💖 **<@{winner_id}>**, you've done well. I drew this **for you**.\n"
+            await safe_send(channel, content=message, file=discord.File(io.BytesIO(image_data), filename="winner.png"))
 
-                loop = asyncio.get_running_loop()
+            message = f"\n**I call it**...*{image_description}*\n"
+            message += f"\n🏛️👋 **Welcome to the Okra Museum**"
+            message += "\n🌐➡️ [Visit the Museum](https://clubokra.com/okra-museum)\n"
+            museum_message = await safe_send(channel, message)
 
-                def process_fallback_image():
-                    img = Image.open(io.BytesIO(image_data)).resize((256, 256))
-                    buffer = io.BytesIO()
-                    img.save(buffer, format="PNG")
-                    buffer.seek(0)
-                    return buffer
+            loop = asyncio.get_running_loop()
 
-                buffer = await loop.run_in_executor(None, process_fallback_image)
-                social_post = await upload_image_to_s3(buffer, winner, image_description)
-                share_view = build_museum_share_view(social_post)
-                if museum_message and share_view:
-                    await museum_message.edit(view=share_view)
-                return None
-            
-            except openai.OpenAIError as e2:
-                print(f"Error generating default image: {e2}")
-                return "Image generation failed!"
-        else:
-            return "Image generation failed!"
+            def process_image():
+                img = Image.open(io.BytesIO(image_data)).resize((256, 256))
+                buffer = io.BytesIO()
+                img.save(buffer, format="PNG")
+                buffer.seek(0)
+                return buffer
+
+            buffer = await loop.run_in_executor(None, process_image)
+            social_post = await upload_image_to_s3(buffer, winner, image_description)
+            share_view = build_museum_share_view(social_post)
+            if museum_message and share_view:
+                await museum_message.edit(view=share_view)
+            return True
+
+        except openai.OpenAIError as e:
+            print(f"Error generating image: {e}")
+            # Check if the error is due to the safety system
+            if "Your request was rejected as a result of our safety system" in str(e):
+                # Use a default safe prompt
+                default_prompt = f"A Renaissance painting of what you think {winner} looks like holding an okra. Make the painting elegant and refined."
+                try:
+                    response = await openai_client.images.generate(
+                        model="gpt-image-1-mini",
+                        prompt=default_prompt,
+                        size="1024x1024",
+                        quality="medium",
+                    )
+
+                    b64 = response.data[0].b64_json
+                    image_data = base64.b64decode(b64)
+                    image_url_for_vision = f"data:image/png;base64,{b64}"
+                    image_description = await describe_image_with_vision(image_url_for_vision, "title", prompt)
+
+                    message = f"😈😉 <@{winner_id}> Naughty naughty, I'll have to pick another.\n\n"
+                    await safe_send(channel, content=message, file=discord.File(io.BytesIO(image_data), filename="winner.png"))
+                    message = f"\nI call it: '{image_description}'\n"
+                    message += f"\n🏛️👋 Welcome to the Okra Museum"
+                    message += "\n🌐➡️ [Visit the Museum](https://clubokra.com/okra-museum)\n"
+                    museum_message = await safe_send(channel, message)
+
+                    loop = asyncio.get_running_loop()
+
+                    def process_fallback_image():
+                        img = Image.open(io.BytesIO(image_data)).resize((256, 256))
+                        buffer = io.BytesIO()
+                        img.save(buffer, format="PNG")
+                        buffer.seek(0)
+                        return buffer
+
+                    buffer = await loop.run_in_executor(None, process_fallback_image)
+                    social_post = await upload_image_to_s3(buffer, winner, image_description)
+                    share_view = build_museum_share_view(social_post)
+                    if museum_message and share_view:
+                        await museum_message.edit(view=share_view)
+                    return True
+
+                except openai.OpenAIError as e2:
+                    print(f"Error generating default image: {e2}")
+                    return False
+            else:
+                return False
+
+    except Exception as e:
+        print(f"Unexpected error in generate_round_summary_image: {e}")
+        sentry_sdk.capture_exception(e)
+        return False
 
 
 async def ask_category(winner, categories, winner_coffees, winner_id):
@@ -18064,6 +18111,36 @@ async def change_color_command(interaction: discord.Interaction, color: str):
         await interaction.followup.send(f"❌ An error occurred: {e}", ephemeral=True)
 
 
+async def get_image_credits(user_id):
+    doc = await db.image_credits.find_one({"_id": user_id})
+    return doc.get("credits", 0) if doc else 0
+
+
+async def add_image_credits(user_id, amount, display_name=None):
+    update = {
+        "$inc": {"credits": amount},
+        "$set": {"updated_at": datetime.datetime.utcnow()},
+    }
+    if display_name:
+        update["$set"]["display_name"] = display_name
+    doc = await db.image_credits.find_one_and_update(
+        {"_id": user_id},
+        update,
+        upsert=True,
+        return_document=True,
+    )
+    return doc["credits"]
+
+
+async def consume_image_credit(user_id):
+    """Race-safe: only consumes if credits > 0. Returns True iff a credit was consumed."""
+    doc = await db.image_credits.find_one_and_update(
+        {"_id": user_id, "credits": {"$gt": 0}},
+        {"$inc": {"credits": -1}, "$set": {"updated_at": datetime.datetime.utcnow()}},
+    )
+    return doc is not None
+
+
 async def save_data_to_mongo(collection_name, document_id, data):
     if data is None:
         data = {"data": "None"}  
@@ -19066,43 +19143,51 @@ async def update_round_streaks(user, user_id, roast_task=None):
 
         if ai_on:
             winner_coffees = await get_coffees(user_id)
-            if winner_coffees > 0:
-                #gpt_summary = await generate_round_summary(round_data, user, user_id)
-                #gpt_message = f"\u200b\n{gpt_summary}\n\u200b"
-                #await safe_send(channel, gpt_message)
+            pre_balance = await get_image_credits(user_id)  # credits owed BEFORE this win's earn
 
-                highest_score_player = max(scoreboard, key=lambda uid: scoreboard[uid]["score"])
-                highest_score = scoreboard[highest_score_player]["score"]
-    
-                
-                #if len(scoreboard) >= image_wins and highest_score > image_points:
-                if current_longest_round_streak['streak'] % image_wins == 0:
-                    await asyncio.sleep(5)
-                    await generate_round_summary_image(round_data, user, user_id)
+            # Earn (Okran streak reward — still coffee-gated)
+            if winner_coffees > 0 and current_longest_round_streak['streak'] % image_wins == 0:
+                await add_image_credits(user_id, 1, user)
+
+            banked = await get_image_credits(user_id)
+
+            if banked > 0:  # redeem ONE per win (granted credits work without coffee)
+                if pre_balance > 0:  # this credit was owed from a prior failure/grant
+                    await safe_send(channel, f"🎁🥒 **<@{user_id}>**, cashing in a drawing you were owed…")
+                await asyncio.sleep(5)
+                ok = await generate_round_summary_image(round_data, user, user_id)
+                if ok:
+                    await consume_image_credit(user_id)
                 else:
-                    number_to_emoji = {
-                        1: "1️⃣",
-                        2: "2️⃣",
-                        3: "3️⃣",
-                        4: "4️⃣",
-                        5: "5️⃣",
-                        6: "6️⃣",
-                        7: "7️⃣",
-                        8: "8️⃣",
-                        9: "9️⃣",
-                        10: "🔟"
-                    }
-                    
-                    await asyncio.sleep(2)
-                    remaining_games = image_wins - (current_longest_round_streak['streak'] % image_wins)
-                    dynamic_emoji = number_to_emoji.get(remaining_games, str(remaining_games))
-                    
-                    if remaining_games == 1:
-                        image_message = f"{dynamic_emoji}🎨 **<@{user_id}>**, win the next game and I'll draw you something."
-                    else:
-                        image_message = f"{dynamic_emoji}🎨 **<@{user_id}>**, win {remaining_games} more in a row and I'll draw you something."
-    
-                    await get_image_url_from_s3(image_message)
+                    await safe_send(
+                        channel,
+                        f"🥒🛠️ **<@{user_id}>**, my crayons snapped — I couldn't finish your drawing. "
+                        f"It's **saved**: win again and I'll make it. (Drawings owed: {banked})"
+                    )
+            elif winner_coffees > 0:  # on-streak, nothing banked → existing progress message
+                number_to_emoji = {
+                    1: "1️⃣",
+                    2: "2️⃣",
+                    3: "3️⃣",
+                    4: "4️⃣",
+                    5: "5️⃣",
+                    6: "6️⃣",
+                    7: "7️⃣",
+                    8: "8️⃣",
+                    9: "9️⃣",
+                    10: "🔟"
+                }
+
+                await asyncio.sleep(2)
+                remaining_games = image_wins - (current_longest_round_streak['streak'] % image_wins)
+                dynamic_emoji = number_to_emoji.get(remaining_games, str(remaining_games))
+
+                if remaining_games == 1:
+                    image_message = f"{dynamic_emoji}🎨 **<@{user_id}>**, win the next game and I'll draw you something."
+                else:
+                    image_message = f"{dynamic_emoji}🎨 **<@{user_id}>**, win {remaining_games} more in a row and I'll draw you something."
+
+                await get_image_url_from_s3(image_message)
 
     # Perform all MongoDB operations at the end
     for operation in mongo_operations:
@@ -23690,6 +23775,17 @@ async def flag_question_context_menu(interaction: discord.Interaction, message: 
 
     modal = FlagReasonModal(question, "current", interaction.user.display_name, message, None)
     await interaction.response.send_modal(modal)
+
+
+@bot.tree.context_menu(name="Grant Image Credit", guild=discord.Object(id=OKRAN_GUILD_ID))
+@discord.app_commands.default_permissions(manage_guild=True)
+async def grant_image_credit_menu(interaction: discord.Interaction, member: discord.Member):
+    if interaction.user.id != okrag_id and not any(
+        r.id == SUBMISSION_MOD_ROLE_ID for r in getattr(interaction.user, "roles", [])
+    ):
+        await interaction.response.send_message("❌ Mods only.", ephemeral=True)
+        return
+    await interaction.response.send_modal(GrantImageCreditModal(member))
 
 
 @bot.event
