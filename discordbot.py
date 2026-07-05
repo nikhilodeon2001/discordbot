@@ -364,7 +364,8 @@ async def send_question_queen_submit_ad():
     perks_mention = f"</perks:{PERKS_COMMAND_ID}>" if PERKS_COMMAND_ID else "/perks"
     message = "\u200b\n"
     message += "**Help the game. Get rewarded.**\n"
-    message += f"{submit_mention} new trivia questions\n\n"
+    message += f"{submit_mention} new trivia questions\n"
+    message += "Report inaccurate or niche questions\n\n"
     if top_contributor_id or top_editor_id:
         message += "👑 This week's Question Queens: \n"
         if top_contributor_id:
@@ -20429,7 +20430,8 @@ async def start_trivia():
             await asyncio.sleep(3)
             start_message = f"\u200b\n\u200b\n🎉🤹‍♂️ **Live Trivia & Games for Discord!**\n"
             start_message += f"\n⏩ Starting a **{questions_per_round} question** round! ⏩"
-            start_message += f"\n\n🗝️ {perks_mention}: Unlock all modes/games"
+            start_message += f"\n\n🚩 Report bad questions"
+            start_message += f"\n🗝️ {perks_mention}: Unlock all modes/games"
             start_message += f"\n❓ {submit_mention}: Suggest new questions"
 
             #if current_longest_round_streak["user"] is not None and await get_coffees(current_longest_round_streak["user_id"]) > 0:
