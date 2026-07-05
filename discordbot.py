@@ -4935,9 +4935,12 @@ class GrantImageCreditModal(discord.ui.Modal, title="Grant Image Credit"):
 
         try:
             plural = "generation" if amount == 1 else "generations"
+            if new_balance == 1:
+                balance_note = "Win a round of trivia to cash it in."
+            else:
+                balance_note = f"Your balance is now **{new_balance}**. Win a round of trivia to cash one in."
             await self.member.send(
-                f"🥒🎁 **OkraStrut** granted you **{amount}** image {plural}! "
-                f"Your balance is now **{new_balance}**. Win a round of trivia to cash one in."
+                f"🥒🎁 You've been granted **{amount}** image {plural}! {balance_note}"
             )
         except Exception as e:
             print(f"Could not DM {self.member.id} about granted image credit: {e}")
