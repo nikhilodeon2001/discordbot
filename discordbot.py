@@ -21502,7 +21502,7 @@ async def _run_flagged_review(collection_name, doc_id, mod_user_id):
     if collection_name in {"math_questions", "stats_questions"}:
         return {"ai_action": "no_change", "ai_reasoning": "Math/stats questions are generated at runtime — skipping.", "proposed_changes": {}}
     try:
-        doc = await db[collection_name].find_one({"_id": ObjectId(doc_id)})
+        doc = await db[collection_name].find_one({"_id": _to_object_id(doc_id)})
     except Exception:
         return {"ai_action": "no_change", "ai_reasoning": "Document not found", "proposed_changes": {}}
     if not doc:
@@ -21546,7 +21546,7 @@ async def _run_flagged_review(collection_name, doc_id, mod_user_id):
         "ai_reviewed_by": mod_user_id,
     }
     await db[collection_name].update_one(
-        {"_id": ObjectId(doc_id)},
+        {"_id": _to_object_id(doc_id)},
         {"$set": {"ai_review": result}},
     )
     return result
@@ -22931,13 +22931,13 @@ class ApplyFlaggedModal(discord.ui.Modal, title="Apply Claude Changes"):
                     ephemeral=True,
                 )
                 return
-            doc = await db[col].find_one({"_id": ObjectId(doc_id)})
+            doc = await db[col].find_one({"_id": _to_object_id(doc_id)})
             proposed = (doc.get("ai_review") or {}).get("proposed_changes", {})
             update_op = {"$unset": {"audit": ""}}
             if proposed:
                 update_op["$set"] = proposed
                 update_op["$unset"].update({"asked_count": "", "correct_count": "", "incorrect_count": ""})
-            await db[col].update_one({"_id": ObjectId(doc_id)}, update_op)
+            await db[col].update_one({"_id": _to_object_id(doc_id)}, update_op)
             await db.flag_notifications.update_one(
                 {"doc_id": doc_id, "collection_name": col}, {"$set": {"resolved": True}}
             )
@@ -22984,9 +22984,9 @@ class ClearFlaggedModal(discord.ui.Modal, title="Clear Audit"):
         col, doc_id = self.collection_name, self.doc_id
         try:
             doc = None
-            if col not in {"math_questions", "stats_questions"} and ObjectId.is_valid(doc_id):
-                doc = await db[col].find_one({"_id": ObjectId(doc_id)})
-                await db[col].update_one({"_id": ObjectId(doc_id)}, {"$unset": {"audit": ""}})
+            if col not in {"math_questions", "stats_questions"}:
+                doc = await db[col].find_one({"_id": _to_object_id(doc_id)})
+                await db[col].update_one({"_id": _to_object_id(doc_id)}, {"$unset": {"audit": ""}})
 
             flag_record = await db.flag_notifications.find_one({"doc_id": doc_id, "collection_name": col})
             await db.flag_notifications.update_one(
@@ -23054,9 +23054,9 @@ class EditFlaggedQuestionModal(discord.ui.Modal, title="Edit & Apply Question Fi
             "answers": answers,
         }
         try:
-            doc_before = await db[col].find_one({"_id": ObjectId(doc_id)})
+            doc_before = await db[col].find_one({"_id": _to_object_id(doc_id)})
             await db[col].update_one(
-                {"_id": ObjectId(doc_id)},
+                {"_id": _to_object_id(doc_id)},
                 {"$set": fields, "$unset": {"audit": "", "asked_count": "", "correct_count": "", "incorrect_count": ""}},
             )
             await db.flag_notifications.update_one(
@@ -23127,7 +23127,7 @@ class FlaggedReviewView(discord.ui.View):
 
         # Rebuild embed with verdict
         try:
-            doc = await db[col].find_one({"_id": ObjectId(doc_id)})
+            doc = await db[col].find_one({"_id": _to_object_id(doc_id)})
             answers = doc.get("answers", [])
             embed = discord.Embed(
                 title="🚩 Question Flagged",
@@ -23174,7 +23174,7 @@ class FlaggedReviewView(discord.ui.View):
                 ephemeral=True,
             )
             return
-        doc = await db[col].find_one({"_id": ObjectId(doc_id)})
+        doc = await db[col].find_one({"_id": _to_object_id(doc_id)})
         if not doc:
             await interaction.response.send_message("❌ Question not found.", ephemeral=True)
             return
