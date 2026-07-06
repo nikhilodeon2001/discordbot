@@ -20590,7 +20590,7 @@ async def start_trivia():
             submit_mention = f"</submit:{SUBMIT_COMMAND_ID}>" if SUBMIT_COMMAND_ID else "/submit"
             message = (
                 "\u200b\n"
-                "\U0001f9d8\u200d\u2642\ufe0f A short breather. Relax, stretch, meditate.\n\n"
+                "\U0001f9d8\u200d\u2642\ufe0f **Relax, stretch, meditate.**\n\n"
                 "\U0001f49a [Unlock Perks](https://discord.com/channels/1367682586079395902/role-subscriptions)\n"
                 "\U0001f4a1 [Submit Feedback](https://forms.gle/iWvmN24pfGEGSy7n7)\n"
                 "\u2b50 [Leave a Review](https://disboard.org/review/create/1367682586079395902)\n"
