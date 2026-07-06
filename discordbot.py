@@ -384,6 +384,14 @@ async def send_question_queen_submit_ad():
     return await safe_send(channel, message)
 
 
+# Kill switch + content for the periodic Okra Lab announcement (posted to the
+# trivia channel each round, and once to the announcements channel via
+# sync_okra_lab_announcement's de-dupe). To ship a new announcement, set
+# okra_lab_announcement_text to the new body text.
+okra_lab_announcement_enabled = True
+okra_lab_announcement_text = ""
+
+
 async def sync_okra_lab_announcement(content):
     """Post the Okra Lab feature list to the announcements channel, but only when
     this exact content has never been posted before \u2014 checked against full history,
@@ -20424,12 +20432,13 @@ async def start_trivia():
 
             perks_mention = f"</perks:{PERKS_COMMAND_ID}>" if PERKS_COMMAND_ID else "/perks"
             submit_mention = f"</submit:{SUBMIT_COMMAND_ID}>" if SUBMIT_COMMAND_ID else "/submit"
-            lab_message = "\u200b\n✨🧪 **NEW from the Okra Lab**! 🧪✨\n"
-            lab_message += "\n⛓️🔐 **Bondage**: More multiple choice [Game Mode]\n"
-            await sync_okra_lab_announcement(lab_message)
-            lab_message += "\n\n\u200b"
-            await safe_send(channel, lab_message)
-            await asyncio.sleep(3)
+            if okra_lab_announcement_enabled and okra_lab_announcement_text:
+                lab_message = "\u200b\n✨🧪 **NEW from the Okra Lab**! 🧪✨\n"
+                lab_message += f"\n{okra_lab_announcement_text}\n"
+                await sync_okra_lab_announcement(lab_message)
+                lab_message += "\n\n\u200b"
+                await safe_send(channel, lab_message)
+                await asyncio.sleep(3)
             start_message = f"\u200b\n\u200b\n🎉🤹‍♂️ **Live Trivia & Games for Discord!**\n"
             start_message += f"\n⏩ Starting a **{questions_per_round} question** round! ⏩"
             start_message += f"\n\n🚩 Report bad questions"
