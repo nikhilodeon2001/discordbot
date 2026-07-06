@@ -103,6 +103,8 @@ except ImportError:
     SIMPLY_TRIVIA_ENABLED = False
     print("⚠️ simply_trivia.py not found - Simply Trivia disabled")
 
+simply_trivia_task = None
+
 embed_color_default = discord.Color.green()
 embed_color = embed_color_default
 
@@ -23792,7 +23794,7 @@ async def grant_image_credit_menu(interaction: discord.Interaction, member: disc
 @bot.event
 async def on_ready():
     global channel, db, museum_backfill_task, offquestion_chat_flush_task, offquestion_chat_compaction_task
-    global resume_no_players_override
+    global resume_no_players_override, simply_trivia_task
     print(f"✅ Logged in as {bot.user}")
     db =  await connect_to_mongodb()
     await load_parameters()
@@ -23940,10 +23942,10 @@ async def on_ready():
         print("🧪 For testing: Use add_fake_players.py script to add fake players")
 
         # Start Simply Trivia system
-        if SIMPLY_TRIVIA_ENABLED:
+        if SIMPLY_TRIVIA_ENABLED and (simply_trivia_task is None or simply_trivia_task.done()):
             try:
                 print("🎯 Starting Simply Trivia system...")
-                asyncio.create_task(simply_trivia.start_simply_trivia(
+                simply_trivia_task = asyncio.create_task(simply_trivia.start_simply_trivia(
                     bot=bot,
                     db=db,
                     channel_id=SIMPLY_TRIVIA_CHANNEL_ID,
