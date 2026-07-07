@@ -361,27 +361,32 @@ async def get_update_blurb() -> str:
 
 
 async def send_question_queen_submit_ad():
-    """Round-end /submit ad, also calling out whoever currently holds the Question Queen crowns."""
+    """Builds the round-transition ad body: help-the-game bullets + This Week's Royalty
+    (Bumper King + Question Queens). Returns text only — caller composes it into the
+    combined round-start message rather than sending it standalone."""
     submit_mention = f"</submit:{SUBMIT_COMMAND_ID}>" if SUBMIT_COMMAND_ID else "/submit"
     perks_mention = f"</perks:{PERKS_COMMAND_ID}>" if PERKS_COMMAND_ID else "/perks"
-    message = "\u200b\n"
-    message += "**Help the game. Get rewarded.**\n"
-    message += f"{submit_mention} new trivia questions\n"
-    message += "Report inaccurate or niche questions\n\n"
+    message = "**Help the game. Get rewarded.**\n"
+    message += f"{submit_mention} new trivia questions (min 5)\n"
+    message += "Flag poor quality questions (min 5)\n"
+    if bumped_status == False:
+        message += "/bump the server to attract players\n"
+    message += "\n👑 This Week's Royalty:\n"
+    if bumper_king_id:
+        message += f"👑🍔 <@{bumper_king_id}> — Bumper King\n"
+    else:
+        message += "👑🍔 No Bumper King yet — /bump to claim it!\n"
     if top_contributor_id or top_editor_id:
-        message += "👑 This week's Question Queens: \n"
         if top_contributor_id:
             count_str = f" ({top_contributor_count} questions)" if top_contributor_count else ""
-            message += f"<@{top_contributor_id}>{count_str}\n"
+            message += f"👑❓ <@{top_contributor_id}>{count_str} — Question Queen\n"
         if top_editor_id:
             count_str = f" ({top_editor_count} edits)" if top_editor_count else ""
-            message += f"<@{top_editor_id}>{count_str}\n"
-        message += f"\n🎁 Thanks for your contributions. You've unlocked all {perks_mention}!\n"
+            message += f"👑❓ <@{top_editor_id}>{count_str} — Question Queen\n"
+        message += f"\n🎁 Thanks for your contributions. {perks_mention} unlocked.\n"
     else:
         message += f"👑 No Question Queens crowned. Snag a crown and unlock free {perks_mention}!\n"
-    message += f"*5️⃣ Submit or edit at least 5 to earn a crown*\n"
-    message += "\n\u200b"
-    return await safe_send(channel, message)
+    return message
 
 
 async def sync_okra_lab_announcement(content):
@@ -20324,7 +20329,6 @@ async def start_trivia():
         else:
             await warm_category_emoji_cache(q[0] for q in selected_questions)
 
-        last_round_end_msg = None
         while True:  # Endless loop
             reset_embed_color()  
             current_time = time.time()
@@ -20378,20 +20382,24 @@ async def start_trivia():
                 send_magic_image(magic_number)
             elif image_questions == True:
                 selected_gif_url = await select_intro_image_url()
+            # Build the combined round-start message: banner + help-the-game ad + Royalty
+            await check_bump_status()
+            ad_body = await send_question_queen_submit_ad()
+            start_message = f"​\n​\n🎉🤹‍♂️ **Live Trivia & Games for Discord!**\n"
+            start_message += f"\n⏩ Starting a **{questions_per_round} question** round! ⏩\n\n"
+            start_message += ad_body
+
+            #if current_longest_round_streak["user"] is not None and await get_coffees(current_longest_round_streak["user_id"]) > 0:
+            #    start_message += f"\n\n🕹️ **{current_longest_round_streak['user']}** can toggle modes mid-game"
+            #    start_message += "\n↔️ **#[command]** any time during round"
+
+            start_message += "\n🏁 **Get ready** 🏁\n​"
+            intro_embed = discord.Embed().set_image(url=selected_gif_url) if selected_gif_url else None
+
             # Wait for a player to be present before starting
             if no_players:
                 view = StartRoundView()
-                prompt_suffix = "\u200b\n👥 ***Send any message or click below to start!*** 👥\n\u200b"
-                base_text = ""
-                if last_round_end_msg is not None:
-                    base_text = last_round_end_msg.content
-                    try:
-                        prompt_msg = await last_round_end_msg.edit(view=view)
-                    except (discord.NotFound, discord.HTTPException):
-                        base_text = ""
-                        prompt_msg = await safe_send(channel, prompt_suffix, view=view)
-                else:
-                    prompt_msg = await safe_send(channel, prompt_suffix, view=view)
+                prompt_msg = await safe_send(channel, content=start_message, embed=intro_embed, view=view)
 
                 def check(m):
                     return m.author.id != get_bot().user.id and m.channel.id == channel.id
@@ -20414,35 +20422,21 @@ async def start_trivia():
                     interaction = view.future.result()
                     try:
                         await prompt_msg.edit(
-                            content=base_text + f"\u200b\n🥒 ***Started by {interaction.user.mention}!*** 🥒\n\u200b",
+                            content=start_message + f"​\n🥒 ***Started by {interaction.user.mention}!*** 🥒\n​",
                             view=None,
                         )
                     except (discord.NotFound, discord.HTTPException):
                         pass
             else:
+                await safe_send(channel, content=start_message, embed=intro_embed)
                 await asyncio.sleep(5)
 
-            perks_mention = f"</perks:{PERKS_COMMAND_ID}>" if PERKS_COMMAND_ID else "/perks"
-            submit_mention = f"</submit:{SUBMIT_COMMAND_ID}>" if SUBMIT_COMMAND_ID else "/submit"
-            lab_message = "\u200b\n✨🧪 **NEW from the Okra Lab**! 🧪✨\n"
+            lab_message = "​\n✨🧪 **NEW from the Okra Lab**! 🧪✨\n"
             lab_message += "\n⛓️🔐 **Bondage**: More multiple choice [Game Mode]\n"
             await sync_okra_lab_announcement(lab_message)
-            lab_message += "\n\n\u200b"
+            lab_message += "\n\n​"
             await safe_send(channel, lab_message)
             await asyncio.sleep(3)
-            start_message = f"\u200b\n\u200b\n🎉🤹‍♂️ **Live Trivia & Games for Discord!**\n"
-            start_message += f"\n⏩ Starting a **{questions_per_round} question** round! ⏩"
-            start_message += f"\n\n🚩 Report bad questions"
-            start_message += f"\n🗝️ {perks_mention}: Unlock all modes/games"
-            start_message += f"\n❓ {submit_mention}: Suggest new questions"
-
-            #if current_longest_round_streak["user"] is not None and await get_coffees(current_longest_round_streak["user_id"]) > 0:
-            #    start_message += f"\n\n🕹️ **{current_longest_round_streak['user']}** can toggle modes mid-game"
-            #    start_message += "\n↔️ **#[command]** any time during round"
-
-            start_message += "\n\n🏁 **Get ready** 🏁\n\u200b"
-            intro_embed = discord.Embed().set_image(url=selected_gif_url) if selected_gif_url else None
-            await safe_send(channel, content=start_message, embed=intro_embed)
 
             #await round_start_messages()
             await asyncio.sleep(5)
@@ -20608,45 +20602,12 @@ async def start_trivia():
             await safe_send(channel, blurb)
             await asyncio.sleep(5)
 
-            await check_bump_status()
-            if bumped_status == False:
-                await get_bump_url_from_s3()
-                await asyncio.sleep(4)
-
-            await asyncio.sleep(2)
-            last_round_end_msg = await send_question_queen_submit_ad()
-
     except Exception as e:
         sentry_sdk.capture_exception(e)
         print(f"Error occurred: {e}")
         traceback.print_exc()  # Print the stack trace of the error
         print("Restarting the trivia bot in 10 seconds...")
         await asyncio.sleep(10)  
-
-
-async def get_bump_url_from_s3():
-    bucket_name = "triviabotwebsite"
-    prefix = "bump/"
-    
-    session = aioboto3.Session()
-    async with session.client("s3") as s3:
-        response = await s3.list_objects_v2(Bucket=bucket_name, Prefix=prefix)
-    
-    # Extract file keys
-    files = [item['Key'] for item in response.get('Contents', []) if item['Key'].lower().endswith(('.png', '.jpg', '.jpeg', '.gif'))]
-    random_file = random.choice(files)
-    encoded_filename = quote(random_file)
-
-    public_url = f"https://{bucket_name}.s3.amazonaws.com/{encoded_filename}"
-    
-    message = (
-        f"\u200b\n🚨⏫ BUMP ALERT ⏫🚨\n\n"
-        f"Type 👉 **/bump** 👈 now to boost our trivia server and gain the title of...\n\n👑🍔 **Bumper King** 🍔👑!\n\u200b"
-    )
-
-    await safe_send(channel, content=message, embed=discord.Embed().set_image(url=public_url))
-
-
 
 
 def print_round_settings():
