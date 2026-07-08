@@ -20311,12 +20311,11 @@ class StartRoundView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
         self.future = asyncio.get_event_loop().create_future()
-        self.button_ref = None
+        self.button_ref = self.children[0]
 
     @discord.ui.button(label="Start Round", style=discord.ButtonStyle.success, emoji="🥒")
     async def start_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not self.future.done():
-            self.button_ref = button
             self.future.set_result(interaction)
         await interaction.response.defer()
 
@@ -20416,7 +20415,7 @@ async def start_trivia():
                 await sync_okra_lab_announcement(lab_message)
                 lab_block = f"\n{lab_message}"
 
-            start_message = f"​\n​\n🎉🤹‍♂️ **Live Trivia & Games for Discord!**\n"
+            start_message = f"​\n​\n🎉🤹‍♂️ **Live Trivia & Games**\n"
             start_message += lab_block
 
             #if current_longest_round_streak["user"] is not None and await get_coffees(current_longest_round_streak["user_id"]) > 0:
@@ -20426,7 +20425,21 @@ async def start_trivia():
             intro_embed = discord.Embed()
             if selected_gif_url:
                 intro_embed.set_image(url=selected_gif_url)
-            intro_embed.set_footer(text=f"⏩ Starting a {questions_per_round} question round! ⏩\n🏁 Get ready 🏁")
+
+            async def run_start_countdown(msg, embed, view, button):
+                embed.set_footer(text=f"⏩ Starting a {questions_per_round} question round! ⏩\n🏁 Get ready 🏁")
+                button.disabled = True
+                for i in range(5, 0, -1):
+                    button.label = f"Starting in {i}s"
+                    try:
+                        await msg.edit(embed=embed, view=view)
+                    except (discord.NotFound, discord.HTTPException):
+                        return
+                    await asyncio.sleep(1)
+                try:
+                    await msg.edit(embed=embed, view=None)
+                except (discord.NotFound, discord.HTTPException):
+                    pass
 
             # Wait for a player to be present before starting
             if no_players:
@@ -20446,28 +20459,19 @@ async def start_trivia():
                 if message_task in done:
                     msg = message_task.result()
                     await msg.add_reaction("🥒")
-                    try:
-                        await prompt_msg.edit(view=None)
-                    except (discord.NotFound, discord.HTTPException):
-                        pass
+                    starter = msg.author
                 else:
                     interaction = view.future.result()
-                    try:
-                        updated_embed = prompt_msg.embeds[0] if prompt_msg.embeds else discord.Embed()
-                        updated_embed.description = (updated_embed.description or "") + f"​\n🥒 ***Started by {interaction.user.mention}!*** 🥒\n​"
-                        button = view.button_ref
-                        if button:
-                            button.disabled = True
-                            for i in range(5, 0, -1):
-                                button.label = f"Starting in {i}s"
-                                await prompt_msg.edit(embed=updated_embed, view=view)
-                                await asyncio.sleep(1)
-                        await prompt_msg.edit(embed=updated_embed, view=None)
-                    except (discord.NotFound, discord.HTTPException):
-                        pass
+                    starter = interaction.user
+
+                updated_embed = prompt_msg.embeds[0] if prompt_msg.embeds else discord.Embed()
+                updated_embed.description = (updated_embed.description or "") + f"​\n🥒 ***Started by {starter.mention}!*** 🥒\n​"
+                await run_start_countdown(prompt_msg, updated_embed, view, view.button_ref)
             else:
-                await safe_send(channel, content=start_message, embed=intro_embed)
-                await asyncio.sleep(5)
+                view = StartRoundView()
+                view.button_ref.disabled = True
+                prompt_msg = await safe_send(channel, content=start_message, embed=intro_embed, view=view)
+                await run_start_countdown(prompt_msg, intro_embed, view, view.button_ref)
 
             await round_preview(selected_questions)
 
