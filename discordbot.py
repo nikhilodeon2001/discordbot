@@ -355,7 +355,7 @@ async def get_update_blurb() -> str:
         signoff = await _sample_recent_text(db, "update_blurbs", "update_blurb")
         if not fact or not signoff:
             return "🥬 Heading off to level up — back in a flash, Okrans!"
-        return f"🌿 {fact}\n\n{signoff} 🥬"
+        return f"**OkRandom Fact**\n\n🌿 {fact}\n\n{signoff} 🥬"
     except Exception:
         return "🥬 Heading off to level up — back in a flash, Okrans!"
 
