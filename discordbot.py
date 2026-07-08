@@ -399,6 +399,14 @@ okra_lab_announcement_enabled = False
 okra_lab_announcement_text = "⛓️🔐 **Bondage**: More multiple choice [Game Mode]\n"
 
 
+# Kill switch + content for the periodic Okra Lab announcement (posted to the
+# trivia channel each round, and once to the announcements channel via
+# sync_okra_lab_announcement's de-dupe). To ship a new announcement, set
+# okra_lab_announcement_text to the new body text.
+okra_lab_announcement_enabled = True
+okra_lab_announcement_text = ""
+
+
 async def sync_okra_lab_announcement(content):
     """Post the Okra Lab feature list to the announcements channel, but only when
     this exact content has never been posted before \u2014 checked against full history,
@@ -20621,7 +20629,7 @@ async def start_trivia():
             ad_body = await send_question_queen_submit_ad()
             message = (
                 "\u200b\n"
-                "\U0001f9d8\u200d\u2642\ufe0f A short breather. Relax, stretch, meditate.\n\n"
+                "\U0001f9d8\u200d\u2642\ufe0f **Relax, stretch, meditate.**\n\n"
                 "\U0001f49a [Unlock Perks](https://discord.com/channels/1367682586079395902/role-subscriptions)\n"
                 "\U0001f4a1 [Leave Feedback](https://forms.gle/iWvmN24pfGEGSy7n7)\n"
                 "\u2b50 [Write a Review](https://disboard.org/review/create/1367682586079395902)\n\n"
