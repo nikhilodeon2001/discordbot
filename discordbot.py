@@ -395,7 +395,7 @@ async def send_question_queen_submit_ad():
 # trivia channel each round, and once to the announcements channel via
 # sync_okra_lab_announcement's de-dupe). To ship a new announcement, set
 # okra_lab_announcement_text to the new body text.
-okra_lab_announcement_enabled = True
+okra_lab_announcement_enabled = False
 okra_lab_announcement_text = "⛓️🔐 **Bondage**: More multiple choice [Game Mode]\n"
 
 
@@ -13928,9 +13928,8 @@ async def get_image_url_from_s3(streak_message=None):
         if streak_message:
             message += f"{streak_message}\n\n"
         message += "🖼️✨ A masterpiece from the [**Okra Museum**](https://clubokra.com/okra-museum)\n"
-        message += f"\n**Masterpiece**: *{museum_post['title']}*\n"
-        message += f"**Okra's Muse**: *{museum_post['muse']}*\n"
-        message += f"**Creation Date**: *{museum_post['creation_date']}*\n\u200b"
+        message += f"\n**{museum_post['title']}**\n"
+        message += f"By {museum_post['muse']}, {museum_post['creation_date']}\n\u200b"
 
         await safe_send(
             channel,
@@ -13947,7 +13946,7 @@ async def upload_image_to_s3(buffer, winner, description):
 
         pst = pytz.timezone('America/Los_Angeles')
         now = datetime.datetime.now(pst)
-        formatted_time = now.strftime('%b %-d, %Y %H%M')
+        formatted_time = now.strftime('%B %d, %Y %H%M')
         object_name = f"{folder_name}/{description} & {winner} ({formatted_time}).png"
 
         # Async S3 client
@@ -14026,6 +14025,12 @@ def parse_museum_image_key(object_key):
     title, muse, full_date = match.groups()
     clean_title = re.sub(r"[\"']", "", title)
     date_only = " ".join(full_date.split()[:-1]) or full_date
+    for fmt in ("%B %d, %Y", "%b %d, %Y"):
+        try:
+            date_only = datetime.datetime.strptime(date_only, fmt).strftime("%b %-d, %Y")
+            break
+        except ValueError:
+            continue
     return {
         "s3_key": object_key,
         "image_url": f"https://triviabotwebsite.s3.amazonaws.com/{quote(object_key, safe='/')}",
