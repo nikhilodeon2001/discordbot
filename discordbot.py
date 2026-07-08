@@ -20426,8 +20426,13 @@ async def start_trivia():
             if selected_gif_url:
                 intro_embed.set_image(url=selected_gif_url)
 
-            async def run_start_countdown(msg, embed, view, button):
-                embed.set_footer(text=f"⏩ Starting a {questions_per_round} question round! ⏩\n🏁 Get ready 🏁")
+            async def run_start_countdown(msg, embed, view, button, starter=None):
+                footer_lines = []
+                if starter is not None:
+                    footer_lines.append(f"🥒 Started by {starter.display_name}! 🥒")
+                footer_lines.append(f"⏩ Starting a {questions_per_round} question round! ⏩")
+                footer_lines.append("🏁 Get ready 🏁")
+                embed.set_footer(text="\n".join(footer_lines))
                 button.disabled = True
                 for i in range(5, 0, -1):
                     button.label = f"Starting in {i}s"
@@ -20466,7 +20471,7 @@ async def start_trivia():
 
                 updated_embed = prompt_msg.embeds[0] if prompt_msg.embeds else discord.Embed()
                 updated_embed.description = (updated_embed.description or "") + f"​\n🥒 ***Started by {starter.mention}!*** 🥒\n​"
-                await run_start_countdown(prompt_msg, updated_embed, view, view.button_ref)
+                await run_start_countdown(prompt_msg, updated_embed, view, view.button_ref, starter=starter)
             else:
                 view = StartRoundView()
                 view.button_ref.disabled = True
