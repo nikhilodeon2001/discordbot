@@ -13927,8 +13927,7 @@ async def get_image_url_from_s3(streak_message=None):
         message = "\u200b\n"
         if streak_message:
             message += f"{streak_message}\n\n"
-        message += "🖼️✨ A memory from the **Okra Museum**\n"
-        message += "\n🥒🏛️ [Visit the Okra Museum](https://clubokra.com/okra-museum)\n"
+        message += "🖼️✨ A masterpiece from the [**Okra Museum**](https://clubokra.com/okra-museum)\n"
         message += f"\n**Masterpiece**: *{museum_post['title']}*\n"
         message += f"**Okra's Muse**: *{museum_post['muse']}*\n"
         message += f"**Creation Date**: *{museum_post['creation_date']}*\n\u200b"
@@ -13948,7 +13947,7 @@ async def upload_image_to_s3(buffer, winner, description):
 
         pst = pytz.timezone('America/Los_Angeles')
         now = datetime.datetime.now(pst)
-        formatted_time = now.strftime('%B %d, %Y %H%M')
+        formatted_time = now.strftime('%b %-d, %Y %H%M')
         object_name = f"{folder_name}/{description} & {winner} ({formatted_time}).png"
 
         # Async S3 client
@@ -19216,9 +19215,9 @@ async def update_round_streaks(user, user_id, roast_task=None):
                 dynamic_emoji = number_to_emoji.get(remaining_games, str(remaining_games))
 
                 if remaining_games == 1:
-                    image_message = f"{dynamic_emoji}🎨 **<@{user_id}>**, win the next game and I'll draw you something."
+                    image_message = f"{dynamic_emoji}🎨 **<@{user_id}>**, win the next game and you get a painting."
                 else:
-                    image_message = f"{dynamic_emoji}🎨 **<@{user_id}>**, win {remaining_games} more in a row and I'll draw you something."
+                    image_message = f"{dynamic_emoji}🎨 **<@{user_id}>**, win {remaining_games} more in a row and you get a painting."
 
                 await get_image_url_from_s3(image_message)
 
