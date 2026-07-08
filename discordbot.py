@@ -20411,21 +20411,22 @@ async def start_trivia():
             # Build the round-start banner (help-the-game ad + Royalty now live in the round-end message)
             lab_block = ""
             if okra_lab_announcement_enabled and okra_lab_announcement_text:
-                lab_message = "✨🧪 **NEW from the Okra Lab**! 🧪✨\n"
-                lab_message += f"\n{okra_lab_announcement_text}\n"
+                lab_message = "✨ **NEW** ✨\n"
+                lab_message += f"{okra_lab_announcement_text}\n"
                 await sync_okra_lab_announcement(lab_message)
                 lab_block = f"\n{lab_message}"
 
             start_message = f"​\n​\n🎉🤹‍♂️ **Live Trivia & Games for Discord!**\n"
             start_message += lab_block
-            start_message += f"\n⏩ Starting a **{questions_per_round} question** round! ⏩\n"
 
             #if current_longest_round_streak["user"] is not None and await get_coffees(current_longest_round_streak["user_id"]) > 0:
             #    start_message += f"\n\n🕹️ **{current_longest_round_streak['user']}** can toggle modes mid-game"
             #    start_message += "\n↔️ **#[command]** any time during round"
 
-            start_message += "\n🏁 **Get ready** 🏁\n​"
-            intro_embed = discord.Embed().set_image(url=selected_gif_url) if selected_gif_url else None
+            intro_embed = discord.Embed()
+            if selected_gif_url:
+                intro_embed.set_image(url=selected_gif_url)
+            intro_embed.set_footer(text=f"⏩ Starting a {questions_per_round} question round! ⏩\n🏁 Get ready 🏁")
 
             # Wait for a player to be present before starting
             if no_players:
@@ -20610,8 +20611,8 @@ async def start_trivia():
                 "\u200b\n"
                 "\U0001f9d8\u200d\u2642\ufe0f A short breather. Relax, stretch, meditate.\n\n"
                 "\U0001f49a [Unlock Perks](https://discord.com/channels/1367682586079395902/role-subscriptions)\n"
-                "\U0001f4a1 [Submit Feedback](https://forms.gle/iWvmN24pfGEGSy7n7)\n"
-                "\u2b50 [Leave a Review](https://disboard.org/review/create/1367682586079395902)\n\n"
+                "\U0001f4a1 [Leave Feedback](https://forms.gle/iWvmN24pfGEGSy7n7)\n"
+                "\u2b50 [Write a Review](https://disboard.org/review/create/1367682586079395902)\n\n"
                 f"{ad_body}\n"
                 "\U0001f3a8 Live Trivia is a pure hobby effort.\n"
                 "\u200b"
