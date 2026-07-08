@@ -363,29 +363,31 @@ async def get_update_blurb() -> str:
 async def send_question_queen_submit_ad():
     """Builds the round-transition ad body: help-the-game bullets + This Week's Royalty
     (Bumper King + Question Queens). Returns text only — caller composes it into the
-    combined round-start message rather than sending it standalone."""
+    round-end message rather than sending it standalone."""
     submit_mention = f"</submit:{SUBMIT_COMMAND_ID}>" if SUBMIT_COMMAND_ID else "/submit"
     perks_mention = f"</perks:{PERKS_COMMAND_ID}>" if PERKS_COMMAND_ID else "/perks"
+    flag_mention = f"</flag:{FLAG_COMMAND_ID}>" if FLAG_COMMAND_ID else "/flag"
+    bump_mention = f"</bump:{BUMP_COMMAND_ID}>" if BUMP_COMMAND_ID else "/bump"
     message = "**Help the game. Get rewarded.**\n"
     message += f"{submit_mention} new trivia questions (min 5)\n"
-    message += "Flag poor quality questions (min 5)\n"
+    message += f"{flag_mention} poor quality questions (min 5)\n"
     if bumped_status == False:
-        message += "/bump the server to attract players\n"
-    message += "\n👑 This Week's Royalty:\n"
+        message += f"{bump_mention} the server to attract players\n"
+    message += "\n👑🌹 This Week's Royalty:\n"
     if bumper_king_id:
-        message += f"👑🍔 <@{bumper_king_id}> — Bumper King\n"
+        message += f"🍔🤴 <@{bumper_king_id}> — Bumper King\n"
     else:
-        message += "👑🍔 No Bumper King yet — /bump to claim it!\n"
+        message += "🍔🤴 No current Bumper King\n"
     if top_contributor_id or top_editor_id:
         if top_contributor_id:
             count_str = f" ({top_contributor_count} questions)" if top_contributor_count else ""
-            message += f"👑❓ <@{top_contributor_id}>{count_str} — Question Queen\n"
+            message += f"❓👸 <@{top_contributor_id}>{count_str} — Question Queen\n"
         if top_editor_id:
             count_str = f" ({top_editor_count} edits)" if top_editor_count else ""
-            message += f"👑❓ <@{top_editor_id}>{count_str} — Question Queen\n"
+            message += f"❓👸 <@{top_editor_id}>{count_str} — Question Queen\n"
         message += f"\n🎁 Thanks for your contributions. {perks_mention} unlocked.\n"
     else:
-        message += f"👑 No Question Queens crowned. Snag a crown and unlock free {perks_mention}!\n"
+        message += "❓👸 No current Question Queens\n"
     return message
 
 
@@ -626,8 +628,9 @@ museum_backfill_task = None
 if prod_or_stage == "stage":
     okrag_id = 591861826690613248  
     OKRAN_GUILD_ID = 1375328358573015050 
-    DISBOARD_BOT_ID = 591861826690613248 
-    BUMPER_KING_ROLE_ID = 1411103298907275346 
+    DISBOARD_BOT_ID = 591861826690613248
+    BUMP_COMMAND_ID = None
+    BUMPER_KING_ROLE_ID = 1411103298907275346
     OKRAN_ROLE_ID = 1409785437979148329 
     OKRAN_ROLE_ID_2 = ""
     TOURNAMENT_GUILD_ID = 1415895468822495342
@@ -674,6 +677,7 @@ elif prod_or_stage == "prod":
     okrag_id = 591861826690613248
     OKRAN_GUILD_ID = 1367682586079395902  # Production
     DISBOARD_BOT_ID = 302050872383242240  # Disboard
+    BUMP_COMMAND_ID = 947088344167366698
     BUMPER_KING_ROLE_ID = 1411057279209570374 # Production
     OKRAN_ROLE_ID = 1408305516131782736 #Prouction
     OKRAN_ROLE_ID_2 = 1429516438141538507
@@ -19995,7 +19999,7 @@ def generate_and_render_polynomial(type):
 async def round_preview(selected_questions):
     numbered_blocks = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"]
     
-    message = "\n🔮 **Next Round Preview** 🔮\n\n\u200b"
+    message = "\n🔮 **Round Preview** 🔮\n\n\u200b"
 
     for i, question_data in enumerate(selected_questions):
         trivia_category = question_data[0]
@@ -20382,12 +20386,9 @@ async def start_trivia():
                 send_magic_image(magic_number)
             elif image_questions == True:
                 selected_gif_url = await select_intro_image_url()
-            # Build the combined round-start message: banner + help-the-game ad + Royalty
-            await check_bump_status()
-            ad_body = await send_question_queen_submit_ad()
+            # Build the round-start banner (help-the-game ad + Royalty now live in the round-end message)
             start_message = f"​\n​\n🎉🤹‍♂️ **Live Trivia & Games for Discord!**\n"
-            start_message += f"\n⏩ Starting a **{questions_per_round} question** round! ⏩\n\n"
-            start_message += ad_body
+            start_message += f"\n⏩ Starting a **{questions_per_round} question** round! ⏩\n"
 
             #if current_longest_round_streak["user"] is not None and await get_coffees(current_longest_round_streak["user_id"]) > 0:
             #    start_message += f"\n\n🕹️ **{current_longest_round_streak['user']}** can toggle modes mid-game"
@@ -20421,10 +20422,9 @@ async def start_trivia():
                 else:
                     interaction = view.future.result()
                     try:
-                        await prompt_msg.edit(
-                            content=start_message + f"​\n🥒 ***Started by {interaction.user.mention}!*** 🥒\n​",
-                            view=None,
-                        )
+                        updated_embed = prompt_msg.embeds[0] if prompt_msg.embeds else discord.Embed()
+                        updated_embed.description = (updated_embed.description or "") + f"​\n🥒 ***Started by {interaction.user.mention}!*** 🥒\n​"
+                        await prompt_msg.edit(embed=updated_embed, view=None)
                     except (discord.NotFound, discord.HTTPException):
                         pass
             else:
@@ -20438,9 +20438,11 @@ async def start_trivia():
             await safe_send(channel, lab_message)
             await asyncio.sleep(3)
 
+            await round_preview(selected_questions)
+
             #await round_start_messages()
             await asyncio.sleep(5)
-                
+
             # Randomly select n questions
             print_selected_questions(selected_questions)
             
@@ -20572,14 +20574,15 @@ async def start_trivia():
 
             question_task = asyncio.create_task(_load_next_questions())
             
-            submit_mention = f"</submit:{SUBMIT_COMMAND_ID}>" if SUBMIT_COMMAND_ID else "/submit"
+            await check_bump_status()
+            ad_body = await send_question_queen_submit_ad()
             message = (
                 "\u200b\n"
                 "\U0001f9d8\u200d\u2642\ufe0f A short breather. Relax, stretch, meditate.\n\n"
                 "\U0001f49a [Unlock Perks](https://discord.com/channels/1367682586079395902/role-subscriptions)\n"
                 "\U0001f4a1 [Submit Feedback](https://forms.gle/iWvmN24pfGEGSy7n7)\n"
-                "\u2b50 [Leave a Review](https://disboard.org/review/create/1367682586079395902)\n"
-                f"\u2753 {submit_mention} new questions\n\n"
+                "\u2b50 [Leave a Review](https://disboard.org/review/create/1367682586079395902)\n\n"
+                f"{ad_body}\n"
                 "\U0001f3a8 Live Trivia is a pure hobby effort.\n"
                 "\u200b"
             )
@@ -20588,9 +20591,7 @@ async def start_trivia():
             
             
             selected_questions = await question_task
-            await round_preview(selected_questions)
-            
-            
+
             #if len(scoreboard) >= 1000:
             #    await ask_survey_question()
 
@@ -23985,14 +23986,6 @@ async def on_ready():
     # Send startup notifications to configured channels
     print("📢 Sending startup notifications...")
     try:
-        # Always notify main channel
-        if channel:
-            try:
-                await safe_send(channel, "🥬 And we're back. Let's go, Okrans!")
-                print(f"✅ Sent startup notification to main channel {channel.id}")
-            except Exception as e:
-                print(f"❌ Failed to send notification to main channel: {e}")
-
         # Always notify tournament channel (if it exists)
         tournament_channel = bot.get_channel(TOURNAMENT_GUILD_ID)
         if tournament_channel:
@@ -24013,15 +24006,6 @@ async def on_ready():
                 print(f"✅ Sent startup notification to Mini-Game Arena {MINI_GAME_ARENA_CHANNEL_ID}")
             except Exception as e:
                 print(f"❌ Failed to send notification to Mini-Game Arena: {e}")
-
-        # Always notify Simply Trivia channel
-        simply_trivia_channel = bot.get_channel(SIMPLY_TRIVIA_CHANNEL_ID)
-        if simply_trivia_channel:
-            try:
-                await safe_send(simply_trivia_channel, "🥬 And we're back. Let's go, Okrans!")
-                print(f"✅ Sent startup notification to Simply Trivia {SIMPLY_TRIVIA_CHANNEL_ID}")
-            except Exception as e:
-                print(f"❌ Failed to send notification to Simply Trivia: {e}")
     except Exception as notify_error:
         print(f"❌ Error sending startup notifications: {notify_error}")
 
