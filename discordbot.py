@@ -373,7 +373,7 @@ async def send_question_queen_submit_ad():
     message += f"{flag_mention} poor quality questions (min 5)\n"
     if bumped_status == False:
         message += f"{bump_mention} the server to attract players\n"
-    message += "\n👑🌹 This Week's Royalty:\n"
+    message += "\n"
     if bumper_king_id:
         message += f"🍔🤴 <@{bumper_king_id}> — Bumper King\n"
     else:
@@ -389,6 +389,14 @@ async def send_question_queen_submit_ad():
     else:
         message += "❓👸 No current Question Queens\n"
     return message
+
+
+# Kill switch + content for the periodic Okra Lab announcement (posted to the
+# trivia channel each round, and once to the announcements channel via
+# sync_okra_lab_announcement's de-dupe). To ship a new announcement, set
+# okra_lab_announcement_text to the new body text.
+okra_lab_announcement_enabled = True
+okra_lab_announcement_text = "⛓️🔐 **Bondage**: More multiple choice [Game Mode]\n"
 
 
 async def sync_okra_lab_announcement(content):
@@ -19134,7 +19142,19 @@ async def update_round_streaks(user, user_id, roast_task=None):
             message += roast_block
             message += f"\n▶️ **[Live Stats](https://clubokra.com/leaderboard)**\n\u200b\n\u200b"
 
-        sent_message = await safe_send(channel, message)
+        avatar_url = None
+        try:
+            guild = bot.get_guild(OKRAN_GUILD_ID)
+            member = (guild.get_member(user_id) or await guild.fetch_member(user_id)) if guild else None
+            if member:
+                avatar_url = member.display_avatar.url
+        except Exception as e:
+            print(f"⚠️ Could not fetch winner avatar: {e}")
+
+        winner_embed = discord.Embed()
+        if avatar_url:
+            winner_embed.set_thumbnail(url=avatar_url)
+        sent_message = await safe_send(channel, message, embed=winner_embed)
 
         if roast_text and sent_message is not None:
             test_channel = bot.get_channel(ROAST_TEST_CHANNEL_ID)
@@ -20291,10 +20311,12 @@ class StartRoundView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
         self.future = asyncio.get_event_loop().create_future()
+        self.button_ref = None
 
     @discord.ui.button(label="Start Round", style=discord.ButtonStyle.success, emoji="🥒")
     async def start_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         if not self.future.done():
+            self.button_ref = button
             self.future.set_result(interaction)
         await interaction.response.defer()
 
@@ -20387,7 +20409,15 @@ async def start_trivia():
             elif image_questions == True:
                 selected_gif_url = await select_intro_image_url()
             # Build the round-start banner (help-the-game ad + Royalty now live in the round-end message)
+            lab_block = ""
+            if okra_lab_announcement_enabled and okra_lab_announcement_text:
+                lab_message = "✨🧪 **NEW from the Okra Lab**! 🧪✨\n"
+                lab_message += f"\n{okra_lab_announcement_text}\n"
+                await sync_okra_lab_announcement(lab_message)
+                lab_block = f"\n{lab_message}"
+
             start_message = f"​\n​\n🎉🤹‍♂️ **Live Trivia & Games for Discord!**\n"
+            start_message += lab_block
             start_message += f"\n⏩ Starting a **{questions_per_round} question** round! ⏩\n"
 
             #if current_longest_round_streak["user"] is not None and await get_coffees(current_longest_round_streak["user_id"]) > 0:
@@ -20424,19 +20454,19 @@ async def start_trivia():
                     try:
                         updated_embed = prompt_msg.embeds[0] if prompt_msg.embeds else discord.Embed()
                         updated_embed.description = (updated_embed.description or "") + f"​\n🥒 ***Started by {interaction.user.mention}!*** 🥒\n​"
+                        button = view.button_ref
+                        if button:
+                            button.disabled = True
+                            for i in range(5, 0, -1):
+                                button.label = f"Starting in {i}s"
+                                await prompt_msg.edit(embed=updated_embed, view=view)
+                                await asyncio.sleep(1)
                         await prompt_msg.edit(embed=updated_embed, view=None)
                     except (discord.NotFound, discord.HTTPException):
                         pass
             else:
                 await safe_send(channel, content=start_message, embed=intro_embed)
                 await asyncio.sleep(5)
-
-            lab_message = "​\n✨🧪 **NEW from the Okra Lab**! 🧪✨\n"
-            lab_message += "\n⛓️🔐 **Bondage**: More multiple choice [Game Mode]\n"
-            await sync_okra_lab_announcement(lab_message)
-            lab_message += "\n\n​"
-            await safe_send(channel, lab_message)
-            await asyncio.sleep(3)
 
             await round_preview(selected_questions)
 
