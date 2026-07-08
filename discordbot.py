@@ -399,14 +399,6 @@ okra_lab_announcement_enabled = False
 okra_lab_announcement_text = "⛓️🔐 **Bondage**: More multiple choice [Game Mode]\n"
 
 
-# Kill switch + content for the periodic Okra Lab announcement (posted to the
-# trivia channel each round, and once to the announcements channel via
-# sync_okra_lab_announcement's de-dupe). To ship a new announcement, set
-# okra_lab_announcement_text to the new body text.
-okra_lab_announcement_enabled = True
-okra_lab_announcement_text = ""
-
-
 async def sync_okra_lab_announcement(content):
     """Post the Okra Lab feature list to the announcements channel, but only when
     this exact content has never been posted before \u2014 checked against full history,
@@ -20439,7 +20431,7 @@ async def start_trivia():
             async def run_start_countdown(msg, embed, view, button, starter=None):
                 footer_lines = []
                 if starter is not None:
-                    footer_lines.append(f"🥒 Started by {starter.display_name}! 🥒")
+                    footer_lines.append(f"🥒 Launched by {starter.display_name}! 🥒")
                     footer_lines.append("")
                 footer_lines.append(f"⏩ Starting a {questions_per_round} question round! ⏩")
                 footer_lines.append("🏁 Get ready 🏁")
@@ -20481,7 +20473,7 @@ async def start_trivia():
                     starter = interaction.user
 
                 updated_embed = prompt_msg.embeds[0] if prompt_msg.embeds else discord.Embed()
-                updated_embed.description = (updated_embed.description or "") + f"​\n🥒 ***Started by {starter.mention}!*** 🥒\n​"
+                updated_embed.description = (updated_embed.description or "") + f"​\n🥒 ***Launched by {starter.mention}!*** 🥒\n​"
                 await run_start_countdown(prompt_msg, updated_embed, view, view.button_ref, starter=starter)
             else:
                 view = StartRoundView()
