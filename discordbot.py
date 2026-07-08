@@ -20626,7 +20626,7 @@ async def start_trivia():
                 "\U0001f4a1 [Leave Feedback](https://forms.gle/iWvmN24pfGEGSy7n7)\n"
                 "\u2b50 [Write a Review](https://disboard.org/review/create/1367682586079395902)\n\n"
                 f"{ad_body}\n"
-                "\U0001f3a8 Live Trivia is a pure hobby effort.\n"
+                "\U0001f3a8 Live Trivia & Games is a pure hobby effort.\n"
                 "\u200b"
             )
             await safe_send(channel, message)
