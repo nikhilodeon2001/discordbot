@@ -15652,10 +15652,8 @@ async def select_wof_questions(winner, winner_id):
             "https://triviabotwebsite.s3.us-east-2.amazonaws.com/sad/sad13.gif"
             ]
 
-            gif_url = random.choice(gif_set)
             message = f"\n⏭️🕹️ <@{winner_id}>: '**Less** Games. **More** Trivia.'\n"
-            #await safe_send(channel, content=message, embed=discord.Embed().set_image(url=gif_url))
-            #await asyncio.sleep(3)
+            await safe_send(channel, content=message)
             return None
         
         elif int(selected_wof_category) < premium_counts:
@@ -20608,7 +20606,7 @@ async def start_trivia():
                 await save_selected_questions_to_db(qs)
                 return qs
         
-            await asyncio.sleep(10)
+            await asyncio.sleep(3)
             await process_round_options(round_winner, winner_points, round_winner_id)
 
             question_task = asyncio.create_task(_load_next_questions())
