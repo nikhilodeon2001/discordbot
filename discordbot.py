@@ -343,7 +343,7 @@ async def get_round_blurb() -> str:
         fact = await _sample_recent_text(db, "fun_facts", "fun_fact")
         if not fact:
             return "🥬"
-        return f"🌿 {fact} 🥬"
+        return f"**OkRandom Fact**\n\n🌿 {fact} 🥬"
     except Exception as e:
         print(f"Error fetching fun fact: {e}")
         return "🥬"
@@ -369,8 +369,8 @@ async def send_question_queen_submit_ad():
     flag_mention = f"</flag:{FLAG_COMMAND_ID}>" if FLAG_COMMAND_ID else "/flag"
     bump_mention = f"</bump:{BUMP_COMMAND_ID}>" if BUMP_COMMAND_ID else "/bump"
     message = "**Help the game. Get rewarded.**\n"
-    message += f"{submit_mention} new trivia questions (min 5)\n"
-    message += f"{flag_mention} poor quality questions (min 5)\n"
+    message += f"{submit_mention} new trivia questions\n"
+    message += f"{flag_mention} poor quality questions\n"
     if bumped_status == False:
         message += f"{bump_mention} the server to attract players\n"
     message += "\n"
@@ -15655,8 +15655,8 @@ async def select_wof_questions(winner, winner_id):
 
             gif_url = random.choice(gif_set)
             message = f"\n⏭️🕹️ <@{winner_id}>: '**Less** Games. **More** Trivia.'\n"
-            await safe_send(channel, content=message, embed=discord.Embed().set_image(url=gif_url))
-            await asyncio.sleep(3)
+            #await safe_send(channel, content=message, embed=discord.Embed().set_image(url=gif_url))
+            #await asyncio.sleep(3)
             return None
         
         elif int(selected_wof_category) < premium_counts:
@@ -21672,6 +21672,19 @@ async def _count_submissions_last_24h(submitter_id):
     })
 
 
+async def get_user_contribution_counts(user_id):
+    """Return (approved_submission_count, edit_credit_count) for user_id over the last
+    TOP_CONTRIBUTOR_WINDOW_DAYS days -- same window/criteria as the Question Queen crown."""
+    cutoff = datetime.datetime.utcnow() - datetime.timedelta(days=TOP_CONTRIBUTOR_WINDOW_DAYS)
+    submit_count = await db.question_submissions.count_documents(
+        {"submitter_id": user_id, "status": "approved", "decided_at": {"$gte": cutoff}}
+    )
+    edit_count = await db.edit_credits.count_documents(
+        {"user_id": user_id, "credited_at": {"$gte": cutoff}}
+    )
+    return submit_count, edit_count
+
+
 def _get_submission_lock(submitter_id):
     lock = _submission_locks.get(submitter_id)
     if lock is None:
@@ -22867,6 +22880,11 @@ async def _send_submission_decision_dm(guild, submitter_id, *, decision, notify,
             if notify_text:
                 body += f"\n\n{notify_text}"
             body += "\n\n" + _format_submission_fields(sub, answer_label="Your answer")
+        submit_count, _ = await get_user_contribution_counts(submitter_id)
+        body += (
+            f"\n\n📊 You have **{submit_count}** approved submission(s) in the last 7 days.\n"
+            "👑 The top submitter each week (min 5) earns a Question Queen crown — unlocking all /perks!"
+        )
         await member.send(body)
         return " DM sent."
     except discord.Forbidden:
@@ -22904,6 +22922,11 @@ async def _dm_flaggers(guild, flaggers, *, notify, notify_text=None, intro_text=
             else:
                 parts.append(_format_flagged_fields(before))
             parts.append(f"**Your report:** {flag_comment}")
+            _, edit_count = await get_user_contribution_counts(uid)
+            parts.append(
+                f"📊 You have **{edit_count}** edit credit(s) in the last 7 days.\n"
+                "👑 The top editor each week (min 5) earns a Question Queen crown — unlocking all /perks!"
+            )
             await member.send("\n\n".join(parts))
         except (discord.Forbidden, Exception):
             pass
