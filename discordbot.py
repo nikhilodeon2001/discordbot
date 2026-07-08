@@ -20432,6 +20432,7 @@ async def start_trivia():
                 footer_lines = []
                 if starter is not None:
                     footer_lines.append(f"🥒 Started by {starter.display_name}! 🥒")
+                    footer_lines.append("")
                 footer_lines.append(f"⏩ Starting a {questions_per_round} question round! ⏩")
                 footer_lines.append("🏁 Get ready 🏁")
                 embed.set_footer(text="\n".join(footer_lines))
