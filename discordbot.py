@@ -680,6 +680,7 @@ if prod_or_stage == "stage":
     HOST_USER_ID = 1375325051506655284
     ROAST_TEST_CHANNEL_ID = 1520266511481049099
     ANNOUNCEMENTS_CHANNEL_ID = 1521519888546529301
+    OKRA_MUSEUM_CHANNEL_ID = 1524473435328090304
 
 elif prod_or_stage == "prod":
     okrag_id = 591861826690613248
@@ -728,6 +729,7 @@ elif prod_or_stage == "prod":
     HOST_USER_ID = 1357587097246236794
     ROAST_TEST_CHANNEL_ID = 1449497884931395755
     ANNOUNCEMENTS_CHANNEL_ID = 1409217728388141206
+    OKRA_MUSEUM_CHANNEL_ID = 1524472945240572075
 
 AMBIENT_CHAT_CHANNEL_IDS = {channel_id, CHAT_CHANNEL_ID, PICS_CHANNEL_ID}
 
@@ -13906,6 +13908,89 @@ async def sovereign_check(user):
     return sovereign is not None
 
 
+def museum_thread_title(title, muse):
+    """Forum thread name showing title + painter so the gallery card (one line) shows both.
+
+    Thread names are static plain text (no live mention), capped at Discord's 100 chars;
+    the title is truncated if needed so the "by {muse}" always survives.
+    """
+    muse = muse or "Okra"
+    if not title:
+        return muse[:100]
+    suffix = f" — by {muse}"
+    max_title = 100 - len(suffix)
+    if max_title < 1:
+        return title[:100]
+    shown = title if len(title) <= max_title else title[:max_title - 1] + "…"
+    return f"{shown}{suffix}"
+
+
+MUSEUM_ACTIVE_THREAD_SAFETY_CAP = 990  # headroom below Discord's guild-wide 1000 active-thread limit
+
+
+async def _make_room_for_new_museum_thread(museum_channel):
+    """Archive the single oldest active thread in the museum forum if the guild is near
+    Discord's 1000 active-thread cap, so a rolling window of the newest paintings stays open."""
+    try:
+        guild = museum_channel.guild
+        active = await guild.active_threads()
+        if len(active) < MUSEUM_ACTIVE_THREAD_SAFETY_CAP:
+            return
+        forum_threads = sorted(
+            (t for t in active if t.parent_id == museum_channel.id),
+            key=lambda t: t.id,
+        )
+        if forum_threads:
+            await forum_threads[0].edit(archived=True)
+    except Exception as e:
+        print(f"⚠️ Could not make room in okra-museum forum: {e}")
+
+
+async def post_museum_image_to_channel(museum_post, user_id=None):
+    """Mirror a museum image to the #okra-museum forum channel: bold title, By muse, date.
+
+    Uses a clickable <@user_id> mention (auto-updates on rename) when the id is known,
+    falling back to the stored muse name. Mention lives in the embed description so it
+    renders clickable without pinging. #okra-museum is a Forum channel, so each image
+    becomes its own thread; falls back to a normal send for non-forum channels.
+    """
+    try:
+        museum_channel = bot.get_channel(OKRA_MUSEUM_CHANNEL_ID)
+        if not museum_channel:
+            return
+        muse_ref = f"<@{user_id}>" if user_id else museum_post["muse"]
+        title = museum_post.get("title")
+        header = f"**{title}**\n" if title else ""
+        embed = discord.Embed(description=f"{header}By {muse_ref}\n{museum_post['creation_date']}")
+        embed.set_image(url=museum_post["image_url"])
+        thread_name = museum_thread_title(title, museum_post["muse"])
+        if isinstance(museum_channel, discord.ForumChannel):
+            await _make_room_for_new_museum_thread(museum_channel)
+            await museum_channel.create_thread(name=thread_name, embed=embed)
+        else:
+            await safe_send(museum_channel, embed=embed)
+    except Exception as e:
+        print(f"⚠️ Could not post to okra-museum channel: {e}")
+
+
+async def get_museum_memory_url(user_id=None):
+    """Return a museum image URL — prefer a random painting of `user_id`, else any. None if none/error."""
+    try:
+        coll = db["museum_images"]
+        if user_id is not None:
+            docs = await coll.aggregate([
+                {"$match": {"user_id": user_id}},
+                {"$sample": {"size": 1}},
+            ]).to_list(length=1)
+            if docs:
+                return docs[0].get("image_url")
+        docs = await coll.aggregate([{"$sample": {"size": 1}}]).to_list(length=1)
+        return docs[0].get("image_url") if docs else None
+    except Exception as e:
+        print(f"⚠️ Could not fetch museum memory: {e}")
+        return None
+
+
 async def get_image_url_from_s3(streak_message=None):
     bucket_name = "triviabotwebsite"
     prefix = "generated-images/"
@@ -13939,7 +14024,7 @@ async def get_image_url_from_s3(streak_message=None):
         )
 
 
-async def upload_image_to_s3(buffer, winner, description):
+async def upload_image_to_s3(buffer, winner, description, winner_id=None):
     try:
         bucket_name = 'triviabotwebsite'
         folder_name = 'generated-images'
@@ -13967,6 +14052,24 @@ async def upload_image_to_s3(buffer, winner, description):
 
         museum_post = parse_museum_image_key(object_name)
         if museum_post:
+            await post_museum_image_to_channel(museum_post, winner_id)
+            try:
+                await db["museum_images"].update_one(
+                    {"_id": object_name},
+                    {"$set": {
+                        "user_id": winner_id,
+                        "muse": winner,
+                        "title": museum_post["title"],
+                        "image_url": museum_post["image_url"],
+                        "s3_key": object_name,
+                        "creation_date": museum_post["creation_date"],
+                        "created_at": datetime.datetime.utcnow(),
+                        "channel_posted_at": datetime.datetime.utcnow(),
+                    }},
+                    upsert=True,
+                )
+            except Exception as e:
+                print(f"⚠️ Could not record museum image metadata: {e}")
             return await publish_and_record_museum_post_to_facebook(museum_post, is_archive=False)
 
         return None
@@ -15226,7 +15329,7 @@ async def generate_round_summary_image(round_data, winner, winner_id):
                 return buffer
 
             buffer = await loop.run_in_executor(None, process_image)
-            social_post = await upload_image_to_s3(buffer, winner, image_description)
+            social_post = await upload_image_to_s3(buffer, winner, image_description, winner_id)
             share_view = build_museum_share_view(social_post)
             if museum_message and share_view:
                 await museum_message.edit(view=share_view)
@@ -15268,7 +15371,7 @@ async def generate_round_summary_image(round_data, winner, winner_id):
                         return buffer
 
                     buffer = await loop.run_in_executor(None, process_fallback_image)
-                    social_post = await upload_image_to_s3(buffer, winner, image_description)
+                    social_post = await upload_image_to_s3(buffer, winner, image_description, winner_id)
                     share_view = build_museum_share_view(social_post)
                     if museum_message and share_view:
                         await museum_message.edit(view=share_view)
@@ -19128,6 +19231,29 @@ async def update_round_streaks(user, user_id, roast_task=None):
         roast_block = f"\n{roast_text}\n" if roast_text else ""
 
         streak = current_longest_round_streak["streak"]
+
+        # Painting-progress nudge — computed before the message so it can be embedded in the winner announcement
+        painting_progress_line = ""
+        winner_coffees = None
+        pre_balance = 0
+        if ai_on:
+            winner_coffees = await get_coffees(user_id)
+            pre_balance = await get_image_credits(user_id)  # credits owed BEFORE this win's earn
+            required_wins = image_wins if winner_coffees > 0 else image_wins * 2  # Okrans 5, others 10
+            earning_now = (streak % required_wins == 0)
+            # Only nudge when they won't be redeeming a painting this round
+            if pre_balance == 0 and not earning_now:
+                number_to_emoji = {
+                    1: "1️⃣", 2: "2️⃣", 3: "3️⃣", 4: "4️⃣", 5: "5️⃣",
+                    6: "6️⃣", 7: "7️⃣", 8: "8️⃣", 9: "9️⃣", 10: "🔟"
+                }
+                remaining_games = required_wins - (streak % required_wins)
+                dynamic_emoji = number_to_emoji.get(remaining_games, str(remaining_games))
+                if remaining_games == 1:
+                    painting_progress_line = f"\n{dynamic_emoji}🎨 Win the next game and you get a painting."
+                else:
+                    painting_progress_line = f"\n{dynamic_emoji}🎨 Win {remaining_games} more in a row and you get a painting."
+
         if streak > 1:
             message = f"\u200b\n\u200b\n🏆 **Winner**: **<@{user_id}>**...🔥{current_longest_round_streak['streak']} in a row!\n"
             message += roast_block
@@ -19136,12 +19262,14 @@ async def update_round_streaks(user, user_id, roast_task=None):
                 discount_fraction = min((streak // discount_streak_amount) * discount_step_amount, 90)
                 message += f"\n⚖️ Going forward **<@{user_id}>** will incur a **-{discount_fraction}%** handicap.\n"
 
+            message += painting_progress_line
             message += f"\n▶️ **[Discord Stats](https://clubokra.com/leaderboard)**\n\u200b\n\u200b"
             message += f"\u200b"
         else:
             #message = f"\u200b\n\u200b\n🏆 **Winner**: **<@{user_id}>**!\n\n▶️ **[Discord Stats](https://clubokra.com/discord)**\n\u200b\n\u200b"
             message = f"\u200b\n\u200b\n🏆 **Winner**: **<@{user_id}>**!\n"
             message += roast_block
+            message += painting_progress_line
             message += f"\n▶️ **[Live Stats](https://clubokra.com/leaderboard)**\n\u200b\n\u200b"
 
         avatar_url = None
@@ -19156,6 +19284,9 @@ async def update_round_streaks(user, user_id, roast_task=None):
         winner_embed = discord.Embed()
         if avatar_url:
             winner_embed.set_thumbnail(url=avatar_url)
+        memory_url = await get_museum_memory_url(user_id)
+        if memory_url:
+            winner_embed.set_image(url=memory_url)
         sent_message = await safe_send(channel, message, embed=winner_embed)
 
         if roast_text and sent_message is not None:
@@ -19170,18 +19301,13 @@ async def update_round_streaks(user, user_id, roast_task=None):
                     ),
                 )
 
-        await asyncio.sleep(5)
-
-        await select_wof_questions(user, user_id)
-
         reset_embed_color()
 
+        # Painting earn/redeem — runs right after the winner announcement, before the mini-game
         if ai_on:
-            winner_coffees = await get_coffees(user_id)
-            pre_balance = await get_image_credits(user_id)  # credits owed BEFORE this win's earn
-
-            # Earn (Okran streak reward — still coffee-gated)
-            if winner_coffees > 0 and current_longest_round_streak['streak'] % image_wins == 0:
+            # Earn: Okrans every image_wins wins, non-Okrans every image_wins*2 wins
+            required_wins = image_wins if winner_coffees > 0 else image_wins * 2
+            if current_longest_round_streak['streak'] % required_wins == 0:
                 await add_image_credits(user_id, 1, user)
 
             banked = await get_image_credits(user_id)
@@ -19199,30 +19325,10 @@ async def update_round_streaks(user, user_id, roast_task=None):
                         f"🥒🛠️ **<@{user_id}>**, my crayons snapped — I couldn't finish your drawing. "
                         f"It's **saved**: win again and I'll make it. (Drawings owed: {banked})"
                     )
-            elif winner_coffees > 0:  # on-streak, nothing banked → existing progress message
-                number_to_emoji = {
-                    1: "1️⃣",
-                    2: "2️⃣",
-                    3: "3️⃣",
-                    4: "4️⃣",
-                    5: "5️⃣",
-                    6: "6️⃣",
-                    7: "7️⃣",
-                    8: "8️⃣",
-                    9: "9️⃣",
-                    10: "🔟"
-                }
 
-                await asyncio.sleep(2)
-                remaining_games = image_wins - (current_longest_round_streak['streak'] % image_wins)
-                dynamic_emoji = number_to_emoji.get(remaining_games, str(remaining_games))
+        await asyncio.sleep(5)
 
-                if remaining_games == 1:
-                    image_message = f"{dynamic_emoji}🎨 **<@{user_id}>**, win the next game and you get a painting."
-                else:
-                    image_message = f"{dynamic_emoji}🎨 **<@{user_id}>**, win {remaining_games} more in a row and you get a painting."
-
-                await get_image_url_from_s3(image_message)
+        await select_wof_questions(user, user_id)
 
     # Perform all MongoDB operations at the end
     for operation in mongo_operations:
