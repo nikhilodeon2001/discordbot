@@ -15745,25 +15745,7 @@ async def select_wof_questions(winner, winner_id, winner_coffees=None):
         randomize_embed_color()
 
         if selected_wof_category == "x":
-            gif_set = [
-            "https://triviabotwebsite.s3.us-east-2.amazonaws.com/sad/sad1.gif",
-            "https://triviabotwebsite.s3.us-east-2.amazonaws.com/sad/sad2.gif",
-            "https://triviabotwebsite.s3.us-east-2.amazonaws.com/sad/sad3.gif",
-            "https://triviabotwebsite.s3.us-east-2.amazonaws.com/sad/sad4.gif",
-            "https://triviabotwebsite.s3.us-east-2.amazonaws.com/sad/sad5.gif",
-            "https://triviabotwebsite.s3.us-east-2.amazonaws.com/sad/sad6.gif",
-            "https://triviabotwebsite.s3.us-east-2.amazonaws.com/sad/sad7.gif",
-            "https://triviabotwebsite.s3.us-east-2.amazonaws.com/sad/sad8.gif",
-            "https://triviabotwebsite.s3.us-east-2.amazonaws.com/sad/sad9.gif",
-            "https://triviabotwebsite.s3.us-east-2.amazonaws.com/sad/sad10.gif",
-            "https://triviabotwebsite.s3.us-east-2.amazonaws.com/sad/sad11.gif",
-            "https://triviabotwebsite.s3.us-east-2.amazonaws.com/sad/sad12.gif",
-            "https://triviabotwebsite.s3.us-east-2.amazonaws.com/sad/sad13.gif"
-            ]
-
-            message = f"\n⏭️🕹️ <@{winner_id}>: '**Less** Games. **More** Trivia.'\n"
-            await safe_send(channel, content=message)
-            return None
+            return "skipped"
         
         elif int(selected_wof_category) < premium_counts:
             wof_question = wof_questions[int(selected_wof_category)]
@@ -19185,6 +19167,7 @@ async def update_round_streaks(user, user_id, roast_task=None):
     # Variables to store data to be inserted or saved later
     mongo_operations = []
     winner_coffees = None
+    mini_game_result = None
 
     # Manually copy function for dictionaries
     def manual_copy(data):
@@ -19333,7 +19316,7 @@ async def update_round_streaks(user, user_id, roast_task=None):
 
         await asyncio.sleep(5)
 
-        await select_wof_questions(user, user_id, winner_coffees)
+        mini_game_result = await select_wof_questions(user, user_id, winner_coffees)
 
     # Perform all MongoDB operations at the end
     for operation in mongo_operations:
@@ -19342,7 +19325,7 @@ async def update_round_streaks(user, user_id, roast_task=None):
         elif operation["operation"] == "save":
             await save_data_to_mongo(operation["collection"], operation["document_id"], operation["data"])
 
-    return winner_coffees
+    return winner_coffees, mini_game_result
 
 
 async def determine_round_winner():
@@ -20715,7 +20698,7 @@ async def start_trivia():
             round_winner, winner_points, round_winner_id = await determine_round_winner()
             roast_task = asyncio.create_task(get_winner_roast_text(round_winner_id, round_winner))
             await clear_round_options()
-            winner_coffees = await update_round_streaks(round_winner, round_winner_id, roast_task)
+            winner_coffees, mini_game_result = await update_round_streaks(round_winner, round_winner_id, roast_task)
             asyncio.create_task(write_leaderboard_to_s3())
 
             round_count += 1
@@ -20724,8 +20707,9 @@ async def start_trivia():
                 qs = await select_trivia_questions(questions_per_round)
                 await save_selected_questions_to_db(qs)
                 return qs
-        
-            await asyncio.sleep(3)
+
+            if mini_game_result != "skipped":
+                await asyncio.sleep(3)
             await process_round_options(round_winner, winner_points, round_winner_id, winner_coffees)
 
             question_task = asyncio.create_task(_load_next_questions())
