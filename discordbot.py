@@ -19284,9 +19284,9 @@ async def update_round_streaks(user, user_id, roast_task=None):
             winner_embed.set_image(url=memory["image_url"])
             memory_muse_ref = f"<@{memory['user_id']}>" if memory.get("user_id") else memory.get("muse", "")
             memory_header = f"**{memory['title']}**\n" if memory.get("title") else ""
-            memory_block = f"\n🖼️✨ A memory from the Okra Museum\n{memory_header}By {memory_muse_ref}\n{memory['creation_date']}"
+            memory_block = f"\n\u200b\n🖼️✨ A memory from the Okra Museum\n\u200b\n{memory_header}By {memory_muse_ref}\n{memory['creation_date']}"
             if memory.get("discord_jump_url"):
-                memory_block += f"\n🔗 [View in Museum]({memory['discord_jump_url']})"
+                memory_block += f"\n\u200b\n🔗 [View in Museum]({memory['discord_jump_url']})"
             message += memory_block
         sent_message = await safe_send(channel, message, embed=winner_embed)
 
