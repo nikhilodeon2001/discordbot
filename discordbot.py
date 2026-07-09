@@ -15231,7 +15231,7 @@ async def nice_creep_okra_option(winner, winner_id):
         sentry_sdk.capture_exception(e)
     
     
-async def generate_round_summary_image(round_data, winner, winner_id):
+async def generate_round_summary_image(round_data, winner, winner_id, winner_coffees=None):
     """Returns True if an image was successfully posted (or there was nothing to do), False on any failure."""
     if skip_summary == True:
         message = "\nBe sure to drink your Okratine.\n"
@@ -15239,7 +15239,8 @@ async def generate_round_summary_image(round_data, winner, winner_id):
         return True
 
     try:
-        winner_coffees = await get_coffees(winner_id)
+        if winner_coffees is None:
+            winner_coffees = await get_coffees(winner_id)
 
         if winner == "OkraStrut":
             prompt = (
@@ -15608,7 +15609,7 @@ def create_factors_question():
     }
         
         
-async def select_wof_questions(winner, winner_id):
+async def select_wof_questions(winner, winner_id, winner_coffees=None):
     global fixed_letters
     
     try:
@@ -15739,7 +15740,7 @@ async def select_wof_questions(winner, winner_id):
         message += f"x.\u200b ⏭️🕹️ Skip Mini-Game\n\u200b"
         await safe_send(channel, message) 
                 
-        selected_wof_category = await ask_wof_number(winner, winner_id)
+        selected_wof_category = await ask_wof_number(winner, winner_id, cached_coffees=winner_coffees)
 
         randomize_embed_color()
 
@@ -16201,7 +16202,7 @@ async def ask_wof_letters(winner, answer, extra_time, winner_id, clue):
     return final_letters
 
 
-async def ask_wof_number(winner, winner_id):
+async def ask_wof_number(winner, winner_id, cached_coffees=None):
     def check(m):
         target_channel = _active_game_channel or channel
         return m.channel == target_channel and m.author != get_bot().user and m.author.id in {winner_id, okrag_id}
@@ -16266,7 +16267,10 @@ async def ask_wof_number(winner, winner_id):
             message = await asyncio.wait_for(get_bot().wait_for('message', check=check), timeout=remaining)
             content = message.content.strip().lower()
             responder_id = message.author.id
-            winner_coffees = await get_coffees(responder_id)
+            if responder_id == winner_id and cached_coffees is not None:
+                winner_coffees = cached_coffees
+            else:
+                winner_coffees = await get_coffees(responder_id)
 
             if content == "x":
                 return "x"
@@ -16943,11 +16947,12 @@ async def clear_round_options():
     cloak_mode = cloak_mode_default
     cloaked_user = None
 
-async def process_round_options(round_winner, winner_points, round_winner_id):
+async def process_round_options(round_winner, winner_points, round_winner_id, winner_coffees=None):
     if round_winner is None:
         return
 
-    winner_coffees = await get_coffees(round_winner_id)
+    if winner_coffees is None:
+        winner_coffees = await get_coffees(round_winner_id)
 
     if winner_coffees > 0:
         message = f"\u200b\n🍔🍟 **<@{round_winner_id}>**, what's your order?\n" 
@@ -19179,6 +19184,7 @@ async def update_round_streaks(user, user_id, roast_task=None):
 
     # Variables to store data to be inserted or saved later
     mongo_operations = []
+    winner_coffees = None
 
     # Manually copy function for dictionaries
     def manual_copy(data):
@@ -19234,10 +19240,9 @@ async def update_round_streaks(user, user_id, roast_task=None):
 
         # Painting-progress nudge — computed before the message so it can be embedded in the winner announcement
         painting_progress_line = ""
-        winner_coffees = None
+        winner_coffees = await get_coffees(user_id)
         pre_balance = 0
         if ai_on:
-            winner_coffees = await get_coffees(user_id)
             pre_balance = await get_image_credits(user_id)  # credits owed BEFORE this win's earn
             required_wins = image_wins if winner_coffees > 0 else image_wins * 2  # Okrans 5, others 10
             earning_now = (streak % required_wins == 0)
@@ -19316,7 +19321,7 @@ async def update_round_streaks(user, user_id, roast_task=None):
                 if pre_balance > 0:  # this credit was owed from a prior failure/grant
                     await safe_send(channel, f"🎁🥒 **<@{user_id}>**, cashing in a drawing you were owed…")
                 await asyncio.sleep(5)
-                ok = await generate_round_summary_image(round_data, user, user_id)
+                ok = await generate_round_summary_image(round_data, user, user_id, winner_coffees)
                 if ok:
                     await consume_image_credit(user_id)
                 else:
@@ -19328,7 +19333,7 @@ async def update_round_streaks(user, user_id, roast_task=None):
 
         await asyncio.sleep(5)
 
-        await select_wof_questions(user, user_id)
+        await select_wof_questions(user, user_id, winner_coffees)
 
     # Perform all MongoDB operations at the end
     for operation in mongo_operations:
@@ -19336,7 +19341,9 @@ async def update_round_streaks(user, user_id, roast_task=None):
             await insert_data_to_mongo(operation["collection"], operation["data"])
         elif operation["operation"] == "save":
             await save_data_to_mongo(operation["collection"], operation["document_id"], operation["data"])
-            
+
+    return winner_coffees
+
 
 async def determine_round_winner():
     """Determine the round winner based on points and response times."""
@@ -20708,7 +20715,7 @@ async def start_trivia():
             round_winner, winner_points, round_winner_id = await determine_round_winner()
             roast_task = asyncio.create_task(get_winner_roast_text(round_winner_id, round_winner))
             await clear_round_options()
-            await update_round_streaks(round_winner, round_winner_id, roast_task)
+            winner_coffees = await update_round_streaks(round_winner, round_winner_id, roast_task)
             asyncio.create_task(write_leaderboard_to_s3())
 
             round_count += 1
@@ -20719,7 +20726,7 @@ async def start_trivia():
                 return qs
         
             await asyncio.sleep(3)
-            await process_round_options(round_winner, winner_points, round_winner_id)
+            await process_round_options(round_winner, winner_points, round_winner_id, winner_coffees)
 
             question_task = asyncio.create_task(_load_next_questions())
             
