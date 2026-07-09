@@ -212,12 +212,14 @@ async def run_backfill(limit=None):
                 embed = build_museum_embed(post, user_id)
                 if isinstance(channel, discord.ForumChannel):
                     await make_room_for_new_thread(channel)
-                    await channel.create_thread(name=museum_thread_name(post), embed=embed)
+                    thread_with_message = await channel.create_thread(name=museum_thread_name(post), embed=embed)
+                    jump_url = thread_with_message.thread.jump_url
                 else:
-                    await channel.send(embed=embed)
+                    sent = await channel.send(embed=embed)
+                    jump_url = sent.jump_url if sent else None
                 await museum_images.update_one(
                     {"_id": s3_key},
-                    {"$set": {"channel_posted_at": datetime.datetime.utcnow()}},
+                    {"$set": {"channel_posted_at": datetime.datetime.utcnow(), "discord_jump_url": jump_url}},
                 )
                 posted += 1
                 await asyncio.sleep(POST_DELAY_SECONDS)

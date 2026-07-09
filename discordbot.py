@@ -13953,11 +13953,13 @@ async def post_museum_image_to_channel(museum_post, user_id=None):
     falling back to the stored muse name. Mention lives in the embed description so it
     renders clickable without pinging. #okra-museum is a Forum channel, so each image
     becomes its own thread; falls back to a normal send for non-forum channels.
+
+    Returns the Discord jump URL for the created thread/message, or None on failure.
     """
     try:
         museum_channel = bot.get_channel(OKRA_MUSEUM_CHANNEL_ID)
         if not museum_channel:
-            return
+            return None
         muse_ref = f"<@{user_id}>" if user_id else museum_post["muse"]
         title = museum_post.get("title")
         header = f"**{title}**\n" if title else ""
@@ -13966,15 +13968,19 @@ async def post_museum_image_to_channel(museum_post, user_id=None):
         thread_name = museum_thread_title(title, museum_post["muse"])
         if isinstance(museum_channel, discord.ForumChannel):
             await _make_room_for_new_museum_thread(museum_channel)
-            await museum_channel.create_thread(name=thread_name, embed=embed)
+            thread_with_message = await museum_channel.create_thread(name=thread_name, embed=embed)
+            return thread_with_message.thread.jump_url
         else:
-            await safe_send(museum_channel, embed=embed)
+            sent = await safe_send(museum_channel, embed=embed)
+            return sent.jump_url if sent else None
     except Exception as e:
         print(f"⚠️ Could not post to okra-museum channel: {e}")
+        return None
 
 
 async def get_museum_memory_url(user_id=None):
-    """Return a museum image URL — prefer a random painting of `user_id`, else any. None if none/error."""
+    """Return a museum memory doc {image_url, title, muse, creation_date, user_id, discord_jump_url}
+    — prefer a random painting of `user_id`, else any. None if none/error."""
     try:
         coll = db["museum_images"]
         if user_id is not None:
@@ -13983,9 +13989,9 @@ async def get_museum_memory_url(user_id=None):
                 {"$sample": {"size": 1}},
             ]).to_list(length=1)
             if docs:
-                return docs[0].get("image_url")
+                return docs[0]
         docs = await coll.aggregate([{"$sample": {"size": 1}}]).to_list(length=1)
-        return docs[0].get("image_url") if docs else None
+        return docs[0] if docs else None
     except Exception as e:
         print(f"⚠️ Could not fetch museum memory: {e}")
         return None
@@ -14052,7 +14058,7 @@ async def upload_image_to_s3(buffer, winner, description, winner_id=None):
 
         museum_post = parse_museum_image_key(object_name)
         if museum_post:
-            await post_museum_image_to_channel(museum_post, winner_id)
+            jump_url = await post_museum_image_to_channel(museum_post, winner_id)
             try:
                 await db["museum_images"].update_one(
                     {"_id": object_name},
@@ -14065,6 +14071,7 @@ async def upload_image_to_s3(buffer, winner, description, winner_id=None):
                         "creation_date": museum_post["creation_date"],
                         "created_at": datetime.datetime.utcnow(),
                         "channel_posted_at": datetime.datetime.utcnow(),
+                        "discord_jump_url": jump_url,
                     }},
                     upsert=True,
                 )
@@ -19272,9 +19279,15 @@ async def update_round_streaks(user, user_id, roast_task=None):
         winner_embed = discord.Embed()
         if avatar_url:
             winner_embed.set_thumbnail(url=avatar_url)
-        memory_url = await get_museum_memory_url(user_id)
-        if memory_url:
-            winner_embed.set_image(url=memory_url)
+        memory = await get_museum_memory_url(user_id)
+        if memory:
+            winner_embed.set_image(url=memory["image_url"])
+            memory_muse_ref = f"<@{memory['user_id']}>" if memory.get("user_id") else memory.get("muse", "")
+            memory_header = f"**{memory['title']}**\n" if memory.get("title") else ""
+            memory_block = f"\n🖼️✨ A memory from the Okra Museum\n{memory_header}By {memory_muse_ref}\n{memory['creation_date']}"
+            if memory.get("discord_jump_url"):
+                memory_block += f"\n🔗 [View in Museum]({memory['discord_jump_url']})"
+            message += memory_block
         sent_message = await safe_send(channel, message, embed=winner_embed)
 
         if roast_text and sent_message is not None:
