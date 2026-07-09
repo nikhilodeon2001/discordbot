@@ -15247,7 +15247,17 @@ async def nice_creep_okra_option(winner, winner_id):
         sentry_sdk.capture_exception(e)
     
     
-async def generate_round_summary_image(round_data, winner, winner_id, winner_coffees=None):
+def museum_categories():
+    return {
+        "0": "😠🥒 Okrap (Horror)",
+        "1": "🌹🏰 Okrenaissance",
+        "2": "😇✨ Okroly and Divine",
+        "3": "🎲🔀 (OK)Random",
+        "4": "🖼️🔤 Provide the Prompt 🥒",
+    }
+
+
+async def generate_round_summary_image(round_data, winner, winner_id, winner_coffees=None, category_already_shown=False):
     """Returns True if an image was successfully posted (or there was nothing to do), False on any failure."""
     if skip_summary == True:
         message = "\nBe sure to drink your Okratine.\n"
@@ -15273,16 +15283,12 @@ async def generate_round_summary_image(round_data, winner, winner_id, winner_cof
             message = f"✊🔥 {winner}, thank you for your donation to the cause. And nice streak!\n"
 
         else:
-            categories = {
-                "0": "😠🥒 Okrap (Horror)",
-                "1": "🌹🏰 Okrenaissance",
-                "2": "😇✨ Okroly and Divine",
-                "3": "🎲🔀 (OK)Random",
-                "4": f"🖼️🔤 Provide the Prompt 🥒"
-            }
+            categories = museum_categories()
 
             # Ask the user to choose a category
-            selected_category, additional_prompt = await ask_category(winner, categories, winner_coffees, winner_id)
+            selected_category, additional_prompt = await ask_category(
+                winner, categories, winner_coffees, winner_id, skip_message=category_already_shown
+            )
 
             prompts_by_category = {
                 "0": [
@@ -15406,14 +15412,15 @@ async def generate_round_summary_image(round_data, winner, winner_id, winner_cof
         return False
 
 
-async def ask_category(winner, categories, winner_coffees, winner_id):
+async def ask_category(winner, categories, winner_coffees, winner_id, skip_message=False):
     additional_prompt = ""
 
-    # Display categories
-    category_message = f"\u200b\n🎨🖍️ **<@{winner_id}>** Pick a theme for the Okra Museum!\n\u200b"
-    for key, value in categories.items():
-        category_message += f"**{key}**: {value}\n"
-    await safe_send(channel, category_message)
+    # Display categories (skipped if already shown, e.g. merged into the winner announcement)
+    if not skip_message:
+        category_message = f"\u200b\n🎨🖍️ **<@{winner_id}>** Pick a theme for the Okra Museum!\n\u200b"
+        for key, value in categories.items():
+            category_message += f"**{key}**: {value}\n"
+        await safe_send(channel, category_message)
 
     def check(m):
         target_channel = _active_game_channel or channel
@@ -19237,16 +19244,29 @@ async def update_round_streaks(user, user_id, roast_task=None):
 
         streak = current_longest_round_streak["streak"]
 
-        # Painting-progress nudge — computed before the message so it can be embedded in the winner announcement
-        painting_progress_line = ""
+        # Painting earn/redeem status — computed before the message so it can be embedded in the winner announcement
         winner_coffees = await get_coffees(user_id)
         pre_balance = 0
+        banked = 0
+        painting_status_block = ""
         if ai_on:
             pre_balance = await get_image_credits(user_id)  # credits owed BEFORE this win's earn
             required_wins = image_wins if winner_coffees > 0 else image_wins * 2  # Okrans 5, others 10
-            earning_now = (streak % required_wins == 0)
-            # Only nudge when they won't be redeeming a painting this round
-            if pre_balance == 0 and not earning_now:
+            if streak % required_wins == 0:
+                await add_image_credits(user_id, 1, user)
+            banked = await get_image_credits(user_id)
+
+            if banked > 0:
+                if pre_balance > 0:  # this credit was owed from a prior failure/grant
+                    painting_status_block = "\n🎁🥒 Cashing in a drawing you were owed…"
+                else:
+                    painting_status_block = "\n🎨🎁 You've earned a painting!"
+                if user != "OkraStrut" and winner_coffees <= 100:
+                    categories = museum_categories()
+                    painting_status_block += f"\n\u200b\n🎨🖍️ **<@{user_id}>** Pick a theme for the Okra Museum!\n\u200b"
+                    for key, value in categories.items():
+                        painting_status_block += f"\n**{key}**: {value}"
+            else:
                 number_to_emoji = {
                     1: "1️⃣", 2: "2️⃣", 3: "3️⃣", 4: "4️⃣", 5: "5️⃣",
                     6: "6️⃣", 7: "7️⃣", 8: "8️⃣", 9: "9️⃣", 10: "🔟"
@@ -19254,27 +19274,27 @@ async def update_round_streaks(user, user_id, roast_task=None):
                 remaining_games = required_wins - (streak % required_wins)
                 dynamic_emoji = number_to_emoji.get(remaining_games, str(remaining_games))
                 if remaining_games == 1:
-                    painting_progress_line = f"\n{dynamic_emoji}🎨 Win the next game and you get a painting."
+                    painting_status_block = f"\n{dynamic_emoji}🎨 Win the next game and you get a painting."
                 else:
-                    painting_progress_line = f"\n{dynamic_emoji}🎨 Win {remaining_games} more in a row and you get a painting."
+                    painting_status_block = f"\n{dynamic_emoji}🎨 Win {remaining_games} more in a row and you get a painting."
 
         if streak > 1:
             message = f"\u200b\n\u200b\n🏆 **Winner**: **<@{user_id}>**...🔥{current_longest_round_streak['streak']} in a row!\n"
+            message += f"\n▶️ **[Discord Stats](https://clubokra.com/leaderboard)**\n"
             message += roast_block
 
             if streak % discount_streak_amount == 0:
                 discount_fraction = min((streak // discount_streak_amount) * discount_step_amount, 90)
                 message += f"\n⚖️ Going forward **<@{user_id}>** will incur a **-{discount_fraction}%** handicap.\n"
 
-            message += painting_progress_line
-            message += f"\n▶️ **[Discord Stats](https://clubokra.com/leaderboard)**\n\u200b\n\u200b"
-            message += f"\u200b"
+            message += painting_status_block
+            message += f"\n\u200b\n\u200b"
         else:
-            #message = f"\u200b\n\u200b\n🏆 **Winner**: **<@{user_id}>**!\n\n▶️ **[Discord Stats](https://clubokra.com/discord)**\n\u200b\n\u200b"
             message = f"\u200b\n\u200b\n🏆 **Winner**: **<@{user_id}>**!\n"
+            message += f"\n▶️ **[Live Stats](https://clubokra.com/leaderboard)**\n"
             message += roast_block
-            message += painting_progress_line
-            message += f"\n▶️ **[Live Stats](https://clubokra.com/leaderboard)**\n\u200b\n\u200b"
+            message += painting_status_block
+            message += f"\n\u200b\n\u200b"
 
         avatar_url = None
         try:
@@ -19288,15 +19308,16 @@ async def update_round_streaks(user, user_id, roast_task=None):
         winner_embed = discord.Embed()
         if avatar_url:
             winner_embed.set_thumbnail(url=avatar_url)
-        memory = await get_museum_memory_url(user_id)
-        if memory:
-            winner_embed.set_image(url=memory["image_url"])
-            memory_muse_ref = f"<@{memory['user_id']}>" if memory.get("user_id") else memory.get("muse", "")
-            memory_header = f"**{memory['title']}**\n" if memory.get("title") else ""
-            memory_block = f"\n\u200b\n🖼️✨ A memory from the Okra Museum\n\u200b\n{memory_header}By {memory_muse_ref}\n{memory['creation_date']}"
-            if memory.get("discord_jump_url"):
-                memory_block += f"\n\u200b\n🔗 [View in Museum]({memory['discord_jump_url']})"
-            message += memory_block
+        if banked == 0:  # don't show an old memory in the same message that's about to reveal a new painting
+            memory = await get_museum_memory_url(user_id)
+            if memory:
+                winner_embed.set_image(url=memory["image_url"])
+                memory_muse_ref = f"<@{memory['user_id']}>" if memory.get("user_id") else memory.get("muse", "")
+                memory_header = f"**{memory['title']}**\n" if memory.get("title") else ""
+                memory_block = f"\n\u200b\n🖼️✨ A memory from the Okra Museum\n\u200b\n{memory_header}By {memory_muse_ref}\n{memory['creation_date']}"
+                if memory.get("discord_jump_url"):
+                    memory_block += f"\n\u200b\n🔗 [View in Museum]({memory['discord_jump_url']})"
+                message += memory_block
         sent_message = await safe_send(channel, message, embed=winner_embed)
 
         if roast_text and sent_message is not None:
@@ -19313,28 +19334,18 @@ async def update_round_streaks(user, user_id, roast_task=None):
 
         reset_embed_color()
 
-        # Painting earn/redeem — runs right after the winner announcement, before the mini-game
-        if ai_on:
-            # Earn: Okrans every image_wins wins, non-Okrans every image_wins*2 wins
-            required_wins = image_wins if winner_coffees > 0 else image_wins * 2
-            if current_longest_round_streak['streak'] % required_wins == 0:
-                await add_image_credits(user_id, 1, user)
-
-            banked = await get_image_credits(user_id)
-
-            if banked > 0:  # redeem ONE per win (granted credits work without coffee)
-                if pre_balance > 0:  # this credit was owed from a prior failure/grant
-                    await safe_send(channel, f"🎁🥒 **<@{user_id}>**, cashing in a drawing you were owed…")
-                await asyncio.sleep(5)
-                ok = await generate_round_summary_image(round_data, user, user_id, winner_coffees)
-                if ok:
-                    await consume_image_credit(user_id)
-                else:
-                    await safe_send(
-                        channel,
-                        f"🥒🛠️ **<@{user_id}>**, my crayons snapped — I couldn't finish your drawing. "
-                        f"It's **saved**: win again and I'll make it. (Drawings owed: {banked})"
-                    )
+        # Painting redeem — the theme prompt (if any) was already shown in the winner message above
+        if ai_on and banked > 0:
+            await asyncio.sleep(5)
+            ok = await generate_round_summary_image(round_data, user, user_id, winner_coffees, category_already_shown=True)
+            if ok:
+                await consume_image_credit(user_id)
+            else:
+                await safe_send(
+                    channel,
+                    f"🥒🛠️ **<@{user_id}>**, my crayons snapped — I couldn't finish your drawing. "
+                    f"It's **saved**: win again and I'll make it. (Drawings owed: {banked})"
+                )
 
         await asyncio.sleep(5)
 
