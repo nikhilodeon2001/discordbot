@@ -13954,12 +13954,13 @@ async def post_museum_image_to_channel(museum_post, user_id=None):
     renders clickable without pinging. #okra-museum is a Forum channel, so each image
     becomes its own thread; falls back to a normal send for non-forum channels.
 
-    Returns the Discord jump URL for the created thread/message, or None on failure.
+    Returns (jump_url, message) — message is the actual Discord Message object (needed to
+    later attach a Facebook share button via .edit(view=...)); (None, None) on failure.
     """
     try:
         museum_channel = bot.get_channel(OKRA_MUSEUM_CHANNEL_ID)
         if not museum_channel:
-            return None
+            return None, None
         muse_ref = f"<@{user_id}>" if user_id else museum_post["muse"]
         title = museum_post.get("title")
         header = f"**{title}**\n" if title else ""
@@ -13969,13 +13970,13 @@ async def post_museum_image_to_channel(museum_post, user_id=None):
         if isinstance(museum_channel, discord.ForumChannel):
             await _make_room_for_new_museum_thread(museum_channel)
             thread_with_message = await museum_channel.create_thread(name=thread_name, embed=embed)
-            return thread_with_message.thread.jump_url
+            return thread_with_message.thread.jump_url, thread_with_message.message
         else:
             sent = await safe_send(museum_channel, embed=embed)
-            return sent.jump_url if sent else None
+            return (sent.jump_url, sent) if sent else (None, None)
     except Exception as e:
         print(f"⚠️ Could not post to okra-museum channel: {e}")
-        return None
+        return None, None
 
 
 async def get_museum_memory_url(user_id=None):
@@ -14058,7 +14059,7 @@ async def upload_image_to_s3(buffer, winner, description, winner_id=None):
 
         museum_post = parse_museum_image_key(object_name)
         if museum_post:
-            jump_url = await post_museum_image_to_channel(museum_post, winner_id)
+            jump_url, posted_message = await post_museum_image_to_channel(museum_post, winner_id)
             try:
                 await db["museum_images"].update_one(
                     {"_id": object_name},
@@ -14077,7 +14078,15 @@ async def upload_image_to_s3(buffer, winner, description, winner_id=None):
                 )
             except Exception as e:
                 print(f"⚠️ Could not record museum image metadata: {e}")
-            return await publish_and_record_museum_post_to_facebook(museum_post, is_archive=False)
+            social_post = await publish_and_record_museum_post_to_facebook(museum_post, is_archive=False)
+            if posted_message and social_post:
+                share_view = build_museum_share_view(social_post)
+                if share_view:
+                    try:
+                        await posted_message.edit(view=share_view)
+                    except Exception as e:
+                        print(f"⚠️ Could not attach Facebook share button to museum post: {e}")
+            return social_post
 
         return None
 
