@@ -14086,13 +14086,13 @@ async def upload_image_to_s3(buffer, winner, description, winner_id=None):
                         await posted_message.edit(view=share_view)
                     except Exception as e:
                         print(f"⚠️ Could not attach Facebook share button to museum post: {e}")
-            return social_post
+            return jump_url, social_post
 
-        return None
+        return None, None
 
     except (BotoCoreError, ClientError) as boto_err:
         print(f"Error uploading to S3: {boto_err}")
-        return None
+        return None, None
 
 
 async def _update_museum_manifest(s3_client):
@@ -15334,14 +15334,6 @@ async def generate_round_summary_image(round_data, winner, winner_id, winner_cof
             else:
                 image_description = await describe_image_with_vision(image_url_for_vision, "title", prompt)
 
-            message = f"🔥💖 **<@{winner_id}>**, you've done well. I drew this **for you**.\n"
-            await safe_send(channel, content=message, file=discord.File(io.BytesIO(image_data), filename="winner.png"))
-
-            message = f"\n**I call it**...*{image_description}*\n"
-            message += f"\n🏛️👋 **Welcome to the Okra Museum**"
-            message += "\n🌐➡️ [Visit the Museum](https://clubokra.com/okra-museum)\n"
-            museum_message = await safe_send(channel, message)
-
             loop = asyncio.get_running_loop()
 
             def process_image():
@@ -15352,7 +15344,17 @@ async def generate_round_summary_image(round_data, winner, winner_id, winner_cof
                 return buffer
 
             buffer = await loop.run_in_executor(None, process_image)
-            social_post = await upload_image_to_s3(buffer, winner, image_description, winner_id)
+            jump_url, social_post = await upload_image_to_s3(buffer, winner, image_description, winner_id)
+            museum_link = jump_url or "https://clubokra.com/okra-museum"
+
+            message = f"🔥💖 **<@{winner_id}>**, you've done well. I drew this **for you**.\n"
+            message += f"\n**I call it**...*{image_description}*\n"
+            message += f"\n🏛️👋 **Welcome to the Okra Museum**"
+            message += f"\n🌐➡️ [Visit the Museum]({museum_link})\n"
+            museum_message = await safe_send(
+                channel, content=message, file=discord.File(io.BytesIO(image_data), filename="winner.png")
+            )
+
             share_view = build_museum_share_view(social_post)
             if museum_message and share_view:
                 await museum_message.edit(view=share_view)
@@ -15377,13 +15379,6 @@ async def generate_round_summary_image(round_data, winner, winner_id, winner_cof
                     image_url_for_vision = f"data:image/png;base64,{b64}"
                     image_description = await describe_image_with_vision(image_url_for_vision, "title", prompt)
 
-                    message = f"😈😉 <@{winner_id}> Naughty naughty, I'll have to pick another.\n\n"
-                    await safe_send(channel, content=message, file=discord.File(io.BytesIO(image_data), filename="winner.png"))
-                    message = f"\nI call it: '{image_description}'\n"
-                    message += f"\n🏛️👋 Welcome to the Okra Museum"
-                    message += "\n🌐➡️ [Visit the Museum](https://clubokra.com/okra-museum)\n"
-                    museum_message = await safe_send(channel, message)
-
                     loop = asyncio.get_running_loop()
 
                     def process_fallback_image():
@@ -15394,7 +15389,17 @@ async def generate_round_summary_image(round_data, winner, winner_id, winner_cof
                         return buffer
 
                     buffer = await loop.run_in_executor(None, process_fallback_image)
-                    social_post = await upload_image_to_s3(buffer, winner, image_description, winner_id)
+                    jump_url, social_post = await upload_image_to_s3(buffer, winner, image_description, winner_id)
+                    museum_link = jump_url or "https://clubokra.com/okra-museum"
+
+                    message = f"😈😉 <@{winner_id}> Naughty naughty, I'll have to pick another.\n\n"
+                    message += f"\nI call it: '{image_description}'\n"
+                    message += f"\n🏛️👋 Welcome to the Okra Museum"
+                    message += f"\n🌐➡️ [Visit the Museum]({museum_link})\n"
+                    museum_message = await safe_send(
+                        channel, content=message, file=discord.File(io.BytesIO(image_data), filename="winner.png")
+                    )
+
                     share_view = build_museum_share_view(social_post)
                     if museum_message and share_view:
                         await museum_message.edit(view=share_view)
@@ -19288,13 +19293,11 @@ async def update_round_streaks(user, user_id, roast_task=None):
                 message += f"\n⚖️ Going forward **<@{user_id}>** will incur a **-{discount_fraction}%** handicap.\n"
 
             message += painting_status_block
-            message += f"\n\u200b\n\u200b"
         else:
             message = f"\u200b\n\u200b\n🏆 **Winner**: **<@{user_id}>**!\n"
             message += f"\n▶️ **[Live Stats](https://clubokra.com/leaderboard)**\n"
             message += roast_block
             message += painting_status_block
-            message += f"\n\u200b\n\u200b"
 
         avatar_url = None
         try:
