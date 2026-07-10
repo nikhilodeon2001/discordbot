@@ -19206,6 +19206,10 @@ async def check_correct_responses_delete(question_ask_time, trivia_answer_list, 
     if message:
         message += "\n\u200b"
         answer_embed = discord.Embed()
+        # Set the description directly instead of letting safe_send derive it from plain
+        # content -- safe_send trims leading whitespace/zero-width spaces, which would
+        # otherwise erase the gap between the author row and the first line.
+        answer_embed.description = message
         if fastest_correct_user_id is not None:
             icon_url = await get_cached_okra_avatar_url(fastest_correct_user_id)
             if not icon_url:
@@ -19218,7 +19222,7 @@ async def check_correct_responses_delete(question_ask_time, trivia_answer_list, 
                     print(f"\u26a0\ufe0f Could not fetch fastest responder avatar: {e}")
             if icon_url:
                 answer_embed.set_author(name=f"{fastest_correct_user} ⚡", icon_url=icon_url)
-        await safe_send(channel, message, embed=answer_embed)
+        await safe_send(channel, embed=answer_embed)
 
     flush_submission_queue()
     await flush_offquestion_chat_buffer()
