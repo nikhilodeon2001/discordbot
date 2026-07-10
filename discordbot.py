@@ -15419,6 +15419,57 @@ async def generate_round_summary_image(round_data, winner, winner_id, winner_cof
         return False
 
 
+async def get_okra_avatar_url(member, user_id):
+    """Return an S3 URL for member's avatar with okra worked in, regenerating at most once per local day."""
+    try:
+        local_tz = pytz.timezone('America/Los_Angeles')
+        today = datetime.datetime.now(datetime.UTC).astimezone(local_tz).date().isoformat()
+
+        cached = await db.okra_avatars.find_one({"_id": user_id})
+        if cached and cached.get("date") == today:
+            return cached["image_url"]
+
+        avatar_bytes = await member.display_avatar.replace(size=1024, format="png").read()
+
+        style_hints = [
+            "as a jaunty hat", "as a mustache", "photobombing in the background",
+            "as a piece of jewelry", "held up like a trophy", "as a weapon",
+            "as a pet", "growing out of their hair", "as sunglasses",
+        ]
+        prompt = (
+            f"Add a single okra pod into this image {random.choice(style_hints)}, in a "
+            "funny, lighthearted way that fits naturally with the rest of the image. "
+            "Keep everything else about the image the same."
+        )
+
+        response = await openai_client.images.edit(
+            model="gpt-image-1-mini",
+            image=("avatar.png", avatar_bytes, "image/png"),
+            prompt=prompt,
+            size="1024x1024",
+            quality="medium",
+        )
+        image_data = base64.b64decode(response.data[0].b64_json)
+
+        s3_key = f"okra-avatars/{user_id}.png"
+        session = aioboto3.Session()
+        async with session.client("s3") as s3_client:
+            await s3_client.put_object(
+                Bucket=S3_BUCKET_NAME, Key=s3_key, Body=image_data, ContentType="image/png"
+            )
+        image_url = f"https://{S3_BUCKET_NAME}.s3.us-east-2.amazonaws.com/{s3_key}"
+
+        await db.okra_avatars.update_one(
+            {"_id": user_id},
+            {"$set": {"image_url": image_url, "date": today, "generated_at": datetime.datetime.utcnow()}},
+            upsert=True,
+        )
+        return image_url
+    except Exception as e:
+        print(f"⚠️ Could not generate okra avatar: {e}")
+        return None
+
+
 async def ask_category(winner, categories, winner_coffees, winner_id, skip_message=False):
     additional_prompt = ""
 
@@ -19310,7 +19361,8 @@ async def update_round_streaks(user, user_id, roast_task=None):
 
         winner_embed = discord.Embed()
         if avatar_url:
-            winner_embed.set_image(url=avatar_url)
+            okra_avatar_url = await get_okra_avatar_url(member, user_id) if member else None
+            winner_embed.set_image(url=okra_avatar_url or avatar_url)
         sent_message = await safe_send(channel, winner_text, embed=winner_embed)
 
         if roast_text and sent_message is not None:
@@ -19329,7 +19381,7 @@ async def update_round_streaks(user, user_id, roast_task=None):
         await asyncio.sleep(5)
 
         if ai_on:
-            museum_text = painting_status_block + theme_picker_block
+            museum_text = f"Hey **<@{user_id}>**...\n" + painting_status_block + theme_picker_block
             museum_embed = discord.Embed()
             if banked == 0:  # don't show an old memory in the same message that's about to reveal a new painting
                 memory = await get_museum_memory_url(user_id)
