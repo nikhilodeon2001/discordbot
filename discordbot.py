@@ -19191,27 +19191,16 @@ async def check_correct_responses_delete(question_ask_time, trivia_answer_list, 
                 delta_display = int(delta) if delta == int(delta) else delta
                 delta_suffix = f" ({message_content}, off by {delta_display})"
 
-            # Display the formatted message based on yolo_mode
-            if time_diff == 0:
-                message += f"\u200b\n⚡ **{display_name}**"
-                if not yolo_mode:
-                    message += f": {points}"
-                message += delta_suffix
-                if points == 420:
-                    message += " 🌿"
-                if points == 690:
-                    message += " 😎"
-                if current_longest_answer_streak["streak"] > 1:
-                    message += f"  🔥{current_longest_answer_streak['streak']}"
-            else:
-                message += f"\n\u200b👥 **{display_name}**"
-                if not yolo_mode:
-                    message += f": {points}"
-                message += delta_suffix
-                if points == 420:
-                    message += " 🌿"
-                if points == 690:
-                    message += " 😎"
+            message += f"\n\u200b☑️ **{display_name}**"
+            if not yolo_mode:
+                message += f": {points}"
+            message += delta_suffix
+            if points == 420:
+                message += " 🌿"
+            if points == 690:
+                message += " 😎"
+            if time_diff == 0 and current_longest_answer_streak["streak"] > 1:
+                message += f"  🔥{current_longest_answer_streak['streak']}"
 
     # Send the entire message at once
     if message:
@@ -19228,7 +19217,7 @@ async def check_correct_responses_delete(question_ask_time, trivia_answer_list, 
                 except Exception as e:
                     print(f"\u26a0\ufe0f Could not fetch fastest responder avatar: {e}")
             if icon_url:
-                answer_embed.set_author(name=fastest_correct_user, icon_url=icon_url)
+                answer_embed.set_author(name=f"{fastest_correct_user} ⚡", icon_url=icon_url)
         await safe_send(channel, message, embed=answer_embed)
 
     flush_submission_queue()
