@@ -19513,23 +19513,25 @@ async def determine_round_winner():
         return winner_data["display_name"], winner_data["score"], winner_id
         
 
-def build_standings_header():
+def build_standings_header(scoreboard_override=None, round_responders_override=None):
     """Build the standings section header (used as an embed field name, or prepended to the body)."""
+    responders = round_responders_override if round_responders_override is not None else round_responders
     if golf_mode:
-        return f"⛳📉 **Scoreboard** ({len(round_responders)}) 📉⛳"
-    return f"🏔️📈 **Scoreboard** ({len(round_responders)}) 📈🏔️"
+        return f"⛳📉 **Scoreboard** ({len(responders)}) 📉⛳"
+    return f"🏔️📈 **Scoreboard** ({len(responders)}) 📈🏔️"
 
 
-def build_standings_table(points_gained_this_question=None, name_max_len=14):
+def build_standings_table(points_gained_this_question=None, name_max_len=14, scoreboard_override=None):
     """Build a monospace, ranked total-score table with a (+X) delta for whoever scored
     this question -- merges the per-question responses and the running scoreboard into one
     list instead of two. Omits the (+X) when it would just duplicate the total (a player's
     first scored question this round). Returns None if there's nothing to show."""
-    if not scoreboard:
+    board = scoreboard_override if scoreboard_override is not None else scoreboard
+    if not board:
         return None
 
     points_gained_this_question = points_gained_this_question or {}
-    standings = sorted(scoreboard.items(), key=lambda x: x[1]["score"], reverse=True)
+    standings = sorted(board.items(), key=lambda x: x[1]["score"], reverse=True)
     medals = ["🥇", "🥈", "🥉"]
     rows = []
 
@@ -19557,13 +19559,14 @@ def build_standings_table(points_gained_this_question=None, name_max_len=14):
     return "```\n" + "\n".join(rows) + "\n```"
 
 
-def build_standings_body():
+def build_standings_body(scoreboard_override=None):
     """Build the ranked standings list (no header), or None if there's nothing to show."""
-    if not scoreboard:
+    board = scoreboard_override if scoreboard_override is not None else scoreboard
+    if not board:
         return None
 
     # Sort by score descending
-    standings = sorted(scoreboard.items(), key=lambda x: x[1]["score"], reverse=True)
+    standings = sorted(board.items(), key=lambda x: x[1]["score"], reverse=True)
     medals = ["🥇", "🥈", "🥉"]
     lines = []
 
@@ -20786,7 +20789,6 @@ async def start_trivia():
                     starter = interaction.user
 
                 updated_embed = prompt_msg.embeds[0] if prompt_msg.embeds else discord.Embed()
-                updated_embed.description = (updated_embed.description or "") + f"​\n🥒 ***Launched by {starter.mention}!*** 🥒\n​"
                 await run_start_countdown(prompt_msg, updated_embed, view, view.button_ref, starter=starter)
             else:
                 view = StartRoundView()
@@ -21215,6 +21217,47 @@ async def on_message(message):
                     inline=False,
                 )
             await relay_channel.send("📬 **DM received:**", embed=embed)
+        return
+
+    if message.content.strip() == "#previewscoreboard" and message.author.id == okrag_id:
+        fake_scoreboard = {
+            "fake_1": {"display_name": "QuizWhizExtraordinaire", "score": 1240},
+            "fake_2": {"display_name": "TheOkraG", "score": 890},
+            "fake_3": {"display_name": "Nikki", "score": 690},
+            "fake_4": {"display_name": "Bramblewood", "score": 650},
+            "fake_5": {"display_name": "Zz", "score": 420},
+            "fake_6": {"display_name": "CaptainTrivia99", "score": 300},
+        }
+        fake_gains = {"fake_1": 150, "fake_2": 90, "fake_4": 50}  # these 3 got this question right
+        fake_responders = list(fake_scoreboard.keys())
+
+        responses_lines = [f"☑️ **{fake_scoreboard[uid]['display_name']}**: {gain}" for uid, gain in fake_gains.items()]
+        responses_text = "\n".join(responses_lines)
+        responses_header = f"☑️ Responses ({len(fake_gains)})"
+        answer_description = "✅ **Answer** (6) ✅\nFAKEANSWER"
+        author_name = f"{fake_scoreboard['fake_1']['display_name']} ⚡"
+        author_icon_url = message.author.display_avatar.url
+
+        fields_embed = discord.Embed()
+        fields_embed.description = answer_description
+        fields_embed.add_field(name=responses_header, value=responses_text, inline=True)
+        fields_embed.add_field(
+            name=build_standings_header(scoreboard_override=fake_scoreboard, round_responders_override=fake_responders),
+            value=build_standings_body(scoreboard_override=fake_scoreboard),
+            inline=True,
+        )
+        fields_embed.set_author(name=author_name, icon_url=author_icon_url)
+        await safe_send(message.channel, embed=fields_embed)
+
+        table_embed = discord.Embed()
+        table_embed.description = answer_description
+        table_embed.add_field(
+            name=build_standings_header(scoreboard_override=fake_scoreboard, round_responders_override=fake_responders),
+            value=build_standings_table(fake_gains, scoreboard_override=fake_scoreboard),
+            inline=False,
+        )
+        table_embed.set_author(name=author_name, icon_url=author_icon_url)
+        await safe_send(message.channel, embed=table_embed)
         return
 
     if "okra" in message.content.strip().lower() and emoji_mode == True and message.author.id != get_bot().user.id:
