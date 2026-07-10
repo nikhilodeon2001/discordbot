@@ -19176,6 +19176,7 @@ async def check_correct_responses_delete(question_ask_time, trivia_answer_list, 
             message = f"\u200b\n✅ **Answer** ({len(question_responders)}) ✅\n{trivia_answer}"
             if closest_answer_delta is not None:
                 message += f"\n🎯 Closest answer wins!"
+        message += "\n\u200b"  # blank-line gap before the responses/scoreboard field(s)
 
     # Build the per-responder list separately -- it becomes its own embed field so it's
     # visually distinct from the answer text and the scoreboard instead of one long blob.
@@ -21239,7 +21240,7 @@ async def on_message(message):
         responses_lines = [f"☑️ **{fake_scoreboard[uid]['display_name']}**: {gain}" for uid, gain in fake_gains.items()]
         responses_text = "\n".join(responses_lines)
         responses_header = f"☑️ Responses ({len(fake_gains)})"
-        answer_description = "✅ **Answer** (6) ✅\nFAKEANSWER"
+        answer_description = "\u200b\n✅ **Answer** (6) ✅\nFAKEANSWER\n\u200b"
         author_name = f"{fake_scoreboard['fake_1']['display_name']} ⚡"
         author_icon_url = message.author.display_avatar.url
 
