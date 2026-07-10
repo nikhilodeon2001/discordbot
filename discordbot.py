@@ -19540,21 +19540,26 @@ def build_standings_table(points_gained_this_question=None, name_max_len=14, sco
         score = user_data["score"]
         truncated_name = display_name if len(display_name) <= name_max_len else display_name[:name_max_len - 1] + "…"
 
+        # Rank is always plain text so every row's columns start at the same width --
+        # emoji render wider than one monospace character, which throws off alignment
+        # if used as the leading (padded) token. Special/medal emoji move to a trailing
+        # decoration instead, where imprecise width can't disrupt the columns before it.
         if "420" in str(score):
-            prefix = "🌿"
+            decoration = " 🌿"
         elif "69" in str(score):
-            prefix = "😎"
+            decoration = " 😎"
         elif rank <= 3:
-            prefix = medals[rank - 1]
+            decoration = f" {medals[rank - 1]}"
         elif rank == len(standings) and rank > 4:
-            prefix = "💩"
+            decoration = " 💩"
         else:
-            prefix = f"{rank}."
+            decoration = ""
 
         gained = points_gained_this_question.get(user_id)
         delta_suffix = f" (+{gained})" if gained is not None and gained != score else ""
 
-        rows.append(f"{prefix:<3}{truncated_name:<{name_max_len + 1}}{score:>6,}{delta_suffix}")
+        rank_str = f"{rank}."
+        rows.append(f"{rank_str:<3}{truncated_name:<{name_max_len + 1}}{score:>6,}{delta_suffix}{decoration}")
 
     return "```\n" + "\n".join(rows) + "\n```"
 
