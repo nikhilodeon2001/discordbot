@@ -15349,8 +15349,8 @@ async def generate_round_summary_image(round_data, winner, winner_id, winner_cof
 
             message = f"🔥💖 **<@{winner_id}>**, you've done well. I drew this **for you**.\n"
             message += f"\n**I call it**...*{image_description}*\n"
-            message += f"\n🏛️👋 **Welcome to the Okra Museum**"
-            message += f"\n🌐➡️ [Visit the Museum]({museum_link})\n"
+            channel_link = f"https://discord.com/channels/{OKRAN_GUILD_ID}/{OKRA_MUSEUM_CHANNEL_ID}"
+            message += f"\n🏛️👋 **[Welcome]({museum_link}) to the [Okra Museum]({channel_link})**"
             museum_message = await safe_send(
                 channel, content=message, file=discord.File(io.BytesIO(image_data), filename="winner.png")
             )
@@ -15394,8 +15394,8 @@ async def generate_round_summary_image(round_data, winner, winner_id, winner_cof
 
                     message = f"😈😉 <@{winner_id}> Naughty naughty, I'll have to pick another.\n\n"
                     message += f"\nI call it: '{image_description}'\n"
-                    message += f"\n🏛️👋 Welcome to the Okra Museum"
-                    message += f"\n🌐➡️ [Visit the Museum]({museum_link})\n"
+                    channel_link = f"https://discord.com/channels/{OKRAN_GUILD_ID}/{OKRA_MUSEUM_CHANNEL_ID}"
+                    message += f"\n🏛️👋 [Welcome]({museum_link}) to the [Okra Museum]({channel_link})"
                     museum_message = await safe_send(
                         channel, content=message, file=discord.File(io.BytesIO(image_data), filename="winner.png")
                     )
