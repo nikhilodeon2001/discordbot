@@ -19140,7 +19140,8 @@ async def check_correct_responses_delete(question_ask_time, trivia_answer_list, 
     # - Assign the extra 500 points to the fastest user
     # - Update the scoreboard for all users
     points_gained_this_question = {}
-    for i, (display_name, points, response_time, message_content, sender_id, discord_message, _delta) in enumerate(correct_responses):
+    row_notes = {}
+    for i, (display_name, points, response_time, message_content, sender_id, discord_message, delta) in enumerate(correct_responses):
         if sender_id == fastest_correct_user_id:
             if sender_id in fastest_answers_count:
                 fastest_answers_count[sender_id] += 1
@@ -19160,6 +19161,15 @@ async def check_correct_responses_delete(question_ask_time, trivia_answer_list, 
                 scoreboard[sender_id] = {"display_name": display_name, "score": gained}
         points_gained_this_question[sender_id] = gained
 
+        notes = []
+        if delta is not None:
+            delta_display = int(delta) if delta == int(delta) else delta
+            notes.append(f"off by {delta_display}")
+        if sender_id == fastest_correct_user_id and current_longest_answer_streak["streak"] > 1:
+            notes.append(f"🔥{current_longest_answer_streak['streak']}")
+        if notes:
+            row_notes[sender_id] = ", ".join(notes)
+
     await update_answer_streaks(fastest_correct_user, fastest_correct_user_id)  # Update the correct answer streak for this user
    
     # Add the current state of the scoreboard to round_data
@@ -19178,40 +19188,8 @@ async def check_correct_responses_delete(question_ask_time, trivia_answer_list, 
                 message += f"\n🎯 Closest answer wins!"
         message += "\n\u200b"  # blank-line gap before the responses/scoreboard field(s)
 
-    # Build the per-responder list separately -- it becomes its own embed field so it's
-    # visually distinct from the answer text and the scoreboard instead of one long blob.
-    responses_text = ""
-    responses_header = "☑️ Responses"
-    if correct_responses and marx_mode == False:
-        correct_responses_length = len(correct_responses)
-        responses_header = f"☑️ Responses ({correct_responses_length})"
-
-        for display_name, points, response_time, message_content, sender_id, discord_message, delta in correct_responses:
-            time_diff = response_time - fastest_response_time
-
-            name_str = display_name
-            if current_longest_round_streak["user_id"] == sender_id and discount_percentage is not None and discount_percentage > 0:
-                name_str += f" (-{discount_percentage}%)"
-
-            delta_suffix = ""
-            if delta is not None:
-                delta_display = int(delta) if delta == int(delta) else delta
-                delta_suffix = f" ({message_content}, off by {delta_display})"
-
-            line = f"☑️ **{display_name}**"
-            if not yolo_mode:
-                line += f": {points}"
-            line += delta_suffix
-            if points == 420:
-                line += " 🌿"
-            if points == 690:
-                line += " 😎"
-            if time_diff == 0 and current_longest_answer_streak["streak"] > 1:
-                line += f"  🔥{current_longest_answer_streak['streak']}"
-            responses_text += line if not responses_text else f"\n{line}"
-
     # Send the entire message at once
-    if message or responses_text:
+    if message or (correct_responses and marx_mode == False):
         author_name = None
         author_icon_url = None
         if fastest_correct_user_id is not None:
@@ -19227,32 +19205,18 @@ async def check_correct_responses_delete(question_ask_time, trivia_answer_list, 
             if author_icon_url:
                 author_name = f"{fastest_correct_user} ⚡"
 
-        # Version A: separate inline fields for responses and scoreboard
+        # Responses and the scoreboard are merged into one monospace ranked table with a
+        # (+X) delta -- plus off-by-X / streak notes -- for whoever scored this question.
         answer_embed = discord.Embed()
         if message:
             answer_embed.description = message
-        if responses_text:
-            answer_embed.add_field(name=responses_header, value=responses_text, inline=True)
         if show_standings_after:
-            standings_body = build_standings_body()
-            if standings_body:
-                answer_embed.add_field(name=build_standings_header(), value=standings_body, inline=True)
+            standings_table = build_standings_table(points_gained_this_question, row_notes=row_notes)
+            if standings_table:
+                answer_embed.add_field(name=build_standings_header(), value=standings_table, inline=False)
         if author_name:
             answer_embed.set_author(name=author_name, icon_url=author_icon_url)
         await safe_send(channel, embed=answer_embed)
-
-        # Version B (comparison only): responses + scoreboard merged into one monospace
-        # ranked table with a (+X) delta for whoever scored this question.
-        if show_standings_after:
-            standings_table = build_standings_table(points_gained_this_question)
-            if standings_table:
-                table_embed = discord.Embed()
-                if message:
-                    table_embed.description = message
-                table_embed.add_field(name=build_standings_header(), value=standings_table, inline=False)
-                if author_name:
-                    table_embed.set_author(name=author_name, icon_url=author_icon_url)
-                await safe_send(channel, embed=table_embed)
     elif show_standings_after:
         # No answer-reveal content this question (e.g. blind mode, no correct responses) --
         # still show the scoreboard on its own rather than silently dropping it.
@@ -19522,16 +19486,19 @@ def build_standings_header(scoreboard_override=None, round_responders_override=N
     return f"🏔️📈 **Scoreboard** ({len(responders)}) 📈🏔️"
 
 
-def build_standings_table(points_gained_this_question=None, name_max_len=14, scoreboard_override=None):
+def build_standings_table(points_gained_this_question=None, name_max_len=14, scoreboard_override=None, row_notes=None):
     """Build a monospace, ranked total-score table with a (+X) delta for whoever scored
     this question -- merges the per-question responses and the running scoreboard into one
     list instead of two. Omits the (+X) when it would just duplicate the total (a player's
-    first scored question this round). Returns None if there's nothing to show."""
+    first scored question this round). row_notes optionally annotates a row with extra
+    per-question context (closest-answer "off by X", fastest-answer streak). Returns None
+    if there's nothing to show."""
     board = scoreboard_override if scoreboard_override is not None else scoreboard
     if not board:
         return None
 
     points_gained_this_question = points_gained_this_question or {}
+    row_notes = row_notes or {}
     standings = sorted(board.items(), key=lambda x: x[1]["score"], reverse=True)
     medals = ["🥇", "🥈", "🥉"]
     rows = []
@@ -19557,7 +19524,13 @@ def build_standings_table(points_gained_this_question=None, name_max_len=14, sco
             decoration = ""
 
         gained = points_gained_this_question.get(user_id)
-        delta_suffix = f" (+{gained})" if gained is not None and gained != score else ""
+        note = row_notes.get(user_id)
+        delta_parts = []
+        if gained is not None and gained != score:
+            delta_parts.append(f"+{gained}")
+        if note:
+            delta_parts.append(note)
+        delta_suffix = f" ({', '.join(delta_parts)})" if delta_parts else ""
 
         rank_str = f"{rank}."
         rows.append(f"{rank_str:<3}{truncated_name:<{name_max_len + 1}}{score:>6,}{delta_suffix}{decoration}")
@@ -21223,47 +21196,6 @@ async def on_message(message):
                     inline=False,
                 )
             await relay_channel.send("📬 **DM received:**", embed=embed)
-        return
-
-    if message.content.strip() == "#previewscoreboard" and message.author.id == okrag_id:
-        fake_scoreboard = {
-            "fake_1": {"display_name": "QuizWhizExtraordinaire", "score": 1240},
-            "fake_2": {"display_name": "TheOkraG", "score": 890},
-            "fake_3": {"display_name": "Nikki", "score": 690},
-            "fake_4": {"display_name": "Bramblewood", "score": 650},
-            "fake_5": {"display_name": "Zz", "score": 420},
-            "fake_6": {"display_name": "CaptainTrivia99", "score": 300},
-        }
-        fake_gains = {"fake_1": 150, "fake_2": 90, "fake_4": 50}  # these 3 got this question right
-        fake_responders = list(fake_scoreboard.keys())
-
-        responses_lines = [f"☑️ **{fake_scoreboard[uid]['display_name']}**: {gain}" for uid, gain in fake_gains.items()]
-        responses_text = "\n".join(responses_lines)
-        responses_header = f"☑️ Responses ({len(fake_gains)})"
-        answer_description = "\u200b\n✅ **Answer** (6) ✅\nFAKEANSWER\n\u200b"
-        author_name = f"{fake_scoreboard['fake_1']['display_name']} ⚡"
-        author_icon_url = message.author.display_avatar.url
-
-        fields_embed = discord.Embed()
-        fields_embed.description = answer_description
-        fields_embed.add_field(name=responses_header, value=responses_text, inline=True)
-        fields_embed.add_field(
-            name=build_standings_header(scoreboard_override=fake_scoreboard, round_responders_override=fake_responders),
-            value=build_standings_body(scoreboard_override=fake_scoreboard),
-            inline=True,
-        )
-        fields_embed.set_author(name=author_name, icon_url=author_icon_url)
-        await safe_send(message.channel, embed=fields_embed)
-
-        table_embed = discord.Embed()
-        table_embed.description = answer_description
-        table_embed.add_field(
-            name=build_standings_header(scoreboard_override=fake_scoreboard, round_responders_override=fake_responders),
-            value=build_standings_table(fake_gains, scoreboard_override=fake_scoreboard),
-            inline=False,
-        )
-        table_embed.set_author(name=author_name, icon_url=author_icon_url)
-        await safe_send(message.channel, embed=table_embed)
         return
 
     if "okra" in message.content.strip().lower() and emoji_mode == True and message.author.id != get_bot().user.id:
