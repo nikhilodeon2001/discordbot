@@ -15257,7 +15257,8 @@ def museum_categories():
     }
 
 
-async def generate_round_summary_image(round_data, winner, winner_id, winner_coffees=None, category_already_shown=False):
+async def generate_round_summary_image(round_data, winner, winner_id, winner_coffees=None,
+                                         category_already_shown=False, category_result=None):
     """Returns True if an image was successfully posted (or there was nothing to do), False on any failure."""
     if skip_summary == True:
         message = "\nBe sure to drink your Okratine.\n"
@@ -15283,12 +15284,13 @@ async def generate_round_summary_image(round_data, winner, winner_id, winner_cof
             message = f"✊🔥 {winner}, thank you for your donation to the cause. And nice streak!\n"
 
         else:
-            categories = museum_categories()
-
-            # Ask the user to choose a category
-            selected_category, additional_prompt = await ask_category(
-                winner, categories, winner_coffees, winner_id, skip_message=category_already_shown
-            )
+            if category_result is not None:
+                selected_category, additional_prompt = category_result
+            else:
+                categories = museum_categories()
+                selected_category, additional_prompt = await ask_category(
+                    winner, categories, winner_coffees, winner_id, skip_message=category_already_shown
+                )
 
             prompts_by_category = {
                 "0": [
@@ -19339,8 +19341,18 @@ async def update_round_streaks(user, user_id, roast_task=None):
 
         # Painting redeem — the theme prompt (if any) was already shown in the winner message above
         if ai_on and banked > 0:
-            await asyncio.sleep(5)
-            ok = await generate_round_summary_image(round_data, user, user_id, winner_coffees, category_already_shown=True)
+            category_result = None
+            if user != "OkraStrut" and winner_coffees <= 100:
+                # Start listening immediately — the prompt was already shown in the winner message,
+                # so any delay here risks missing a fast reply.
+                categories = museum_categories()
+                category_result = await ask_category(user, categories, winner_coffees, user_id, skip_message=True)
+            else:
+                await asyncio.sleep(5)
+            ok = await generate_round_summary_image(
+                round_data, user, user_id, winner_coffees,
+                category_already_shown=True, category_result=category_result
+            )
             if ok:
                 await consume_image_credit(user_id)
             else:
