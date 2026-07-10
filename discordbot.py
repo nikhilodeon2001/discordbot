@@ -19214,6 +19214,14 @@ async def check_correct_responses_delete(question_ask_time, trivia_answer_list, 
             standings_table = build_standings_table(points_gained_this_question, row_notes=row_notes)
             if standings_table:
                 answer_embed.add_field(name=build_standings_header(), value=standings_table, inline=False)
+        else:
+            # Yolo mode's in-between questions: show who got it right without revealing the
+            # running standings -- alphabetical order, cumulative totals masked as "####".
+            yolo_table = build_standings_table(
+                points_gained_this_question, row_notes=row_notes, sort_alphabetically=True, mask_score=True
+            )
+            if yolo_table:
+                answer_embed.add_field(name=build_standings_header(), value=yolo_table, inline=False)
         if author_name:
             answer_embed.set_author(name=author_name, icon_url=author_icon_url)
         await safe_send(channel, embed=answer_embed)
@@ -19486,59 +19494,77 @@ def build_standings_header(scoreboard_override=None, round_responders_override=N
     return f"🏔️📈 **Scoreboard** ({len(responders)}) 📈🏔️"
 
 
-def build_standings_table(points_gained_this_question=None, name_max_len=14, scoreboard_override=None, row_notes=None):
-    """Build a monospace, ranked total-score table with a (+X) delta for whoever scored
-    this question -- merges the per-question responses and the running scoreboard into one
-    list instead of two. Omits the (+X) when it would just duplicate the total (a player's
-    first scored question this round). row_notes optionally annotates a row with extra
-    per-question context (closest-answer "off by X", fastest-answer streak). Returns None
-    if there's nothing to show."""
+def build_standings_table(points_gained_this_question=None, name_max_len=14, scoreboard_override=None,
+                           row_notes=None, sort_alphabetically=False, mask_score=False):
+    """Build a monospace ranked table with a (+X) delta for whoever scored this question --
+    merges the per-question responses and the running scoreboard into one list instead of
+    two. row_notes optionally annotates a row with extra per-question context (closest-answer
+    "off by X", fastest-answer streak).
+
+    sort_alphabetically + mask_score are for yolo mode's in-between questions: yolo mode
+    shows who got each question right without revealing the running standings, so names sort
+    A-Z instead of by score, the cumulative total renders as a fixed "####" for everyone, and
+    rank-based decorations (medals, last place) are skipped since alphabetical order isn't a
+    ranking. This question's real point gain still shows for whoever scored, same as normal.
+
+    Returns None if there's nothing to show."""
     board = scoreboard_override if scoreboard_override is not None else scoreboard
     if not board:
         return None
 
     points_gained_this_question = points_gained_this_question or {}
     row_notes = row_notes or {}
-    standings = sorted(board.items(), key=lambda x: x[1]["score"], reverse=True)
+    if sort_alphabetically:
+        standings = sorted(board.items(), key=lambda x: x[1]["display_name"].lower())
+    else:
+        standings = sorted(board.items(), key=lambda x: x[1]["score"], reverse=True)
     medals = ["🥇", "🥈", "🥉"]
     rows = []
 
-    for rank, (user_id, user_data) in enumerate(standings, start=1):
+    for idx, (user_id, user_data) in enumerate(standings, start=1):
         display_name = user_data["display_name"]
         score = user_data["score"]
         truncated_name = display_name if len(display_name) <= name_max_len else display_name[:name_max_len - 1] + "…"
 
         gained = points_gained_this_question.get(user_id)
 
-        # Rank is always plain text so every row's columns start at the same width --
-        # emoji render wider than one monospace character, which throws off alignment
-        # if used as the leading (padded) token. Special/medal emoji move to a trailing
+        # Rank/index is always plain text so every row's columns start at the same width --
+        # emoji render wider than one monospace character, which throws off alignment if
+        # used as the leading (padded) token. Special/medal emoji move to a trailing
         # decoration instead, where imprecise width can't disrupt the columns before it.
         # The 420/69 check looks for the pattern anywhere in the number (so 4200 or 690
-        # count too), on either the cumulative total or this question's point gain.
-        has_420 = "420" in str(score) or (gained is not None and "420" in str(gained))
-        has_69 = "69" in str(score) or (gained is not None and "69" in str(gained))
+        # count too). When the total is masked, only the visible gain is checked -- an emoji
+        # driven by the hidden total would leak information about it.
+        if mask_score:
+            has_420 = gained is not None and "420" in str(gained)
+            has_69 = gained is not None and "69" in str(gained)
+        else:
+            has_420 = "420" in str(score) or (gained is not None and "420" in str(gained))
+            has_69 = "69" in str(score) or (gained is not None and "69" in str(gained))
+
         if has_420:
             decoration = " 🌿"
         elif has_69:
             decoration = " 😎"
-        elif rank <= 3:
-            decoration = f" {medals[rank - 1]}"
-        elif rank == len(standings) and rank > 4:
+        elif not sort_alphabetically and idx <= 3:
+            decoration = f" {medals[idx - 1]}"
+        elif not sort_alphabetically and idx == len(standings) and idx > 4:
             decoration = " 💩"
         else:
             decoration = ""
 
         note = row_notes.get(user_id)
         delta_parts = []
-        if gained is not None and gained != score:
+        # When masked, the total isn't visible, so a gain is never redundant to show.
+        if gained is not None and (mask_score or gained != score):
             delta_parts.append(f"+{gained}")
         if note:
             delta_parts.append(note)
         delta_suffix = f" ({', '.join(delta_parts)})" if delta_parts else ""
 
-        rank_str = f"{rank}."
-        rows.append(f"{rank_str:<3}{truncated_name:<{name_max_len + 1}}{score:>6,}{delta_suffix}{decoration}")
+        score_display = "####" if mask_score else f"{score:,}"
+        idx_str = f"{idx}."
+        rows.append(f"{idx_str:<3}{truncated_name:<{name_max_len + 1}}{score_display:>6}{delta_suffix}{decoration}")
 
     return "```\n" + "\n".join(rows) + "\n```"
 
