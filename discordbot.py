@@ -19296,6 +19296,21 @@ async def update_round_streaks(user, user_id, roast_task=None):
 
     # Generate the round summary if the user is not None
     if user is not None:
+        # Fetch the winner's avatar and kick off okra-ification immediately so it runs
+        # concurrently with the coffee/image-credit lookups below instead of blocking
+        # the winner message afterward.
+        avatar_url = None
+        member = None
+        try:
+            guild = bot.get_guild(OKRAN_GUILD_ID)
+            member = (guild.get_member(user_id) or await guild.fetch_member(user_id)) if guild else None
+            if member:
+                avatar_url = member.display_avatar.url
+        except Exception as e:
+            print(f"⚠️ Could not fetch winner avatar: {e}")
+
+        okra_avatar_task = asyncio.create_task(get_okra_avatar_url(member, user_id)) if member else None
+
         roast_result = await roast_task if roast_task is not None else None
         roast_text, roast_message_count = roast_result if roast_result else (None, None)
         roast_block = f"\n{roast_text}\n" if roast_text else ""
@@ -19350,18 +19365,9 @@ async def update_round_streaks(user, user_id, roast_task=None):
             winner_text += f"\n▶️ **[Live Stats](https://clubokra.com/leaderboard)**\n"
             winner_text += roast_block
 
-        avatar_url = None
-        try:
-            guild = bot.get_guild(OKRAN_GUILD_ID)
-            member = (guild.get_member(user_id) or await guild.fetch_member(user_id)) if guild else None
-            if member:
-                avatar_url = member.display_avatar.url
-        except Exception as e:
-            print(f"⚠️ Could not fetch winner avatar: {e}")
-
         winner_embed = discord.Embed()
         if avatar_url:
-            okra_avatar_url = await get_okra_avatar_url(member, user_id) if member else None
+            okra_avatar_url = await okra_avatar_task if okra_avatar_task else None
             winner_embed.set_image(url=okra_avatar_url or avatar_url)
         sent_message = await safe_send(channel, winner_text, embed=winner_embed)
 
