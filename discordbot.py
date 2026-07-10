@@ -15470,6 +15470,12 @@ async def get_okra_avatar_url(member, user_id):
         return None
 
 
+async def get_cached_okra_avatar_url(user_id):
+    """Return the cached okra-ified avatar URL for user_id, if one has ever been generated. Read-only."""
+    doc = await db.okra_avatars.find_one({"_id": user_id})
+    return doc["image_url"] if doc else None
+
+
 async def ask_category(winner, categories, winner_coffees, winner_id, skip_message=False):
     additional_prompt = ""
 
@@ -19210,7 +19216,20 @@ async def check_correct_responses_delete(question_ask_time, trivia_answer_list, 
     # Send the entire message at once
     if message:
         message += "\n\u200b"
-        await safe_send(channel, message)
+        answer_embed = discord.Embed()
+        if fastest_correct_user_id is not None:
+            icon_url = await get_cached_okra_avatar_url(fastest_correct_user_id)
+            if not icon_url:
+                try:
+                    guild = bot.get_guild(OKRAN_GUILD_ID)
+                    fastest_member = (guild.get_member(fastest_correct_user_id) or await guild.fetch_member(fastest_correct_user_id)) if guild else None
+                    if fastest_member:
+                        icon_url = fastest_member.display_avatar.url
+                except Exception as e:
+                    print(f"\u26a0\ufe0f Could not fetch fastest responder avatar: {e}")
+            if icon_url:
+                answer_embed.set_author(name=fastest_correct_user, icon_url=icon_url)
+        await safe_send(channel, message, embed=answer_embed)
 
     flush_submission_queue()
     await flush_offquestion_chat_buffer()
