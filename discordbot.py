@@ -19315,9 +19315,9 @@ async def update_round_streaks(user, user_id, roast_task=None):
             memory = await get_museum_memory_url(user_id)
             if memory:
                 winner_embed.set_image(url=memory["image_url"])
-                memory_muse_ref = f"<@{memory['user_id']}>" if memory.get("user_id") else memory.get("muse", "")
-                memory_header = f"**{memory['title']}**\n" if memory.get("title") else ""
-                memory_block = f"\n\u200b\n🖼️✨ A memory from the Okra Museum\n\u200b\n{memory_header}By {memory_muse_ref}\n{memory['creation_date']}"
+                footer_lines = [line for line in (memory.get("title"), f"By {memory.get('muse', '')}", memory.get("creation_date")) if line]
+                winner_embed.set_footer(text="\n".join(footer_lines))
+                memory_block = "\n\u200b\n🖼️✨ A memory from the Okra Museum"
                 if memory.get("discord_jump_url"):
                     memory_block += f"\n\u200b\n🔗 [View in Museum]({memory['discord_jump_url']})"
                 message += memory_block
