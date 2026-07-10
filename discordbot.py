@@ -19163,25 +19163,25 @@ async def check_correct_responses_delete(question_ask_time, trivia_answer_list, 
     if current_question_data:
         current_question_data["scoreboard_after_question"] = dict(scoreboard)
 
-    # Construct a single message for all the responses
+    # Construct the answer-reveal header -- this becomes the embed description
     message = ""
     if blind_mode == False:
         if golf_mode:
-            message = f"\u200b\n⛳ **Answer** ({len(question_responders)}) ⛳\n{trivia_answer}\n\u200b"
+            message = f"\u200b\n⛳ **Answer** ({len(question_responders)}) ⛳\n{trivia_answer}"
         else:
-            message = f"\u200b\n✅ **Answer** ({len(question_responders)}) ✅\n{trivia_answer}\n\u200b"
+            message = f"\u200b\n✅ **Answer** ({len(question_responders)}) ✅\n{trivia_answer}"
             if closest_answer_delta is not None:
                 message += f"\n🎯 Closest answer wins!"
 
-
-    # Notify the chat
-    if correct_responses and marx_mode == False:    
+    # Build the per-responder list separately -- it becomes its own embed field so it's
+    # visually distinct from the answer text and the scoreboard instead of one long blob.
+    responses_text = ""
+    if correct_responses and marx_mode == False:
         correct_responses_length = len(correct_responses)
-        
-        # Loop through the responses and append to the message
+
         for display_name, points, response_time, message_content, sender_id, discord_message, delta in correct_responses:
             time_diff = response_time - fastest_response_time
-            
+
             name_str = display_name
             if current_longest_round_streak["user_id"] == sender_id and discount_percentage is not None and discount_percentage > 0:
                 name_str += f" (-{discount_percentage}%)"
@@ -19191,29 +19191,29 @@ async def check_correct_responses_delete(question_ask_time, trivia_answer_list, 
                 delta_display = int(delta) if delta == int(delta) else delta
                 delta_suffix = f" ({message_content}, off by {delta_display})"
 
-            message += f"\n\u200b☑️ **{display_name}**"
+            line = f"☑️ **{display_name}**"
             if not yolo_mode:
-                message += f": {points}"
-            message += delta_suffix
+                line += f": {points}"
+            line += delta_suffix
             if points == 420:
-                message += " 🌿"
+                line += " 🌿"
             if points == 690:
-                message += " 😎"
+                line += " 😎"
             if time_diff == 0 and current_longest_answer_streak["streak"] > 1:
-                message += f"  🔥{current_longest_answer_streak['streak']}"
+                line += f"  🔥{current_longest_answer_streak['streak']}"
+            responses_text += line if not responses_text else f"\n{line}"
 
     # Send the entire message at once
-    if message:
-        message += "\n\u200b"
-        if show_standings_after:
-            standings_text = build_standings_text()
-            if standings_text:
-                message += standings_text
+    if message or responses_text:
         answer_embed = discord.Embed()
-        # Set the description directly instead of letting safe_send derive it from plain
-        # content -- safe_send trims leading whitespace/zero-width spaces, which would
-        # otherwise erase the gap between the author row and the first line.
-        answer_embed.description = message
+        if message:
+            answer_embed.description = message
+        if responses_text:
+            answer_embed.add_field(name="\u200b", value=responses_text, inline=False)
+        if show_standings_after:
+            standings_body = build_standings_body()
+            if standings_body:
+                answer_embed.add_field(name=build_standings_header(), value=standings_body, inline=False)
         if fastest_correct_user_id is not None:
             icon_url = await get_cached_okra_avatar_url(fastest_correct_user_id)
             if not icon_url:
@@ -19488,19 +19488,22 @@ async def determine_round_winner():
         return winner_data["display_name"], winner_data["score"], winner_id
         
 
-def build_standings_text():
-    """Build the current standings text, or None if there's nothing to show."""
+def build_standings_header():
+    """Build the standings section header (used as an embed field name, or prepended to the body)."""
+    if golf_mode:
+        return f"⛳📉 **Scoreboard** ({len(round_responders)}) 📉⛳"
+    return f"🏔️📈 **Scoreboard** ({len(round_responders)}) 📈🏔️"
+
+
+def build_standings_body():
+    """Build the ranked standings list (no header), or None if there's nothing to show."""
     if not scoreboard:
         return None
 
     # Sort by score descending
     standings = sorted(scoreboard.items(), key=lambda x: x[1]["score"], reverse=True)
-    if golf_mode:
-        standing_message = f"\n⛳📉 **Scoreboard** ({len(round_responders)}) 📉⛳\n\u200b"
-    else:
-        standing_message = f"\n🏔️📈 **Scoreboard** ({len(round_responders)}) 📈🏔️\n\u200b"
-
     medals = ["🥇", "🥈", "🥉"]
+    lines = []
 
     for rank, (user_id, user_data) in enumerate(standings, start=1):
         display_name = user_data["display_name"]
@@ -19516,19 +19519,28 @@ def build_standings_text():
         lightning_display = f" ⚡{fastest_count}" if fastest_count > 1 else " ⚡" if fastest_count == 1 else ""
 
         if "420" in str(score):
-            standing_message += f"\n🌿 **{user_str}**: {formatted_points}"
+            line = f"🌿 **{user_str}**: {formatted_points}"
         elif "69" in str(score):
-            standing_message += f"\n😎 **{user_str}**: {formatted_points}"
+            line = f"😎 **{user_str}**: {formatted_points}"
         elif rank <= 3:
-            standing_message += f"\n{medals[rank - 1]} **{user_str}**: {formatted_points}"
+            line = f"{medals[rank - 1]} **{user_str}**: {formatted_points}"
         elif rank == len(standings) and rank > 4:
-            standing_message += f"\n💩 **{user_str}**: {formatted_points}"
+            line = f"💩 **{user_str}**: {formatted_points}"
         else:
-            standing_message += f"\n{rank}. **{user_str}**: {formatted_points}"
+            line = f"{rank}. **{user_str}**: {formatted_points}"
 
-        standing_message += lightning_display
+        line += lightning_display
+        lines.append(line)
 
-    return standing_message
+    return "\n".join(lines)
+
+
+def build_standings_text():
+    """Build the current standings text (header + body), or None if there's nothing to show."""
+    body = build_standings_body()
+    if body is None:
+        return None
+    return f"\n{build_standings_header()}\n\u200b\n{body}"
 
 
 async def show_standings():
