@@ -19251,11 +19251,12 @@ async def update_round_streaks(user, user_id, roast_task=None):
 
         streak = current_longest_round_streak["streak"]
 
-        # Painting earn/redeem status — computed before the message so it can be embedded in the winner announcement
+        # Painting earn/redeem status — computed before the message so it can be shown in the museum/theme-picker embed
         winner_coffees = await get_coffees(user_id)
         pre_balance = 0
         banked = 0
         painting_status_block = ""
+        theme_picker_block = ""
         if ai_on:
             pre_balance = await get_image_credits(user_id)  # credits owed BEFORE this win's earn
             required_wins = image_wins if winner_coffees > 0 else image_wins * 2  # Okrans 5, others 10
@@ -19270,9 +19271,9 @@ async def update_round_streaks(user, user_id, roast_task=None):
                     painting_status_block = "\n🎨🎁 You've earned a painting!"
                 if user != "OkraStrut" and winner_coffees <= 100:
                     categories = museum_categories()
-                    painting_status_block += f"\n\u200b\n🎨🖍️ **<@{user_id}>** Pick a theme for the Okra Museum!\n\u200b"
+                    theme_picker_block = f"\n\u200b\n🎨🖍️ **<@{user_id}>** Pick a theme for the Okra Museum!\n\u200b"
                     for key, value in categories.items():
-                        painting_status_block += f"\n**{key}**: {value}"
+                        theme_picker_block += f"\n**{key}**: {value}"
             else:
                 number_to_emoji = {
                     1: "1️⃣", 2: "2️⃣", 3: "3️⃣", 4: "4️⃣", 5: "5️⃣",
@@ -19286,20 +19287,17 @@ async def update_round_streaks(user, user_id, roast_task=None):
                     painting_status_block = f"\n{dynamic_emoji}🎨 Win {remaining_games} more in a row and you get a painting."
 
         if streak > 1:
-            message = f"\u200b\n\u200b\n🏆 **Winner**: **<@{user_id}>**...🔥{current_longest_round_streak['streak']} in a row!\n"
-            message += f"\n▶️ **[Discord Stats](https://clubokra.com/leaderboard)**\n"
-            message += roast_block
+            winner_text = f"\u200b\n\u200b\n🏆 **Winner**: **<@{user_id}>**...🔥{current_longest_round_streak['streak']} in a row!\n"
+            winner_text += f"\n▶️ **[Discord Stats](https://clubokra.com/leaderboard)**\n"
+            winner_text += roast_block
 
             if streak % discount_streak_amount == 0:
                 discount_fraction = min((streak // discount_streak_amount) * discount_step_amount, 90)
-                message += f"\n⚖️ Going forward **<@{user_id}>** will incur a **-{discount_fraction}%** handicap.\n"
-
-            message += painting_status_block
+                winner_text += f"\n⚖️ Going forward **<@{user_id}>** will incur a **-{discount_fraction}%** handicap.\n"
         else:
-            message = f"\u200b\n\u200b\n🏆 **Winner**: **<@{user_id}>**!\n"
-            message += f"\n▶️ **[Live Stats](https://clubokra.com/leaderboard)**\n"
-            message += roast_block
-            message += painting_status_block
+            winner_text = f"\u200b\n\u200b\n🏆 **Winner**: **<@{user_id}>**!\n"
+            winner_text += f"\n▶️ **[Live Stats](https://clubokra.com/leaderboard)**\n"
+            winner_text += roast_block
 
         avatar_url = None
         try:
@@ -19312,18 +19310,8 @@ async def update_round_streaks(user, user_id, roast_task=None):
 
         winner_embed = discord.Embed()
         if avatar_url:
-            winner_embed.set_thumbnail(url=avatar_url)
-        if banked == 0:  # don't show an old memory in the same message that's about to reveal a new painting
-            memory = await get_museum_memory_url(user_id)
-            if memory:
-                winner_embed.set_image(url=memory["image_url"])
-                footer_lines = [line for line in (memory.get("title"), f"By {memory.get('muse', '')}", memory.get("creation_date")) if line]
-                winner_embed.set_footer(text="\n".join(footer_lines))
-                channel_link = f"https://discord.com/channels/{OKRAN_GUILD_ID}/{OKRA_MUSEUM_CHANNEL_ID}"
-                memory_text = f"[memory]({memory['discord_jump_url']})" if memory.get("discord_jump_url") else "memory"
-                memory_block = f"\n\u200b\n🖼️✨ A {memory_text} from the [Okra Museum]({channel_link})"
-                message += memory_block
-        sent_message = await safe_send(channel, message, embed=winner_embed)
+            winner_embed.set_image(url=avatar_url)
+        sent_message = await safe_send(channel, winner_text, embed=winner_embed)
 
         if roast_text and sent_message is not None:
             test_channel = bot.get_channel(ROAST_TEST_CHANNEL_ID)
@@ -19336,6 +19324,24 @@ async def update_round_streaks(user, user_id, roast_task=None):
                         f"[Jump to message]({sent_message.jump_url}):\n\n{roast_text}"
                     ),
                 )
+
+        # Reveal the museum/theme-picker embed a few seconds after the winner+avatar message
+        await asyncio.sleep(5)
+
+        if ai_on:
+            museum_text = painting_status_block + theme_picker_block
+            museum_embed = discord.Embed()
+            if banked == 0:  # don't show an old memory in the same message that's about to reveal a new painting
+                memory = await get_museum_memory_url(user_id)
+                if memory:
+                    museum_embed.set_image(url=memory["image_url"])
+                    footer_lines = [line for line in (memory.get("title"), f"By {memory.get('muse', '')}", memory.get("creation_date")) if line]
+                    museum_embed.set_footer(text="\n".join(footer_lines))
+                    channel_link = f"https://discord.com/channels/{OKRAN_GUILD_ID}/{OKRA_MUSEUM_CHANNEL_ID}"
+                    memory_text = f"[memory]({memory['discord_jump_url']})" if memory.get("discord_jump_url") else "memory"
+                    museum_text += f"\n\u200b\n🖼️✨ A {memory_text} from the [Okra Museum]({channel_link})"
+            await safe_send(channel, museum_text, embed=museum_embed)
+            await asyncio.sleep(3)
 
         reset_embed_color()
 
