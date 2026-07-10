@@ -19317,9 +19317,9 @@ async def update_round_streaks(user, user_id, roast_task=None):
                 winner_embed.set_image(url=memory["image_url"])
                 footer_lines = [line for line in (memory.get("title"), f"By {memory.get('muse', '')}", memory.get("creation_date")) if line]
                 winner_embed.set_footer(text="\n".join(footer_lines))
-                memory_block = "\n\u200b\n🖼️✨ A memory from the Okra Museum"
-                if memory.get("discord_jump_url"):
-                    memory_block += f"\n\u200b\n🔗 [View in Museum]({memory['discord_jump_url']})"
+                channel_link = f"https://discord.com/channels/{OKRAN_GUILD_ID}/{OKRA_MUSEUM_CHANNEL_ID}"
+                memory_text = f"[memory]({memory['discord_jump_url']})" if memory.get("discord_jump_url") else "memory"
+                memory_block = f"\n\u200b\n🖼️✨ A {memory_text} from the [Okra Museum]({channel_link})"
                 message += memory_block
         sent_message = await safe_send(channel, message, embed=winner_embed)
 
