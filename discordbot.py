@@ -19139,22 +19139,26 @@ async def check_correct_responses_delete(question_ask_time, trivia_answer_list, 
     # Now that we know the fastest responder, iterate over correct_responses to:
     # - Assign the extra 500 points to the fastest user
     # - Update the scoreboard for all users
+    points_gained_this_question = {}
     for i, (display_name, points, response_time, message_content, sender_id, discord_message, _delta) in enumerate(correct_responses):
         if sender_id == fastest_correct_user_id:
             if sender_id in fastest_answers_count:
                 fastest_answers_count[sender_id] += 1
             else:
                 fastest_answers_count[sender_id] = 1
-                
+
+            gained = points + first_place_bonus
             if sender_id in scoreboard:
-                scoreboard[sender_id]["score"] += points + first_place_bonus
+                scoreboard[sender_id]["score"] += gained
             else:
-                scoreboard[sender_id] = {"display_name": display_name, "score": points + first_place_bonus}  
+                scoreboard[sender_id] = {"display_name": display_name, "score": gained}
         else:
+            gained = points
             if sender_id in scoreboard:
-                scoreboard[sender_id]["score"] += points
+                scoreboard[sender_id]["score"] += gained
             else:
-                scoreboard[sender_id] = {"display_name": display_name, "score": points}               
+                scoreboard[sender_id] = {"display_name": display_name, "score": gained}
+        points_gained_this_question[sender_id] = gained
 
     await update_answer_streaks(fastest_correct_user, fastest_correct_user_id)  # Update the correct answer streak for this user
    
@@ -19176,8 +19180,10 @@ async def check_correct_responses_delete(question_ask_time, trivia_answer_list, 
     # Build the per-responder list separately -- it becomes its own embed field so it's
     # visually distinct from the answer text and the scoreboard instead of one long blob.
     responses_text = ""
+    responses_header = "☑️ Responses"
     if correct_responses and marx_mode == False:
         correct_responses_length = len(correct_responses)
+        responses_header = f"☑️ Responses ({correct_responses_length})"
 
         for display_name, points, response_time, message_content, sender_id, discord_message, delta in correct_responses:
             time_diff = response_time - fastest_response_time
@@ -19205,28 +19211,47 @@ async def check_correct_responses_delete(question_ask_time, trivia_answer_list, 
 
     # Send the entire message at once
     if message or responses_text:
-        answer_embed = discord.Embed()
-        if message:
-            answer_embed.description = message
-        if responses_text:
-            answer_embed.add_field(name="\u200b", value=responses_text, inline=False)
-        if show_standings_after:
-            standings_body = build_standings_body()
-            if standings_body:
-                answer_embed.add_field(name=build_standings_header(), value=standings_body, inline=False)
+        author_name = None
+        author_icon_url = None
         if fastest_correct_user_id is not None:
-            icon_url = await get_cached_okra_avatar_url(fastest_correct_user_id)
-            if not icon_url:
+            author_icon_url = await get_cached_okra_avatar_url(fastest_correct_user_id)
+            if not author_icon_url:
                 try:
                     guild = bot.get_guild(OKRAN_GUILD_ID)
                     fastest_member = (guild.get_member(fastest_correct_user_id) or await guild.fetch_member(fastest_correct_user_id)) if guild else None
                     if fastest_member:
-                        icon_url = fastest_member.display_avatar.url
+                        author_icon_url = fastest_member.display_avatar.url
                 except Exception as e:
                     print(f"\u26a0\ufe0f Could not fetch fastest responder avatar: {e}")
-            if icon_url:
-                answer_embed.set_author(name=f"{fastest_correct_user} ⚡", icon_url=icon_url)
+            if author_icon_url:
+                author_name = f"{fastest_correct_user} ⚡"
+
+        # Version A: separate inline fields for responses and scoreboard
+        answer_embed = discord.Embed()
+        if message:
+            answer_embed.description = message
+        if responses_text:
+            answer_embed.add_field(name=responses_header, value=responses_text, inline=True)
+        if show_standings_after:
+            standings_body = build_standings_body()
+            if standings_body:
+                answer_embed.add_field(name=build_standings_header(), value=standings_body, inline=True)
+        if author_name:
+            answer_embed.set_author(name=author_name, icon_url=author_icon_url)
         await safe_send(channel, embed=answer_embed)
+
+        # Version B (comparison only): responses + scoreboard merged into one monospace
+        # ranked table with a (+X) delta for whoever scored this question.
+        if show_standings_after:
+            standings_table = build_standings_table(points_gained_this_question)
+            if standings_table:
+                table_embed = discord.Embed()
+                if message:
+                    table_embed.description = message
+                table_embed.add_field(name=build_standings_header(), value=standings_table, inline=False)
+                if author_name:
+                    table_embed.set_author(name=author_name, icon_url=author_icon_url)
+                await safe_send(channel, embed=table_embed)
     elif show_standings_after:
         # No answer-reveal content this question (e.g. blind mode, no correct responses) --
         # still show the scoreboard on its own rather than silently dropping it.
@@ -19493,6 +19518,43 @@ def build_standings_header():
     if golf_mode:
         return f"⛳📉 **Scoreboard** ({len(round_responders)}) 📉⛳"
     return f"🏔️📈 **Scoreboard** ({len(round_responders)}) 📈🏔️"
+
+
+def build_standings_table(points_gained_this_question=None, name_max_len=14):
+    """Build a monospace, ranked total-score table with a (+X) delta for whoever scored
+    this question -- merges the per-question responses and the running scoreboard into one
+    list instead of two. Omits the (+X) when it would just duplicate the total (a player's
+    first scored question this round). Returns None if there's nothing to show."""
+    if not scoreboard:
+        return None
+
+    points_gained_this_question = points_gained_this_question or {}
+    standings = sorted(scoreboard.items(), key=lambda x: x[1]["score"], reverse=True)
+    medals = ["🥇", "🥈", "🥉"]
+    rows = []
+
+    for rank, (user_id, user_data) in enumerate(standings, start=1):
+        display_name = user_data["display_name"]
+        score = user_data["score"]
+        truncated_name = display_name if len(display_name) <= name_max_len else display_name[:name_max_len - 1] + "…"
+
+        if "420" in str(score):
+            prefix = "🌿"
+        elif "69" in str(score):
+            prefix = "😎"
+        elif rank <= 3:
+            prefix = medals[rank - 1]
+        elif rank == len(standings) and rank > 4:
+            prefix = "💩"
+        else:
+            prefix = f"{rank}."
+
+        gained = points_gained_this_question.get(user_id)
+        delta_suffix = f" (+{gained})" if gained is not None and gained != score else ""
+
+        rows.append(f"{prefix:<3}{truncated_name:<{name_max_len + 1}}{score:>6,}{delta_suffix}")
+
+    return "```\n" + "\n".join(rows) + "\n```"
 
 
 def build_standings_body():
