@@ -371,8 +371,7 @@ async def send_question_queen_submit_ad():
     message = "**Help the game. Get rewarded.**\n"
     message += f"{submit_mention} new trivia questions\n"
     message += f"{flag_mention} poor quality questions\n"
-    if bumped_status == False:
-        message += f"{bump_mention} the server to attract players\n"
+    message += f"{bump_mention} the server to attract players\n"
     message += "\n"
     if bumper_king_id:
         message += f"🍔🤴 <@{bumper_king_id}> — Bumper King\n"
@@ -15339,7 +15338,7 @@ async def generate_round_summary_image(round_data, winner, winner_id, winner_cof
             loop = asyncio.get_running_loop()
 
             def process_image():
-                img = Image.open(io.BytesIO(image_data)).resize((256, 256))
+                img = Image.open(io.BytesIO(image_data)).resize((128, 128))
                 buffer = io.BytesIO()
                 img.save(buffer, format="PNG")
                 buffer.seek(0)
@@ -15384,7 +15383,7 @@ async def generate_round_summary_image(round_data, winner, winner_id, winner_cof
                     loop = asyncio.get_running_loop()
 
                     def process_fallback_image():
-                        img = Image.open(io.BytesIO(image_data)).resize((256, 256))
+                        img = Image.open(io.BytesIO(image_data)).resize((128, 128))
                         buffer = io.BytesIO()
                         img.save(buffer, format="PNG")
                         buffer.seek(0)
@@ -15420,14 +15419,12 @@ async def generate_round_summary_image(round_data, winner, winner_id, winner_cof
 
 
 async def get_okra_avatar_url(member, user_id):
-    """Return an S3 URL for member's avatar with okra worked in, regenerating at most once per local day."""
+    """Return an S3 URL for member's avatar with okra worked in, regenerating at most once every 24 hours."""
     try:
-        local_tz = pytz.timezone('America/Los_Angeles')
-        today = datetime.datetime.now(datetime.UTC).astimezone(local_tz).date().isoformat()
-
         cached = await db.okra_avatars.find_one({"_id": user_id})
-        if cached and cached.get("date") == today:
-            return cached["image_url"]
+        if cached and cached.get("generated_at"):
+            if datetime.datetime.utcnow() - cached["generated_at"] < datetime.timedelta(hours=24):
+                return cached["image_url"]
 
         avatar_bytes = await member.display_avatar.replace(size=1024, format="png").read()
 
@@ -15451,6 +15448,16 @@ async def get_okra_avatar_url(member, user_id):
         )
         image_data = base64.b64decode(response.data[0].b64_json)
 
+        loop = asyncio.get_running_loop()
+
+        def resize_avatar():
+            img = Image.open(io.BytesIO(image_data)).resize((128, 128))
+            buffer = io.BytesIO()
+            img.save(buffer, format="PNG")
+            return buffer.getvalue()
+
+        image_data = await loop.run_in_executor(None, resize_avatar)
+
         s3_key = f"okra-avatars/{user_id}.png"
         session = aioboto3.Session()
         async with session.client("s3") as s3_client:
@@ -15461,7 +15468,7 @@ async def get_okra_avatar_url(member, user_id):
 
         await db.okra_avatars.update_one(
             {"_id": user_id},
-            {"$set": {"image_url": image_url, "date": today, "generated_at": datetime.datetime.utcnow()}},
+            {"$set": {"image_url": image_url, "generated_at": datetime.datetime.utcnow()}},
             upsert=True,
         )
         return image_url
@@ -21227,6 +21234,28 @@ async def on_message(message):
                     inline=False,
                 )
             await relay_channel.send("📬 **DM received:**", embed=embed)
+        return
+
+    if message.content.strip() == "#previewwinner" and message.author.id == okrag_id:
+        fake_user_id = message.author.id
+
+        okra_avatar_url = await get_okra_avatar_url(message.author, fake_user_id)
+        winner_embed = discord.Embed()
+        winner_embed.set_image(url=okra_avatar_url or message.author.display_avatar.url)
+        winner_text = f"\u200b\n\u200b\n🏆 **Winner**: **<@{fake_user_id}>**!\n\n▶️ **[Live Stats](https://clubokra.com/leaderboard)**\n"
+        await safe_send(message.channel, winner_text, embed=winner_embed)
+
+        museum_text = f"Hey **<@{fake_user_id}>**...\n1️⃣🎨 Win the next game and you get a painting."
+        museum_embed = discord.Embed()
+        memory = await get_museum_memory_url(fake_user_id)
+        if memory:
+            museum_embed.set_image(url=memory["image_url"])
+            footer_lines = [line for line in (memory.get("title"), f"By {memory.get('muse', '')}", memory.get("creation_date")) if line]
+            museum_embed.set_footer(text="\n".join(footer_lines))
+            channel_link = f"https://discord.com/channels/{OKRAN_GUILD_ID}/{OKRA_MUSEUM_CHANNEL_ID}"
+            memory_text = f"[memory]({memory['discord_jump_url']})" if memory.get("discord_jump_url") else "memory"
+            museum_text += f"\n\u200b\n🖼️✨ A {memory_text} from the [Okra Museum]({channel_link})"
+        await safe_send(message.channel, museum_text, embed=museum_embed)
         return
 
     if "okra" in message.content.strip().lower() and emoji_mode == True and message.author.id != get_bot().user.id:
