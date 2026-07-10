@@ -18932,7 +18932,7 @@ def fuzzy_match(user_answer, correct_answer, category, url, _skip_alias_check=Fa
     return False  # No match found
 
 
-async def check_correct_responses_delete(question_ask_time, trivia_answer_list, question_number, collected_responses, trivia_category, trivia_url, trivia_db=None, trivia_id=None):
+async def check_correct_responses_delete(question_ask_time, trivia_answer_list, question_number, collected_responses, trivia_category, trivia_url, trivia_db=None, trivia_id=None, show_standings_after=False):
     """Check and respond to users who answered the trivia question correctly."""
     global max_retries, delay_between_retries, current_longest_answer_streak
     global question_responders, round_responders, discount_percentage
@@ -19205,6 +19205,10 @@ async def check_correct_responses_delete(question_ask_time, trivia_answer_list, 
     # Send the entire message at once
     if message:
         message += "\n\u200b"
+        if show_standings_after:
+            standings_text = build_standings_text()
+            if standings_text:
+                message += standings_text
         answer_embed = discord.Embed()
         # Set the description directly instead of letting safe_send derive it from plain
         # content -- safe_send trims leading whitespace/zero-width spaces, which would
@@ -19223,6 +19227,12 @@ async def check_correct_responses_delete(question_ask_time, trivia_answer_list, 
             if icon_url:
                 answer_embed.set_author(name=f"{fastest_correct_user} ⚡", icon_url=icon_url)
         await safe_send(channel, embed=answer_embed)
+    elif show_standings_after:
+        # No answer-reveal content this question (e.g. blind mode, no correct responses) --
+        # still show the scoreboard on its own rather than silently dropping it.
+        standings_text = build_standings_text()
+        if standings_text:
+            await safe_send(channel, standings_text)
 
     flush_submission_queue()
     await flush_offquestion_chat_buffer()
@@ -19478,44 +19488,53 @@ async def determine_round_winner():
         return winner_data["display_name"], winner_data["score"], winner_id
         
 
+def build_standings_text():
+    """Build the current standings text, or None if there's nothing to show."""
+    if not scoreboard:
+        return None
+
+    # Sort by score descending
+    standings = sorted(scoreboard.items(), key=lambda x: x[1]["score"], reverse=True)
+    if golf_mode:
+        standing_message = f"\n⛳📉 **Scoreboard** ({len(round_responders)}) 📉⛳\n\u200b"
+    else:
+        standing_message = f"\n🏔️📈 **Scoreboard** ({len(round_responders)}) 📈🏔️\n\u200b"
+
+    medals = ["🥇", "🥈", "🥉"]
+
+    for rank, (user_id, user_data) in enumerate(standings, start=1):
+        display_name = user_data["display_name"]
+        score = user_data["score"]
+        formatted_points = f"{score:,}"  # Format points with commas
+        fastest_count = fastest_answers_count.get(user_id, 0)
+
+        user_str = display_name
+
+        if current_longest_round_streak["user_id"] == user_id and discount_percentage > 0 and discount_percentage is not None:
+            user_str += f" (-{discount_percentage}%)"
+
+        lightning_display = f" ⚡{fastest_count}" if fastest_count > 1 else " ⚡" if fastest_count == 1 else ""
+
+        if "420" in str(score):
+            standing_message += f"\n🌿 **{user_str}**: {formatted_points}"
+        elif "69" in str(score):
+            standing_message += f"\n😎 **{user_str}**: {formatted_points}"
+        elif rank <= 3:
+            standing_message += f"\n{medals[rank - 1]} **{user_str}**: {formatted_points}"
+        elif rank == len(standings) and rank > 4:
+            standing_message += f"\n💩 **{user_str}**: {formatted_points}"
+        else:
+            standing_message += f"\n{rank}. **{user_str}**: {formatted_points}"
+
+        standing_message += lightning_display
+
+    return standing_message
+
+
 async def show_standings():
     """Show the current standings after each question."""
-    if scoreboard:
-        # Sort by score descending
-        standings = sorted(scoreboard.items(), key=lambda x: x[1]["score"], reverse=True)
-        if golf_mode:
-            standing_message = f"\n⛳📉 **Scoreboard** ({len(round_responders)}) 📉⛳\n\u200b"
-        else:
-            standing_message = f"\n🏔️📈 **Scoreboard** ({len(round_responders)}) 📈🏔️\n\u200b"
-        
-        medals = ["🥇", "🥈", "🥉"]
-        
-        for rank, (user_id, user_data) in enumerate(standings, start=1):
-            display_name = user_data["display_name"]
-            score = user_data["score"]
-            formatted_points = f"{score:,}"  # Format points with commas
-            fastest_count = fastest_answers_count.get(user_id, 0)
-
-            user_str = display_name
-
-            if current_longest_round_streak["user_id"] == user_id and discount_percentage > 0 and discount_percentage is not None:
-                user_str += f" (-{discount_percentage}%)"
-
-            lightning_display = f" ⚡{fastest_count}" if fastest_count > 1 else " ⚡" if fastest_count == 1 else ""
-
-            if "420" in str(score):
-                standing_message += f"\n🌿 **{user_str}**: {formatted_points}"
-            elif "69" in str(score):
-                standing_message += f"\n😎 **{user_str}**: {formatted_points}"
-            elif rank <= 3:
-                standing_message += f"\n{medals[rank - 1]} **{user_str}**: {formatted_points}"
-            elif rank == len(standings) and rank > 4:
-                standing_message += f"\n💩 **{user_str}**: {formatted_points}"
-            else:
-                standing_message += f"\n{rank}. **{user_str}**: {formatted_points}"
-
-            standing_message += lightning_display
-
+    standing_message = build_standings_text()
+    if standing_message:
         await safe_send(channel, standing_message)
 
 
@@ -20758,7 +20777,12 @@ async def start_trivia():
                 else:
                     solution_list = [new_solution]        
                     
-                await check_correct_responses_delete(question_ask_time, solution_list, question_number, collected_responses, trivia_category, trivia_url, trivia_db=trivia_db, trivia_id=trivia_id)
+                show_standings_after = not yolo_mode or question_number == questions_per_round
+                await check_correct_responses_delete(
+                    question_ask_time, solution_list, question_number, collected_responses,
+                    trivia_category, trivia_url, trivia_db=trivia_db, trivia_id=trivia_id,
+                    show_standings_after=show_standings_after,
+                )
 
                 if current_answer_view is not None:
                     current_answer_view.stop()
@@ -20797,9 +20821,6 @@ async def start_trivia():
                     current_answer_view = None
                     current_answer_message = None
                     current_report_view = None
-
-                if not yolo_mode or question_number == questions_per_round:
-                    await show_standings()
 
                 await refill_question_slot(selected_questions, selected_question)
 
