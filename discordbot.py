@@ -5193,6 +5193,132 @@ class NewIntroModal(discord.ui.Modal, title="Generate Intro Image"):
         pending_intro_preview_view = view
 
 
+class AvatarPreviewView(discord.ui.View):
+    """Confirm/Regenerate/Cancel view for a candidate custom avatar edit for a specific member.
+    Unlike IntroImagePreviewView, no global pending-preview singleton is needed here since
+    avatar previews are per-member and don't collide with each other."""
+
+    def __init__(self, owner_id, member, avatar_bytes, image_bytes, prompt, model, quality, source_avatar_key):
+        super().__init__(timeout=None)
+        self.owner_id = owner_id
+        self.member = member
+        self.avatar_bytes = avatar_bytes  # original base image, reused on Regenerate
+        self.image_bytes = image_bytes  # current candidate edit
+        self.prompt = prompt
+        self.model = model
+        self.quality = quality
+        self.source_avatar_key = source_avatar_key
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.owner_id:
+            await interaction.response.send_message(
+                "❌ Only the owner who started this preview can use these buttons.",
+                ephemeral=True,
+            )
+            return False
+        return True
+
+    @discord.ui.button(label="Confirm", style=discord.ButtonStyle.success, emoji="✅")
+    async def confirm_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer()
+        image_url = await save_custom_avatar_bytes(self.member, self.image_bytes, self.source_avatar_key)
+        for item in self.children:
+            item.disabled = True
+        await interaction.message.edit(
+            content=f"✅ Confirmed — this is now {self.member.display_name}'s custom avatar.\n{image_url}",
+            view=self,
+        )
+
+    @discord.ui.button(label="Regenerate", style=discord.ButtonStyle.primary, emoji="🔁")
+    async def regenerate_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer()
+        try:
+            self.image_bytes = await generate_custom_avatar_bytes(self.avatar_bytes, self.prompt, self.model, self.quality)
+        except openai.OpenAIError as e:
+            await interaction.followup.send(f"❌ Generation failed: {e}", ephemeral=True)
+            return
+        await interaction.message.edit(
+            content=f"Preview — {self.member.display_name}, model `{self.model}`, quality `{self.quality}`",
+            attachments=[discord.File(io.BytesIO(self.image_bytes), filename="avatar_preview.png")],
+            view=self,
+        )
+
+    @discord.ui.button(label="Cancel", style=discord.ButtonStyle.secondary, emoji="❌")
+    async def cancel_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        try:
+            await interaction.message.delete()
+        except Exception:
+            pass
+        await interaction.response.send_message("✅ Cancelled.", ephemeral=True, delete_after=3)
+
+
+class NewAvatarModal(discord.ui.Modal, title="Generate Custom Avatar"):
+    """Prompt + model + quality picker for a custom avatar edit targeting a specific member."""
+
+    prompt = discord.ui.TextInput(
+        label="Prompt",
+        style=discord.TextStyle.paragraph,
+        placeholder="Describe how to edit their avatar (e.g. 'add a wizard hat')",
+        required=True,
+        max_length=2000,
+    )
+
+    model_label = discord.ui.Label(
+        text="Model",
+        component=discord.ui.Select(
+            options=[
+                discord.SelectOption(label="gpt-image-1-mini (default)", value="gpt-image-1-mini", default=True),
+                discord.SelectOption(label="gpt-image-1", value="gpt-image-1"),
+            ],
+            min_values=1,
+            max_values=1,
+        ),
+    )
+
+    quality_label = discord.ui.Label(
+        text="Quality",
+        component=discord.ui.Select(
+            options=[
+                discord.SelectOption(label="low", value="low"),
+                discord.SelectOption(label="medium (default)", value="medium", default=True),
+                discord.SelectOption(label="high", value="high"),
+            ],
+            min_values=1,
+            max_values=1,
+        ),
+    )
+
+    def __init__(self, member):
+        super().__init__()
+        self.member = member
+
+    async def on_submit(self, interaction: discord.Interaction):
+        await interaction.response.defer()
+
+        prompt = self.prompt.value.strip()
+        model = self.model_label.component.values[0]
+        quality = self.quality_label.component.values[0]
+
+        source_avatar_key = self.member.display_avatar.key
+        avatar_bytes = await self.member.display_avatar.replace(size=1024, format="png").read()
+
+        try:
+            image_bytes = await generate_custom_avatar_bytes(avatar_bytes, prompt, model, quality)
+        except openai.OpenAIError as e:
+            await interaction.followup.send(f"❌ Generation failed: {e}", ephemeral=True)
+            return
+
+        view = AvatarPreviewView(
+            interaction.user.id, self.member, avatar_bytes, image_bytes,
+            prompt=prompt, model=model, quality=quality, source_avatar_key=source_avatar_key,
+        )
+        await interaction.followup.send(
+            content=f"Preview — {self.member.display_name}, model `{model}`, quality `{quality}`",
+            file=discord.File(io.BytesIO(image_bytes), filename="avatar_preview.png"),
+            view=view,
+        )
+
+
 class ReportQuestionView(discord.ui.View):
     def __init__(self, question):
         super().__init__(timeout=None)
@@ -15630,6 +15756,52 @@ async def get_cached_okra_avatar_url(user_id):
     return doc["image_url"] if doc else None
 
 
+async def generate_custom_avatar_bytes(avatar_bytes: bytes, prompt: str, model: str, quality: str) -> bytes:
+    """Edit a member's avatar via OpenAI using an owner-supplied prompt, mirroring the
+    images.edit call in get_okra_avatar_url but with a custom prompt/model/quality instead of
+    a random style hint. Returns raw decoded bytes at native 1024x1024 (no resize) so a preview
+    can show full detail; resize happens at save time in save_custom_avatar_bytes."""
+    response = await openai_client.images.edit(
+        model=model,
+        image=("avatar.png", avatar_bytes, "image/png"),
+        prompt=prompt,
+        size="1024x1024",
+        quality=quality,
+    )
+    return base64.b64decode(response.data[0].b64_json)
+
+
+async def save_custom_avatar_bytes(member, image_bytes: bytes, source_avatar_key: str) -> str:
+    """Resize and store image_bytes as member's custom okra avatar, reusing the exact same
+    S3 key convention / Mongo doc shape get_okra_avatar_url writes, so it flows through every
+    existing consumer (winner flow, answer-reveal icon) with no changes needed there."""
+    loop = asyncio.get_running_loop()
+
+    def resize_avatar():
+        img = Image.open(io.BytesIO(image_bytes)).resize((256, 256))
+        buffer = io.BytesIO()
+        img.save(buffer, format="PNG")
+        return buffer.getvalue()
+
+    resized = await loop.run_in_executor(None, resize_avatar)
+
+    s3_key = f"okra-avatars/{member.id}.png"
+    session = aioboto3.Session()
+    async with session.client("s3") as s3_client:
+        await s3_client.put_object(
+            Bucket=S3_BUCKET_NAME, Key=s3_key, Body=resized, ContentType="image/png"
+        )
+    generated_at = datetime.datetime.utcnow()
+    image_url = f"https://{S3_BUCKET_NAME}.s3.us-east-2.amazonaws.com/{s3_key}?v={int(generated_at.timestamp())}"
+
+    await db.okra_avatars.update_one(
+        {"_id": member.id},
+        {"$set": {"image_url": image_url, "generated_at": generated_at, "source_avatar_key": source_avatar_key}},
+        upsert=True,
+    )
+    return image_url
+
+
 async def generate_intro_image_bytes(prompt: str, model: str, quality: str) -> bytes:
     """Generate an intro-image banner via OpenAI. Raises openai.OpenAIError on failure so the
     caller can surface the exact message (e.g. a safety-system rejection) to the owner."""
@@ -24184,10 +24356,19 @@ class BulkSubmitModal(discord.ui.Modal, title="Bulk Submit Questions"):
 @bot.tree.command(name="newintro", description="Generate a new custom intro-image banner (owner only)", guild=discord.Object(id=OKRAN_GUILD_ID))
 @discord.app_commands.default_permissions(administrator=True)
 async def newintro_command(interaction: discord.Interaction):
-    if interaction.channel_id != INTRO_IMAGE_ADMIN_CHANNEL_ID or interaction.user.id != okrag_id:
+    if interaction.user.id != okrag_id:
         await interaction.response.send_message("❌ Not available here.", ephemeral=True)
         return
     await interaction.response.send_modal(NewIntroModal(interaction.user.id))
+
+
+@bot.tree.command(name="newavatar", description="Generate a custom AI avatar edit for a user (owner only)", guild=discord.Object(id=OKRAN_GUILD_ID))
+@discord.app_commands.default_permissions(administrator=True)
+async def newavatar_command(interaction: discord.Interaction, member: discord.Member):
+    if interaction.user.id != okrag_id:
+        await interaction.response.send_message("❌ Not available here.", ephemeral=True)
+        return
+    await interaction.response.send_modal(NewAvatarModal(member))
 
 
 @bot.tree.command(name="submissions", description="Manage pending question submissions (mods only)", guild=discord.Object(id=OKRAN_GUILD_ID))
@@ -24515,6 +24696,21 @@ async def grant_image_credit_menu(interaction: discord.Interaction, member: disc
         await interaction.response.send_message("❌ Mods only.", ephemeral=True)
         return
     await interaction.response.send_modal(GrantImageCreditModal(member))
+
+
+@bot.tree.context_menu(name="Clear Custom Avatar", guild=discord.Object(id=OKRAN_GUILD_ID))
+@discord.app_commands.default_permissions(manage_guild=True)
+async def clear_custom_avatar_menu(interaction: discord.Interaction, member: discord.Member):
+    if interaction.user.id != okrag_id and not any(
+        r.id == SUBMISSION_MOD_ROLE_ID for r in getattr(interaction.user, "roles", [])
+    ):
+        await interaction.response.send_message("❌ Mods only.", ephemeral=True)
+        return
+    result = await db.okra_avatars.delete_one({"_id": member.id})
+    if result.deleted_count:
+        await interaction.response.send_message(f"✅ Cleared {member.display_name}'s custom avatar.", ephemeral=True)
+    else:
+        await interaction.response.send_message(f"{member.display_name} has no custom avatar cached.", ephemeral=True)
 
 
 @bot.event
