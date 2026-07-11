@@ -19085,13 +19085,13 @@ async def ask_question(trivia_category, trivia_question, trivia_url, trivia_answ
         report_btn.callback = _report_cb
         answer_view.add_item(report_btn)
 
-        countdown_btn = discord.ui.Button(label=f"\u23f3 {question_time}s", style=discord.ButtonStyle.success, disabled=True, row=1)
+        countdown_btn = discord.ui.Button(label=f"\u23f3 {question_time}s", style=discord.ButtonStyle.secondary, disabled=True, row=1)
         answer_view.add_item(countdown_btn)
         current_countdown_button = countdown_btn
 
         view_kwargs = {"view": answer_view}
     else:
-        countdown_btn = discord.ui.Button(label=f"\u23f3 {question_time}s", style=discord.ButtonStyle.success, disabled=True, row=0)
+        countdown_btn = discord.ui.Button(label=f"\u23f3 {question_time}s", style=discord.ButtonStyle.secondary, disabled=True, row=0)
         current_report_view.add_item(countdown_btn)
         current_countdown_button = countdown_btn
 
@@ -21391,7 +21391,7 @@ async def start_trivia():
                         elif remaining <= 3:
                             current_countdown_button.style = discord.ButtonStyle.danger
                         else:
-                            current_countdown_button.style = discord.ButtonStyle.success
+                            current_countdown_button.style = discord.ButtonStyle.secondary
                         view_to_edit = current_answer_view if current_answer_view is not None else current_report_view
                         try:
                             await current_answer_message.edit(view=view_to_edit)
