@@ -15418,7 +15418,7 @@ async def generate_round_summary_image(round_data, winner, winner_id, winner_cof
         return False
 
 
-async def fetch_and_resize_image(url, size=(256, 256)):
+async def fetch_and_resize_image(url, size=(100, 100)):
     """Fetch a remote image and return PNG bytes resized to `size`, or None on failure.
     Does not touch the source file -- for shrinking an image only for one specific
     redisplay (e.g. the museum-memory callback in the winner message) without affecting
@@ -15477,7 +15477,7 @@ async def get_okra_avatar_url(member, user_id):
         loop = asyncio.get_running_loop()
 
         def resize_avatar():
-            img = Image.open(io.BytesIO(image_data)).resize((256, 256))
+            img = Image.open(io.BytesIO(image_data)).resize((100, 100))
             buffer = io.BytesIO()
             img.save(buffer, format="PNG")
             return buffer.getvalue()
@@ -19444,7 +19444,7 @@ async def update_round_streaks(user, user_id, roast_task=None):
         embeds_to_send = [winner_embed]
         museum_attachments = []
         if ai_on:
-            museum_text = f"Hey **<@{user_id}>**...\n" + painting_status_block + theme_picker_block
+            museum_text = (painting_status_block + theme_picker_block).lstrip("\n")
             museum_embed = discord.Embed()
             museum_embed.color = embed_color
             if memory_task is not None:
@@ -21311,7 +21311,7 @@ async def on_message(message):
         winner_text = f"🏆 **Winner**: **<@{fake_user_id}>**!\n\n▶️ **[Live Stats](https://clubokra.com/leaderboard)**\n"
         winner_embed.description = winner_text
 
-        museum_text = f"Hey **<@{fake_user_id}>**...\n1️⃣🎨 Win the next game and you get a painting."
+        museum_text = "1️⃣🎨 Win the next game and you get a painting."
         museum_embed = discord.Embed()
         museum_embed.color = embed_color
         museum_attachments = []
