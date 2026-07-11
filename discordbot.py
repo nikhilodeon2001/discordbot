@@ -19824,7 +19824,7 @@ def _pad_to_display_width(s, width):
     return s + " " * max(0, width - _display_width(s))
 
 
-def build_standings_table(points_gained_this_question=None, name_max_len=13, scoreboard_override=None,
+def build_standings_table(points_gained_this_question=None, name_max_len=20, scoreboard_override=None,
                            row_notes=None, sort_alphabetically=False, mask_score=False):
     """Build a monospace ranked table with a (+X) delta for whoever scored this question --
     merges the per-question responses and the running scoreboard into one list instead of
