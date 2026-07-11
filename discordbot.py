@@ -19422,7 +19422,7 @@ async def update_round_streaks(user, user_id, roast_task=None):
         memory_task = asyncio.create_task(_prepare_memory_display()) if (ai_on and banked == 0) else None
 
         if streak > 1:
-            winner_text = f"\u200b\n\u200b\n🏆 **Winner**: **<@{user_id}>**...🔥{current_longest_round_streak['streak']} in a row!\n"
+            winner_text = f"🏆 **Winner**: **<@{user_id}>**...🔥{current_longest_round_streak['streak']} in a row!\n"
             winner_text += f"\n▶️ **[Discord Stats](https://clubokra.com/leaderboard)**\n"
             winner_text += roast_block
 
@@ -19430,7 +19430,7 @@ async def update_round_streaks(user, user_id, roast_task=None):
                 discount_fraction = min((streak // discount_streak_amount) * discount_step_amount, 90)
                 winner_text += f"\n⚖️ Going forward **<@{user_id}>** will incur a **-{discount_fraction}%** handicap.\n"
         else:
-            winner_text = f"\u200b\n\u200b\n🏆 **Winner**: **<@{user_id}>**!\n"
+            winner_text = f"🏆 **Winner**: **<@{user_id}>**!\n"
             winner_text += f"\n▶️ **[Live Stats](https://clubokra.com/leaderboard)**\n"
             winner_text += roast_block
 
@@ -21308,7 +21308,7 @@ async def on_message(message):
         winner_embed = discord.Embed()
         winner_embed.color = embed_color
         winner_embed.set_image(url=okra_avatar_url or message.author.display_avatar.url)
-        winner_text = f"\u200b\n\u200b\n🏆 **Winner**: **<@{fake_user_id}>**!\n\n▶️ **[Live Stats](https://clubokra.com/leaderboard)**\n"
+        winner_text = f"🏆 **Winner**: **<@{fake_user_id}>**!\n\n▶️ **[Live Stats](https://clubokra.com/leaderboard)**\n"
         winner_embed.description = winner_text
 
         museum_text = f"Hey **<@{fake_user_id}>**...\n1️⃣🎨 Win the next game and you get a painting."
