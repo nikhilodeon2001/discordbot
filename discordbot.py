@@ -17063,7 +17063,7 @@ async def process_round_options(round_winner, winner_points, round_winner_id, wi
         "🟦✋ **Alex**: More Jeopardy questions\n"
         "🤓📝 **Nerd**: Add SAT questions\n"
         "🎖🥒 **Dicktator**: Choose the categories\n"
-        "\n🏁 **x**: I'm Done / Skip\n"
+        "\n🏁⏭️ **x**: I'm Done / Skip\n"
     )
 
     await safe_send(channel, message)
@@ -19383,9 +19383,9 @@ async def update_round_streaks(user, user_id, roast_task=None):
                 remaining_games = required_wins - (streak % required_wins)
                 dynamic_emoji = number_to_emoji.get(remaining_games, str(remaining_games))
                 if remaining_games == 1:
-                    painting_status_block = f"\n{dynamic_emoji}🎨 Hey **<@{user_id}>**, win the next game and you get a painting in the [Okra Museum]({museum_channel_link})."
+                    painting_status_block = f"\n{dynamic_emoji}🎨 Hey **<@{user_id}>**, win the next game for a painting in the [Okra Museum]({museum_channel_link})!"
                 else:
-                    painting_status_block = f"\n{dynamic_emoji}🎨 Hey **<@{user_id}>**, win {remaining_games} more in a row and you get a painting in the [Okra Museum]({museum_channel_link})."
+                    painting_status_block = f"\n{dynamic_emoji}🎨 Hey **<@{user_id}>**, win {remaining_games} more in a row for a painting in the [Okra Museum]({museum_channel_link})!"
 
         if streak > 1:
             winner_text = f"🏆 **Winner**: **<@{user_id}>**...🔥{current_longest_round_streak['streak']} in a row!\n"
@@ -21281,7 +21281,7 @@ async def on_message(message):
 
         museum_embed = discord.Embed()
         museum_embed.color = embed_color
-        museum_embed.description = f"1️⃣🎨 Hey **<@{fake_user_id}>**, win the next game and you get a painting in the [Okra Museum]({museum_channel_link})."
+        museum_embed.description = f"1️⃣🎨 Hey **<@{fake_user_id}>**, win the next game for a painting in the [Okra Museum]({museum_channel_link})!"
 
         await safe_send(message.channel, embeds=[winner_embed, museum_embed], use_embed=False)
         return
