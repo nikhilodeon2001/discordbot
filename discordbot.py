@@ -234,7 +234,7 @@ def generate_presigned_url(s3_url, expiration=3600):
         # Return original URL as fallback
         return s3_url
 
-async def end_of_round():
+async def end_of_round(sent_message=None):
     print("Round ended. Checking for updates...")
     try:
         # Check if there's a new commit first (don't notify yet)
@@ -261,8 +261,19 @@ async def end_of_round():
 
             blurb = await get_update_blurb()
 
-            # Send update notification to main channel
-            if channel:
+            # Merge into the already-sent round-end message in the main channel instead of
+            # sending a new one -- falls back to a fresh send if the edit fails.
+            if sent_message is not None:
+                try:
+                    updated_embed = sent_message.embeds[0] if sent_message.embeds else discord.Embed()
+                    updated_embed.description = (updated_embed.description or "") + f"\n\n{blurb}"
+                    await sent_message.edit(embed=updated_embed)
+                    print(f"✅ Merged update notification into round-end message in main channel")
+                except (discord.NotFound, discord.HTTPException) as e:
+                    print(f"❌ Failed to merge update notification into main channel message: {e}")
+                    if channel:
+                        await safe_send(channel, blurb)
+            elif channel:
                 try:
                     await safe_send(channel, blurb)
                     print(f"✅ Sent update notification to main channel {channel.id}")
@@ -343,7 +354,7 @@ async def get_round_blurb() -> str:
         fact = await _sample_recent_text(db, "fun_facts", "fun_fact")
         if not fact:
             return "🥬"
-        return f"**OkRandom Fact**\n\n🌿 {fact} 🥬"
+        return f"🌿 {fact} 🥬"
     except Exception as e:
         print(f"Error fetching fun fact: {e}")
         return "🥬"
@@ -355,7 +366,7 @@ async def get_update_blurb() -> str:
         signoff = await _sample_recent_text(db, "update_blurbs", "update_blurb")
         if not fact or not signoff:
             return "🥬 Heading off to level up — back in a flash, Okrans!"
-        return f"**OkRandom Fact**\n\n🌿 {fact}\n\n{signoff} 🥬"
+        return f"🌿 {fact}\n\n{signoff} 🥬"
     except Exception:
         return "🥬 Heading off to level up — back in a flash, Okrans!"
 
@@ -824,6 +835,7 @@ marx_mode_default = False
 marx_mode = marx_mode_default
 image_questions_default = True
 image_questions = image_questions_default
+okra_avatar_enabled = True  # code-level kill switch for the paid AI avatar edit -- flip to False to fall back to the plain Discord avatar
 sniper_mode_default = False
 sniper_mode = sniper_mode_default
 blitz_mode_default = False
@@ -13978,25 +13990,6 @@ async def post_museum_image_to_channel(museum_post, user_id=None):
         return None, None
 
 
-async def get_museum_memory_url(user_id=None):
-    """Return a museum memory doc {image_url, title, muse, creation_date, user_id, discord_jump_url}
-    — prefer a random painting of `user_id`, else any. None if none/error."""
-    try:
-        coll = db["museum_images"]
-        if user_id is not None:
-            docs = await coll.aggregate([
-                {"$match": {"user_id": user_id}},
-                {"$sample": {"size": 1}},
-            ]).to_list(length=1)
-            if docs:
-                return docs[0]
-        docs = await coll.aggregate([{"$sample": {"size": 1}}]).to_list(length=1)
-        return docs[0] if docs else None
-    except Exception as e:
-        print(f"⚠️ Could not fetch museum memory: {e}")
-        return None
-
-
 async def get_image_url_from_s3(streak_message=None):
     bucket_name = "triviabotwebsite"
     prefix = "generated-images/"
@@ -15418,39 +15411,16 @@ async def generate_round_summary_image(round_data, winner, winner_id, winner_cof
         return False
 
 
-async def fetch_and_resize_image(url, size=(100, 100)):
-    """Fetch a remote image and return PNG bytes resized to `size`, or None on failure.
-    Does not touch the source file -- for shrinking an image only for one specific
-    redisplay (e.g. the museum-memory callback in the winner message) without affecting
-    the canonical copy used elsewhere (museum forum post, Facebook, website)."""
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url) as resp:
-                if resp.status != 200:
-                    return None
-                image_bytes = await resp.read()
-
-        loop = asyncio.get_running_loop()
-
-        def resize():
-            img = Image.open(io.BytesIO(image_bytes)).resize(size)
-            buffer = io.BytesIO()
-            img.save(buffer, format="PNG")
-            return buffer.getvalue()
-
-        return await loop.run_in_executor(None, resize)
-    except Exception as e:
-        print(f"⚠️ Could not fetch/resize image: {e}")
-        return None
-
-
 async def get_okra_avatar_url(member, user_id):
-    """Return an S3 URL for member's avatar with okra worked in, regenerating at most once every 24 hours."""
+    """Return an S3 URL for member's avatar with okra worked in. Only regenerates when the
+    member's underlying Discord avatar actually changes (compared via its hash key) --
+    not on any fixed schedule."""
     try:
+        current_avatar_key = member.display_avatar.key
+
         cached = await db.okra_avatars.find_one({"_id": user_id})
-        if cached and cached.get("generated_at"):
-            if datetime.datetime.utcnow() - cached["generated_at"] < datetime.timedelta(hours=24):
-                return cached["image_url"]
+        if cached and cached.get("source_avatar_key") == current_avatar_key:
+            return cached["image_url"]
 
         avatar_bytes = await member.display_avatar.replace(size=1024, format="png").read()
 
@@ -15477,7 +15447,7 @@ async def get_okra_avatar_url(member, user_id):
         loop = asyncio.get_running_loop()
 
         def resize_avatar():
-            img = Image.open(io.BytesIO(image_data)).resize((100, 100))
+            img = Image.open(io.BytesIO(image_data)).resize((256, 256))
             buffer = io.BytesIO()
             img.save(buffer, format="PNG")
             return buffer.getvalue()
@@ -15498,7 +15468,7 @@ async def get_okra_avatar_url(member, user_id):
 
         await db.okra_avatars.update_one(
             {"_id": user_id},
-            {"$set": {"image_url": image_url, "generated_at": generated_at}},
+            {"$set": {"image_url": image_url, "generated_at": generated_at, "source_avatar_key": current_avatar_key}},
             upsert=True,
         )
         return image_url
@@ -19366,7 +19336,7 @@ async def update_round_streaks(user, user_id, roast_task=None):
         except Exception as e:
             print(f"⚠️ Could not fetch winner avatar: {e}")
 
-        okra_avatar_task = asyncio.create_task(get_okra_avatar_url(member, user_id)) if member else None
+        okra_avatar_task = asyncio.create_task(get_okra_avatar_url(member, user_id)) if (member and okra_avatar_enabled) else None
 
         roast_result = await roast_task if roast_task is not None else None
         roast_text, roast_message_count = roast_result if roast_result else (None, None)
@@ -19381,6 +19351,7 @@ async def update_round_streaks(user, user_id, roast_task=None):
         painting_status_block = ""
         theme_picker_block = ""
         if ai_on:
+            museum_channel_link = f"https://discord.com/channels/{OKRAN_GUILD_ID}/{OKRA_MUSEUM_CHANNEL_ID}"
             pre_balance = await get_image_credits(user_id)  # credits owed BEFORE this win's earn
             required_wins = image_wins if winner_coffees > 0 else image_wins * 2  # Okrans 5, others 10
             if streak % required_wins == 0:
@@ -19389,12 +19360,12 @@ async def update_round_streaks(user, user_id, roast_task=None):
 
             if banked > 0:
                 if pre_balance > 0:  # this credit was owed from a prior failure/grant
-                    painting_status_block = "\n🎁🥒 Cashing in a drawing you were owed…"
+                    painting_status_block = f"\n🎁🥒 Congrats **<@{user_id}>**, cashing in a drawing you were owed…"
                 else:
-                    painting_status_block = "\n🎨🎁 You've earned a painting!"
+                    painting_status_block = f"\n🎨🎁 Congrats **<@{user_id}>**, you've earned a painting!"
                 if user != "OkraStrut" and winner_coffees <= 100:
                     categories = museum_categories()
-                    theme_picker_block = f"\n\u200b\n🎨🖍️ **<@{user_id}>** Pick a theme for the Okra Museum!\n\u200b"
+                    theme_picker_block = f"\n\u200b\n🎨🖍️ Pick a theme for the [Okra Museum]({museum_channel_link})!\n\u200b"
                     for key, value in categories.items():
                         theme_picker_block += f"\n**{key}**: {value}"
             else:
@@ -19405,21 +19376,9 @@ async def update_round_streaks(user, user_id, roast_task=None):
                 remaining_games = required_wins - (streak % required_wins)
                 dynamic_emoji = number_to_emoji.get(remaining_games, str(remaining_games))
                 if remaining_games == 1:
-                    painting_status_block = f"\n{dynamic_emoji}🎨 Win the next game and you get a painting."
+                    painting_status_block = f"\n{dynamic_emoji}🎨 Hey **<@{user_id}>**, win the next game and you get a painting in the [Okra Museum]({museum_channel_link})."
                 else:
-                    painting_status_block = f"\n{dynamic_emoji}🎨 Win {remaining_games} more in a row and you get a painting."
-
-        # Kick off the museum-memory fetch+resize (if applicable) concurrently with the rest
-        # of the text/avatar prep below, so everything is ready before anything is sent --
-        # no more "post avatar now, add memory a few seconds later" staged reveal.
-        async def _prepare_memory_display():
-            memory = await get_museum_memory_url(user_id)
-            if not memory:
-                return None, None
-            resized_bytes = await fetch_and_resize_image(memory["image_url"])
-            return memory, resized_bytes
-
-        memory_task = asyncio.create_task(_prepare_memory_display()) if (ai_on and banked == 0) else None
+                    painting_status_block = f"\n{dynamic_emoji}🎨 Hey **<@{user_id}>**, win {remaining_games} more in a row and you get a painting in the [Okra Museum]({museum_channel_link})."
 
         if streak > 1:
             winner_text = f"🏆 **Winner**: **<@{user_id}>**...🔥{current_longest_round_streak['streak']} in a row!\n"
@@ -19434,6 +19393,8 @@ async def update_round_streaks(user, user_id, roast_task=None):
             winner_text += f"\n▶️ **[Live Stats](https://clubokra.com/leaderboard)**\n"
             winner_text += roast_block
 
+        # Winner text + avatar in the first embed (avatar renders below the text within
+        # that same embed), painting-status/theme-picker in a second embed right after it.
         winner_embed = discord.Embed()
         winner_embed.color = embed_color
         winner_embed.description = winner_text
@@ -19442,32 +19403,15 @@ async def update_round_streaks(user, user_id, roast_task=None):
             winner_embed.set_image(url=okra_avatar_url or avatar_url)
 
         embeds_to_send = [winner_embed]
-        museum_attachments = []
         if ai_on:
             museum_text = (painting_status_block + theme_picker_block).lstrip("\n")
-            museum_embed = discord.Embed()
-            museum_embed.color = embed_color
-            if memory_task is not None:
-                memory, resized_bytes = await memory_task
-                if memory:
-                    # Resize just this redisplay -- the canonical museum image (forum post,
-                    # Facebook, website) stays full-size; only this callback shrinks.
-                    if resized_bytes:
-                        museum_attachments.append(discord.File(io.BytesIO(resized_bytes), filename="memory.png"))
-                        museum_embed.set_image(url="attachment://memory.png")
-                    else:
-                        museum_embed.set_image(url=memory["image_url"])
-                    footer_lines = [line for line in (memory.get("title"), f"By {memory.get('muse', '')}", memory.get("creation_date")) if line]
-                    museum_embed.set_footer(text="\n".join(footer_lines))
-                    channel_link = f"https://discord.com/channels/{OKRAN_GUILD_ID}/{OKRA_MUSEUM_CHANNEL_ID}"
-                    memory_text = f"[memory]({memory['discord_jump_url']})" if memory.get("discord_jump_url") else "memory"
-                    museum_text += f"\n\u200b\n🖼️✨ A {memory_text} from the [Okra Museum]({channel_link})"
-            museum_embed.description = museum_text
-            embeds_to_send.append(museum_embed)
+            if museum_text:
+                museum_embed = discord.Embed()
+                museum_embed.color = embed_color
+                museum_embed.description = museum_text
+                embeds_to_send.append(museum_embed)
 
-        sent_message = await safe_send(
-            channel, embeds=embeds_to_send, files=museum_attachments or None, use_embed=False
-        )
+        sent_message = await safe_send(channel, embeds=embeds_to_send, use_embed=False)
 
         if roast_text and sent_message is not None:
             test_channel = bot.get_channel(ROAST_TEST_CHANNEL_ID)
@@ -19557,7 +19501,7 @@ def build_standings_header(scoreboard_override=None, round_responders_override=N
     return f"🏔️📈 **Scoreboard** ({len(responders)}) 📈🏔️"
 
 
-def build_standings_table(points_gained_this_question=None, name_max_len=14, scoreboard_override=None,
+def build_standings_table(points_gained_this_question=None, name_max_len=10, scoreboard_override=None,
                            row_notes=None, sort_alphabetically=False, mask_score=False):
     """Build a monospace ranked table with a (+X) delta for whoever scored this question --
     merges the per-question responses and the running scoreboard into one list instead of
@@ -19625,9 +19569,19 @@ def build_standings_table(points_gained_this_question=None, name_max_len=14, sco
             delta_parts.append(note)
         delta_suffix = f" ({', '.join(delta_parts)})" if delta_parts else ""
 
+        # Fastest-answer count -- hidden in masked mode along with the rest of the
+        # competitive standing info (score, medals, rank).
+        fastest_count = fastest_answers_count.get(user_id, 0) if not mask_score else 0
+        if fastest_count > 1:
+            lightning_suffix = f" ⚡{fastest_count}"
+        elif fastest_count == 1:
+            lightning_suffix = " ⚡"
+        else:
+            lightning_suffix = ""
+
         score_display = "####" if mask_score else f"{score:,}"
         idx_str = f"{idx}."
-        rows.append(f"{idx_str:<3}{truncated_name:<{name_max_len + 1}}{score_display:>6}{delta_suffix}{decoration}")
+        rows.append(f"{idx_str:<3}{truncated_name:<{name_max_len + 1}}{score_display:>6}{delta_suffix}{lightning_suffix}{decoration}")
 
     return "```\n" + "\n".join(rows) + "\n```"
 
@@ -20418,7 +20372,7 @@ async def round_preview(selected_questions):
         number_block = numbered_blocks[i] if i < len(numbered_blocks) else f"{i + 1}."
         line = f"{number_block} {get_category_title(trivia_category, trivia_url)}\n"
         message += line
-    message += "\n\u200b\n\u200b"
+    message += "\n\u200b\n\ud83c\udfc1 Get ready \ud83c\udfc1"
 
     await safe_send(channel, message.rstrip())
 
@@ -20791,55 +20745,57 @@ async def start_trivia():
             round_responders.clear()  # Reset round responders
             round_data["questions"] = []
 
-            selected_gif_url = None
-            if random.random() < 0:  # random.random() generates a float between 0 and 1
-                magic_number = random_number = random.randint(1000, 9999)
-                print(f"Magic number is {magic_number}")
-                send_magic_image(magic_number)
-            elif image_questions == True:
-                selected_gif_url = await select_intro_image_url()
-            # Build the round-start banner (help-the-game ad + Royalty now live in the round-end message)
-            lab_block = ""
-            if okra_lab_announcement_enabled and okra_lab_announcement_text:
-                lab_message = "✨ **NEW** ✨\n"
-                lab_message += f"{okra_lab_announcement_text}\n"
-                await sync_okra_lab_announcement(lab_message)
-                lab_block = f"\n{lab_message}"
-
-            start_message = f"​\n​\n🎉🤹‍♂️ **Live Trivia & Games**\n"
-            start_message += lab_block
-
-            #if current_longest_round_streak["user"] is not None and await get_coffees(current_longest_round_streak["user_id"]) > 0:
-            #    start_message += f"\n\n🕹️ **{current_longest_round_streak['user']}** can toggle modes mid-game"
-            #    start_message += "\n↔️ **#[command]** any time during round"
-
-            intro_embed = discord.Embed()
-            if selected_gif_url:
-                intro_embed.set_image(url=selected_gif_url)
-
-            async def run_start_countdown(msg, embed, view, button, starter=None):
-                footer_lines = []
-                if starter is not None:
-                    footer_lines.append(f"🥒 Launched by {starter.display_name}! 🥒")
-                    footer_lines.append("")
-                footer_lines.append(f"⏩ Starting a {questions_per_round} question round! ⏩")
-                footer_lines.append("🏁 Get ready 🏁")
-                embed.set_footer(text="\n".join(footer_lines))
-                button.disabled = True
-                for i in range(5, 0, -1):
-                    button.label = f"Starting in {i}s"
-                    try:
-                        await msg.edit(embed=embed, view=view)
-                    except (discord.NotFound, discord.HTTPException):
-                        return
-                    await asyncio.sleep(1)
-                try:
-                    await msg.edit(embed=embed, view=None)
-                except (discord.NotFound, discord.HTTPException):
-                    pass
-
-            # Wait for a player to be present before starting
+            # Only show the start banner/image/button/countdown when nobody was playing last
+            # round and we need someone to manually kick things off -- auto-continuing
+            # straight into the next round shouldn't repeat all of that.
             if no_players:
+                selected_gif_url = None
+                if random.random() < 0:  # random.random() generates a float between 0 and 1
+                    magic_number = random_number = random.randint(1000, 9999)
+                    print(f"Magic number is {magic_number}")
+                    send_magic_image(magic_number)
+                elif image_questions == True:
+                    selected_gif_url = await select_intro_image_url()
+                # Build the round-start banner (help-the-game ad + Royalty now live in the round-end message)
+                lab_block = ""
+                if okra_lab_announcement_enabled and okra_lab_announcement_text:
+                    lab_message = "✨ **NEW** ✨\n"
+                    lab_message += f"{okra_lab_announcement_text}\n"
+                    await sync_okra_lab_announcement(lab_message)
+                    lab_block = f"\n{lab_message}"
+
+                start_message = f"​\n​\n🎉🤹‍♂️ **Live Trivia & Games**\n"
+                start_message += lab_block
+
+                #if current_longest_round_streak["user"] is not None and await get_coffees(current_longest_round_streak["user_id"]) > 0:
+                #    start_message += f"\n\n🕹️ **{current_longest_round_streak['user']}** can toggle modes mid-game"
+                #    start_message += "\n↔️ **#[command]** any time during round"
+
+                intro_embed = discord.Embed()
+                if selected_gif_url:
+                    intro_embed.set_image(url=selected_gif_url)
+
+                async def run_start_countdown(msg, embed, view, button, starter=None):
+                    footer_lines = []
+                    if starter is not None:
+                        footer_lines.append(f"🥒 Launched by {starter.display_name}! 🥒")
+                        footer_lines.append("")
+                    footer_lines.append(f"⏩ Starting a {questions_per_round} question round! ⏩")
+                    embed.set_footer(text="\n".join(footer_lines))
+                    button.disabled = True
+                    for i in range(5, 0, -1):
+                        button.label = f"Starting in {i}s"
+                        try:
+                            await msg.edit(embed=embed, view=view)
+                        except (discord.NotFound, discord.HTTPException):
+                            return
+                        await asyncio.sleep(1)
+                    try:
+                        await msg.edit(embed=embed, view=None)
+                    except (discord.NotFound, discord.HTTPException):
+                        pass
+
+                # Wait for a player to be present before starting
                 view = StartRoundView()
                 prompt_msg = await safe_send(channel, content=start_message, embed=intro_embed, view=view)
 
@@ -20863,11 +20819,6 @@ async def start_trivia():
 
                 updated_embed = prompt_msg.embeds[0] if prompt_msg.embeds else discord.Embed()
                 await run_start_countdown(prompt_msg, updated_embed, view, view.button_ref, starter=starter)
-            else:
-                view = StartRoundView()
-                view.button_ref.disabled = True
-                prompt_msg = await safe_send(channel, content=start_message, embed=intro_embed, view=view)
-                await run_start_countdown(prompt_msg, intro_embed, view, view.button_ref)
 
             await round_preview(selected_questions)
 
@@ -21009,19 +20960,26 @@ async def start_trivia():
             question_task = asyncio.create_task(_load_next_questions())
             
             await check_bump_status()
-            ad_body = await send_question_queen_submit_ad()
-            message = (
-                "\u200b\n"
-                "\U0001f9d8\u200d\u2642\ufe0f **Relax, stretch, meditate.**\n\n"
-                "\U0001f49a [Unlock Perks](https://discord.com/channels/1367682586079395902/role-subscriptions)\n"
-                "\U0001f4a1 [Leave Feedback](https://forms.gle/iWvmN24pfGEGSy7n7)\n"
-                "\u2b50 [Write a Review](https://disboard.org/review/create/1367682586079395902)\n\n"
-                f"{ad_body}\n"
-                "\U0001f3a8 Live Trivia & Games is a pure hobby effort.\n"
-                "\u200b"
-            )
-            await safe_send(channel, message)
-            await asyncio.sleep(5)
+
+            # Only show the relax/perks/help-the-game/fact round-end message every 5 rounds --
+            # the update check below still runs every round regardless, since that's the
+            # critical self-deploy path and shouldn't be delayed by the display cadence.
+            show_round_end_message = round_count % 5 == 0
+            sent_round_end_message = None
+            if show_round_end_message:
+                ad_body = await send_question_queen_submit_ad()
+                message = (
+                    "\u200b\n"
+                    "\U0001f9d8\u200d\u2642\ufe0f **Relax. Stretch. Meditate.**\n\n"
+                    "\U0001f49a [Unlock Perks](https://discord.com/channels/1367682586079395902/role-subscriptions)\n"
+                    "\U0001f4a1 [Leave Feedback](https://forms.gle/iWvmN24pfGEGSy7n7)\n"
+                    "\u2b50 [Write a Review](https://disboard.org/review/create/1367682586079395902)\n\n"
+                    f"{ad_body}\n"
+                    "\U0001f3a8 Live Trivia & Games is a pure hobby effort.\n"
+                    "\u200b"
+                )
+                sent_round_end_message = await safe_send(channel, message)
+                await asyncio.sleep(5)
             
             
             selected_questions = await question_task
@@ -21029,13 +20987,24 @@ async def start_trivia():
             #if len(scoreboard) >= 1000:
             #    await ask_survey_question()
 
+            update_pending = False
             if len(active_tournaments) == 0 and _active_game_bot is None and _active_game_channel is None:
-                await end_of_round()
+                update_pending = await end_of_round(sent_round_end_message)
 
-            # Fetch round blurb concurrently with the between-round pause
-            blurb, _ = await asyncio.gather(get_round_blurb(), asyncio.sleep(4))
-            await safe_send(channel, blurb)
-            await asyncio.sleep(5)
+            if not update_pending and show_round_end_message:
+                # Fetch round blurb concurrently with the between-round pause, then merge it
+                # into the round-end message already sent above instead of a new message.
+                blurb, _ = await asyncio.gather(get_round_blurb(), asyncio.sleep(4))
+                if sent_round_end_message is not None:
+                    try:
+                        updated_embed = sent_round_end_message.embeds[0] if sent_round_end_message.embeds else discord.Embed()
+                        updated_embed.description = (updated_embed.description or "") + f"\n\n{blurb}"
+                        await sent_round_end_message.edit(embed=updated_embed)
+                    except (discord.NotFound, discord.HTTPException):
+                        await safe_send(channel, blurb)
+                else:
+                    await safe_send(channel, blurb)
+                await asyncio.sleep(5)
 
     except Exception as e:
         sentry_sdk.capture_exception(e)
@@ -21295,43 +21264,19 @@ async def on_message(message):
     if message.content.strip() == "#previewwinner" and message.author.id == okrag_id:
         fake_user_id = message.author.id
 
-        async def _prepare_memory_display():
-            memory = await get_museum_memory_url(fake_user_id)
-            if not memory:
-                return None, None
-            resized_bytes = await fetch_and_resize_image(memory["image_url"])
-            return memory, resized_bytes
+        okra_avatar_url = await get_okra_avatar_url(message.author, fake_user_id) if okra_avatar_enabled else None
 
-        memory_task = asyncio.create_task(_prepare_memory_display())
-        okra_avatar_url = await get_okra_avatar_url(message.author, fake_user_id)
-
+        museum_channel_link = f"https://discord.com/channels/{OKRAN_GUILD_ID}/{OKRA_MUSEUM_CHANNEL_ID}"
         winner_embed = discord.Embed()
         winner_embed.color = embed_color
+        winner_embed.description = f"🏆 **Winner**: **<@{fake_user_id}>**!\n\n▶️ **[Live Stats](https://clubokra.com/leaderboard)**\n"
         winner_embed.set_image(url=okra_avatar_url or message.author.display_avatar.url)
-        winner_text = f"🏆 **Winner**: **<@{fake_user_id}>**!\n\n▶️ **[Live Stats](https://clubokra.com/leaderboard)**\n"
-        winner_embed.description = winner_text
 
-        museum_text = "1️⃣🎨 Win the next game and you get a painting."
         museum_embed = discord.Embed()
         museum_embed.color = embed_color
-        museum_attachments = []
-        memory, resized_bytes = await memory_task
-        if memory:
-            if resized_bytes:
-                museum_attachments.append(discord.File(io.BytesIO(resized_bytes), filename="memory.png"))
-                museum_embed.set_image(url="attachment://memory.png")
-            else:
-                museum_embed.set_image(url=memory["image_url"])
-            footer_lines = [line for line in (memory.get("title"), f"By {memory.get('muse', '')}", memory.get("creation_date")) if line]
-            museum_embed.set_footer(text="\n".join(footer_lines))
-            channel_link = f"https://discord.com/channels/{OKRAN_GUILD_ID}/{OKRA_MUSEUM_CHANNEL_ID}"
-            memory_text = f"[memory]({memory['discord_jump_url']})" if memory.get("discord_jump_url") else "memory"
-            museum_text += f"\n\u200b\n🖼️✨ A {memory_text} from the [Okra Museum]({channel_link})"
-        museum_embed.description = museum_text
+        museum_embed.description = f"1️⃣🎨 Hey **<@{fake_user_id}>**, win the next game and you get a painting in the [Okra Museum]({museum_channel_link})."
 
-        await safe_send(
-            message.channel, embeds=[winner_embed, museum_embed], files=museum_attachments or None, use_embed=False
-        )
+        await safe_send(message.channel, embeds=[winner_embed, museum_embed], use_embed=False)
         return
 
     if "okra" in message.content.strip().lower() and emoji_mode == True and message.author.id != get_bot().user.id:
