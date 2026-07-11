@@ -21010,20 +21010,29 @@ async def start_trivia():
             if len(active_tournaments) == 0 and _active_game_bot is None and _active_game_channel is None:
                 update_pending = await end_of_round(sent_round_end_message)
 
-            if not update_pending and show_round_end_message:
-                # Merge the round blurb into the round-end message already sent above
-                # instead of a new message, then give players one pause to read it all.
+            if not update_pending:
                 blurb = await get_round_blurb()
-                if sent_round_end_message is not None:
-                    try:
-                        updated_embed = sent_round_end_message.embeds[0] if sent_round_end_message.embeds else discord.Embed()
-                        updated_embed.description = (updated_embed.description or "") + f"\n\n{blurb}"
-                        await sent_round_end_message.edit(embed=updated_embed)
-                    except (discord.NotFound, discord.HTTPException):
+                if show_round_end_message:
+                    # Merge the round blurb into the round-end message already sent above
+                    # instead of a new message, then give players one pause to read it all.
+                    if sent_round_end_message is not None:
+                        try:
+                            updated_embed = sent_round_end_message.embeds[0] if sent_round_end_message.embeds else discord.Embed()
+                            updated_embed.description = (updated_embed.description or "") + f"\n\n{blurb}"
+                            await sent_round_end_message.edit(embed=updated_embed)
+                        except (discord.NotFound, discord.HTTPException):
+                            await safe_send(channel, blurb)
+                    else:
                         await safe_send(channel, blurb)
+                    await asyncio.sleep(20)
                 else:
-                    await safe_send(channel, blurb)
-                await asyncio.sleep(20)
+                    # Rounds without the relax/perks message still get the random fact and
+                    # the help-the-game upgrade ad, as their own standalone embed.
+                    ad_body = await send_question_queen_submit_ad()
+                    standalone_embed = discord.Embed()
+                    standalone_embed.description = f"**OkRandom Fact**\n\n{blurb}\n\n{ad_body}"
+                    await safe_send(channel, embed=standalone_embed)
+                    await asyncio.sleep(5)
 
     except Exception as e:
         sentry_sdk.capture_exception(e)
