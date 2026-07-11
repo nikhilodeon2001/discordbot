@@ -21386,7 +21386,12 @@ async def start_trivia():
                     await asyncio.sleep(1)
                     if current_countdown_button is not None:
                         current_countdown_button.label = "🏁" if remaining == 0 else f"⏳ {remaining}s"
-                        current_countdown_button.style = discord.ButtonStyle.danger if remaining <= 3 else discord.ButtonStyle.success
+                        if remaining == 0:
+                            current_countdown_button.style = discord.ButtonStyle.secondary
+                        elif remaining <= 3:
+                            current_countdown_button.style = discord.ButtonStyle.danger
+                        else:
+                            current_countdown_button.style = discord.ButtonStyle.success
                         view_to_edit = current_answer_view if current_answer_view is not None else current_report_view
                         try:
                             await current_answer_message.edit(view=view_to_edit)
