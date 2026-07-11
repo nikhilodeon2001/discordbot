@@ -691,6 +691,7 @@ if prod_or_stage == "stage":
     ROAST_TEST_CHANNEL_ID = 1520266511481049099
     ANNOUNCEMENTS_CHANNEL_ID = 1521519888546529301
     OKRA_MUSEUM_CHANNEL_ID = 1524928905989853258
+    INTRO_IMAGE_ADMIN_CHANNEL_ID = 1449499426669334700
 
 elif prod_or_stage == "prod":
     okrag_id = 591861826690613248
@@ -740,6 +741,7 @@ elif prod_or_stage == "prod":
     ROAST_TEST_CHANNEL_ID = 1449497884931395755
     ANNOUNCEMENTS_CHANNEL_ID = 1409217728388141206
     OKRA_MUSEUM_CHANNEL_ID = 1524472945240572075
+    INTRO_IMAGE_ADMIN_CHANNEL_ID = 1449497884931395755
 
 AMBIENT_CHAT_CHANNEL_IDS = {channel_id, CHAT_CHANNEL_ID, PICS_CHANNEL_ID}
 
@@ -941,6 +943,7 @@ current_answer_view = None
 current_answer_message = None
 previous_answer_message = None
 current_report_view = None
+pending_intro_preview_view = None  # Currently-live #newintro/#uploadintro confirmation, if any
 answer_buttons_enabled = True  # Feature flag: click-to-answer buttons on multiple-choice trivia questions
 jeopardy_boosted = False  # Set by "Alex"/"Xela" this round - signals 3-way coordination with crossword/SAT boosts
 crossword_boosted = False  # Set by "Word"/"Cross" this round
@@ -1096,7 +1099,16 @@ async def get_survey_results():
     return results
 
 
+async def get_intro_image_config():
+    config = await db.intro_image_config.find_one({"_id": "config"})
+    return config or {}
+
+
 async def select_intro_image_url():
+    config = await get_intro_image_config()
+    if config.get("mode") == "custom" and config.get("custom_image_url"):
+        return config["custom_image_url"]
+
     # Connect to the collection
     collection = db["intro_image_urls"]
 
@@ -5044,6 +5056,141 @@ class FlagQuestionView(discord.ui.View):
                 ephemeral=True,
                 delete_after=3
             )
+
+
+class IntroImagePreviewView(discord.ui.View):
+    """Confirm/Regenerate/Cancel view for a candidate round-start intro-image banner.
+    Regenerate is omitted for uploaded images since there's no prompt/model/quality to redo."""
+
+    def __init__(self, owner_id, image_bytes, prompt=None, model=None, quality=None, source="generated"):
+        super().__init__(timeout=None)
+        self.owner_id = owner_id
+        self.image_bytes = image_bytes
+        self.prompt = prompt
+        self.model = model
+        self.quality = quality
+        self.source = source  # "generated" or "uploaded"
+        self.message = None  # Set by the caller after the preview is sent
+        if source == "uploaded":
+            for item in list(self.children):
+                if getattr(item, "label", None) == "Regenerate":
+                    self.remove_item(item)
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.owner_id:
+            await interaction.response.send_message(
+                "❌ Only the owner who started this preview can use these buttons.",
+                ephemeral=True,
+            )
+            return False
+        return True
+
+    @discord.ui.button(label="Confirm", style=discord.ButtonStyle.success, emoji="✅")
+    async def confirm_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        global pending_intro_preview_view
+        await interaction.response.defer()
+        image_url = await upload_intro_image_bytes(self.image_bytes, interaction.user.id)
+        for item in self.children:
+            item.disabled = True
+        await interaction.message.edit(content=f"✅ Confirmed — this is now the active intro image.\n{image_url}", view=self)
+        pending_intro_preview_view = None
+
+    @discord.ui.button(label="Regenerate", style=discord.ButtonStyle.primary, emoji="🔁")
+    async def regenerate_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer()
+        try:
+            self.image_bytes = await generate_intro_image_bytes(self.prompt, self.model, self.quality)
+        except openai.OpenAIError as e:
+            await interaction.followup.send(f"❌ Generation failed: {e}", ephemeral=True)
+            return
+        await interaction.message.edit(
+            content=f"Preview — model `{self.model}`, quality `{self.quality}`",
+            attachments=[discord.File(io.BytesIO(self.image_bytes), filename="intro_preview.png")],
+            view=self,
+        )
+
+    @discord.ui.button(label="Cancel", style=discord.ButtonStyle.secondary, emoji="❌")
+    async def cancel_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        global pending_intro_preview_view
+        try:
+            await interaction.message.delete()
+        except Exception:
+            pass
+        await interaction.response.send_message("✅ Cancelled.", ephemeral=True, delete_after=3)
+        pending_intro_preview_view = None
+
+
+class NewIntroModal(discord.ui.Modal, title="Generate Intro Image"):
+    """Prompt + model + quality picker for a new candidate intro-image banner."""
+
+    prompt = discord.ui.TextInput(
+        label="Prompt",
+        style=discord.TextStyle.paragraph,
+        placeholder="Describe the banner image you want",
+        required=True,
+        max_length=2000,
+    )
+
+    model_label = discord.ui.Label(
+        text="Model",
+        component=discord.ui.Select(
+            options=[
+                discord.SelectOption(label="gpt-image-1-mini (default)", value="gpt-image-1-mini", default=True),
+                discord.SelectOption(label="gpt-image-1", value="gpt-image-1"),
+            ],
+            min_values=1,
+            max_values=1,
+        ),
+    )
+
+    quality_label = discord.ui.Label(
+        text="Quality",
+        component=discord.ui.Select(
+            options=[
+                discord.SelectOption(label="low", value="low"),
+                discord.SelectOption(label="medium (default)", value="medium", default=True),
+                discord.SelectOption(label="high", value="high"),
+            ],
+            min_values=1,
+            max_values=1,
+        ),
+    )
+
+    def __init__(self, owner_id):
+        super().__init__()
+        self.owner_id = owner_id
+
+    async def on_submit(self, interaction: discord.Interaction):
+        global pending_intro_preview_view
+        await interaction.response.defer()
+
+        prompt = self.prompt.value.strip()
+        model = self.model_label.component.values[0]
+        quality = self.quality_label.component.values[0]
+
+        try:
+            image_bytes = await generate_intro_image_bytes(prompt, model, quality)
+        except openai.OpenAIError as e:
+            await interaction.followup.send(f"❌ Generation failed: {e}", ephemeral=True)
+            return
+
+        if pending_intro_preview_view is not None:
+            for item in pending_intro_preview_view.children:
+                item.disabled = True
+            if pending_intro_preview_view.message:
+                try:
+                    await pending_intro_preview_view.message.edit(view=pending_intro_preview_view)
+                except Exception:
+                    pass
+
+        view = IntroImagePreviewView(self.owner_id, image_bytes, prompt=prompt, model=model, quality=quality, source="generated")
+        preview_message = await interaction.followup.send(
+            content=f"Preview — model `{model}`, quality `{quality}`",
+            file=discord.File(io.BytesIO(image_bytes), filename="intro_preview.png"),
+            view=view,
+        )
+        view.message = preview_message
+        pending_intro_preview_view = view
 
 
 class ReportQuestionView(discord.ui.View):
@@ -15483,6 +15630,114 @@ async def get_cached_okra_avatar_url(user_id):
     return doc["image_url"] if doc else None
 
 
+async def generate_intro_image_bytes(prompt: str, model: str, quality: str) -> bytes:
+    """Generate an intro-image banner via OpenAI. Raises openai.OpenAIError on failure so the
+    caller can surface the exact message (e.g. a safety-system rejection) to the owner."""
+    response = await openai_client.images.generate(
+        model=model,
+        prompt=prompt,
+        size="1024x1024",
+        quality=quality,
+    )
+    return base64.b64decode(response.data[0].b64_json)
+
+
+async def upload_intro_image_bytes(image_bytes: bytes, actor_id: int) -> str:
+    """Store image_bytes as the fixed custom intro-image banner and flip intro_image_config to
+    mode='custom'. The S3 key is deterministic and env-scoped (overwritten each time) so the
+    bucket doesn't accumulate objects; the query-string timestamp cache-busts Discord's CDN."""
+    s3_key = f"intro-images/{prod_or_stage}/custom.png"
+    session = aioboto3.Session()
+    async with session.client("s3") as s3_client:
+        await s3_client.put_object(
+            Bucket=S3_BUCKET_NAME, Key=s3_key, Body=image_bytes, ContentType="image/png"
+        )
+    updated_at = datetime.datetime.utcnow()
+    image_url = f"https://{S3_BUCKET_NAME}.s3.us-east-2.amazonaws.com/{s3_key}?v={int(updated_at.timestamp())}"
+
+    await db.intro_image_config.update_one(
+        {"_id": "config"},
+        {"$set": {
+            "mode": "custom",
+            "custom_image_url": image_url,
+            "custom_image_s3_key": s3_key,
+            "updated_at": updated_at,
+            "updated_by": actor_id,
+        }},
+        upsert=True,
+    )
+    return image_url
+
+
+async def handle_intro_image_admin_command(message: discord.Message) -> bool:
+    """Owner-only #-commands for the intro-image admin channel (everything except /newintro,
+    which needs a modal and so is a slash command instead). Returns True if the message was
+    a recognized command (caller should stop further on_message processing)."""
+    global pending_intro_preview_view
+    content = message.content.strip()
+
+    if content == "#uploadintro":
+        if not message.attachments:
+            await safe_send(message.channel, content="❌ Attach an image with `#uploadintro`.")
+            return True
+        attachment = message.attachments[0]
+        if not (attachment.content_type or "").startswith("image/"):
+            await safe_send(message.channel, content="❌ That attachment isn't an image.")
+            return True
+
+        image_bytes = await attachment.read()
+
+        if pending_intro_preview_view is not None:
+            for item in pending_intro_preview_view.children:
+                item.disabled = True
+            if pending_intro_preview_view.message:
+                try:
+                    await pending_intro_preview_view.message.edit(view=pending_intro_preview_view)
+                except Exception:
+                    pass
+
+        view = IntroImagePreviewView(message.author.id, image_bytes, source="uploaded")
+        preview_message = await safe_send(
+            message.channel,
+            content="Preview — uploaded image",
+            file=discord.File(io.BytesIO(image_bytes), filename="intro_preview.png"),
+            view=view,
+        )
+        view.message = preview_message
+        pending_intro_preview_view = view
+        return True
+
+    if content in ("#introsource random", "#introsource custom"):
+        mode = "custom" if content.endswith("custom") else "random"
+        if mode == "custom":
+            config = await get_intro_image_config()
+            if not config.get("custom_image_url"):
+                await safe_send(
+                    message.channel,
+                    content="⚠️ No custom image has ever been confirmed yet — the banner will keep using the random rotation until one is set via `/newintro` or `#uploadintro`.",
+                )
+        await db.intro_image_config.update_one(
+            {"_id": "config"},
+            {"$set": {"mode": mode, "updated_at": datetime.datetime.utcnow(), "updated_by": message.author.id}},
+            upsert=True,
+        )
+        await safe_send(message.channel, content=f"✅ Intro image source set to **{mode}**.")
+        return True
+
+    if content == "#introstatus":
+        config = await get_intro_image_config()
+        mode = config.get("mode", "random")
+        lines = [f"Mode: **{mode}**"]
+        if config.get("custom_image_url"):
+            lines.append(f"Custom image: {config['custom_image_url']}")
+        else:
+            lines.append("Custom image: none confirmed yet")
+        await safe_send(message.channel, content="\n".join(lines))
+        return True
+
+    return False
+
+
 async def ask_category(winner, categories, winner_coffees, winner_id, skip_message=False):
     additional_prompt = ""
 
@@ -21353,6 +21608,10 @@ async def on_message(message):
             await relay_channel.send("📬 **DM received:**", embed=embed)
         return
 
+    if message.channel.id == INTRO_IMAGE_ADMIN_CHANNEL_ID and message.author.id == okrag_id:
+        if await handle_intro_image_admin_command(message):
+            return
+
     if "okra" in message.content.strip().lower() and emoji_mode == True and message.author.id != get_bot().user.id:
         if emoji_mode == True:
             await message.add_reaction("🥒")
@@ -23942,6 +24201,15 @@ class BulkSubmitModal(discord.ui.Modal, title="Bulk Submit Questions"):
             except Exception:
                 pass
 
+
+
+@bot.tree.command(name="newintro", description="Generate a new custom intro-image banner (owner only)", guild=discord.Object(id=OKRAN_GUILD_ID))
+@discord.app_commands.default_permissions(administrator=True)
+async def newintro_command(interaction: discord.Interaction):
+    if interaction.channel_id != INTRO_IMAGE_ADMIN_CHANNEL_ID or interaction.user.id != okrag_id:
+        await interaction.response.send_message("❌ Not available here.", ephemeral=True)
+        return
+    await interaction.response.send_modal(NewIntroModal(interaction.user.id))
 
 
 @bot.tree.command(name="submissions", description="Manage pending question submissions (mods only)", guild=discord.Object(id=OKRAN_GUILD_ID))
