@@ -22720,10 +22720,12 @@ def _to_object_id(val):
 
 async def _approve_submission(interaction, submission_id, edited=False, notify_text=None, notify=True, before=None):
     try:
+        # Defer immediately: ensure_category_emoji below can call out to an LLM for a
+        # brand-new category, which regularly exceeds Discord's 3s interaction-ack window.
+        await interaction.response.defer(ephemeral=True)
         sub = await db.question_submissions.find_one({"_id": _to_object_id(submission_id)})
         if not sub or sub.get("status") != "awaiting_mod":
-            if not interaction.response.is_done():
-                await interaction.response.send_message("❌ Submission no longer pending.", ephemeral=True)
+            await interaction.followup.send("❌ Submission no longer pending.", ephemeral=True)
             return
         now = datetime.datetime.utcnow()
         is_mc = sub.get("type") == "multiple_choice"
@@ -22787,13 +22789,10 @@ async def _approve_submission(interaction, submission_id, edited=False, notify_t
             notify=notify, notify_text=notify_text, sub=sub, before=before,
         )
         approved_msg = f"✅ Approved into `{target_pool}`.{dm_status}"
-        if not interaction.response.is_done():
-            await interaction.response.send_message(approved_msg, ephemeral=True)
-        else:
-            try:
-                await interaction.followup.send(approved_msg, ephemeral=True)
-            except Exception:
-                pass
+        try:
+            await interaction.followup.send(approved_msg, ephemeral=True)
+        except Exception:
+            pass
         # Update the Top Contributor role (best-effort)
         try:
             await sync_crown_roles()
@@ -22803,7 +22802,9 @@ async def _approve_submission(interaction, submission_id, edited=False, notify_t
         sentry_sdk.capture_exception(e)
         print(f"❌ _approve_submission: {e}")
         try:
-            if not interaction.response.is_done():
+            if interaction.response.is_done():
+                await interaction.followup.send("❌ Approve failed.", ephemeral=True)
+            else:
                 await interaction.response.send_message("❌ Approve failed.", ephemeral=True)
         except Exception:
             pass
