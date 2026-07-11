@@ -19824,12 +19824,18 @@ def _pad_to_display_width(s, width):
     return s + " " * max(0, width - _display_width(s))
 
 
-def build_standings_table(points_gained_this_question=None, name_max_len=20, scoreboard_override=None,
+def build_standings_table(points_gained_this_question=None, name_max_len=13, scoreboard_override=None,
                            row_notes=None, sort_alphabetically=False, mask_score=False):
     """Build a monospace ranked table with a (+X) delta for whoever scored this question --
     merges the per-question responses and the running scoreboard into one list instead of
     two. row_notes optionally annotates a row with extra per-question context (closest-answer
     "off by X").
+
+    name_max_len is sized against the worst-case row, not a typical one: rank (3) + name
+    (name_max_len + 1) + score (6) + a delta suffix like " (+1000)" (8) + a lightning suffix
+    like " ⚡9" (~4-5 display width) all on one line, since scoring rows commonly carry both
+    a delta and a lightning count together. Widening this without re-checking that combined
+    worst case against mobile risks wrapping the row.
 
     sort_alphabetically + mask_score are for yolo mode's in-between questions: yolo mode
     shows who got each question right without revealing the running standings, so names sort
