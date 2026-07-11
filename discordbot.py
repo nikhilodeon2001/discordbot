@@ -17126,12 +17126,6 @@ async def prompt_user_for_response(round_winner, winner_points, winner_coffees, 
         try:
             message = await get_bot().wait_for("message", timeout=magic_time - (time.time() - start_time), check=check)
             message_content = message.content.strip().lower()
-
-            if message_content == "x":
-                await message.add_reaction("🏁")
-                await safe_send(channel, f"🏁 **<@{round_winner_id}>** is all set. Let's get to it!")
-                break
-
             matches = re.findall(r'(?<!#)\d+', message_content)
 
             if matches:
@@ -17209,7 +17203,14 @@ async def prompt_user_for_response(round_winner, winner_points, winner_coffees, 
 
             if (not keyword_config["glyph"]["exclude_hashtag"] or "#glyph" not in message_content) and await coffee_gate("glyph", f"\n🔐🛡️ **<@{round_winner_id}>** has obscured the questions!", "Glyph"):
                 glyph_mode = True
-            
+
+            # x (as a standalone word, not e.g. inside "xela"/"marx") ends the prompt early --
+            # checked last so it still chains with whatever other keywords were in this same
+            # message, matching how every other option can be combined in one string.
+            if re.search(r'\bx\b', message_content):
+                await message.add_reaction("🏁")
+                await safe_send(channel, f"🏁 **<@{round_winner_id}>** is all set. Let's get to it!")
+                break
 
         except asyncio.TimeoutError:
             break
@@ -21266,24 +21267,6 @@ async def on_message(message):
                     inline=False,
                 )
             await relay_channel.send("📬 **DM received:**", embed=embed)
-        return
-
-    if message.content.strip() == "#previewwinner" and message.author.id == okrag_id:
-        fake_user_id = message.author.id
-
-        okra_avatar_url = await get_okra_avatar_url(message.author, fake_user_id) if okra_avatar_enabled else None
-
-        museum_channel_link = f"https://discord.com/channels/{OKRAN_GUILD_ID}/{OKRA_MUSEUM_CHANNEL_ID}"
-        winner_embed = discord.Embed()
-        winner_embed.color = embed_color
-        winner_embed.description = f"🏆 **Winner**: **<@{fake_user_id}>**!\n\n▶️ **[Live Stats](https://clubokra.com/leaderboard)**\n"
-        winner_embed.set_image(url=okra_avatar_url or message.author.display_avatar.url)
-
-        museum_embed = discord.Embed()
-        museum_embed.color = embed_color
-        museum_embed.description = f"1️⃣🎨 Hey **<@{fake_user_id}>**, win the next game for a painting in the [Okra Museum]({museum_channel_link})!"
-
-        await safe_send(message.channel, embeds=[winner_embed, museum_embed], use_embed=False)
         return
 
     if "okra" in message.content.strip().lower() and emoji_mode == True and message.author.id != get_bot().user.id:
