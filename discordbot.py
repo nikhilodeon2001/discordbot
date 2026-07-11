@@ -5347,7 +5347,7 @@ class ReportQuestionView(discord.ui.View):
         super().__init__(timeout=None)
         self.question = question
 
-    @discord.ui.button(label="🚩 Report", style=discord.ButtonStyle.secondary, row=0)
+    @discord.ui.button(label="🚩", style=discord.ButtonStyle.secondary, row=0)
     async def report_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         modal = FlagReasonModal(
             self.question, "current",
@@ -19078,7 +19078,7 @@ async def ask_question(trivia_category, trivia_question, trivia_url, trivia_answ
     current_report_view = ReportQuestionView(_question_dict)
 
     if answer_view is not None:
-        report_btn = discord.ui.Button(label="\ud83d\udea9 Report", style=discord.ButtonStyle.secondary, row=1)
+        report_btn = discord.ui.Button(label="\ud83d\udea9", style=discord.ButtonStyle.secondary, row=1)
         async def _report_cb(interaction, _q=_question_dict):
             modal = FlagReasonModal(_q, "current", interaction.user.display_name, interaction.message, None)
             await interaction.response.send_modal(modal)
