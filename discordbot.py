@@ -17051,7 +17051,8 @@ async def process_round_options(round_winner, winner_points, round_winner_id, wi
         "🔐🛡️ **Glyph**: Add anti-Google defenses\n" 
 
         "\n🕹️: Toggle mid-round with **#[command]**"
-        "\n⛳: Golf excluded\n\n"
+        "\n⛳: Golf excluded"
+        "\n🏁 **x**: I'm Done / Skip\n\n"
 
         "\n📝🔀 ***Question Options***\n\n"
         "🇺🇸🗽 **Freedom**: No multiple choice\n"
@@ -17125,6 +17126,10 @@ async def prompt_user_for_response(round_winner, winner_points, winner_coffees, 
         try:
             message = await get_bot().wait_for("message", timeout=magic_time - (time.time() - start_time), check=check)
             message_content = message.content.strip().lower()
+
+            if message_content == "x":
+                break
+
             matches = re.findall(r'(?<!#)\d+', message_content)
 
             if matches:
