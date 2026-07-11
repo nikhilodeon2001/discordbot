@@ -943,6 +943,7 @@ current_answer_view = None
 current_answer_message = None
 previous_answer_message = None
 current_report_view = None
+current_countdown_button = None
 pending_intro_preview_view = None  # Currently-live #newintro/#uploadintro confirmation, if any
 answer_buttons_enabled = True  # Feature flag: click-to-answer buttons on multiple-choice trivia questions
 jeopardy_boosted = False  # Set by "Alex"/"Xela" this round - signals 3-way coordination with crossword/SAT boosts
@@ -18890,7 +18891,7 @@ def apply_glyphs(text):
 
 async def ask_question(trivia_category, trivia_question, trivia_url, trivia_answer_list, question_number, trivia_db=None, trivia_id=None, trivia_paragraph=None):
     """Ask the trivia question."""
-    global current_answer_view, current_answer_message, current_report_view
+    global current_answer_view, current_answer_message, current_report_view, current_countdown_button
     await record_question_asked(trivia_db, trivia_id)
     # Define the numbered block emojis for questions 1 to 10
     numbered_blocks = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"]
@@ -19083,8 +19084,17 @@ async def ask_question(trivia_category, trivia_question, trivia_url, trivia_answ
             await interaction.response.send_modal(modal)
         report_btn.callback = _report_cb
         answer_view.add_item(report_btn)
+
+        countdown_btn = discord.ui.Button(label=f"\u23f3 {question_time}s", style=discord.ButtonStyle.secondary, disabled=True, row=1)
+        answer_view.add_item(countdown_btn)
+        current_countdown_button = countdown_btn
+
         view_kwargs = {"view": answer_view}
     else:
+        countdown_btn = discord.ui.Button(label=f"\u23f3 {question_time}s", style=discord.ButtonStyle.secondary, disabled=True, row=0)
+        current_report_view.add_item(countdown_btn)
+        current_countdown_button = countdown_btn
+
         view_kwargs = {"view": current_report_view}
 
     if len(message_body) > 4000:
@@ -21175,7 +21185,7 @@ async def start_trivia():
     global scoreboard, current_longest_round_streak, current_longest_answer_streak
     global headers, params, filter_json, since_token, round_count, selected_questions, magic_number
     global previous_question, current_question
-    global current_answer_view, current_answer_message, previous_answer_message, current_report_view
+    global current_answer_view, current_answer_message, previous_answer_message, current_report_view, current_countdown_button
     global db
     global question_responders, round_responders
     global question_asked_start, question_asked_end
@@ -21372,7 +21382,17 @@ async def start_trivia():
                 question_ask_time, new_question, new_solution = await ask_question(trivia_category, trivia_question, trivia_url, trivia_answer_list, question_number, trivia_db=trivia_db, trivia_id=trivia_id, trivia_paragraph=trivia_paragraph)
                 question_message_link = current_answer_message.jump_url if current_answer_message else None
                 current_question["trivia_message_link"] = question_message_link
-                await asyncio.sleep(question_time)
+                for remaining in range(question_time - 1, -1, -1):
+                    await asyncio.sleep(1)
+                    if current_countdown_button is not None:
+                        current_countdown_button.label = f"⏳ {remaining}s"
+                        if remaining <= 3:
+                            current_countdown_button.style = discord.ButtonStyle.danger
+                        view_to_edit = current_answer_view if current_answer_view is not None else current_report_view
+                        try:
+                            await current_answer_message.edit(view=view_to_edit)
+                        except (discord.NotFound, discord.HTTPException):
+                            break
                 #await safe_send(channel, "\u200b\n🛑 TIME 🛑\n\u200b")
                 
                 solution_list = []
