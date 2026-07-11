@@ -20380,9 +20380,12 @@ async def round_preview(selected_questions):
         number_block = numbered_blocks[i] if i < len(numbered_blocks) else f"{i + 1}."
         line = f"{number_block} {get_category_title(trivia_category, trivia_url)}\n"
         message += line
-    message += "\n\u200b\n\ud83c\udfc1 Get ready \ud83c\udfc1"
 
-    await safe_send(channel, message.rstrip())
+    preview_embed = discord.Embed()
+    preview_embed.description = message.rstrip()
+    preview_embed.set_footer(text="\ud83c\udfc1 Get ready \ud83c\udfc1")
+
+    await safe_send(channel, embed=preview_embed)
 
 
 async def warm_category_emoji_cache(categories):
