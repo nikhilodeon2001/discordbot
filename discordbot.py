@@ -20647,7 +20647,7 @@ def generate_and_render_polynomial(type):
         print("Failed to upload the image to Matrix.")
 
 
-async def round_preview(selected_questions):
+async def round_preview(selected_questions, image_url=None):
     numbered_blocks = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"]
     
     message = "\n🔮 **Round Preview** 🔮\n\n\u200b"
@@ -20660,7 +20660,11 @@ async def round_preview(selected_questions):
         message += line
 
     preview_embed = discord.Embed()
+    # Trailing blank line leaves a gap before the image (Discord renders set_image below
+    # the description) -- same spacer whether or not an image is attached this round.
     preview_embed.description = message.rstrip() + "\n\u200b"
+    if image_url:
+        preview_embed.set_image(url=image_url)
     preview_embed.set_footer(text="\ud83c\udfc1 Get ready \ud83c\udfc1")
 
     await safe_send(channel, embed=preview_embed)
@@ -21048,7 +21052,10 @@ async def start_trivia():
 
             # Only show the start banner/image/button/countdown when nobody was playing last
             # round and we need someone to manually kick things off -- auto-continuing
-            # straight into the next round shouldn't repeat all of that.
+            # straight into the next round shouldn't repeat all of that. When players carried
+            # over, the intro banner (and its image) never shows, so the image goes on the
+            # round preview embed instead.
+            preview_image_url = None
             if no_players:
                 selected_gif_url = None
                 if random.random() < 0:  # random.random() generates a float between 0 and 1
@@ -21120,8 +21127,10 @@ async def start_trivia():
 
                 updated_embed = prompt_msg.embeds[0] if prompt_msg.embeds else discord.Embed()
                 await run_start_countdown(prompt_msg, updated_embed, view, view.button_ref, starter=starter)
+            elif image_questions == True:
+                preview_image_url = await select_intro_image_url()
 
-            await round_preview(selected_questions)
+            await round_preview(selected_questions, image_url=preview_image_url)
 
             #await round_start_messages()
             await asyncio.sleep(5)
