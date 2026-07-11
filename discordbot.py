@@ -15418,7 +15418,7 @@ async def generate_round_summary_image(round_data, winner, winner_id, winner_cof
         return False
 
 
-async def fetch_and_resize_image(url, size=(128, 128)):
+async def fetch_and_resize_image(url, size=(256, 256)):
     """Fetch a remote image and return PNG bytes resized to `size`, or None on failure.
     Does not touch the source file -- for shrinking an image only for one specific
     redisplay (e.g. the museum-memory callback in the winner message) without affecting
@@ -15477,7 +15477,7 @@ async def get_okra_avatar_url(member, user_id):
         loop = asyncio.get_running_loop()
 
         def resize_avatar():
-            img = Image.open(io.BytesIO(image_data)).resize((128, 128))
+            img = Image.open(io.BytesIO(image_data)).resize((256, 256))
             buffer = io.BytesIO()
             img.save(buffer, format="PNG")
             return buffer.getvalue()
@@ -19409,6 +19409,18 @@ async def update_round_streaks(user, user_id, roast_task=None):
                 else:
                     painting_status_block = f"\n{dynamic_emoji}🎨 Win {remaining_games} more in a row and you get a painting."
 
+        # Kick off the museum-memory fetch+resize (if applicable) concurrently with the rest
+        # of the text/avatar prep below, so everything is ready before anything is sent --
+        # no more "post avatar now, add memory a few seconds later" staged reveal.
+        async def _prepare_memory_display():
+            memory = await get_museum_memory_url(user_id)
+            if not memory:
+                return None, None
+            resized_bytes = await fetch_and_resize_image(memory["image_url"])
+            return memory, resized_bytes
+
+        memory_task = asyncio.create_task(_prepare_memory_display()) if (ai_on and banked == 0) else None
+
         if streak > 1:
             winner_text = f"\u200b\n\u200b\n🏆 **Winner**: **<@{user_id}>**...🔥{current_longest_round_streak['streak']} in a row!\n"
             winner_text += f"\n▶️ **[Discord Stats](https://clubokra.com/leaderboard)**\n"
@@ -19423,10 +19435,39 @@ async def update_round_streaks(user, user_id, roast_task=None):
             winner_text += roast_block
 
         winner_embed = discord.Embed()
+        winner_embed.color = embed_color
+        winner_embed.description = winner_text
         if avatar_url:
             okra_avatar_url = await okra_avatar_task if okra_avatar_task else None
             winner_embed.set_image(url=okra_avatar_url or avatar_url)
-        sent_message = await safe_send(channel, winner_text, embed=winner_embed)
+
+        embeds_to_send = [winner_embed]
+        museum_attachments = []
+        if ai_on:
+            museum_text = f"Hey **<@{user_id}>**...\n" + painting_status_block + theme_picker_block
+            museum_embed = discord.Embed()
+            museum_embed.color = embed_color
+            if memory_task is not None:
+                memory, resized_bytes = await memory_task
+                if memory:
+                    # Resize just this redisplay -- the canonical museum image (forum post,
+                    # Facebook, website) stays full-size; only this callback shrinks.
+                    if resized_bytes:
+                        museum_attachments.append(discord.File(io.BytesIO(resized_bytes), filename="memory.png"))
+                        museum_embed.set_image(url="attachment://memory.png")
+                    else:
+                        museum_embed.set_image(url=memory["image_url"])
+                    footer_lines = [line for line in (memory.get("title"), f"By {memory.get('muse', '')}", memory.get("creation_date")) if line]
+                    museum_embed.set_footer(text="\n".join(footer_lines))
+                    channel_link = f"https://discord.com/channels/{OKRAN_GUILD_ID}/{OKRA_MUSEUM_CHANNEL_ID}"
+                    memory_text = f"[memory]({memory['discord_jump_url']})" if memory.get("discord_jump_url") else "memory"
+                    museum_text += f"\n\u200b\n🖼️✨ A {memory_text} from the [Okra Museum]({channel_link})"
+            museum_embed.description = museum_text
+            embeds_to_send.append(museum_embed)
+
+        sent_message = await safe_send(
+            channel, embeds=embeds_to_send, files=museum_attachments or None, use_embed=False
+        )
 
         if roast_text and sent_message is not None:
             test_channel = bot.get_channel(ROAST_TEST_CHANNEL_ID)
@@ -19440,40 +19481,7 @@ async def update_round_streaks(user, user_id, roast_task=None):
                     ),
                 )
 
-        # Reveal the museum/theme-picker embed a few seconds after the winner+avatar message --
-        # added to the same message via edit so it ends up as one combined message instead of two.
-        await asyncio.sleep(5)
-
         if ai_on:
-            museum_text = f"Hey **<@{user_id}>**...\n" + painting_status_block + theme_picker_block
-            museum_embed = discord.Embed()
-            museum_embed.color = embed_color
-            museum_attachments = []
-            if banked == 0:  # don't show an old memory in the same message that's about to reveal a new painting
-                memory = await get_museum_memory_url(user_id)
-                if memory:
-                    # Resize just this redisplay -- the canonical museum image (forum post,
-                    # Facebook, website) stays full-size; only this callback shrinks.
-                    resized_bytes = await fetch_and_resize_image(memory["image_url"])
-                    if resized_bytes:
-                        museum_attachments.append(discord.File(io.BytesIO(resized_bytes), filename="memory.png"))
-                        museum_embed.set_image(url="attachment://memory.png")
-                    else:
-                        museum_embed.set_image(url=memory["image_url"])
-                    footer_lines = [line for line in (memory.get("title"), f"By {memory.get('muse', '')}", memory.get("creation_date")) if line]
-                    museum_embed.set_footer(text="\n".join(footer_lines))
-                    channel_link = f"https://discord.com/channels/{OKRAN_GUILD_ID}/{OKRA_MUSEUM_CHANNEL_ID}"
-                    memory_text = f"[memory]({memory['discord_jump_url']})" if memory.get("discord_jump_url") else "memory"
-                    museum_text += f"\n\u200b\n🖼️✨ A {memory_text} from the [Okra Museum]({channel_link})"
-            museum_embed.description = museum_text
-            if sent_message is not None:
-                try:
-                    await sent_message.edit(embeds=[winner_embed, museum_embed], attachments=museum_attachments)
-                except (discord.NotFound, discord.HTTPException) as e:
-                    print(f"\u26a0\ufe0f Could not edit winner message with museum embed: {e}")
-                    await safe_send(channel, museum_text, embed=museum_embed, file=museum_attachments[0] if museum_attachments else None)
-            else:
-                await safe_send(channel, museum_text, embed=museum_embed, file=museum_attachments[0] if museum_attachments else None)
             await asyncio.sleep(3)
 
         reset_embed_color()
@@ -21287,22 +21295,28 @@ async def on_message(message):
     if message.content.strip() == "#previewwinner" and message.author.id == okrag_id:
         fake_user_id = message.author.id
 
+        async def _prepare_memory_display():
+            memory = await get_museum_memory_url(fake_user_id)
+            if not memory:
+                return None, None
+            resized_bytes = await fetch_and_resize_image(memory["image_url"])
+            return memory, resized_bytes
+
+        memory_task = asyncio.create_task(_prepare_memory_display())
         okra_avatar_url = await get_okra_avatar_url(message.author, fake_user_id)
+
         winner_embed = discord.Embed()
         winner_embed.color = embed_color
         winner_embed.set_image(url=okra_avatar_url or message.author.display_avatar.url)
         winner_text = f"\u200b\n\u200b\n🏆 **Winner**: **<@{fake_user_id}>**!\n\n▶️ **[Live Stats](https://clubokra.com/leaderboard)**\n"
-        sent_message = await safe_send(message.channel, winner_text, embed=winner_embed)
-
-        await asyncio.sleep(5)
+        winner_embed.description = winner_text
 
         museum_text = f"Hey **<@{fake_user_id}>**...\n1️⃣🎨 Win the next game and you get a painting."
         museum_embed = discord.Embed()
         museum_embed.color = embed_color
         museum_attachments = []
-        memory = await get_museum_memory_url(fake_user_id)
+        memory, resized_bytes = await memory_task
         if memory:
-            resized_bytes = await fetch_and_resize_image(memory["image_url"])
             if resized_bytes:
                 museum_attachments.append(discord.File(io.BytesIO(resized_bytes), filename="memory.png"))
                 museum_embed.set_image(url="attachment://memory.png")
@@ -21314,12 +21328,10 @@ async def on_message(message):
             memory_text = f"[memory]({memory['discord_jump_url']})" if memory.get("discord_jump_url") else "memory"
             museum_text += f"\n\u200b\n🖼️✨ A {memory_text} from the [Okra Museum]({channel_link})"
         museum_embed.description = museum_text
-        if sent_message is not None:
-            try:
-                await sent_message.edit(embeds=[winner_embed, museum_embed], attachments=museum_attachments)
-            except (discord.NotFound, discord.HTTPException) as e:
-                print(f"\u26a0\ufe0f Could not edit preview message with museum embed: {e}")
-                await safe_send(message.channel, museum_text, embed=museum_embed, file=museum_attachments[0] if museum_attachments else None)
+
+        await safe_send(
+            message.channel, embeds=[winner_embed, museum_embed], files=museum_attachments or None, use_embed=False
+        )
         return
 
     if "okra" in message.content.strip().lower() and emoji_mode == True and message.author.id != get_bot().user.id:
