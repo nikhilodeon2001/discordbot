@@ -19192,6 +19192,17 @@ async def check_correct_responses_delete(question_ask_time, trivia_answer_list, 
     if current_question_data:
         current_question_data["scoreboard_after_question"] = dict(scoreboard)
 
+    # Compute the standings/scoreboard table first so we know whether the answer-reveal
+    # description needs a trailing spacer before it.
+    if show_standings_after:
+        standings_table = build_standings_table(points_gained_this_question, row_notes=row_notes)
+    else:
+        # Yolo mode's in-between questions: show who got it right without revealing the
+        # running standings -- alphabetical order, cumulative totals masked as "####".
+        standings_table = build_standings_table(
+            points_gained_this_question, row_notes=row_notes, sort_alphabetically=True, mask_score=True
+        )
+
     # Construct the answer-reveal header -- this becomes the embed description
     message = ""
     if blind_mode == False:
@@ -19201,7 +19212,8 @@ async def check_correct_responses_delete(question_ask_time, trivia_answer_list, 
             message = f"\u200b\n✅ **Answer** ({len(question_responders)}) ✅\n{trivia_answer}"
             if closest_answer_delta is not None:
                 message += f"\n🎯 Closest answer wins!"
-        message += "\n\u200b"  # blank-line gap before the responses/scoreboard field(s)
+        if standings_table:
+            message += "\n\u200b"  # blank-line gap before the standings field
 
     # Send the entire message at once
     if message or (correct_responses and marx_mode == False):
@@ -19225,18 +19237,8 @@ async def check_correct_responses_delete(question_ask_time, trivia_answer_list, 
         answer_embed = discord.Embed()
         if message:
             answer_embed.description = message
-        if show_standings_after:
-            standings_table = build_standings_table(points_gained_this_question, row_notes=row_notes)
-            if standings_table:
-                answer_embed.add_field(name=build_standings_header(), value=standings_table, inline=False)
-        else:
-            # Yolo mode's in-between questions: show who got it right without revealing the
-            # running standings -- alphabetical order, cumulative totals masked as "####".
-            yolo_table = build_standings_table(
-                points_gained_this_question, row_notes=row_notes, sort_alphabetically=True, mask_score=True
-            )
-            if yolo_table:
-                answer_embed.add_field(name=build_standings_header(), value=yolo_table, inline=False)
+        if standings_table:
+            answer_embed.add_field(name=build_standings_header(), value=standings_table, inline=False)
         if author_name:
             answer_embed.set_author(name=author_name, icon_url=author_icon_url)
         await safe_send(channel, embed=answer_embed)
