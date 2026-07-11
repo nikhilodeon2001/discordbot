@@ -15338,7 +15338,7 @@ async def generate_round_summary_image(round_data, winner, winner_id, winner_cof
             loop = asyncio.get_running_loop()
 
             def process_image():
-                img = Image.open(io.BytesIO(image_data)).resize((128, 128))
+                img = Image.open(io.BytesIO(image_data)).resize((256, 256))
                 buffer = io.BytesIO()
                 img.save(buffer, format="PNG")
                 buffer.seek(0)
@@ -15383,7 +15383,7 @@ async def generate_round_summary_image(round_data, winner, winner_id, winner_cof
                     loop = asyncio.get_running_loop()
 
                     def process_fallback_image():
-                        img = Image.open(io.BytesIO(image_data)).resize((128, 128))
+                        img = Image.open(io.BytesIO(image_data)).resize((256, 256))
                         buffer = io.BytesIO()
                         img.save(buffer, format="PNG")
                         buffer.seek(0)
@@ -15418,13 +15418,41 @@ async def generate_round_summary_image(round_data, winner, winner_id, winner_cof
         return False
 
 
-async def get_okra_avatar_url(member, user_id):
-    """Return an S3 URL for member's avatar with okra worked in, regenerating at most once every 24 hours."""
+async def fetch_and_resize_image(url, size=(128, 128)):
+    """Fetch a remote image and return PNG bytes resized to `size`, or None on failure.
+    Does not touch the source file -- for shrinking an image only for one specific
+    redisplay (e.g. the museum-memory callback in the winner message) without affecting
+    the canonical copy used elsewhere (museum forum post, Facebook, website)."""
     try:
-        cached = await db.okra_avatars.find_one({"_id": user_id})
-        if cached and cached.get("generated_at"):
-            if datetime.datetime.utcnow() - cached["generated_at"] < datetime.timedelta(hours=24):
-                return cached["image_url"]
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url) as resp:
+                if resp.status != 200:
+                    return None
+                image_bytes = await resp.read()
+
+        loop = asyncio.get_running_loop()
+
+        def resize():
+            img = Image.open(io.BytesIO(image_bytes)).resize(size)
+            buffer = io.BytesIO()
+            img.save(buffer, format="PNG")
+            return buffer.getvalue()
+
+        return await loop.run_in_executor(None, resize)
+    except Exception as e:
+        print(f"⚠️ Could not fetch/resize image: {e}")
+        return None
+
+
+async def get_okra_avatar_url(member, user_id, force=False):
+    """Return an S3 URL for member's avatar with okra worked in, regenerating at most once every 24 hours.
+    force=True bypasses the cache check (used by the #previewwinner debug command)."""
+    try:
+        if not force:
+            cached = await db.okra_avatars.find_one({"_id": user_id})
+            if cached and cached.get("generated_at"):
+                if datetime.datetime.utcnow() - cached["generated_at"] < datetime.timedelta(hours=24):
+                    return cached["image_url"]
 
         avatar_bytes = await member.display_avatar.replace(size=1024, format="png").read()
 
@@ -19416,16 +19444,23 @@ async def update_round_streaks(user, user_id, roast_task=None):
         if ai_on:
             museum_text = f"Hey **<@{user_id}>**...\n" + painting_status_block + theme_picker_block
             museum_embed = discord.Embed()
+            museum_file = None
             if banked == 0:  # don't show an old memory in the same message that's about to reveal a new painting
                 memory = await get_museum_memory_url(user_id)
                 if memory:
-                    museum_embed.set_image(url=memory["image_url"])
+                    # Resize just this redisplay -- the canonical museum image (forum post,
+                    # Facebook, website) stays full-size; only this callback shrinks.
+                    resized_bytes = await fetch_and_resize_image(memory["image_url"])
+                    if resized_bytes:
+                        museum_file = discord.File(io.BytesIO(resized_bytes), filename="memory.png")
+                    else:
+                        museum_embed.set_image(url=memory["image_url"])
                     footer_lines = [line for line in (memory.get("title"), f"By {memory.get('muse', '')}", memory.get("creation_date")) if line]
                     museum_embed.set_footer(text="\n".join(footer_lines))
                     channel_link = f"https://discord.com/channels/{OKRAN_GUILD_ID}/{OKRA_MUSEUM_CHANNEL_ID}"
                     memory_text = f"[memory]({memory['discord_jump_url']})" if memory.get("discord_jump_url") else "memory"
                     museum_text += f"\n\u200b\n🖼️✨ A {memory_text} from the [Okra Museum]({channel_link})"
-            await safe_send(channel, museum_text, embed=museum_embed)
+            await safe_send(channel, museum_text, embed=museum_embed, file=museum_file)
             await asyncio.sleep(3)
 
         reset_embed_color()
@@ -21239,7 +21274,7 @@ async def on_message(message):
     if message.content.strip() == "#previewwinner" and message.author.id == okrag_id:
         fake_user_id = message.author.id
 
-        okra_avatar_url = await get_okra_avatar_url(message.author, fake_user_id)
+        okra_avatar_url = await get_okra_avatar_url(message.author, fake_user_id, force=True)
         winner_embed = discord.Embed()
         winner_embed.set_image(url=okra_avatar_url or message.author.display_avatar.url)
         winner_text = f"\u200b\n\u200b\n🏆 **Winner**: **<@{fake_user_id}>**!\n\n▶️ **[Live Stats](https://clubokra.com/leaderboard)**\n"
@@ -21247,15 +21282,20 @@ async def on_message(message):
 
         museum_text = f"Hey **<@{fake_user_id}>**...\n1️⃣🎨 Win the next game and you get a painting."
         museum_embed = discord.Embed()
+        museum_file = None
         memory = await get_museum_memory_url(fake_user_id)
         if memory:
-            museum_embed.set_image(url=memory["image_url"])
+            resized_bytes = await fetch_and_resize_image(memory["image_url"])
+            if resized_bytes:
+                museum_file = discord.File(io.BytesIO(resized_bytes), filename="memory.png")
+            else:
+                museum_embed.set_image(url=memory["image_url"])
             footer_lines = [line for line in (memory.get("title"), f"By {memory.get('muse', '')}", memory.get("creation_date")) if line]
             museum_embed.set_footer(text="\n".join(footer_lines))
             channel_link = f"https://discord.com/channels/{OKRAN_GUILD_ID}/{OKRA_MUSEUM_CHANNEL_ID}"
             memory_text = f"[memory]({memory['discord_jump_url']})" if memory.get("discord_jump_url") else "memory"
             museum_text += f"\n\u200b\n🖼️✨ A {memory_text} from the [Okra Museum]({channel_link})"
-        await safe_send(message.channel, museum_text, embed=museum_embed)
+        await safe_send(message.channel, museum_text, embed=museum_embed, file=museum_file)
         return
 
     if "okra" in message.content.strip().lower() and emoji_mode == True and message.author.id != get_bot().user.id:
