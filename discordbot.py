@@ -19824,7 +19824,7 @@ def _pad_to_display_width(s, width):
     return s + " " * max(0, width - _display_width(s))
 
 
-def build_standings_table(points_gained_this_question=None, name_max_len=10, scoreboard_override=None,
+def build_standings_table(points_gained_this_question=None, name_max_len=13, scoreboard_override=None,
                            row_notes=None, sort_alphabetically=False, mask_score=False):
     """Build a monospace ranked table with a (+X) delta for whoever scored this question --
     merges the per-question responses and the running scoreboard into one list instead of
@@ -19833,9 +19833,8 @@ def build_standings_table(points_gained_this_question=None, name_max_len=10, sco
 
     sort_alphabetically + mask_score are for yolo mode's in-between questions: yolo mode
     shows who got each question right without revealing the running standings, so names sort
-    A-Z instead of by score, the cumulative total renders as a fixed "####" for everyone, and
-    rank-based decorations (medals, last place) are skipped since alphabetical order isn't a
-    ranking. This question's real point gain still shows for whoever scored, same as normal.
+    A-Z instead of by score, and the cumulative total renders as a fixed "####" for everyone.
+    This question's real point gain still shows for whoever scored, same as normal.
 
     Returns None if there's nothing to show."""
     board = scoreboard_override if scoreboard_override is not None else scoreboard
@@ -19848,7 +19847,6 @@ def build_standings_table(points_gained_this_question=None, name_max_len=10, sco
         standings = sorted(board.items(), key=lambda x: x[1]["display_name"].lower())
     else:
         standings = sorted(board.items(), key=lambda x: x[1]["score"], reverse=True)
-    medals = ["🥇", "🥈", "🥉"]
     rows = []
 
     for idx, (user_id, user_data) in enumerate(standings, start=1):
@@ -19857,31 +19855,6 @@ def build_standings_table(points_gained_this_question=None, name_max_len=10, sco
         truncated_name = _truncate_to_display_width(display_name, name_max_len)
 
         gained = points_gained_this_question.get(user_id)
-
-        # Rank/index is always plain text so every row's columns start at the same width --
-        # emoji render wider than one monospace character, which throws off alignment if
-        # used as the leading (padded) token. Special/medal emoji move to a trailing
-        # decoration instead, where imprecise width can't disrupt the columns before it.
-        # The 420/69 check looks for the pattern anywhere in the number (so 4200 or 690
-        # count too). When the total is masked, only the visible gain is checked -- an emoji
-        # driven by the hidden total would leak information about it.
-        if mask_score:
-            has_420 = gained is not None and "420" in str(gained)
-            has_69 = gained is not None and "69" in str(gained)
-        else:
-            has_420 = "420" in str(score) or (gained is not None and "420" in str(gained))
-            has_69 = "69" in str(score) or (gained is not None and "69" in str(gained))
-
-        if has_420:
-            decoration = " 🌿"
-        elif has_69:
-            decoration = " 😎"
-        elif not sort_alphabetically and idx <= 3:
-            decoration = f" {medals[idx - 1]}"
-        elif not sort_alphabetically and idx == len(standings) and idx > 4:
-            decoration = " 💩"
-        else:
-            decoration = ""
 
         note = row_notes.get(user_id)
         delta_parts = []
@@ -19893,7 +19866,7 @@ def build_standings_table(points_gained_this_question=None, name_max_len=10, sco
         delta_suffix = f" ({', '.join(delta_parts)})" if delta_parts else ""
 
         # Fastest-answer count -- hidden in masked mode along with the rest of the
-        # competitive standing info (score, medals, rank).
+        # competitive standing info (score, rank).
         fastest_count = fastest_answers_count.get(user_id, 0) if not mask_score else 0
         if fastest_count > 1:
             lightning_suffix = f" ⚡{fastest_count}"
@@ -19905,7 +19878,7 @@ def build_standings_table(points_gained_this_question=None, name_max_len=10, sco
         score_display = "####" if mask_score else f"{score:,}"
         idx_str = f"{idx}."
         name_col = _pad_to_display_width(truncated_name, name_max_len + 1)
-        rows.append(f"{idx_str:<3}{name_col}{score_display:>6}{delta_suffix}{lightning_suffix}{decoration}")
+        rows.append(f"{idx_str:<3}{name_col}{score_display:>6}{delta_suffix}{lightning_suffix}")
 
     return "```\n" + "\n".join(rows) + "\n```"
 
@@ -19918,7 +19891,6 @@ def build_standings_body(scoreboard_override=None):
 
     # Sort by score descending
     standings = sorted(board.items(), key=lambda x: x[1]["score"], reverse=True)
-    medals = ["🥇", "🥈", "🥉"]
     lines = []
 
     for rank, (user_id, user_data) in enumerate(standings, start=1):
@@ -19934,17 +19906,7 @@ def build_standings_body(scoreboard_override=None):
 
         lightning_display = f" ⚡{fastest_count}" if fastest_count > 1 else " ⚡" if fastest_count == 1 else ""
 
-        if "420" in str(score):
-            line = f"🌿 **{user_str}**: {formatted_points}"
-        elif "69" in str(score):
-            line = f"😎 **{user_str}**: {formatted_points}"
-        elif rank <= 3:
-            line = f"{medals[rank - 1]} **{user_str}**: {formatted_points}"
-        elif rank == len(standings) and rank > 4:
-            line = f"💩 **{user_str}**: {formatted_points}"
-        else:
-            line = f"{rank}. **{user_str}**: {formatted_points}"
-
+        line = f"{rank}. **{user_str}**: {formatted_points}"
         line += lightning_display
         lines.append(line)
 
@@ -20685,7 +20647,7 @@ def generate_and_render_polynomial(type):
         print("Failed to upload the image to Matrix.")
 
 
-async def round_preview(selected_questions):
+async def round_preview(selected_questions, image_url=None):
     numbered_blocks = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"]
     
     message = "\n🔮 **Round Preview** 🔮\n\n\u200b"
@@ -20698,7 +20660,11 @@ async def round_preview(selected_questions):
         message += line
 
     preview_embed = discord.Embed()
+    # Trailing blank line leaves a gap before the image (Discord renders set_image below
+    # the description) -- same spacer whether or not an image is attached this round.
     preview_embed.description = message.rstrip() + "\n\u200b"
+    if image_url:
+        preview_embed.set_image(url=image_url)
     preview_embed.set_footer(text="\ud83c\udfc1 Get ready \ud83c\udfc1")
 
     await safe_send(channel, embed=preview_embed)
@@ -21086,7 +21052,10 @@ async def start_trivia():
 
             # Only show the start banner/image/button/countdown when nobody was playing last
             # round and we need someone to manually kick things off -- auto-continuing
-            # straight into the next round shouldn't repeat all of that.
+            # straight into the next round shouldn't repeat all of that. When players carried
+            # over, the intro banner (and its image) never shows, so the image goes on the
+            # round preview embed instead.
+            preview_image_url = None
             if no_players:
                 selected_gif_url = None
                 if random.random() < 0:  # random.random() generates a float between 0 and 1
@@ -21158,8 +21127,10 @@ async def start_trivia():
 
                 updated_embed = prompt_msg.embeds[0] if prompt_msg.embeds else discord.Embed()
                 await run_start_countdown(prompt_msg, updated_embed, view, view.button_ref, starter=starter)
+            elif image_questions == True:
+                preview_image_url = await select_intro_image_url()
 
-            await round_preview(selected_questions)
+            await round_preview(selected_questions, image_url=preview_image_url)
 
             #await round_start_messages()
             await asyncio.sleep(5)
