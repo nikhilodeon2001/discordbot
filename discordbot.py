@@ -837,7 +837,7 @@ marx_mode_default = False
 marx_mode = marx_mode_default
 image_questions_default = True
 image_questions = image_questions_default
-okra_avatar_enabled = True  # code-level kill switch for the paid AI avatar edit -- flip to False to fall back to the plain Discord avatar
+okra_avatar_enabled = False  # code-level kill switch for the paid AI avatar edit -- flip to False to fall back to the plain Discord avatar
 sniper_mode_default = False
 sniper_mode = sniper_mode_default
 blitz_mode_default = False
@@ -19473,7 +19473,7 @@ async def check_correct_responses_delete(question_ask_time, trivia_answer_list, 
         author_name = None
         author_icon_url = None
         if fastest_correct_user_id is not None:
-            author_icon_url = await get_cached_okra_avatar_url(fastest_correct_user_id)
+            author_icon_url = await get_cached_okra_avatar_url(fastest_correct_user_id) if okra_avatar_enabled else None
             if not author_icon_url:
                 try:
                     guild = bot.get_guild(OKRAN_GUILD_ID)
