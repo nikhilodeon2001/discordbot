@@ -17129,6 +17129,7 @@ async def prompt_user_for_response(round_winner, winner_points, winner_coffees, 
 
             if message_content == "x":
                 await message.add_reaction("🏁")
+                await safe_send(channel, f"🏁 **<@{round_winner_id}>** is all set. Let's get to it!")
                 break
 
             matches = re.findall(r'(?<!#)\d+', message_content)
