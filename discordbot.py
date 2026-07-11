@@ -19180,8 +19180,6 @@ async def check_correct_responses_delete(question_ask_time, trivia_answer_list, 
         if delta is not None:
             delta_display = int(delta) if delta == int(delta) else delta
             notes.append(f"off by {delta_display}")
-        if sender_id == fastest_correct_user_id and current_longest_answer_streak["streak"] > 1:
-            notes.append(f"🔥{current_longest_answer_streak['streak']}")
         if notes:
             row_notes[sender_id] = ", ".join(notes)
 
@@ -19230,12 +19228,21 @@ async def check_correct_responses_delete(question_ask_time, trivia_answer_list, 
                 except Exception as e:
                     print(f"\u26a0\ufe0f Could not fetch fastest responder avatar: {e}")
             if author_icon_url:
-                author_name = f"{fastest_correct_user} ⚡"
+                streak = current_longest_answer_streak["streak"]
+                if streak > 1:
+                    author_name = f"{fastest_correct_user} ⚡...🔥{streak} in a row!"
+                else:
+                    author_name = f"{fastest_correct_user} ⚡"
 
         # Responses and the scoreboard are merged into one monospace ranked table with a
         # (+X) delta -- plus off-by-X / streak notes -- for whoever scored this question.
         answer_embed = discord.Embed()
         if message:
+            # The leading blank line exists to leave room below the author line's avatar --
+            # drop it when there's no author (e.g. avatar lookup failed) so the embed
+            # doesn't start with a stray empty line.
+            if not author_name:
+                message = message.removeprefix("​\n")
             answer_embed.description = message
         if standings_table:
             answer_embed.add_field(name=build_standings_header(), value=standings_table, inline=False)
@@ -19517,12 +19524,57 @@ def build_standings_header(scoreboard_override=None, round_responders_override=N
     return f"🏔️📈 **Scoreboard** ({len(responders)}) 📈🏔️"
 
 
+_WIDE_UNICODE_RANGES = (
+    (0x1100, 0x115F),    # Hangul Jamo
+    (0x2460, 0x24FF),    # Enclosed Alphanumerics (circled letters/numbers)
+    (0x2600, 0x27BF),    # Misc symbols & dingbats
+    (0x1D400, 0x1D7FF),  # Mathematical Alphanumeric Symbols ("fancy font" letters)
+    (0x1F000, 0x1FAFF),  # Emoji & pictographs
+    (0xFF00, 0xFFEF),    # Fullwidth forms
+    (0x3000, 0x30FF),    # CJK/Japanese punctuation & kana
+    (0x4E00, 0x9FFF),    # CJK unified ideographs
+)
+
+
+def _char_display_width(ch):
+    """Approximate on-screen column width -- emoji, CJK, circled/fullwidth letters, and
+    other "fancy text" unicode render wider than one monospace cell in Discord's font, so
+    len()-based padding misaligns table columns whenever a name uses these ranges."""
+    if unicodedata.combining(ch):
+        return 0
+    if unicodedata.east_asian_width(ch) in ("W", "F"):
+        return 2
+    cp = ord(ch)
+    return 2 if any(lo <= cp <= hi for lo, hi in _WIDE_UNICODE_RANGES) else 1
+
+
+def _display_width(s):
+    return sum(_char_display_width(ch) for ch in s)
+
+
+def _truncate_to_display_width(s, max_width):
+    if _display_width(s) <= max_width:
+        return s
+    out, width = "", 0
+    for ch in s:
+        cw = _char_display_width(ch)
+        if width + cw > max_width - 1:  # reserve 1 column for the ellipsis
+            break
+        out += ch
+        width += cw
+    return out + "…"
+
+
+def _pad_to_display_width(s, width):
+    return s + " " * max(0, width - _display_width(s))
+
+
 def build_standings_table(points_gained_this_question=None, name_max_len=10, scoreboard_override=None,
                            row_notes=None, sort_alphabetically=False, mask_score=False):
     """Build a monospace ranked table with a (+X) delta for whoever scored this question --
     merges the per-question responses and the running scoreboard into one list instead of
     two. row_notes optionally annotates a row with extra per-question context (closest-answer
-    "off by X", fastest-answer streak).
+    "off by X").
 
     sort_alphabetically + mask_score are for yolo mode's in-between questions: yolo mode
     shows who got each question right without revealing the running standings, so names sort
@@ -19547,7 +19599,7 @@ def build_standings_table(points_gained_this_question=None, name_max_len=10, sco
     for idx, (user_id, user_data) in enumerate(standings, start=1):
         display_name = user_data["display_name"]
         score = user_data["score"]
-        truncated_name = display_name if len(display_name) <= name_max_len else display_name[:name_max_len - 1] + "…"
+        truncated_name = _truncate_to_display_width(display_name, name_max_len)
 
         gained = points_gained_this_question.get(user_id)
 
@@ -19597,7 +19649,8 @@ def build_standings_table(points_gained_this_question=None, name_max_len=10, sco
 
         score_display = "####" if mask_score else f"{score:,}"
         idx_str = f"{idx}."
-        rows.append(f"{idx_str:<3}{truncated_name:<{name_max_len + 1}}{score_display:>6}{delta_suffix}{lightning_suffix}{decoration}")
+        name_col = _pad_to_display_width(truncated_name, name_max_len + 1)
+        rows.append(f"{idx_str:<3}{name_col}{score_display:>6}{delta_suffix}{lightning_suffix}{decoration}")
 
     return "```\n" + "\n".join(rows) + "\n```"
 
@@ -20457,14 +20510,26 @@ def _jeopardy_title_case(text):
     words = text.lower().split()
     return " ".join(w if (i > 0 and w in _TITLE_CASE_SKIP) else w.capitalize() for i, w in enumerate(words))
 
-def get_category_title(trivia_category, trivia_url):
+def get_category_title(trivia_category, trivia_url, max_len=40):
     emojis = category_emoji_cache.get(trivia_category)
     if emojis is None:
         prefix = trivia_category.split(":")[0].strip()
         emojis = category_emoji_cache.get(prefix, "❓❔")
+
     if trivia_url.lower().startswith("jeopardy"):
-        return f"Jeopardy: {_jeopardy_title_case(trivia_category)} {emojis}"
-    return f"{trivia_category} {emojis}"
+        label_prefix = "Jeopardy: "
+        category_text = _jeopardy_title_case(trivia_category)
+    else:
+        label_prefix = ""
+        category_text = trivia_category
+
+    # Truncate only the category text against the remaining budget -- the "Jeopardy: "
+    # label and the emoji suffix always stay intact so the emoji is never cut off.
+    available = max_len - len(label_prefix)
+    if len(category_text) > available:
+        category_text = category_text[:available - 1] + "…"
+
+    return f"{label_prefix}{category_text} {emojis}"
 
 
 async def get_player_selected_question(questions, round_winner, winner_id):
