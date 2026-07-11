@@ -19358,6 +19358,7 @@ async def update_round_streaks(user, user_id, roast_task=None):
         banked = 0
         painting_status_block = ""
         theme_picker_block = ""
+        winner_footer_text = None
         if ai_on:
             museum_channel_link = f"https://discord.com/channels/{OKRAN_GUILD_ID}/{OKRA_MUSEUM_CHANNEL_ID}"
             pre_balance = await get_image_credits(user_id)  # credits owed BEFORE this win's earn
@@ -19383,10 +19384,13 @@ async def update_round_streaks(user, user_id, roast_task=None):
                 }
                 remaining_games = required_wins - (streak % required_wins)
                 dynamic_emoji = number_to_emoji.get(remaining_games, str(remaining_games))
+                # Footer text can't render mentions/markdown/links, so this uses a plain-text
+                # name and drops the Okra Museum link (unlike the banked>0 case below, which
+                # stays in its own embed and keeps the clickable link).
                 if remaining_games == 1:
-                    painting_status_block = f"\n{dynamic_emoji}🎨 Hey **<@{user_id}>**, win the next game for a painting in the [Okra Museum]({museum_channel_link})!"
+                    winner_footer_text = f"{dynamic_emoji}🎨 Hey {user}, win the next game for a painting in the Okra Museum!"
                 else:
-                    painting_status_block = f"\n{dynamic_emoji}🎨 Hey **<@{user_id}>**, win {remaining_games} more in a row for a painting in the [Okra Museum]({museum_channel_link})!"
+                    winner_footer_text = f"{dynamic_emoji}🎨 Hey {user}, win {remaining_games} more in a row for a painting in the Okra Museum!"
 
         if streak > 1:
             winner_text = f"🏆 **Winner**: **<@{user_id}>**...🔥{current_longest_round_streak['streak']} in a row!\n"
@@ -19406,6 +19410,8 @@ async def update_round_streaks(user, user_id, roast_task=None):
         winner_embed = discord.Embed()
         winner_embed.color = embed_color
         winner_embed.description = winner_text
+        if winner_footer_text:
+            winner_embed.set_footer(text=winner_footer_text)
         if avatar_url:
             okra_avatar_url = await okra_avatar_task if okra_avatar_task else None
             winner_embed.set_image(url=okra_avatar_url or avatar_url)
@@ -20382,7 +20388,7 @@ async def round_preview(selected_questions):
         message += line
 
     preview_embed = discord.Embed()
-    preview_embed.description = message.rstrip()
+    preview_embed.description = message.rstrip() + "\n\u200b"
     preview_embed.set_footer(text="\ud83c\udfc1 Get ready \ud83c\udfc1")
 
     await safe_send(channel, embed=preview_embed)
@@ -20985,14 +20991,14 @@ async def start_trivia():
                     "\U0001f49a [Unlock Perks](https://discord.com/channels/1367682586079395902/role-subscriptions)\n"
                     "\U0001f4a1 [Leave Feedback](https://forms.gle/iWvmN24pfGEGSy7n7)\n"
                     "\u2b50 [Write a Review](https://disboard.org/review/create/1367682586079395902)\n\n"
-                    f"{ad_body}\n"
-                    "\U0001f3a8 Live Trivia & Games is a pure hobby effort.\n"
-                    "\u200b"
+                    f"{ad_body}"
                 )
-                sent_round_end_message = await safe_send(channel, message)
-                await asyncio.sleep(5)
-            
-            
+                round_end_embed = discord.Embed()
+                round_end_embed.description = message
+                round_end_embed.set_footer(text="\U0001f3a8 Live Trivia & Games is a pure hobby effort.")
+                sent_round_end_message = await safe_send(channel, embed=round_end_embed)
+
+
             selected_questions = await question_task
 
             #if len(scoreboard) >= 1000:
@@ -21003,9 +21009,9 @@ async def start_trivia():
                 update_pending = await end_of_round(sent_round_end_message)
 
             if not update_pending and show_round_end_message:
-                # Fetch round blurb concurrently with the between-round pause, then merge it
-                # into the round-end message already sent above instead of a new message.
-                blurb, _ = await asyncio.gather(get_round_blurb(), asyncio.sleep(4))
+                # Merge the round blurb into the round-end message already sent above
+                # instead of a new message, then give players one pause to read it all.
+                blurb = await get_round_blurb()
                 if sent_round_end_message is not None:
                     try:
                         updated_embed = sent_round_end_message.embeds[0] if sent_round_end_message.embeds else discord.Embed()
@@ -21015,7 +21021,7 @@ async def start_trivia():
                         await safe_send(channel, blurb)
                 else:
                     await safe_send(channel, blurb)
-                await asyncio.sleep(5)
+                await asyncio.sleep(20)
 
     except Exception as e:
         sentry_sdk.capture_exception(e)
