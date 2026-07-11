@@ -17128,6 +17128,7 @@ async def prompt_user_for_response(round_winner, winner_points, winner_coffees, 
             message_content = message.content.strip().lower()
 
             if message_content == "x":
+                await message.add_reaction("🏁")
                 break
 
             matches = re.findall(r'(?<!#)\d+', message_content)
