@@ -5198,16 +5198,17 @@ class AvatarPreviewView(discord.ui.View):
     Unlike IntroImagePreviewView, no global pending-preview singleton is needed here since
     avatar previews are per-member and don't collide with each other."""
 
-    def __init__(self, owner_id, member, avatar_bytes, image_bytes, prompt, model, quality, source_avatar_key):
+    def __init__(self, owner_id, member, avatar_bytes, image_bytes, prompt, model, quality, source_avatar_key, mode):
         super().__init__(timeout=None)
         self.owner_id = owner_id
         self.member = member
-        self.avatar_bytes = avatar_bytes  # original base image, reused on Regenerate
+        self.avatar_bytes = avatar_bytes  # original base image, reused on Regenerate ("edit" mode only)
         self.image_bytes = image_bytes  # current candidate edit
         self.prompt = prompt
         self.model = model
         self.quality = quality
         self.source_avatar_key = source_avatar_key
+        self.mode = mode  # "edit" (images.edit on their real avatar) or "generate" (from scratch)
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if interaction.user.id != self.owner_id:
@@ -5233,7 +5234,10 @@ class AvatarPreviewView(discord.ui.View):
     async def regenerate_button(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.defer()
         try:
-            self.image_bytes = await generate_custom_avatar_bytes(self.avatar_bytes, self.prompt, self.model, self.quality)
+            if self.mode == "edit":
+                self.image_bytes = await generate_custom_avatar_bytes(self.avatar_bytes, self.prompt, self.model, self.quality)
+            else:
+                self.image_bytes = await generate_intro_image_bytes(self.prompt, self.model, self.quality)
         except openai.OpenAIError as e:
             await interaction.followup.send(f"❌ Generation failed: {e}", ephemeral=True)
             return
@@ -5288,6 +5292,18 @@ class NewAvatarModal(discord.ui.Modal, title="Generate Custom Avatar"):
         ),
     )
 
+    source_label = discord.ui.Label(
+        text="Source",
+        component=discord.ui.Select(
+            options=[
+                discord.SelectOption(label="Edit their current avatar (default)", value="edit", default=True),
+                discord.SelectOption(label="Create a new image from scratch", value="generate"),
+            ],
+            min_values=1,
+            max_values=1,
+        ),
+    )
+
     def __init__(self, member):
         super().__init__()
         self.member = member
@@ -5298,19 +5314,25 @@ class NewAvatarModal(discord.ui.Modal, title="Generate Custom Avatar"):
         prompt = self.prompt.value.strip()
         model = self.model_label.component.values[0]
         quality = self.quality_label.component.values[0]
+        mode = self.source_label.component.values[0]
 
         source_avatar_key = self.member.display_avatar.key
-        avatar_bytes = await self.member.display_avatar.replace(size=1024, format="png").read()
+        avatar_bytes = None
+        if mode == "edit":
+            avatar_bytes = await self.member.display_avatar.replace(size=1024, format="png").read()
 
         try:
-            image_bytes = await generate_custom_avatar_bytes(avatar_bytes, prompt, model, quality)
+            if mode == "edit":
+                image_bytes = await generate_custom_avatar_bytes(avatar_bytes, prompt, model, quality)
+            else:
+                image_bytes = await generate_intro_image_bytes(prompt, model, quality)
         except openai.OpenAIError as e:
             await interaction.followup.send(f"❌ Generation failed: {e}", ephemeral=True)
             return
 
         view = AvatarPreviewView(
             interaction.user.id, self.member, avatar_bytes, image_bytes,
-            prompt=prompt, model=model, quality=quality, source_avatar_key=source_avatar_key,
+            prompt=prompt, model=model, quality=quality, source_avatar_key=source_avatar_key, mode=mode,
         )
         await interaction.followup.send(
             content=f"Preview — {self.member.display_name}, model `{model}`, quality `{quality}`",
