@@ -15444,15 +15444,13 @@ async def fetch_and_resize_image(url, size=(128, 128)):
         return None
 
 
-async def get_okra_avatar_url(member, user_id, force=False):
-    """Return an S3 URL for member's avatar with okra worked in, regenerating at most once every 24 hours.
-    force=True bypasses the cache check (used by the #previewwinner debug command)."""
+async def get_okra_avatar_url(member, user_id):
+    """Return an S3 URL for member's avatar with okra worked in, regenerating at most once every 24 hours."""
     try:
-        if not force:
-            cached = await db.okra_avatars.find_one({"_id": user_id})
-            if cached and cached.get("generated_at"):
-                if datetime.datetime.utcnow() - cached["generated_at"] < datetime.timedelta(hours=24):
-                    return cached["image_url"]
+        cached = await db.okra_avatars.find_one({"_id": user_id})
+        if cached and cached.get("generated_at"):
+            if datetime.datetime.utcnow() - cached["generated_at"] < datetime.timedelta(hours=24):
+                return cached["image_url"]
 
         avatar_bytes = await member.display_avatar.replace(size=1024, format="png").read()
 
@@ -21289,7 +21287,7 @@ async def on_message(message):
     if message.content.strip() == "#previewwinner" and message.author.id == okrag_id:
         fake_user_id = message.author.id
 
-        okra_avatar_url = await get_okra_avatar_url(message.author, fake_user_id, force=True)
+        okra_avatar_url = await get_okra_avatar_url(message.author, fake_user_id)
         winner_embed = discord.Embed()
         winner_embed.color = embed_color
         winner_embed.set_image(url=okra_avatar_url or message.author.display_avatar.url)
