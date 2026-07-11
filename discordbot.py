@@ -21026,11 +21026,10 @@ async def start_trivia():
                         await safe_send(channel, blurb)
                     await asyncio.sleep(20)
                 else:
-                    # Rounds without the relax/perks message still get the random fact and
-                    # the help-the-game upgrade ad, as their own standalone embed.
-                    ad_body = await send_question_queen_submit_ad()
+                    # Rounds without the relax/perks message still get the random fact,
+                    # as its own standalone embed.
                     standalone_embed = discord.Embed()
-                    standalone_embed.description = f"**OkRandom Fact**\n\n{blurb}\n\n{ad_body}"
+                    standalone_embed.description = f"**OkRandom Fact**\n\n{blurb}"
                     await safe_send(channel, embed=standalone_embed)
                     await asyncio.sleep(5)
 
