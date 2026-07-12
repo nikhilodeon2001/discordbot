@@ -17489,18 +17489,31 @@ def generate_scoreboard_image(rows, title_outer_emoji="🏔️", title_inner_emo
     rank_x = 20
     name_x = 60
     name_max_width = 400
+    name_min_font_size = 14
     lightning_x = 470
     score_right_x = 630
     delta_x = 645
 
-    # Precompute wrapped name lines (rare case: an unusually long name) so row heights can
-    # grow instead of ever truncating.
-    wrapped_names = []
-    for row in rows:
-        lines = draw_text_wrapper(row["name"], font, name_max_width)
-        wrapped_names.append(lines if lines else [row["name"]])
+    def fit_name(name):
+        """Shrink the name's font a point at a time until it fits on one line within
+        name_max_width; only wraps to a second line as a last resort once it's already at
+        the smallest readable size and still doesn't fit."""
+        size = font_size
+        name_font = font
+        width = name_font.getbbox(name)[2] - name_font.getbbox(name)[0]
+        while width > name_max_width and size > name_min_font_size:
+            size -= 1
+            name_font = get_font("DejaVuSans.ttf", size)
+            width = name_font.getbbox(name)[2] - name_font.getbbox(name)[0]
+        if width <= name_max_width:
+            return name_font, size, [name]
+        lines = draw_text_wrapper(name, name_font, name_max_width)
+        return name_font, size, (lines if lines else [name])
 
-    row_heights = [max(row_height, len(lines) * (font_size + 6) + 16) for lines in wrapped_names]
+    # Precompute each row's name font/lines (shrinking first, wrapping only as a last
+    # resort) so row heights can grow instead of ever truncating.
+    name_render = [fit_name(row["name"]) for row in rows]
+    row_heights = [max(row_height, len(lines) * (size + 6) + 16) for _, size, lines in name_render]
     img_height = title_height + top_padding * 2 + sum(row_heights)
 
     img = Image.new("RGB", (img_width, img_height), color=background_color)
@@ -17528,8 +17541,9 @@ def generate_scoreboard_image(rows, title_outer_emoji="🏔️", title_inner_emo
     img.paste(outer_icon, (tx, ty_icon), outer_icon)
 
     y = title_height + top_padding
-    for row, lines, height in zip(rows, wrapped_names, row_heights):
+    for row, (name_font, name_size, lines), height in zip(rows, name_render, row_heights):
         row_center_y = y + height // 2 - font_size // 2
+        name_center_y = y + height // 2 - name_size // 2
         icon_center_y = y + height // 2
 
         if row["rank_icon"]:
@@ -17539,7 +17553,7 @@ def generate_scoreboard_image(rows, title_outer_emoji="🏔️", title_inner_emo
             draw.text((rank_x, row_center_y), row["rank_text"], fill=text_color, font=font)
 
         name_text = "\n".join(lines)
-        draw.multiline_text((name_x, row_center_y), name_text, fill=text_color, font=font)
+        draw.multiline_text((name_x, name_center_y), name_text, fill=text_color, font=name_font)
 
         if row["lightning_count"] > 0:
             lightning_icon = render_emoji_icon("⚡", lightning_icon_size)
