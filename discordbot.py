@@ -17499,14 +17499,15 @@ def generate_scoreboard_image(rows, title_outer_emoji="🏔️", title_inner_emo
     name_x = 60
     name_max_width = 400
     name_min_font_size = 14
-    lightning_x = 470
     score_right_x = 630
     delta_x = 645
 
     def fit_name(name):
         """Shrink the name's font a point at a time until it fits on one line within
         name_max_width; only wraps to a second line as a last resort once it's already at
-        the smallest readable size and still doesn't fit."""
+        the smallest readable size and still doesn't fit. Also returns the name's actual
+        rendered width, so the lightning column can sit right after the widest name in
+        this particular scoreboard instead of always assuming the worst case."""
         size = font_size
         name_font = font
         width = name_font.getbbox(name)[2] - name_font.getbbox(name)[0]
@@ -17515,15 +17516,23 @@ def generate_scoreboard_image(rows, title_outer_emoji="🏔️", title_inner_emo
             name_font = get_font("DejaVuSans.ttf", size)
             width = name_font.getbbox(name)[2] - name_font.getbbox(name)[0]
         if width <= name_max_width:
-            return name_font, size, [name]
+            return name_font, size, [name], width
         lines = draw_text_wrapper(name, name_font, name_max_width)
-        return name_font, size, (lines if lines else [name])
+        lines = lines if lines else [name]
+        rendered_width = max(name_font.getbbox(line)[2] - name_font.getbbox(line)[0] for line in lines)
+        return name_font, size, lines, rendered_width
 
     # Precompute each row's name font/lines (shrinking first, wrapping only as a last
     # resort) so row heights can grow instead of ever truncating.
     name_render = [fit_name(row["name"]) for row in rows]
-    row_heights = [max(row_height, len(lines) * (size + 6) + 16) for _, size, lines in name_render]
+    row_heights = [max(row_height, len(lines) * (size + 6) + 16) for _, size, lines, _ in name_render]
     img_height = title_height + top_padding * 2 + sum(row_heights)
+
+    # Lightning column sits right after the widest name actually in this scoreboard (with a
+    # fixed gap), instead of a fixed position that leaves a big empty gap when every name is
+    # short -- clamped so it never crowds the score column when names run long.
+    max_name_render_width = max((w for _, _, _, w in name_render), default=0)
+    lightning_x = min(max(name_x + max_name_render_width + 30, 150), 570)
 
     img = Image.new("RGB", (img_width, img_height), color=background_color)
     draw = ImageDraw.Draw(img)
@@ -17550,7 +17559,7 @@ def generate_scoreboard_image(rows, title_outer_emoji="🏔️", title_inner_emo
     img.paste(outer_icon, (tx, ty_icon), outer_icon)
 
     y = title_height + top_padding
-    for row, (name_font, name_size, lines), height in zip(rows, name_render, row_heights):
+    for row, (name_font, name_size, lines, _), height in zip(rows, name_render, row_heights):
         row_center_y = y + height // 2 - font_size // 2
         name_center_y = y + height // 2 - name_size // 2
         icon_center_y = y + height // 2
