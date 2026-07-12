@@ -17443,7 +17443,14 @@ def render_emoji_icon(emoji_char, target_size):
     bbox = tmp.getbbox()
     if bbox:
         tmp = tmp.crop(bbox)
-    return tmp.resize((target_size, target_size), Image.LANCZOS)
+    # Preserve aspect ratio -- some glyphs (e.g. the medals) render notably taller than
+    # wide, and a naive resize straight to a forced square stretches/distorts them.
+    scale = target_size / max(tmp.width, tmp.height)
+    new_w, new_h = max(1, round(tmp.width * scale)), max(1, round(tmp.height * scale))
+    resized = tmp.resize((new_w, new_h), Image.LANCZOS)
+    canvas = Image.new("RGBA", (target_size, target_size), (0, 0, 0, 0))
+    canvas.paste(resized, ((target_size - new_w) // 2, (target_size - new_h) // 2), resized)
+    return canvas
 
 
 def generate_scoreboard_image(rows):
@@ -17451,69 +17458,79 @@ def generate_scoreboard_image(rows):
     columns are pixel-positioned, not padded/truncated strings, so long names never get
     cut off and there's no monospace-alignment budget forcing a name-length cap.
 
+    Rank is shown as a medal/keycap-number icon (row["rank_icon"]) or, past the 10th
+    keycap, plain text (row["rank_text"]) -- see _compute_standings_rows. Lightning,
+    score, and delta each get their own fixed column so they stay clearly separated and
+    aligned across rows regardless of content width.
+
     rows: list of dicts from _compute_standings_rows(), or falsy -- returns None if so."""
     if not rows:
         return None
 
     background_color = (32, 34, 37)  # Discord dark-theme neutral
     text_color = (255, 255, 255)
+    muted_color = (170, 175, 180)
     img_width = 800
-    row_height = 64
+    row_height = 56
     top_padding = 20
-    font_size = 32
-    icon_size = 40
+    font_size = 24
+    rank_icon_size = 30
+    deco_icon_size = 28
+    lightning_icon_size = 22
 
     font = get_font("DejaVuSans.ttf", font_size)
 
+    rank_x = 20
+    name_x = 60
+    name_max_width = 330
+    deco_x = 405
+    lightning_x = 470
+    score_right_x = 630
+    delta_x = 645
+
     # Precompute wrapped name lines (rare case: an unusually long name) so row heights can
     # grow instead of ever truncating.
-    name_max_width = 380
-    tmp_img = Image.new("RGB", (10, 10))
-    tmp_draw = ImageDraw.Draw(tmp_img)
     wrapped_names = []
     for row in rows:
         lines = draw_text_wrapper(row["name"], font, name_max_width)
         wrapped_names.append(lines if lines else [row["name"]])
 
-    row_heights = [max(row_height, len(lines) * (font_size + 8) + 16) for lines in wrapped_names]
+    row_heights = [max(row_height, len(lines) * (font_size + 6) + 16) for lines in wrapped_names]
     img_height = top_padding * 2 + sum(row_heights)
 
     img = Image.new("RGB", (img_width, img_height), color=background_color)
     draw = ImageDraw.Draw(img)
 
-    rank_x = 20
-    icon_x = 70
-    name_x = 130
-    score_x = img_width - 20
-
     y = top_padding
     for row, lines, height in zip(rows, wrapped_names, row_heights):
         row_center_y = y + height // 2 - font_size // 2
+        icon_center_y = y + height // 2
 
-        draw.text((rank_x, row_center_y), f"{row['rank']}.", fill=text_color, font=font)
-
-        if row["decoration"]:
-            icon = render_emoji_icon(row["decoration"], icon_size)
-            img.paste(icon, (icon_x, y + height // 2 - icon_size // 2), icon)
+        if row["rank_icon"]:
+            icon = render_emoji_icon(row["rank_icon"], rank_icon_size)
+            img.paste(icon, (rank_x, icon_center_y - rank_icon_size // 2), icon)
+        else:
+            draw.text((rank_x, row_center_y), row["rank_text"], fill=text_color, font=font)
 
         name_text = "\n".join(lines)
         draw.multiline_text((name_x, row_center_y), name_text, fill=text_color, font=font)
 
-        score_line = f"{row['score_display']}{row['delta_suffix']}"
-        score_bbox = draw.textbbox((0, 0), score_line, font=font)
-        score_width = score_bbox[2] - score_bbox[0]
-        draw.text((score_x - score_width, row_center_y), score_line, fill=text_color, font=font)
+        if row["decoration"]:
+            icon = render_emoji_icon(row["decoration"], deco_icon_size)
+            img.paste(icon, (deco_x, icon_center_y - deco_icon_size // 2), icon)
 
         if row["lightning_count"] > 0:
-            lightning_icon = render_emoji_icon("⚡", icon_size - 8)
-            # Bolt-then-count, matching the original monospace convention (" ⚡3").
-            count_text = f"{row['lightning_count']}" if row["lightning_count"] > 1 else ""
-            count_width = draw.textbbox((0, 0), count_text, font=font)[2] if count_text else 0
-            block_width = lightning_icon.width + (count_width + 4 if count_text else 0)
-            lightning_x = score_x - score_width - block_width - 12
-            img.paste(lightning_icon, (lightning_x, y + height // 2 - lightning_icon.height // 2), lightning_icon)
-            if count_text:
-                draw.text((lightning_x + lightning_icon.width + 4, row_center_y), count_text, fill=text_color, font=font)
+            lightning_icon = render_emoji_icon("⚡", lightning_icon_size)
+            img.paste(lightning_icon, (lightning_x, icon_center_y - lightning_icon_size // 2), lightning_icon)
+            if row["lightning_count"] > 1:
+                draw.text((lightning_x + lightning_icon_size + 4, row_center_y), f"{row['lightning_count']}", fill=text_color, font=font)
+
+        score_bbox = draw.textbbox((0, 0), row["score_display"], font=font)
+        score_width = score_bbox[2] - score_bbox[0]
+        draw.text((score_right_x - score_width, row_center_y), row["score_display"], fill=text_color, font=font)
+
+        if row["delta_text"]:
+            draw.text((delta_x, row_center_y), row["delta_text"], fill=muted_color, font=font)
 
         y += height
 
@@ -20282,6 +20299,7 @@ def _compute_standings_rows(points_gained_this_question=None, scoreboard_overrid
     else:
         standings = sorted(board.items(), key=lambda x: x[1]["score"], reverse=True)
     medals = ["🥇", "🥈", "🥉"]
+    keycap_numbers = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"]
     rows = []
 
     for idx, (user_id, user_data) in enumerate(standings, start=1):
@@ -20300,12 +20318,21 @@ def _compute_standings_rows(points_gained_this_question=None, scoreboard_overrid
             has_420 = "420" in str(score) or (gained is not None and "420" in str(gained))
             has_69 = "69" in str(score) or (gained is not None and "69" in str(gained))
 
+        # Rank marker: medal for the top 3 (not in alphabetical/masked mode, since
+        # alphabetical order isn't a ranking), a keycap-number emoji up through 10th, plain
+        # text past that. The 420/69/last-place decoration is a separate, independent icon
+        # -- e.g. a rank-1 finisher with a 420 score shows both the gold medal and the leaf.
+        if not sort_alphabetically and idx <= 3:
+            rank_icon, rank_text = medals[idx - 1], None
+        elif idx <= len(keycap_numbers):
+            rank_icon, rank_text = keycap_numbers[idx - 1], None
+        else:
+            rank_icon, rank_text = None, f"{idx}."
+
         if has_420:
             decoration = "🌿"
         elif has_69:
             decoration = "😎"
-        elif not sort_alphabetically and idx <= 3:
-            decoration = medals[idx - 1]
         elif not sort_alphabetically and idx == len(standings) and idx > 4:
             decoration = "💩"
         else:
@@ -20318,7 +20345,7 @@ def _compute_standings_rows(points_gained_this_question=None, scoreboard_overrid
             delta_parts.append(f"+{gained}")
         if note:
             delta_parts.append(note)
-        delta_suffix = f" ({', '.join(delta_parts)})" if delta_parts else ""
+        delta_text = f"({', '.join(delta_parts)})" if delta_parts else ""
 
         # Fastest-answer count -- hidden in masked mode along with the rest of the
         # competitive standing info (score, medals, rank).
@@ -20326,10 +20353,11 @@ def _compute_standings_rows(points_gained_this_question=None, scoreboard_overrid
 
         score_display = "####" if mask_score else f"{score:,}"
         rows.append({
-            "rank": idx,
+            "rank_icon": rank_icon,
+            "rank_text": rank_text,
             "name": display_name,
             "score_display": score_display,
-            "delta_suffix": delta_suffix,
+            "delta_text": delta_text,
             "lightning_count": fastest_count,
             "decoration": decoration,
         })
