@@ -17503,22 +17503,22 @@ def generate_scoreboard_image(rows, title_outer_emoji="🏔️", title_inner_emo
             width += 4 + text_width(str(count))
         return width
 
-    # Every subsequent column starts right after the widest actual content of the columns
-    # before it (not a fixed worst-case position), so the whole row -- and the image itself
-    # -- shrinks to fit when the real content (names, streaks, scores, deltas) is short, and
-    # only grows as far as it actually needs to when something is long.
+    # The lightning/score/delta cluster's own width is content-driven (widest actual
+    # content, not a fixed worst-case), which is what lets the image shrink when everything
+    # is short and grow only as far as something long actually requires.
     max_name_render_width = max((w for _, _, _, w in name_render), default=0)
-    lightning_x = name_x + max_name_render_width + col_gap
-
     max_lightning_width = max((lightning_reserved_width(row["lightning_count"]) for row in rows), default=0)
-    score_x = lightning_x + (max_lightning_width + col_gap if max_lightning_width else 0)
-
     max_score_width = max((text_width(row["score_display"]) for row in rows), default=0)
     delta_widths = [text_width(row["delta_text"]) if row["delta_text"] else 0 for row in rows]
     max_delta_width = max(delta_widths, default=0)
-    delta_x = score_x + max_score_width + col_gap
 
-    content_right_edge = (delta_x + max_delta_width if max_delta_width else score_x + max_score_width) + side_margin
+    cluster_width = max_score_width
+    if max_lightning_width:
+        cluster_width += max_lightning_width + col_gap
+    if max_delta_width:
+        cluster_width += max_delta_width + col_gap
+
+    content_right_edge = name_x + max_name_render_width + col_gap + cluster_width + side_margin
 
     title_text_bbox_probe = title_font.getbbox(title_text)
     title_text_width = title_text_bbox_probe[2] - title_text_bbox_probe[0]
@@ -17527,6 +17527,15 @@ def generate_scoreboard_image(rows, title_outer_emoji="🏔️", title_inner_emo
     title_required_width = total_title_width + side_margin * 2
 
     img_width = int(min(img_width_max, max(img_width_min, content_right_edge, title_required_width)))
+
+    # Anchor the lightning/score/delta cluster to the image's actual right edge (not
+    # immediately after the name) -- so when the image is forced wider than the row content
+    # needs (e.g. to fit the title), the extra room becomes breathing space between the name
+    # and the numbers instead of dead space after the score.
+    cluster_left = max(img_width - side_margin - cluster_width, name_x + max_name_render_width + col_gap)
+    lightning_x = cluster_left
+    score_x = lightning_x + (max_lightning_width + col_gap if max_lightning_width else 0)
+    delta_x = score_x + max_score_width + col_gap
 
     img = Image.new("RGB", (img_width, img_height), color=background_color)
     draw = ImageDraw.Draw(img)
