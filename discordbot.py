@@ -838,6 +838,7 @@ marx_mode = marx_mode_default
 image_questions_default = True
 image_questions = image_questions_default
 okra_avatar_enabled = True  # code-level kill switch for the paid AI avatar edit -- flip to False to fall back to the plain Discord avatar
+scoreboard_image_enabled = True  # code-level kill switch for the image scoreboard experiment -- flip to False to fall back to the original monospace table
 sniper_mode_default = False
 sniper_mode = sniper_mode_default
 blitz_mode_default = False
@@ -15930,6 +15931,33 @@ async def handle_intro_image_admin_command(message: discord.Message) -> bool:
         await safe_send(message.channel, content="\n".join(lines))
         return True
 
+    if content == "#scoreboardpreview":
+        # Fake negative user IDs so they can never collide with real Discord snowflakes.
+        # Engineered to hit every decoration in one image: all 3 medals, both easter eggs
+        # (420/69), last place, a delta, a note, and a multi-count lightning icon.
+        sample_scoreboard = {
+            -1: {"display_name": "Sky Shadowfax the Third", "score": 1500},
+            -2: {"display_name": "Okra_Enjoyer99", "score": 1200},
+            -3: {"display_name": "Nikhil", "score": 900},
+            -4: {"display_name": "Lucky Larry", "score": 1420},
+            -5: {"display_name": "Chill Chad", "score": 69},
+            -6: {"display_name": "Middle Mike", "score": 300},
+            -7: {"display_name": "Zeta", "score": 10},
+        }
+        sample_gained = {-1: 500}
+        sample_notes = {-6: "off by 2"}
+        sample_fastest = {-1: 3}
+        rows = _compute_standings_rows(
+            sample_gained, scoreboard_override=sample_scoreboard,
+            row_notes=sample_notes, fastest_answers_override=sample_fastest,
+        )
+        await safe_send(
+            message.channel,
+            content="Scoreboard preview (sample data)",
+            file=discord.File(generate_scoreboard_image(rows), filename="scoreboard_preview.png"),
+        )
+        return True
+
     return False
 
 
@@ -17399,8 +17427,100 @@ def draw_text_wrapper(text, font, max_width):
         # Append the line to lines
         if line.strip():
             lines.append(line.strip())
-    
+
     return lines
+
+
+def render_emoji_icon(emoji_char, target_size):
+    """Render a single color emoji as its own small RGBA image, for pasting into a
+    PIL-drawn scoreboard. NotoColorEmojiLegacy.ttf is a fixed-strike color bitmap font --
+    109 is the only valid size (every other size raises "invalid pixel size" or silently
+    renders blank, confirmed by testing) -- so it's always rendered at 109 then cropped and
+    resized down, rather than requested at the target size directly."""
+    font = get_font("NotoColorEmojiLegacy.ttf", 109)
+    tmp = Image.new("RGBA", (136, 136), (0, 0, 0, 0))
+    ImageDraw.Draw(tmp).text((0, 0), emoji_char, font=font, embedded_color=True)
+    bbox = tmp.getbbox()
+    if bbox:
+        tmp = tmp.crop(bbox)
+    return tmp.resize((target_size, target_size), Image.LANCZOS)
+
+
+def generate_scoreboard_image(rows):
+    """Render the per-question scoreboard as an image instead of a monospace table --
+    columns are pixel-positioned, not padded/truncated strings, so long names never get
+    cut off and there's no monospace-alignment budget forcing a name-length cap.
+
+    rows: list of dicts from _compute_standings_rows(), or falsy -- returns None if so."""
+    if not rows:
+        return None
+
+    background_color = (32, 34, 37)  # Discord dark-theme neutral
+    text_color = (255, 255, 255)
+    img_width = 800
+    row_height = 64
+    top_padding = 20
+    font_size = 32
+    icon_size = 40
+
+    font = get_font("DejaVuSans.ttf", font_size)
+
+    # Precompute wrapped name lines (rare case: an unusually long name) so row heights can
+    # grow instead of ever truncating.
+    name_max_width = 380
+    tmp_img = Image.new("RGB", (10, 10))
+    tmp_draw = ImageDraw.Draw(tmp_img)
+    wrapped_names = []
+    for row in rows:
+        lines = draw_text_wrapper(row["name"], font, name_max_width)
+        wrapped_names.append(lines if lines else [row["name"]])
+
+    row_heights = [max(row_height, len(lines) * (font_size + 8) + 16) for lines in wrapped_names]
+    img_height = top_padding * 2 + sum(row_heights)
+
+    img = Image.new("RGB", (img_width, img_height), color=background_color)
+    draw = ImageDraw.Draw(img)
+
+    rank_x = 20
+    icon_x = 70
+    name_x = 130
+    score_x = img_width - 20
+
+    y = top_padding
+    for row, lines, height in zip(rows, wrapped_names, row_heights):
+        row_center_y = y + height // 2 - font_size // 2
+
+        draw.text((rank_x, row_center_y), f"{row['rank']}.", fill=text_color, font=font)
+
+        if row["decoration"]:
+            icon = render_emoji_icon(row["decoration"], icon_size)
+            img.paste(icon, (icon_x, y + height // 2 - icon_size // 2), icon)
+
+        name_text = "\n".join(lines)
+        draw.multiline_text((name_x, row_center_y), name_text, fill=text_color, font=font)
+
+        score_line = f"{row['score_display']}{row['delta_suffix']}"
+        score_bbox = draw.textbbox((0, 0), score_line, font=font)
+        score_width = score_bbox[2] - score_bbox[0]
+        draw.text((score_x - score_width, row_center_y), score_line, fill=text_color, font=font)
+
+        if row["lightning_count"] > 0:
+            lightning_icon = render_emoji_icon("⚡", icon_size - 8)
+            # Bolt-then-count, matching the original monospace convention (" ⚡3").
+            count_text = f"{row['lightning_count']}" if row["lightning_count"] > 1 else ""
+            count_width = draw.textbbox((0, 0), count_text, font=font)[2] if count_text else 0
+            block_width = lightning_icon.width + (count_width + 4 if count_text else 0)
+            lightning_x = score_x - score_width - block_width - 12
+            img.paste(lightning_icon, (lightning_x, y + height // 2 - lightning_icon.height // 2), lightning_icon)
+            if count_text:
+                draw.text((lightning_x + lightning_icon.width + 4, row_center_y), count_text, fill=text_color, font=font)
+
+        y += height
+
+    image_buffer = io.BytesIO()
+    img.save(image_buffer, format="PNG")
+    image_buffer.seek(0)
+    return image_buffer
 
 
 def generate_crossword_image(answer, prefill=0.5):
@@ -19674,16 +19794,30 @@ async def check_correct_responses_delete(question_ask_time, trivia_answer_list, 
     if current_question_data:
         current_question_data["scoreboard_after_question"] = dict(scoreboard)
 
-    # Compute the standings/scoreboard table first so we know whether the answer-reveal
-    # description needs a trailing spacer before it.
-    if show_standings_after:
-        standings_table = build_standings_table(points_gained_this_question, row_notes=row_notes)
+    # Compute the standings/scoreboard first so we know whether the answer-reveal
+    # description needs a trailing spacer before it. scoreboard_image_enabled is a
+    # code-level kill switch for the image-scoreboard experiment -- flip it off to fall
+    # back to the original monospace table with zero other behavior changes.
+    standings_table = None
+    standings_rows = None
+    if scoreboard_image_enabled:
+        if show_standings_after:
+            standings_rows = _compute_standings_rows(points_gained_this_question, row_notes=row_notes)
+        else:
+            standings_rows = _compute_standings_rows(
+                points_gained_this_question, row_notes=row_notes, sort_alphabetically=True, mask_score=True
+            )
+        has_standings = bool(standings_rows)
     else:
-        # Yolo mode's in-between questions: show who got it right without revealing the
-        # running standings -- alphabetical order, cumulative totals masked as "####".
-        standings_table = build_standings_table(
-            points_gained_this_question, row_notes=row_notes, sort_alphabetically=True, mask_score=True
-        )
+        if show_standings_after:
+            standings_table = build_standings_table(points_gained_this_question, row_notes=row_notes)
+        else:
+            # Yolo mode's in-between questions: show who got it right without revealing the
+            # running standings -- alphabetical order, cumulative totals masked as "####".
+            standings_table = build_standings_table(
+                points_gained_this_question, row_notes=row_notes, sort_alphabetically=True, mask_score=True
+            )
+        has_standings = bool(standings_table)
 
     # Construct the answer-reveal header -- this becomes the embed description
     message = ""
@@ -19694,7 +19828,7 @@ async def check_correct_responses_delete(question_ask_time, trivia_answer_list, 
             message = f"\u200b\n✅ **Answer** ({len(question_responders)}) ✅\n{trivia_answer}"
             if closest_answer_delta is not None:
                 message += f"\n🎯 Closest answer wins!"
-        if standings_table:
+        if has_standings:
             message += "\n\u200b"  # blank-line gap before the standings field
 
     # Send the entire message at once
@@ -19718,8 +19852,8 @@ async def check_correct_responses_delete(question_ask_time, trivia_answer_list, 
                 else:
                     author_name = f"{fastest_correct_user} ⚡"
 
-        # Responses and the scoreboard are merged into one monospace ranked table with a
-        # (+X) delta -- plus off-by-X / streak notes -- for whoever scored this question.
+        # Responses and the scoreboard are merged into one ranked list with a (+X) delta --
+        # plus off-by-X / streak notes -- for whoever scored this question.
         answer_embed = discord.Embed()
         if message:
             # The leading blank line exists to leave room below the author line's avatar --
@@ -19728,11 +19862,16 @@ async def check_correct_responses_delete(question_ask_time, trivia_answer_list, 
             if not author_name:
                 message = message.removeprefix("​\n")
             answer_embed.description = message
-        if standings_table:
+        scoreboard_file = None
+        if scoreboard_image_enabled:
+            if standings_rows:
+                answer_embed.add_field(name=build_standings_header(), value="​", inline=False)
+                scoreboard_file = discord.File(generate_scoreboard_image(standings_rows), filename="scoreboard.png")
+        elif standings_table:
             answer_embed.add_field(name=build_standings_header(), value=standings_table, inline=False)
         if author_name:
             answer_embed.set_author(name=author_name, icon_url=author_icon_url)
-        await safe_send(channel, embed=answer_embed)
+        await safe_send(channel, embed=answer_embed, file=scoreboard_file)
     elif show_standings_after:
         # No answer-reveal content this question (e.g. blind mode, no correct responses) --
         # still show the scoreboard on its own rather than silently dropping it.
@@ -20116,6 +20255,86 @@ def build_standings_table(points_gained_this_question=None, name_max_len=13, sco
         rows.append(f"{idx_str:<3}{name_col}{score_display:>6}{delta_suffix}{lightning_suffix}")
 
     return "```\n" + "\n".join(rows) + "\n```"
+
+
+def _compute_standings_rows(points_gained_this_question=None, scoreboard_override=None,
+                             row_notes=None, sort_alphabetically=False, mask_score=False,
+                             fastest_answers_override=None):
+    """Row data for generate_scoreboard_image() -- same merge/sort/delta/lightning logic as
+    build_standings_table, minus any name-width truncation (the image has no fixed-width
+    column constraint), plus the medal/420/69/last-place decorations restored from before
+    commit b231b91 removed them (they were dropped purely to free up monospace column room,
+    which no longer applies here).
+
+    fastest_answers_override lets #scoreboardpreview inject fake lightning counts without
+    touching the real fastest_answers_count global.
+
+    Returns None if there's nothing to show."""
+    board = scoreboard_override if scoreboard_override is not None else scoreboard
+    if not board:
+        return None
+    fastest_counts = fastest_answers_override if fastest_answers_override is not None else fastest_answers_count
+
+    points_gained_this_question = points_gained_this_question or {}
+    row_notes = row_notes or {}
+    if sort_alphabetically:
+        standings = sorted(board.items(), key=lambda x: x[1]["display_name"].lower())
+    else:
+        standings = sorted(board.items(), key=lambda x: x[1]["score"], reverse=True)
+    medals = ["🥇", "🥈", "🥉"]
+    rows = []
+
+    for idx, (user_id, user_data) in enumerate(standings, start=1):
+        display_name = user_data["display_name"]
+        score = user_data["score"]
+
+        gained = points_gained_this_question.get(user_id)
+
+        # The 420/69 check looks for the pattern anywhere in the number (so 4200 or 690
+        # count too). When the total is masked, only the visible gain is checked -- an emoji
+        # driven by the hidden total would leak information about it.
+        if mask_score:
+            has_420 = gained is not None and "420" in str(gained)
+            has_69 = gained is not None and "69" in str(gained)
+        else:
+            has_420 = "420" in str(score) or (gained is not None and "420" in str(gained))
+            has_69 = "69" in str(score) or (gained is not None and "69" in str(gained))
+
+        if has_420:
+            decoration = "🌿"
+        elif has_69:
+            decoration = "😎"
+        elif not sort_alphabetically and idx <= 3:
+            decoration = medals[idx - 1]
+        elif not sort_alphabetically and idx == len(standings) and idx > 4:
+            decoration = "💩"
+        else:
+            decoration = None
+
+        note = row_notes.get(user_id)
+        delta_parts = []
+        # When masked, the total isn't visible, so a gain is never redundant to show.
+        if gained is not None and (mask_score or gained != score):
+            delta_parts.append(f"+{gained}")
+        if note:
+            delta_parts.append(note)
+        delta_suffix = f" ({', '.join(delta_parts)})" if delta_parts else ""
+
+        # Fastest-answer count -- hidden in masked mode along with the rest of the
+        # competitive standing info (score, medals, rank).
+        fastest_count = fastest_counts.get(user_id, 0) if not mask_score else 0
+
+        score_display = "####" if mask_score else f"{score:,}"
+        rows.append({
+            "rank": idx,
+            "name": display_name,
+            "score_display": score_display,
+            "delta_suffix": delta_suffix,
+            "lightning_count": fastest_count,
+            "decoration": decoration,
+        })
+
+    return rows
 
 
 def build_standings_body(scoreboard_override=None):
