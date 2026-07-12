@@ -15942,21 +15942,21 @@ async def handle_intro_image_admin_command(message: discord.Message) -> bool:
                 -2: {"display_name": "Al", "score": 1200},
                 -3: {"display_name": "K", "score": 900},
                 -4: {"display_name": "Bo", "score": 400},
-            }, {}, {}),
+            }, {}, {-1: 3}),
             ("All long usernames", {
                 -1: {"display_name": "Christopher Alexander Montgomery III", "score": 1500},
                 -2: {"display_name": "Elizabeth Featherstonehaugh-Smythe", "score": 1200},
                 -3: {"display_name": "Sky Shadowfax the Third of House Windrunner", "score": 900},
-            }, {}, {}),
+            }, {}, {-1: 4}),
             ("Mixed short and long usernames", {
                 -1: {"display_name": "Jo", "score": 1500},
                 -2: {"display_name": "Christopher Alexander Montgomery III", "score": 1200},
                 -3: {"display_name": "K", "score": 900},
                 -4: {"display_name": "Elizabeth Featherstonehaugh-Smythe", "score": 400},
-            }, {}, {}),
+            }, {}, {-2: 2}),
             ("Single player, short name", {
                 -1: {"display_name": "Jo", "score": 10},
-            }, {}, {}),
+            }, {}, {-1: 5}),
             ("Full decoration demo (medals, easter eggs, last place, lightning, delta)", {
                 -1: {"display_name": "Sky Shadowfax the Third", "score": 1500},
                 -2: {"display_name": "Okra_Enjoyer99", "score": 1200},
