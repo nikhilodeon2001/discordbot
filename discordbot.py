@@ -17445,25 +17445,25 @@ def generate_scoreboard_image(rows, title_outer_emoji="🏔️", title_inner_emo
     background_color = (32, 34, 37)  # Discord dark-theme neutral
     text_color = (255, 255, 255)
     muted_color = (170, 175, 180)
-    img_width_min = 420
-    img_width_max = 800
-    side_margin = 24
-    col_gap = 24
-    row_height = 56
-    top_padding = 20
-    font_size = 24
-    rank_icon_size = 30
-    lightning_icon_size = 22
+    img_width_min = 340
+    img_width_max = 620
+    side_margin = 18
+    col_gap = 18
+    row_height = 44
+    top_padding = 16
+    font_size = 19
+    rank_icon_size = 24
+    lightning_icon_size = 18
 
     font = get_font("DejaVuSans.ttf", font_size)
-    title_font = get_font("DejaVuSans-Bold.ttf", 28)
-    title_icon_size = 32
-    title_height = 56
+    title_font = get_font("DejaVuSans-Bold.ttf", 22)
+    title_icon_size = 26
+    title_height = 44
 
-    rank_x = 20
-    name_x = 60
-    name_max_width = 400
-    name_min_font_size = 14
+    rank_x = 16
+    name_x = 48
+    name_max_width = 320
+    name_min_font_size = 12
 
     def fit_name(name):
         """Shrink the name's font a point at a time until it fits on one line within
