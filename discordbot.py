@@ -19234,7 +19234,7 @@ async def ask_question(trivia_category, trivia_question, trivia_url, trivia_answ
 
     elif trivia_url.startswith("jeopardy"):
         if image_questions == True: 
-            image_buffer = generate_jeopardy_image(trivia_question, get_category_title(trivia_category, trivia_url, include_emoji=False))
+            image_buffer = generate_jeopardy_image(trivia_question, get_category_title(trivia_category, trivia_url, include_emoji=False, include_prefix=False))
             message_body += f"\u200b\n\u200b\n{number_block} **{get_category_title(trivia_category, trivia_url)}**\n\nAnd the answer is: \n"
             send_image_flag = True
         else:
@@ -21259,14 +21259,14 @@ def _jeopardy_title_case(text):
     words = text.lower().split()
     return " ".join(w if (i > 0 and w in _TITLE_CASE_SKIP) else w.capitalize() for i, w in enumerate(words))
 
-def get_category_title(trivia_category, trivia_url, max_len=40, include_emoji=True):
+def get_category_title(trivia_category, trivia_url, max_len=40, include_emoji=True, include_prefix=True):
     emojis = category_emoji_cache.get(trivia_category)
     if emojis is None:
         prefix = trivia_category.split(":")[0].strip()
         emojis = category_emoji_cache.get(prefix, "❓❔")
 
     if trivia_url.lower().startswith("jeopardy"):
-        label_prefix = "Jeopardy: "
+        label_prefix = "Jeopardy: " if include_prefix else ""
         category_text = _jeopardy_title_case(trivia_category)
     else:
         label_prefix = ""
