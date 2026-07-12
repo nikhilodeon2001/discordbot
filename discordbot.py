@@ -15952,14 +15952,13 @@ async def handle_intro_image_admin_command(message: discord.Message) -> bool:
         preview_image = generate_scoreboard_image(rows, title_text=f"Scoreboard ({len(sample_scoreboard)})")
 
         # Mirrors the full real answer-reveal embed (check_correct_responses_delete): author
-        # line (avatar + fastest responder + off-by-N + streak), the Answer/checkmark
-        # description, then the scoreboard image -- not just the image in isolation, since
-        # "(off by N)" now only ever shows here, next to the fastest closest-answer guesser,
-        # not as a per-row scoreboard note.
+        # line (avatar + fastest responder + streak), the Answer/checkmark description
+        # (with the "was closest (off by N)!" callout), then the scoreboard image -- not
+        # just the image in isolation.
         preview_embed = discord.Embed()
-        preview_embed.description = "​\n✅ **Answer** (5) ✅\n42\n🎯 Closest answer wins!\n​"
+        preview_embed.description = "​\n✅ **Answer** (5) ✅\n42\n​\n🎯 Sky Shadowfax the Third was closest (off by 2)!\n​"
         preview_embed.set_author(
-            name="Sky Shadowfax the Third (off by 2) ⚡...🔥3 in a row!",
+            name="Sky Shadowfax the Third ⚡...🔥3 in a row!",
             icon_url=message.author.display_avatar.url,
         )
         await safe_send(
@@ -19886,7 +19885,8 @@ async def check_correct_responses_delete(question_ask_time, trivia_answer_list, 
         else:
             message = f"\u200b\n✅ **Answer** ({len(question_responders)}) ✅\n{trivia_answer}"
             if closest_answer_delta is not None:
-                message += f"\n🎯 Closest answer wins!"
+                delta_display = int(fastest_delta) if fastest_delta == int(fastest_delta) else fastest_delta
+                message += f"\n​\n🎯 {fastest_correct_user} was closest (off by {delta_display})!"
         if has_standings:
             message += "\n\u200b"  # blank-line gap before the standings field
 
@@ -19906,18 +19906,15 @@ async def check_correct_responses_delete(question_ask_time, trivia_answer_list, 
                     print(f"\u26a0\ufe0f Could not fetch fastest responder avatar: {e}")
             if author_icon_url:
                 streak = current_longest_answer_streak["streak"]
-                off_by_suffix = ""
-                if fastest_delta is not None:
-                    delta_display = int(fastest_delta) if fastest_delta == int(fastest_delta) else fastest_delta
-                    off_by_suffix = f" (off by {delta_display})"
                 if streak > 1:
-                    author_name = f"{fastest_correct_user}{off_by_suffix} ⚡...🔥{streak} in a row!"
+                    author_name = f"{fastest_correct_user} ⚡...🔥{streak} in a row!"
                 else:
-                    author_name = f"{fastest_correct_user}{off_by_suffix} ⚡"
+                    author_name = f"{fastest_correct_user} ⚡"
 
         # Responses and the scoreboard are merged into one ranked list with a (+X) delta
         # for whoever scored this question; the fastest closest-answer guess (if any) gets
-        # its "(off by N)" called out in the author line above instead of a per-row note.
+        # its "was closest (off by N)!" called out in the description above instead of a
+        # per-row note.
         answer_embed = discord.Embed()
         if message:
             # The leading blank line exists to leave room below the author line's avatar --
