@@ -17254,13 +17254,17 @@ def generate_jeopardy_image(question_text, category_text=None):
     text_height = text_bbox[3] - text_bbox[1]
 
     # Category (if any) sits above the question, both centered together as one block,
-    # with a full blank line of space (not just a small pixel gap) between them.
+    # with a full blank line of space (not just a small pixel gap) between them. Wrapped
+    # with the same width constraint as the question so long categories don't hug the edges.
+    wrapped_category = None
     category_block_height = 0
     category_bbox = None
     if category_font:
-        category_bbox = draw.textbbox((0, 0), category_text, font=category_font)
-        category_line_height = category_bbox[3] - category_bbox[1]
-        category_block_height = category_line_height * 2  # category line + one blank line
+        wrapped_category = "\n".join(draw_text_wrapper(category_text, category_font, img_width - 40))
+        category_bbox = draw.textbbox((0, 0), wrapped_category, font=category_font)
+        single_line_bbox = draw.textbbox((0, 0), "Ag", font=category_font)
+        single_line_height = single_line_bbox[3] - single_line_bbox[1]
+        category_block_height = (category_bbox[3] - category_bbox[1]) + single_line_height  # category block + one blank line
 
     total_height = text_height + category_block_height
     top_y = (img_height - total_height) // 2
@@ -17268,7 +17272,7 @@ def generate_jeopardy_image(question_text, category_text=None):
     if category_font:
         category_width = category_bbox[2] - category_bbox[0]
         category_x = (img_width - category_width) // 2
-        draw.text((category_x, top_y), category_text, fill=text_color, font=category_font)
+        draw.multiline_text((category_x, top_y), wrapped_category, fill=text_color, font=category_font, align="center")
 
     text_x = (img_width - text_width) // 2
     text_y = top_y + category_block_height
