@@ -17231,7 +17231,6 @@ def generate_jeopardy_image(question_text, category_text=None):
     # Define image size and font properties
     img_width, img_height = 800, 600
     font_size = 60
-    category_font_size = 36
 
     # Create a blank image with blue background
     img = Image.new('RGB', (img_width, img_height), color=background_color)
@@ -17244,7 +17243,7 @@ def generate_jeopardy_image(question_text, category_text=None):
         print(f"Error: Font file not found: DejaVuSans.ttf")
         return None
 
-    category_font = get_font("DejaVuSans-Bold.ttf", category_font_size) if category_text else None
+    category_font = get_font("DejaVuSans-Bold.ttf", font_size) if category_text else None
 
     # Prepare the text for drawing (wrap text if too long)
     wrapped_text = "\n".join(draw_text_wrapper(question_text, font, img_width - 40))
@@ -17254,12 +17253,14 @@ def generate_jeopardy_image(question_text, category_text=None):
     text_width = text_bbox[2] - text_bbox[0]
     text_height = text_bbox[3] - text_bbox[1]
 
-    # Category (if any) sits above the question, both centered together as one block
+    # Category (if any) sits above the question, both centered together as one block,
+    # with a full blank line of space (not just a small pixel gap) between them.
     category_block_height = 0
     category_bbox = None
     if category_font:
         category_bbox = draw.textbbox((0, 0), category_text, font=category_font)
-        category_block_height = (category_bbox[3] - category_bbox[1]) + 20  # gap before question
+        category_line_height = category_bbox[3] - category_bbox[1]
+        category_block_height = category_line_height * 2  # category line + one blank line
 
     total_height = text_height + category_block_height
     top_y = (img_height - total_height) // 2
@@ -19046,7 +19047,7 @@ async def ask_question(trivia_category, trivia_question, trivia_url, trivia_answ
 
     elif trivia_url.startswith("jeopardy"):
         if image_questions == True: 
-            image_buffer = generate_jeopardy_image(trivia_question, get_category_title(trivia_category, trivia_url))
+            image_buffer = generate_jeopardy_image(trivia_question, get_category_title(trivia_category, trivia_url, include_emoji=False))
             message_body += f"\u200b\n\u200b\n{number_block} **{get_category_title(trivia_category, trivia_url)}**\n\nAnd the answer is: \n"
             send_image_flag = True
         else:
@@ -20960,7 +20961,7 @@ def _jeopardy_title_case(text):
     words = text.lower().split()
     return " ".join(w if (i > 0 and w in _TITLE_CASE_SKIP) else w.capitalize() for i, w in enumerate(words))
 
-def get_category_title(trivia_category, trivia_url, max_len=40):
+def get_category_title(trivia_category, trivia_url, max_len=40, include_emoji=True):
     emojis = category_emoji_cache.get(trivia_category)
     if emojis is None:
         prefix = trivia_category.split(":")[0].strip()
@@ -20979,6 +20980,8 @@ def get_category_title(trivia_category, trivia_url, max_len=40):
     if len(category_text) > available:
         category_text = category_text[:available - 1] + "…"
 
+    if not include_emoji:
+        return f"{label_prefix}{category_text}"
     return f"{label_prefix}{category_text} {emojis}"
 
 
