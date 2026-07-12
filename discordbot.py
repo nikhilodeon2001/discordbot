@@ -15934,7 +15934,7 @@ async def handle_intro_image_admin_command(message: discord.Message) -> bool:
     if content == "#scoreboardpreview":
         # Fake negative user IDs so they can never collide with real Discord snowflakes.
         # Engineered to hit every decoration in one image: all 3 medals, both easter eggs
-        # (420/69), last place, a delta, a note, and a multi-count lightning icon.
+        # (420/69), last place, a delta, and a multi-count lightning icon.
         sample_scoreboard = {
             -1: {"display_name": "Sky Shadowfax the Third", "score": 1500},
             -2: {"display_name": "Okra_Enjoyer99", "score": 1200},
@@ -15945,16 +15945,26 @@ async def handle_intro_image_admin_command(message: discord.Message) -> bool:
             -7: {"display_name": "Zeta", "score": 10},
         }
         sample_gained = {-1: 500}
-        sample_notes = {-6: "off by 2"}
         sample_fastest = {-1: 3}
         rows = _compute_standings_rows(
-            sample_gained, scoreboard_override=sample_scoreboard,
-            row_notes=sample_notes, fastest_answers_override=sample_fastest,
+            sample_gained, scoreboard_override=sample_scoreboard, fastest_answers_override=sample_fastest,
         )
         preview_image = generate_scoreboard_image(rows, title_text=f"Scoreboard ({len(sample_scoreboard)})")
+
+        # Mirrors the full real answer-reveal embed (check_correct_responses_delete): author
+        # line (avatar + fastest responder + off-by-N + streak), the Answer/checkmark
+        # description, then the scoreboard image -- not just the image in isolation, since
+        # "(off by N)" now only ever shows here, next to the fastest closest-answer guesser,
+        # not as a per-row scoreboard note.
+        preview_embed = discord.Embed()
+        preview_embed.description = "​\n✅ **Answer** (5) ✅\n42\n🎯 Closest answer wins!\n​"
+        preview_embed.set_author(
+            name="Sky Shadowfax the Third (off by 2) ⚡...🔥3 in a row!",
+            icon_url=message.author.display_avatar.url,
+        )
         await safe_send(
             message.channel,
-            content="Scoreboard preview (sample data)",
+            embed=preview_embed,
             file=discord.File(preview_image, filename="scoreboard_preview.png"),
         )
         return True
@@ -19812,7 +19822,7 @@ async def check_correct_responses_delete(question_ask_time, trivia_answer_list, 
     # - Assign the extra 500 points to the fastest user
     # - Update the scoreboard for all users
     points_gained_this_question = {}
-    row_notes = {}
+    fastest_delta = None
     for i, (display_name, points, response_time, message_content, sender_id, discord_message, delta) in enumerate(correct_responses):
         if sender_id == fastest_correct_user_id:
             if sender_id in fastest_answers_count:
@@ -19825,6 +19835,9 @@ async def check_correct_responses_delete(question_ask_time, trivia_answer_list, 
                 scoreboard[sender_id]["score"] += gained
             else:
                 scoreboard[sender_id] = {"display_name": display_name, "score": gained}
+            # Closest-answer mode can tie multiple people at the same distance -- only the
+            # fastest of them is called out (in the author line, not a per-row note).
+            fastest_delta = delta
         else:
             gained = points
             if sender_id in scoreboard:
@@ -19832,13 +19845,6 @@ async def check_correct_responses_delete(question_ask_time, trivia_answer_list, 
             else:
                 scoreboard[sender_id] = {"display_name": display_name, "score": gained}
         points_gained_this_question[sender_id] = gained
-
-        notes = []
-        if delta is not None:
-            delta_display = int(delta) if delta == int(delta) else delta
-            notes.append(f"off by {delta_display}")
-        if notes:
-            row_notes[sender_id] = ", ".join(notes)
 
     await update_answer_streaks(fastest_correct_user, fastest_correct_user_id)  # Update the correct answer streak for this user
    
@@ -19855,20 +19861,20 @@ async def check_correct_responses_delete(question_ask_time, trivia_answer_list, 
     standings_rows = None
     if scoreboard_image_enabled:
         if show_standings_after:
-            standings_rows = _compute_standings_rows(points_gained_this_question, row_notes=row_notes)
+            standings_rows = _compute_standings_rows(points_gained_this_question)
         else:
             standings_rows = _compute_standings_rows(
-                points_gained_this_question, row_notes=row_notes, sort_alphabetically=True, mask_score=True
+                points_gained_this_question, sort_alphabetically=True, mask_score=True
             )
         has_standings = bool(standings_rows)
     else:
         if show_standings_after:
-            standings_table = build_standings_table(points_gained_this_question, row_notes=row_notes)
+            standings_table = build_standings_table(points_gained_this_question)
         else:
             # Yolo mode's in-between questions: show who got it right without revealing the
             # running standings -- alphabetical order, cumulative totals masked as "####".
             standings_table = build_standings_table(
-                points_gained_this_question, row_notes=row_notes, sort_alphabetically=True, mask_score=True
+                points_gained_this_question, sort_alphabetically=True, mask_score=True
             )
         has_standings = bool(standings_table)
 
@@ -19900,13 +19906,18 @@ async def check_correct_responses_delete(question_ask_time, trivia_answer_list, 
                     print(f"\u26a0\ufe0f Could not fetch fastest responder avatar: {e}")
             if author_icon_url:
                 streak = current_longest_answer_streak["streak"]
+                off_by_suffix = ""
+                if fastest_delta is not None:
+                    delta_display = int(fastest_delta) if fastest_delta == int(fastest_delta) else fastest_delta
+                    off_by_suffix = f" (off by {delta_display})"
                 if streak > 1:
-                    author_name = f"{fastest_correct_user} ⚡...🔥{streak} in a row!"
+                    author_name = f"{fastest_correct_user}{off_by_suffix} ⚡...🔥{streak} in a row!"
                 else:
-                    author_name = f"{fastest_correct_user} ⚡"
+                    author_name = f"{fastest_correct_user}{off_by_suffix} ⚡"
 
-        # Responses and the scoreboard are merged into one ranked list with a (+X) delta --
-        # plus off-by-X / streak notes -- for whoever scored this question.
+        # Responses and the scoreboard are merged into one ranked list with a (+X) delta
+        # for whoever scored this question; the fastest closest-answer guess (if any) gets
+        # its "(off by N)" called out in the author line above instead of a per-row note.
         answer_embed = discord.Embed()
         if message:
             # The leading blank line exists to leave room below the author line's avatar --
