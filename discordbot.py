@@ -17223,44 +17223,63 @@ async def ask_magic_challenge(winner, winner_id, num=5):
     return magic_winner_id
 
 
-def generate_jeopardy_image(question_text):
+def generate_jeopardy_image(question_text, category_text=None):
     # Define the background color and text properties
     background_color = (6, 12, 233)  # Blue color similar to Jeopardy screen
     text_color = (255, 255, 255)    # White text
-    
+
     # Define image size and font properties
     img_width, img_height = 800, 600
     font_size = 60
+    category_font_size = 36
 
     # Create a blank image with blue background
     img = Image.new('RGB', (img_width, img_height), color=background_color)
     draw = ImageDraw.Draw(img)
-    
+
     # Load the font
     try:
         font = get_font("DejaVuSans.ttf", font_size)
     except IOError:
         print(f"Error: Font file not found: DejaVuSans.ttf")
         return None
-    
+
+    category_font = get_font("DejaVuSans-Bold.ttf", category_font_size) if category_text else None
+
     # Prepare the text for drawing (wrap text if too long)
     wrapped_text = "\n".join(draw_text_wrapper(question_text, font, img_width - 40))
-    
+
     # Calculate text position for centering
     text_bbox = draw.textbbox((0, 0), wrapped_text, font=font)
     text_width = text_bbox[2] - text_bbox[0]
     text_height = text_bbox[3] - text_bbox[1]
+
+    # Category (if any) sits above the question, both centered together as one block
+    category_block_height = 0
+    category_bbox = None
+    if category_font:
+        category_bbox = draw.textbbox((0, 0), category_text, font=category_font)
+        category_block_height = (category_bbox[3] - category_bbox[1]) + 20  # gap before question
+
+    total_height = text_height + category_block_height
+    top_y = (img_height - total_height) // 2
+
+    if category_font:
+        category_width = category_bbox[2] - category_bbox[0]
+        category_x = (img_width - category_width) // 2
+        draw.text((category_x, top_y), category_text, fill=text_color, font=category_font)
+
     text_x = (img_width - text_width) // 2
-    text_y = (img_height - text_height) // 2
-    
+    text_y = top_y + category_block_height
+
     # Draw the question text on the image
     draw.multiline_text((text_x, text_y), wrapped_text, fill=text_color, font=font, align="center")
-    
+
     # Save the image to a bytes buffer
     image_buffer = io.BytesIO()
     img.save(image_buffer, format='PNG')
     image_buffer.seek(0)  # Move the pointer to the beginning of the buffer
-    
+
     return image_buffer
 
 
@@ -19027,7 +19046,7 @@ async def ask_question(trivia_category, trivia_question, trivia_url, trivia_answ
 
     elif trivia_url.startswith("jeopardy"):
         if image_questions == True: 
-            image_buffer = generate_jeopardy_image(trivia_question)
+            image_buffer = generate_jeopardy_image(trivia_question, get_category_title(trivia_category, trivia_url))
             message_body += f"\u200b\n\u200b\n{number_block} **{get_category_title(trivia_category, trivia_url)}**\n\nAnd the answer is: \n"
             send_image_flag = True
         else:
