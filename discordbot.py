@@ -940,6 +940,7 @@ categories_to_exclude = []
 collected_responses = []
 current_question = None
 previous_question = None
+round_in_progress = False  # True from the moment a round is committed to starting until it ends -- lets /checkupdate warn before an update would kill the process mid-round
 current_answer_view = None
 current_answer_message = None
 previous_answer_message = None
@@ -5341,6 +5342,40 @@ class NewAvatarModal(discord.ui.Modal, title="Generate Custom Avatar"):
             file=discord.File(io.BytesIO(image_bytes), filename="avatar_preview.png"),
             view=view,
         )
+
+
+class CheckUpdateConfirmView(discord.ui.View):
+    """Push Through Anyway / Cancel prompt shown by /checkupdate when a round looks
+    actively in progress -- proceeding kills the process mid-round once Heroku's rebuild
+    finishes, so this isn't triggered automatically like the round-end update check is."""
+
+    def __init__(self, owner_id):
+        super().__init__(timeout=None)
+        self.owner_id = owner_id
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.owner_id:
+            await interaction.response.send_message(
+                "❌ Only the owner who triggered this can use these buttons.",
+                ephemeral=True,
+            )
+            return False
+        return True
+
+    @discord.ui.button(label="Push Through Anyway", style=discord.ButtonStyle.danger, emoji="⚠️")
+    async def confirm_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        for item in self.children:
+            item.disabled = True
+        await interaction.response.edit_message(content="🔍 Checking for a new commit...", view=self)
+        update_found = await end_of_round()
+        if not update_found:
+            await interaction.followup.send("✅ No update found — already on the latest commit.", ephemeral=True)
+
+    @discord.ui.button(label="Cancel", style=discord.ButtonStyle.secondary, emoji="❌")
+    async def cancel_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        for item in self.children:
+            item.disabled = True
+        await interaction.response.edit_message(content="✅ Cancelled.", view=self)
 
 
 class ReportQuestionView(discord.ui.View):
@@ -21516,6 +21551,7 @@ async def start_trivia():
     global question_responders, round_responders
     global question_asked_start, question_asked_end
     global resume_no_players_override
+    global round_in_progress
 
     try:
 
@@ -21666,6 +21702,7 @@ async def start_trivia():
             elif image_questions == True:
                 preview_image_url = await select_intro_image_url()
 
+            round_in_progress = True
             await round_preview(selected_questions, image_url=preview_image_url)
 
             #await round_start_messages()
@@ -21796,7 +21833,8 @@ async def start_trivia():
                 }
 
                 await save_data_to_mongo("previous_question_discord", "previous_question", previous_question)
-                
+
+            round_in_progress = False
             reset_embed_color()
             round_winner, winner_points, round_winner_id = await determine_round_winner()
             roast_task = asyncio.create_task(get_winner_roast_text(round_winner_id, round_winner))
@@ -24739,6 +24777,25 @@ async def newavatar_command(interaction: discord.Interaction, member: discord.Me
         await interaction.response.send_message("❌ Not available here.", ephemeral=True)
         return
     await interaction.response.send_modal(NewAvatarModal(member))
+
+
+@bot.tree.command(name="checkupdate", description="Check for a pending self-update right now (owner only)", guild=discord.Object(id=OKRAN_GUILD_ID))
+@discord.app_commands.default_permissions(administrator=True)
+async def checkupdate_command(interaction: discord.Interaction):
+    if interaction.user.id != okrag_id:
+        await interaction.response.send_message("❌ Not available here.", ephemeral=True)
+        return
+    if round_in_progress:
+        await interaction.response.send_message(
+            "⚠️ A round looks in progress right now — proceeding will kill the process mid-round once the rebuild finishes.",
+            view=CheckUpdateConfirmView(interaction.user.id),
+            ephemeral=True,
+        )
+        return
+    await interaction.response.send_message("🔍 Checking for a new commit...", ephemeral=True)
+    update_found = await end_of_round()
+    if not update_found:
+        await interaction.followup.send("✅ No update found — already on the latest commit.", ephemeral=True)
 
 
 @bot.tree.command(name="submissions", description="Manage pending question submissions (mods only)", guild=discord.Object(id=OKRAN_GUILD_ID))
