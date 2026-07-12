@@ -19945,7 +19945,9 @@ async def check_correct_responses_delete(question_ask_time, trivia_answer_list, 
             answer_embed.add_field(name=build_standings_header(), value=standings_table, inline=False)
         if author_name:
             answer_embed.set_author(name=author_name, icon_url=author_icon_url)
-        await safe_send(channel, embed=answer_embed, file=scoreboard_file)
+        # Same flag button as the question message -- tags the same current_question,
+        # since this embed is revealing the answer to that same question.
+        await safe_send(channel, embed=answer_embed, file=scoreboard_file, view=ReportQuestionView(current_question))
     elif show_standings_after:
         # No answer-reveal content this question (e.g. blind mode, no correct responses) --
         # still show the scoreboard on its own rather than silently dropping it.
