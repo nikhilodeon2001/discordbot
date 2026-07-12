@@ -20359,8 +20359,7 @@ def build_standings_table(points_gained_this_question=None, name_max_len=13, sco
 
         note = row_notes.get(user_id)
         delta_parts = []
-        # When masked, the total isn't visible, so a gain is never redundant to show.
-        if gained is not None and (mask_score or gained != score):
+        if gained is not None:
             delta_parts.append(f"+{gained}")
         if note:
             delta_parts.append(note)
@@ -20444,8 +20443,7 @@ def _compute_standings_rows(points_gained_this_question=None, row_notes=None,
 
         note = row_notes.get(user_id)
         delta_parts = []
-        # When masked, the total isn't visible, so a gain is never redundant to show.
-        if gained is not None and (mask_score or gained != score):
+        if gained is not None:
             delta_parts.append(f"+{gained}")
         if note:
             delta_parts.append(note)
