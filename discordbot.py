@@ -17231,6 +17231,7 @@ def generate_jeopardy_image(question_text, category_text=None):
     # Define image size and font properties
     img_width, img_height = 800, 600
     font_size = 60
+    category_font_size = 40
 
     # Create a blank image with blue background
     img = Image.new('RGB', (img_width, img_height), color=background_color)
@@ -17243,7 +17244,7 @@ def generate_jeopardy_image(question_text, category_text=None):
         print(f"Error: Font file not found: DejaVuSans.ttf")
         return None
 
-    category_font = get_font("DejaVuSans-Bold.ttf", font_size) if category_text else None
+    category_font = get_font("DejaVuSans-Bold.ttf", category_font_size) if category_text else None
 
     # Prepare the text for drawing (wrap text if too long)
     wrapped_text = "\n".join(draw_text_wrapper(question_text, font, img_width - 40))
