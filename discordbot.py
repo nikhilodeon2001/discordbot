@@ -21451,13 +21451,13 @@ async def start_trivia():
                         correct_letter = trivia_answer_list[0][0].upper() if trivia_answer_list else ""
                         is_letter_mc = correct_letter.isalpha() and len(correct_letter) == 1
 
-                        if is_letter_mc and choices and collected_responses:
+                        if is_letter_mc and choices:
                             clicks = {}
                             for r in collected_responses:
                                 ltr = r.get("message_content", "").strip().upper()
                                 if len(ltr) == 1 and ltr.isalpha():
                                     clicks.setdefault(ltr, []).append(r.get("display_name", "?"))
-                            if clicks and current_answer_message.embeds:
+                            if current_answer_message.embeds:
                                 embed = current_answer_message.embeds[0]
                                 if embed.description:
                                     desc_lines = embed.description.split('\n')
