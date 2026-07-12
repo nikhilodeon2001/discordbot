@@ -15951,10 +15951,11 @@ async def handle_intro_image_admin_command(message: discord.Message) -> bool:
             sample_gained, scoreboard_override=sample_scoreboard,
             row_notes=sample_notes, fastest_answers_override=sample_fastest,
         )
+        preview_image = generate_scoreboard_image(rows, title_text=f"Scoreboard ({len(sample_scoreboard)})")
         await safe_send(
             message.channel,
             content="Scoreboard preview (sample data)",
-            file=discord.File(generate_scoreboard_image(rows), filename="scoreboard_preview.png"),
+            file=discord.File(preview_image, filename="scoreboard_preview.png"),
         )
         return True
 
@@ -17453,10 +17454,13 @@ def render_emoji_icon(emoji_char, target_size):
     return canvas
 
 
-def generate_scoreboard_image(rows):
+def generate_scoreboard_image(rows, title_outer_emoji="🏔️", title_inner_emoji="📈", title_text="Scoreboard"):
     """Render the per-question scoreboard as an image instead of a monospace table --
     columns are pixel-positioned, not padded/truncated strings, so long names never get
-    cut off and there's no monospace-alignment budget forcing a name-length cap.
+    cut off and there's no monospace-alignment budget forcing a name-length cap. The
+    header (title_outer_emoji/title_inner_emoji/title_text, mirroring build_standings_header)
+    is baked into the image itself now that render_emoji_icon makes emoji reliable, rather
+    than living as a separate Discord embed field name above a title-less image.
 
     Rank is shown as a medal/keycap-number icon (row["rank_icon"]) or, past the 10th
     keycap, plain text (row["rank_text"]) -- see _compute_standings_rows. Lightning,
@@ -17479,6 +17483,9 @@ def generate_scoreboard_image(rows):
     lightning_icon_size = 22
 
     font = get_font("DejaVuSans.ttf", font_size)
+    title_font = get_font("DejaVuSans-Bold.ttf", 28)
+    title_icon_size = 32
+    title_height = 56
 
     rank_x = 20
     name_x = 60
@@ -17496,12 +17503,33 @@ def generate_scoreboard_image(rows):
         wrapped_names.append(lines if lines else [row["name"]])
 
     row_heights = [max(row_height, len(lines) * (font_size + 6) + 16) for lines in wrapped_names]
-    img_height = top_padding * 2 + sum(row_heights)
+    img_height = title_height + top_padding * 2 + sum(row_heights)
 
     img = Image.new("RGB", (img_width, img_height), color=background_color)
     draw = ImageDraw.Draw(img)
 
-    y = top_padding
+    # Title: mirrors build_standings_header()'s "🏔️📈 Scoreboard (N) 📈🏔️" format, drawn
+    # as icons + bold text rather than markdown since this is a raster image, not embed text.
+    outer_icon = render_emoji_icon(title_outer_emoji, title_icon_size)
+    inner_icon = render_emoji_icon(title_inner_emoji, title_icon_size)
+    title_text_bbox = draw.textbbox((0, 0), title_text, font=title_font)
+    title_text_width = title_text_bbox[2] - title_text_bbox[0]
+    title_gap = 10
+    total_title_width = title_icon_size * 4 + title_gap * 4 + title_text_width
+    tx = (img_width - total_title_width) // 2
+    ty_icon = (title_height - title_icon_size) // 2
+    ty_text = (title_height - (title_text_bbox[3] - title_text_bbox[1])) // 2 - title_text_bbox[1]
+    img.paste(outer_icon, (tx, ty_icon), outer_icon)
+    tx += title_icon_size + title_gap
+    img.paste(inner_icon, (tx, ty_icon), inner_icon)
+    tx += title_icon_size + title_gap
+    draw.text((tx, ty_text), title_text, fill=text_color, font=title_font)
+    tx += title_text_width + title_gap
+    img.paste(inner_icon, (tx, ty_icon), inner_icon)
+    tx += title_icon_size + title_gap
+    img.paste(outer_icon, (tx, ty_icon), outer_icon)
+
+    y = title_height + top_padding
     for row, lines, height in zip(rows, wrapped_names, row_heights):
         row_center_y = y + height // 2 - font_size // 2
         icon_center_y = y + height // 2
@@ -19882,8 +19910,13 @@ async def check_correct_responses_delete(question_ask_time, trivia_answer_list, 
         scoreboard_file = None
         if scoreboard_image_enabled:
             if standings_rows:
-                answer_embed.add_field(name=build_standings_header(), value="​", inline=False)
-                scoreboard_file = discord.File(generate_scoreboard_image(standings_rows), filename="scoreboard.png")
+                # Title is baked into the image itself now (see generate_scoreboard_image),
+                # rather than living as a separate embed field name above a title-less image.
+                title_kwargs = {"title_outer_emoji": "⛳", "title_inner_emoji": "📉"} if golf_mode else {}
+                scoreboard_image = generate_scoreboard_image(
+                    standings_rows, title_text=f"Scoreboard ({len(round_responders)})", **title_kwargs
+                )
+                scoreboard_file = discord.File(scoreboard_image, filename="scoreboard.png")
         elif standings_table:
             answer_embed.add_field(name=build_standings_header(), value=standings_table, inline=False)
         if author_name:
@@ -20333,7 +20366,7 @@ def _compute_standings_rows(points_gained_this_question=None, scoreboard_overrid
             decoration = "🌿"
         elif has_69:
             decoration = "😎"
-        elif not sort_alphabetically and idx == len(standings) and idx > 4:
+        elif not sort_alphabetically and idx == len(standings) and idx >= 4:
             decoration = "💩"
         else:
             decoration = None
