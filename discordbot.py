@@ -17292,29 +17292,28 @@ def generate_jeopardy_image(question_text, category_text=None):
     text_width = text_bbox[2] - text_bbox[0]
     text_height = text_bbox[3] - text_bbox[1]
 
-    # Category (if any) sits above the question, both centered together as one block,
-    # with a full blank line of space (not just a small pixel gap) between them. Wrapped
-    # with the same width constraint as the question so long categories don't hug the edges.
-    wrapped_category = None
-    category_block_height = 0
-    category_bbox = None
+    # Category (if any) is pinned near the top of the image at a fixed margin -- not
+    # centered as part of one block with the question -- so it's always in the same place
+    # regardless of how long the question is/how much it wraps. Wrapped with the same width
+    # constraint as the question so long categories don't hug the edges.
+    category_top_margin = 50
+    content_top = 0
     if category_font:
         wrapped_category = "\n".join(draw_text_wrapper(category_text, category_font, img_width - 40))
         category_bbox = draw.textbbox((0, 0), wrapped_category, font=category_font)
         single_line_bbox = draw.textbbox((0, 0), "Ag", font=category_font)
         single_line_height = single_line_bbox[3] - single_line_bbox[1]
-        category_block_height = (category_bbox[3] - category_bbox[1]) + single_line_height  # category block + one blank line
 
-    total_height = text_height + category_block_height
-    top_y = (img_height - total_height) // 2
-
-    if category_font:
         category_width = category_bbox[2] - category_bbox[0]
         category_x = (img_width - category_width) // 2
-        draw.multiline_text((category_x, top_y), wrapped_category, fill=text_color, font=category_font, align="center")
+        draw.multiline_text((category_x, category_top_margin), wrapped_category, fill=text_color, font=category_font, align="center")
 
+        content_top = category_top_margin + (category_bbox[3] - category_bbox[1]) + single_line_height  # category block + one blank line
+
+    # Question is centered within whatever space remains below the category (or the whole
+    # image, if there's no category).
     text_x = (img_width - text_width) // 2
-    text_y = top_y + category_block_height
+    text_y = content_top + (img_height - content_top - text_height) // 2
 
     # Draw the question text on the image
     draw.multiline_text((text_x, text_y), wrapped_text, fill=text_color, font=font, align="center")
@@ -17483,7 +17482,10 @@ def generate_scoreboard_image(rows, title_outer_emoji="🏔️", title_inner_emo
     background_color = (32, 34, 37)  # Discord dark-theme neutral
     text_color = (255, 255, 255)
     muted_color = (170, 175, 180)
-    img_width = 800
+    img_width_min = 420
+    img_width_max = 800
+    side_margin = 24
+    col_gap = 24
     row_height = 56
     top_padding = 20
     font_size = 24
@@ -17499,15 +17501,13 @@ def generate_scoreboard_image(rows, title_outer_emoji="🏔️", title_inner_emo
     name_x = 60
     name_max_width = 400
     name_min_font_size = 14
-    score_right_x = 630
-    delta_x = 645
 
     def fit_name(name):
         """Shrink the name's font a point at a time until it fits on one line within
         name_max_width; only wraps to a second line as a last resort once it's already at
         the smallest readable size and still doesn't fit. Also returns the name's actual
-        rendered width, so the lightning column can sit right after the widest name in
-        this particular scoreboard instead of always assuming the worst case."""
+        rendered width, so later columns can sit right after the widest actual content
+        instead of always assuming a fixed worst-case width."""
         size = font_size
         name_font = font
         width = name_font.getbbox(name)[2] - name_font.getbbox(name)[0]
@@ -17528,11 +17528,42 @@ def generate_scoreboard_image(rows, title_outer_emoji="🏔️", title_inner_emo
     row_heights = [max(row_height, len(lines) * (size + 6) + 16) for _, size, lines, _ in name_render]
     img_height = title_height + top_padding * 2 + sum(row_heights)
 
-    # Lightning column sits right after the widest name actually in this scoreboard (with a
-    # fixed gap), instead of a fixed position that leaves a big empty gap when every name is
-    # short -- clamped so it never crowds the score column when names run long.
+    def text_width(text, use_font=font):
+        bbox = use_font.getbbox(text)
+        return bbox[2] - bbox[0]
+
+    def lightning_reserved_width(count):
+        if count <= 0:
+            return 0
+        width = lightning_icon_size
+        if count > 1:
+            width += 4 + text_width(str(count))
+        return width
+
+    # Every subsequent column starts right after the widest actual content of the columns
+    # before it (not a fixed worst-case position), so the whole row -- and the image itself
+    # -- shrinks to fit when the real content (names, streaks, scores, deltas) is short, and
+    # only grows as far as it actually needs to when something is long.
     max_name_render_width = max((w for _, _, _, w in name_render), default=0)
-    lightning_x = min(max(name_x + max_name_render_width + 30, 150), 570)
+    lightning_x = name_x + max_name_render_width + col_gap
+
+    max_lightning_width = max((lightning_reserved_width(row["lightning_count"]) for row in rows), default=0)
+    score_x = lightning_x + (max_lightning_width + col_gap if max_lightning_width else 0)
+
+    max_score_width = max((text_width(row["score_display"]) for row in rows), default=0)
+    delta_widths = [text_width(row["delta_text"]) if row["delta_text"] else 0 for row in rows]
+    max_delta_width = max(delta_widths, default=0)
+    delta_x = score_x + max_score_width + col_gap
+
+    content_right_edge = (delta_x + max_delta_width if max_delta_width else score_x + max_score_width) + side_margin
+
+    title_text_bbox_probe = title_font.getbbox(title_text)
+    title_text_width = title_text_bbox_probe[2] - title_text_bbox_probe[0]
+    title_gap = 10
+    total_title_width = title_icon_size * 4 + title_gap * 4 + title_text_width
+    title_required_width = total_title_width + side_margin * 2
+
+    img_width = int(min(img_width_max, max(img_width_min, content_right_edge, title_required_width)))
 
     img = Image.new("RGB", (img_width, img_height), color=background_color)
     draw = ImageDraw.Draw(img)
@@ -17542,9 +17573,6 @@ def generate_scoreboard_image(rows, title_outer_emoji="🏔️", title_inner_emo
     outer_icon = render_emoji_icon(title_outer_emoji, title_icon_size)
     inner_icon = render_emoji_icon(title_inner_emoji, title_icon_size)
     title_text_bbox = draw.textbbox((0, 0), title_text, font=title_font)
-    title_text_width = title_text_bbox[2] - title_text_bbox[0]
-    title_gap = 10
-    total_title_width = title_icon_size * 4 + title_gap * 4 + title_text_width
     tx = (img_width - total_title_width) // 2
     ty_icon = (title_height - title_icon_size) // 2
     ty_text = (title_height - (title_text_bbox[3] - title_text_bbox[1])) // 2 - title_text_bbox[1]
@@ -17579,9 +17607,8 @@ def generate_scoreboard_image(rows, title_outer_emoji="🏔️", title_inner_emo
             if row["lightning_count"] > 1:
                 draw.text((lightning_x + lightning_icon_size + 4, row_center_y), f"{row['lightning_count']}", fill=text_color, font=font)
 
-        score_bbox = draw.textbbox((0, 0), row["score_display"], font=font)
-        score_width = score_bbox[2] - score_bbox[0]
-        draw.text((score_right_x - score_width, row_center_y), row["score_display"], fill=text_color, font=font)
+        score_width = text_width(row["score_display"])
+        draw.text((score_x + max_score_width - score_width, row_center_y), row["score_display"], fill=text_color, font=font)
 
         if row["delta_text"]:
             draw.text((delta_x, row_center_y), row["delta_text"], fill=muted_color, font=font)
