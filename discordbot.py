@@ -837,7 +837,7 @@ marx_mode_default = False
 marx_mode = marx_mode_default
 image_questions_default = True
 image_questions = image_questions_default
-okra_avatar_enabled = True  # code-level kill switch for the paid AI avatar edit -- flip to False to fall back to the plain Discord avatar
+okra_avatar_enabled = False  # code-level kill switch for the paid AI avatar edit -- flip to False to fall back to the plain Discord avatar
 scoreboard_image_enabled = True  # code-level kill switch for the image scoreboard experiment -- flip to False to fall back to the original monospace table
 sniper_mode_default = False
 sniper_mode = sniper_mode_default
@@ -19154,6 +19154,7 @@ async def ask_question(trivia_category, trivia_question, trivia_url, trivia_answ
     image_buffer = None
     image_url = None
     answer_view = None
+    footer_text = None
 
     # Apply glyph transformation if glyph_mode is enabled
     trivia_question = apply_glyphs(trivia_question)
@@ -19177,7 +19178,11 @@ async def ask_question(trivia_category, trivia_question, trivia_url, trivia_answ
 
     message_body = ""
     if single_answer:
-        message_body += "\u200b\n🚨 **1 GUESS** 🚨"
+        is_numeric_answer = (
+            is_number(trivia_answer) or
+            trivia_url in ["algebra", "base", "median", "mean", "zeroes sum", "zeroes product"]
+        )
+        footer_text = "\ud83d\udea8 One guess: Answer is a number" if is_numeric_answer else "\ud83d\udea8 One guess"
         
     if is_valid_url(trivia_url): 
         message_body += f"\u200b\n\u200b\n{number_block}📷 **{get_category_title(trivia_category, trivia_url)}**\n\n{trivia_question}\n"
@@ -19293,9 +19298,11 @@ async def ask_question(trivia_category, trivia_question, trivia_url, trivia_answ
         
     elif "multiple choice" in trivia_url:
         if trivia_answer_list[0] in {"True", "False"}:
-            message_body += f"\u200b\n\u200b\n{number_block} **{get_category_title(trivia_category, trivia_url)}**\n\n🚨 **T/F - 1 GUESS** 🚨 {trivia_question}\n\n"
+            message_body += f"\u200b\n\u200b\n{number_block} **{get_category_title(trivia_category, trivia_url)}**\n\n{trivia_question}\n\n"
+            footer_text = "🚨 One guess: True/T/False/F (or click)"
         else:
-            message_body += f"\u200b\n\u200b\n{number_block} **{get_category_title(trivia_category, trivia_url)}**\n\n🚨 **Letter - 1 GUESS** 🚨 {trivia_question}\n"
+            message_body += f"\u200b\n\u200b\n{number_block} **{get_category_title(trivia_category, trivia_url)}**\n\n{trivia_question}\n"
+            footer_text = "🚨 One guess: A,B,C,D,a,b,c,d (or click)"
             #await safe_send(channel, message_body)
             message_body += "\n"
             for answer in trivia_answer_list[1:]:
@@ -19352,14 +19359,23 @@ async def ask_question(trivia_category, trivia_question, trivia_url, trivia_answ
 
     if send_image_flag:
         if image_url:
-            message = await safe_send(channel, content=message_body, embed=discord.Embed().set_image(url=image_url), **view_kwargs)
+            embed = discord.Embed()
+            embed.set_image(url=image_url)
+            if footer_text:
+                embed.set_footer(text=footer_text)
+            message = await safe_send(channel, content=message_body, embed=embed, **view_kwargs)
         elif image_buffer:
             image_file = discord.File(fp=image_buffer, filename="image.png")
             embed = discord.Embed()
             embed.set_image(url="attachment://image.png")
+            if footer_text:
+                embed.set_footer(text=footer_text)
             message = await safe_send(channel, content=message_body, embed=embed, file=image_file, **view_kwargs)
     else:
-        message = await safe_send(channel, message_body, **view_kwargs)
+        embed = discord.Embed()
+        if footer_text:
+            embed.set_footer(text=footer_text)
+        message = await safe_send(channel, message_body, embed=embed, **view_kwargs)
 
     current_answer_view = answer_view
     current_answer_message = message
