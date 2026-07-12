@@ -17479,7 +17479,6 @@ def generate_scoreboard_image(rows, title_outer_emoji="🏔️", title_inner_emo
     top_padding = 20
     font_size = 24
     rank_icon_size = 30
-    deco_icon_size = 28
     lightning_icon_size = 22
 
     font = get_font("DejaVuSans.ttf", font_size)
@@ -17489,8 +17488,7 @@ def generate_scoreboard_image(rows, title_outer_emoji="🏔️", title_inner_emo
 
     rank_x = 20
     name_x = 60
-    name_max_width = 330
-    deco_x = 405
+    name_max_width = 400
     lightning_x = 470
     score_right_x = 630
     delta_x = 645
@@ -17542,10 +17540,6 @@ def generate_scoreboard_image(rows, title_outer_emoji="🏔️", title_inner_emo
 
         name_text = "\n".join(lines)
         draw.multiline_text((name_x, row_center_y), name_text, fill=text_color, font=font)
-
-        if row["decoration"]:
-            icon = render_emoji_icon(row["decoration"], deco_icon_size)
-            img.paste(icon, (deco_x, icon_center_y - deco_icon_size // 2), icon)
 
         if row["lightning_count"] > 0:
             lightning_icon = render_emoji_icon("⚡", lightning_icon_size)
@@ -20351,25 +20345,23 @@ def _compute_standings_rows(points_gained_this_question=None, scoreboard_overrid
             has_420 = "420" in str(score) or (gained is not None and "420" in str(gained))
             has_69 = "69" in str(score) or (gained is not None and "69" in str(gained))
 
-        # Rank marker: medal for the top 3 (not in alphabetical/masked mode, since
-        # alphabetical order isn't a ranking), a keycap-number emoji up through 10th, plain
-        # text past that. The 420/69/last-place decoration is a separate, independent icon
-        # -- e.g. a rank-1 finisher with a 420 score shows both the gold medal and the leaf.
-        if not sort_alphabetically and idx <= 3:
+        # Rank marker -- one icon per row, in priority order: a 420/69 easter egg replaces
+        # the rank marker entirely (matching the original monospace code's priority, where
+        # these took precedence over everything else), then medal (top 3, not in
+        # alphabetical/masked mode), then last-place, then a keycap-number emoji through
+        # 10th, then plain text past that.
+        if has_420:
+            rank_icon, rank_text = "🌿", None
+        elif has_69:
+            rank_icon, rank_text = "😎", None
+        elif not sort_alphabetically and idx <= 3:
             rank_icon, rank_text = medals[idx - 1], None
+        elif not sort_alphabetically and idx == len(standings) and idx >= 4:
+            rank_icon, rank_text = "💩", None
         elif idx <= len(keycap_numbers):
             rank_icon, rank_text = keycap_numbers[idx - 1], None
         else:
             rank_icon, rank_text = None, f"{idx}."
-
-        if has_420:
-            decoration = "🌿"
-        elif has_69:
-            decoration = "😎"
-        elif not sort_alphabetically and idx == len(standings) and idx >= 4:
-            decoration = "💩"
-        else:
-            decoration = None
 
         note = row_notes.get(user_id)
         delta_parts = []
@@ -20392,7 +20384,6 @@ def _compute_standings_rows(points_gained_this_question=None, scoreboard_overrid
             "score_display": score_display,
             "delta_text": delta_text,
             "lightning_count": fastest_count,
-            "decoration": decoration,
         })
 
     return rows
