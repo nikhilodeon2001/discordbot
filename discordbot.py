@@ -15933,39 +15933,51 @@ async def handle_intro_image_admin_command(message: discord.Message) -> bool:
 
     if content == "#scoreboardpreview":
         # Fake negative user IDs so they can never collide with real Discord snowflakes.
-        # Engineered to hit every decoration in one image: all 3 medals, both easter eggs
-        # (420/69), last place, a delta, and a multi-count lightning icon.
-        sample_scoreboard = {
-            -1: {"display_name": "Sky Shadowfax the Third", "score": 1500},
-            -2: {"display_name": "Okra_Enjoyer99", "score": 1200},
-            -3: {"display_name": "Nikhil", "score": 900},
-            -4: {"display_name": "Lucky Larry", "score": 1420},
-            -5: {"display_name": "Chill Chad", "score": 69},
-            -6: {"display_name": "Middle Mike", "score": 300},
-            -7: {"display_name": "Zeta", "score": 10},
-        }
-        sample_gained = {-1: 500}
-        sample_fastest = {-1: 3}
-        rows = _compute_standings_rows(
-            sample_gained, scoreboard_override=sample_scoreboard, fastest_answers_override=sample_fastest,
-        )
-        preview_image = generate_scoreboard_image(rows, title_text=f"Scoreboard ({len(sample_scoreboard)})")
+        # Several scenarios, each its own message, so username-length behavior (shrink,
+        # wrap, dynamic column widths) can be checked across the range at a glance instead
+        # of guessing from a single sample.
+        scenarios = [
+            ("All short usernames", {
+                -1: {"display_name": "Jo", "score": 1500},
+                -2: {"display_name": "Al", "score": 1200},
+                -3: {"display_name": "K", "score": 900},
+                -4: {"display_name": "Bo", "score": 400},
+            }, {}, {}),
+            ("All long usernames", {
+                -1: {"display_name": "Christopher Alexander Montgomery III", "score": 1500},
+                -2: {"display_name": "Elizabeth Featherstonehaugh-Smythe", "score": 1200},
+                -3: {"display_name": "Sky Shadowfax the Third of House Windrunner", "score": 900},
+            }, {}, {}),
+            ("Mixed short and long usernames", {
+                -1: {"display_name": "Jo", "score": 1500},
+                -2: {"display_name": "Christopher Alexander Montgomery III", "score": 1200},
+                -3: {"display_name": "K", "score": 900},
+                -4: {"display_name": "Elizabeth Featherstonehaugh-Smythe", "score": 400},
+            }, {}, {}),
+            ("Single player, short name", {
+                -1: {"display_name": "Jo", "score": 10},
+            }, {}, {}),
+            ("Full decoration demo (medals, easter eggs, last place, lightning, delta)", {
+                -1: {"display_name": "Sky Shadowfax the Third", "score": 1500},
+                -2: {"display_name": "Okra_Enjoyer99", "score": 1200},
+                -3: {"display_name": "Nikhil", "score": 900},
+                -4: {"display_name": "Lucky Larry", "score": 1420},
+                -5: {"display_name": "Chill Chad", "score": 69},
+                -6: {"display_name": "Middle Mike", "score": 300},
+                -7: {"display_name": "Zeta", "score": 10},
+            }, {-1: 500}, {-1: 3}),
+        ]
 
-        # Mirrors the full real answer-reveal embed (check_correct_responses_delete): author
-        # line (avatar + fastest responder + streak), the Answer/checkmark description
-        # (with the "was closest (off by N)!" callout), then the scoreboard image -- not
-        # just the image in isolation.
-        preview_embed = discord.Embed()
-        preview_embed.description = "​\n✅ **Answer** (5) ✅\n42\n​\n🎯 Sky Shadowfax the Third was closest (off by 2)!\n​"
-        preview_embed.set_author(
-            name="Sky Shadowfax the Third ⚡...🔥3 in a row!",
-            icon_url=message.author.display_avatar.url,
-        )
-        await safe_send(
-            message.channel,
-            embed=preview_embed,
-            file=discord.File(preview_image, filename="scoreboard_preview.png"),
-        )
+        for label, sample_scoreboard, sample_gained, sample_fastest in scenarios:
+            rows = _compute_standings_rows(
+                sample_gained, scoreboard_override=sample_scoreboard, fastest_answers_override=sample_fastest,
+            )
+            preview_image = generate_scoreboard_image(rows, title_text=f"Scoreboard ({len(sample_scoreboard)})")
+            await safe_send(
+                message.channel,
+                content=f"**{label}**",
+                file=discord.File(preview_image, filename="scoreboard_preview.png"),
+            )
         return True
 
     return False
