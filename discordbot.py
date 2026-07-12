@@ -15931,55 +15931,6 @@ async def handle_intro_image_admin_command(message: discord.Message) -> bool:
         await safe_send(message.channel, content="\n".join(lines))
         return True
 
-    if content == "#scoreboardpreview":
-        # Fake negative user IDs so they can never collide with real Discord snowflakes.
-        # Several scenarios, each its own message, so username-length behavior (shrink,
-        # wrap, dynamic column widths) can be checked across the range at a glance instead
-        # of guessing from a single sample.
-        scenarios = [
-            ("All short usernames", {
-                -1: {"display_name": "Jo", "score": 1500},
-                -2: {"display_name": "Al", "score": 1200},
-                -3: {"display_name": "K", "score": 900},
-                -4: {"display_name": "Bo", "score": 400},
-            }, {}, {-1: 3}),
-            ("All long usernames", {
-                -1: {"display_name": "Christopher Alexander Montgomery III", "score": 1500},
-                -2: {"display_name": "Elizabeth Featherstonehaugh-Smythe", "score": 1200},
-                -3: {"display_name": "Sky Shadowfax the Third of House Windrunner", "score": 900},
-            }, {}, {-1: 4}),
-            ("Mixed short and long usernames", {
-                -1: {"display_name": "Jo", "score": 1500},
-                -2: {"display_name": "Christopher Alexander Montgomery III", "score": 1200},
-                -3: {"display_name": "K", "score": 900},
-                -4: {"display_name": "Elizabeth Featherstonehaugh-Smythe", "score": 400},
-            }, {}, {-2: 2}),
-            ("Single player, short name", {
-                -1: {"display_name": "Jo", "score": 10},
-            }, {}, {-1: 5}),
-            ("Full decoration demo (medals, easter eggs, last place, lightning, delta)", {
-                -1: {"display_name": "Sky Shadowfax the Third", "score": 1500},
-                -2: {"display_name": "Okra_Enjoyer99", "score": 1200},
-                -3: {"display_name": "Nikhil", "score": 900},
-                -4: {"display_name": "Lucky Larry", "score": 1420},
-                -5: {"display_name": "Chill Chad", "score": 69},
-                -6: {"display_name": "Middle Mike", "score": 300},
-                -7: {"display_name": "Zeta", "score": 10},
-            }, {-1: 500}, {-1: 3}),
-        ]
-
-        for label, sample_scoreboard, sample_gained, sample_fastest in scenarios:
-            rows = _compute_standings_rows(
-                sample_gained, scoreboard_override=sample_scoreboard, fastest_answers_override=sample_fastest,
-            )
-            preview_image = generate_scoreboard_image(rows, title_text=f"Scoreboard ({len(sample_scoreboard)})")
-            await safe_send(
-                message.channel,
-                content=f"**{label}**",
-                file=discord.File(preview_image, filename="scoreboard_preview.png"),
-            )
-        return True
-
     return False
 
 
@@ -20371,23 +20322,19 @@ def build_standings_table(points_gained_this_question=None, name_max_len=13, sco
     return "```\n" + "\n".join(rows) + "\n```"
 
 
-def _compute_standings_rows(points_gained_this_question=None, scoreboard_override=None,
-                             row_notes=None, sort_alphabetically=False, mask_score=False,
-                             fastest_answers_override=None):
+def _compute_standings_rows(points_gained_this_question=None, row_notes=None,
+                             sort_alphabetically=False, mask_score=False):
     """Row data for generate_scoreboard_image() -- same merge/sort/delta/lightning logic as
     build_standings_table, minus any name-width truncation (the image has no fixed-width
     column constraint), plus the medal/420/69/last-place decorations restored from before
     commit b231b91 removed them (they were dropped purely to free up monospace column room,
     which no longer applies here).
 
-    fastest_answers_override lets #scoreboardpreview inject fake lightning counts without
-    touching the real fastest_answers_count global.
-
     Returns None if there's nothing to show."""
-    board = scoreboard_override if scoreboard_override is not None else scoreboard
+    board = scoreboard
     if not board:
         return None
-    fastest_counts = fastest_answers_override if fastest_answers_override is not None else fastest_answers_count
+    fastest_counts = fastest_answers_count
 
     points_gained_this_question = points_gained_this_question or {}
     row_notes = row_notes or {}
