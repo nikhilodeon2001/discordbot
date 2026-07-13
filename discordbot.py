@@ -22841,7 +22841,7 @@ async def _run_flagged_review(collection_name, doc_id, mod_user_id, mod_name=Non
     if collection_name in {"math_questions", "stats_questions"}:
         return {"ai_action": "no_change", "ai_reasoning": "Math/stats questions are generated at runtime — skipping.", "proposed_changes": {}}
     try:
-        doc = await db[collection_name].find_one({"_id": _to_object_id(doc_id)})
+        doc = await db[collection_name].find_one(_id_filter(doc_id))
     except Exception as e:
         sentry_sdk.capture_exception(e)
         return {"ai_action": "no_change", "ai_reasoning": f"Error looking up document in '{collection_name}': {e}", "proposed_changes": {}}
@@ -22899,7 +22899,7 @@ async def _run_flagged_review(collection_name, doc_id, mod_user_id, mod_name=Non
         "clarifications": clarifications,
     }
     await db[collection_name].update_one(
-        {"_id": _to_object_id(doc_id)},
+        _id_filter(doc_id),
         {"$set": {"ai_review": result}},
     )
     return result
@@ -23374,6 +23374,15 @@ def _to_object_id(val):
         return ObjectId(val)
     except Exception:
         return val
+
+
+def _id_filter(val):
+    """Match a document's _id whether it's stored as the given value or its ObjectId
+    equivalent — some legacy collections have string-typed _ids that look like ObjectIds."""
+    oid = _to_object_id(val)
+    if isinstance(oid, ObjectId) and oid != val:
+        return {"_id": {"$in": [val, oid]}}
+    return {"_id": val}
 
 
 async def _approve_submission(interaction, submission_id, edited=False, notify_text=None, notify=True, before=None):
@@ -24342,13 +24351,13 @@ class ApplyFlaggedModal(discord.ui.Modal, title="Apply Claude Changes"):
                     ephemeral=True,
                 )
                 return
-            doc = await db[col].find_one({"_id": _to_object_id(doc_id)})
+            doc = await db[col].find_one(_id_filter(doc_id))
             proposed = (doc.get("ai_review") or {}).get("proposed_changes", {})
             update_op = {"$unset": {"audit": ""}}
             if proposed:
                 update_op["$set"] = proposed
                 update_op["$unset"].update({"asked_count": "", "correct_count": "", "incorrect_count": ""})
-            await db[col].update_one({"_id": _to_object_id(doc_id)}, update_op)
+            await db[col].update_one(_id_filter(doc_id), update_op)
             await db.flag_notifications.update_one(
                 {"doc_id": doc_id, "collection_name": col}, {"$set": {"resolved": True}}
             )
@@ -24396,8 +24405,8 @@ class ClearFlaggedModal(discord.ui.Modal, title="Clear Audit"):
         try:
             doc = None
             if col not in {"math_questions", "stats_questions"}:
-                doc = await db[col].find_one({"_id": _to_object_id(doc_id)})
-                await db[col].update_one({"_id": _to_object_id(doc_id)}, {"$unset": {"audit": ""}})
+                doc = await db[col].find_one(_id_filter(doc_id))
+                await db[col].update_one(_id_filter(doc_id), {"$unset": {"audit": ""}})
 
             flag_record = await db.flag_notifications.find_one({"doc_id": doc_id, "collection_name": col})
             await db.flag_notifications.update_one(
@@ -24465,9 +24474,9 @@ class EditFlaggedQuestionModal(discord.ui.Modal, title="Edit & Apply Question Fi
             "answers": answers,
         }
         try:
-            doc_before = await db[col].find_one({"_id": _to_object_id(doc_id)})
+            doc_before = await db[col].find_one(_id_filter(doc_id))
             await db[col].update_one(
-                {"_id": _to_object_id(doc_id)},
+                _id_filter(doc_id),
                 {"$set": fields, "$unset": {"audit": "", "asked_count": "", "correct_count": "", "incorrect_count": ""}},
             )
             await db.flag_notifications.update_one(
@@ -24510,7 +24519,7 @@ async def _build_flagged_review_embed(col, doc_id, result):
     question_message_link = (flag_record or {}).get("question_message_link")
 
     try:
-        doc = await db[col].find_one({"_id": _to_object_id(doc_id)})
+        doc = await db[col].find_one(_id_filter(doc_id))
         answers = doc.get("answers", [])
         embed = discord.Embed(
             title="🚩 Question Flagged",
@@ -24600,7 +24609,7 @@ class FlaggedReviewView(discord.ui.View):
         if not col or not doc_id:
             await interaction.response.send_message("❌ Could not parse document ID.", ephemeral=True)
             return
-        existing = await db[col].find_one({"_id": _to_object_id(doc_id)}, {"ai_review": 1})
+        existing = await db[col].find_one(_id_filter(doc_id), {"ai_review": 1})
         if existing and existing.get("ai_review"):
             # Already reviewed at least once — collect optional clarification before re-asking.
             await interaction.response.send_modal(FlaggedReviewClarificationModal(col, doc_id))
@@ -24633,7 +24642,7 @@ class FlaggedReviewView(discord.ui.View):
                 ephemeral=True,
             )
             return
-        doc = await db[col].find_one({"_id": _to_object_id(doc_id)})
+        doc = await db[col].find_one(_id_filter(doc_id))
         if not doc:
             await interaction.response.send_message("❌ Question not found.", ephemeral=True)
             return
