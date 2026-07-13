@@ -13261,6 +13261,7 @@ async def send_flag_notification(question, flag_reason, display_name, flag_messa
                         "resolved": False,
                         "posted_at": datetime.datetime.utcnow(),
                         "question_snapshot": {"question": question_text, "answers": answers},
+                        "question_message_link": question_message_link,
                     },
                     "$push": {"flaggers": {"user_id": user_id, "display_name": display_name, "message_content": flag_reason, "timestamp": datetime.datetime.utcnow()}},
                 },
@@ -24505,6 +24506,8 @@ async def _build_flagged_review_embed(col, doc_id, result):
     flag_record = await db.flag_notifications.find_one({"doc_id": doc_id, "collection_name": col})
     flaggers = (flag_record or {}).get("flaggers", [])
     flagged_by = ", ".join(f.get("display_name", "Unknown") for f in flaggers if f.get("display_name")) or "Unknown"
+    original_timestamp = (flag_record or {}).get("posted_at") or datetime.datetime.now(timezone.utc)
+    question_message_link = (flag_record or {}).get("question_message_link")
 
     try:
         doc = await db[col].find_one({"_id": _to_object_id(doc_id)})
@@ -24512,11 +24515,13 @@ async def _build_flagged_review_embed(col, doc_id, result):
         embed = discord.Embed(
             title="🚩 Question Flagged",
             color=discord.Color.red(),
-            timestamp=datetime.datetime.now(timezone.utc),
+            timestamp=original_timestamp,
         )
         embed.add_field(name="👤 Flagged By", value=flagged_by, inline=True)
         embed.add_field(name="❓ Question", value=f"**{doc.get('category','')}**: {doc.get('question','')}", inline=False)
         embed.add_field(name="Answers", value=", ".join(str(a) for a in answers)[:512] or "—", inline=False)
+        if question_message_link:
+            embed.add_field(name="🔗 Jump to Question", value=f"[View in chat]({question_message_link})", inline=False)
         embed.add_field(name="💬 Flag Report(s)", value=_format_flag_reports(doc), inline=False)
         action_emoji = "🔄" if ai_action == "update" else "✅"
         embed.add_field(name=f"{action_emoji} Claude: {ai_action.upper()}", value=ai_reasoning[:1024], inline=False)
@@ -24527,10 +24532,12 @@ async def _build_flagged_review_embed(col, doc_id, result):
             embed.add_field(name="🗣️ Moderator guidance", value=history[:1024], inline=False)
     except Exception:
         snapshot = (flag_record or {}).get("question_snapshot", {})
-        embed = discord.Embed(title="🚩 Question Flagged (Claude reviewed)", color=discord.Color.red())
+        embed = discord.Embed(title="🚩 Question Flagged (Claude reviewed)", color=discord.Color.red(), timestamp=original_timestamp)
         embed.add_field(name="👤 Flagged By", value=flagged_by, inline=True)
         if snapshot.get("question"):
             embed.add_field(name="❓ Question", value=snapshot["question"], inline=False)
+        if question_message_link:
+            embed.add_field(name="🔗 Jump to Question", value=f"[View in chat]({question_message_link})", inline=False)
         embed.add_field(name="Verdict", value=f"{ai_action}: {ai_reasoning[:512]}", inline=False)
     return embed
 
