@@ -24325,6 +24325,26 @@ async def _dm_flaggers(guild, flaggers, *, notify, notify_text=None, intro_text=
             pass
 
 
+def _build_flagged_resolution_embed(flag_record, doc_for_audit, *, title, color, action_field=None, footer_text):
+    """Build the final confirmation embed for Apply/Edit & Apply/Clear Audit — keeps the
+    original flagger identity, timestamp, jump link, and flag report(s) instead of dropping them."""
+    flaggers = (flag_record or {}).get("flaggers", [])
+    flagged_by = ", ".join(f.get("display_name", "Unknown") for f in flaggers if f.get("display_name")) or "Unknown"
+    original_timestamp = (flag_record or {}).get("posted_at") or datetime.datetime.now(timezone.utc)
+    question_message_link = (flag_record or {}).get("question_message_link")
+
+    embed = discord.Embed(title=title, color=color, timestamp=original_timestamp)
+    embed.add_field(name="👤 Flagged By", value=flagged_by, inline=True)
+    if question_message_link:
+        embed.add_field(name="🔗 Jump to Question", value=f"[View in chat]({question_message_link})", inline=False)
+    if action_field:
+        name, value = action_field
+        embed.add_field(name=name, value=value, inline=False)
+    embed.add_field(name="💬 Flag Report(s)", value=_format_flag_reports(doc_for_audit or {}), inline=False)
+    embed.set_footer(text=footer_text)
+    return embed
+
+
 class ApplyFlaggedModal(discord.ui.Modal, title="Apply Claude Changes"):
     notify = discord.ui.TextInput(
         label="Note to flagger(s) (optional)",
@@ -24372,8 +24392,13 @@ class ApplyFlaggedModal(discord.ui.Modal, title="Apply Claude Changes"):
                 intro_text="✅ A question you flagged has been reviewed and updated.",
                 before=doc, after=after_doc,
             )
-            embed = discord.Embed(title="🚩 Question Flagged", color=discord.Color.green())
-            embed.set_footer(text=f"✅ Applied by {interaction.user.display_name}")
+            flag_record = await db.flag_notifications.find_one({"doc_id": doc_id, "collection_name": col})
+            action_field = ("✅ Applied", f"**{after_doc.get('category','')}**: {after_doc.get('question','')}") if proposed else None
+            embed = _build_flagged_resolution_embed(
+                flag_record, doc,
+                title="🚩 Question Flagged", color=discord.Color.green(),
+                action_field=action_field, footer_text=f"✅ Applied by {interaction.user.display_name}",
+            )
             await interaction.response.send_message("✅ Applied changes and cleared audit.", ephemeral=True)
             if interaction.message:
                 await interaction.message.edit(embed=embed, view=None)
@@ -24422,8 +24447,11 @@ class ClearFlaggedModal(discord.ui.Modal, title="Clear Audit"):
                 notify=self.notify_label.component.value, notify_text=notify_text,
                 intro_text="⚠️ Your flag was reviewed!", before=context,
             )
-            embed = discord.Embed(title="🚩 Question Flagged", color=discord.Color.greyple())
-            embed.set_footer(text=f"🧹 Audit cleared by {interaction.user.display_name}")
+            embed = _build_flagged_resolution_embed(
+                flag_record, doc,
+                title="🚩 Question Flagged", color=discord.Color.greyple(),
+                footer_text=f"🧹 Audit cleared by {interaction.user.display_name}",
+            )
             await interaction.response.send_message("🧹 Audit cleared.", ephemeral=True)
             if interaction.message:
                 await interaction.message.edit(embed=embed, view=None)
@@ -24492,9 +24520,13 @@ class EditFlaggedQuestionModal(discord.ui.Modal, title="Edit & Apply Question Fi
                     intro_text="✅ A question you flagged has been reviewed and updated.",
                     before=doc_before, after=fields,
                 )
-            embed = discord.Embed(title="🚩 Question Flagged", color=discord.Color.green())
-            embed.add_field(name="✏️ Edited & Applied", value=f"**{fields['category']}**: {fields['question']}", inline=False)
-            embed.set_footer(text=f"✅ Edited & applied by {interaction.user.display_name}")
+            flag_record = await db.flag_notifications.find_one({"doc_id": doc_id, "collection_name": col})
+            embed = _build_flagged_resolution_embed(
+                flag_record, doc_before,
+                title="🚩 Question Flagged", color=discord.Color.green(),
+                action_field=("✏️ Edited & Applied", f"**{fields['category']}**: {fields['question']}"),
+                footer_text=f"✅ Edited & applied by {interaction.user.display_name}",
+            )
             await interaction.response.send_message("✅ Applied edits and cleared audit.", ephemeral=True)
             if interaction.message:
                 await interaction.message.edit(embed=embed, view=None)
@@ -24535,7 +24567,15 @@ async def _build_flagged_review_embed(col, doc_id, result):
         action_emoji = "🔄" if ai_action == "update" else "✅"
         embed.add_field(name=f"{action_emoji} Claude: {ai_action.upper()}", value=ai_reasoning[:1024], inline=False)
         if proposed:
-            embed.add_field(name="📝 Proposed changes", value="\n".join(f"**{k}:** {v}" for k, v in proposed.items())[:1024], inline=False)
+            full_category = proposed.get("category", doc.get("category", ""))
+            full_question = proposed.get("question", doc.get("question", ""))
+            full_answers = proposed.get("answers", answers)
+            proposed_lines = [
+                f"**category:** {full_category}",
+                f"**question:** {full_question}",
+                f"**answers:** {full_answers}",
+            ]
+            embed.add_field(name="📝 Proposed changes", value="\n".join(proposed_lines)[:1024], inline=False)
         if clarifications:
             history = "\n".join(f"**{c.get('mod_name', 'Unknown')}:** {c.get('text', '')}" for c in clarifications)
             embed.add_field(name="🗣️ Moderator guidance", value=history[:1024], inline=False)
