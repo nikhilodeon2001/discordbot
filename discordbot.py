@@ -19304,7 +19304,7 @@ async def ask_question(trivia_category, trivia_question, trivia_url, trivia_answ
             footer_text = "🚨 One guess: True/T/False/F (or click)"
         else:
             message_body += f"\u200b\n\u200b\n{number_block} **{get_category_title(trivia_category, trivia_url)}**\n\n{trivia_question}\n"
-            footer_text = "🚨 One guess: A,B,C,D"
+            footer_text = "🚨 One guess"
             #await safe_send(channel, message_body)
             message_body += "\n"
             for answer in trivia_answer_list[1:]:
