@@ -13262,7 +13262,7 @@ async def send_flag_notification(question, flag_reason, display_name, flag_messa
                         "posted_at": datetime.datetime.utcnow(),
                         "question_snapshot": {"question": question_text, "answers": answers},
                     },
-                    "$push": {"flaggers": {"user_id": user_id, "display_name": display_name, "message_content": flag_reason}},
+                    "$push": {"flaggers": {"user_id": user_id, "display_name": display_name, "message_content": flag_reason, "timestamp": datetime.datetime.utcnow()}},
                 },
                 upsert=True,
             )
@@ -13287,6 +13287,7 @@ async def update_audit_question(question, message_content, display_name, flag_me
         audit_entry = {
             "display_name": f"{display_name} (Discord)",
             "message_content": message_content,
+            "timestamp": time.time(),
         }
         if user_id is not None:
             audit_entry["user_id"] = user_id
@@ -22649,11 +22650,14 @@ ANSWER ARRAY RULES:
 GIVEAWAY CHECK (free-text questions only):
 - If the question names the answer's general category (e.g. "Which bridge...", "Which street...", "Which policy...", "Which treaty..."), and that category word also appears in the correct answer, flag this even if no user flag mentions it — a player could type just that generic word and be marked correct, since this game's answer matching accepts partial/substring answers. Propose a reworded question that doesn't hand away the category.
 
+DIFFICULTY CALIBRATION (applies to any full replacement question, see TOO NICHE FLAGS and MISSING INFORMATION below):
+- Target MEDIUM difficulty. A well-informed trivia player should be able to work it out or recognize it, but it must not be the single most obvious/famous fact in the category (too easy) and must not require specialist/niche knowledge (too hard — that's what got the original flagged in the first place). Aim for solid pub-trivia/crossword difficulty — not a gimme, not a stumper.
+
 TOO NICHE FLAGS:
-- If a user flag includes "(Too Niche)", don't just tweak the existing question — propose a full replacement: a different question and answer in the same category that's more generally known/mainstream. The replacement doesn't need to relate to the original question's specific facts at all; it just needs to stay in the same category and be clearly less obscure. Set "question" and "answers" in proposed_changes (and "category" only if it also needs to change), with ai_action "update".
+- If a user flag includes "(Too Niche)", don't just tweak the existing question — propose a full replacement: a different question and answer in the same category that's more generally known/mainstream, per DIFFICULTY CALIBRATION above. The replacement doesn't need to relate to the original question's specific facts at all; it just needs to stay in the same category and match the target difficulty. Set "question" and "answers" in proposed_changes (and "category" only if it also needs to change), with ai_action "update".
 
 MISSING INFORMATION:
-- If the question references something it doesn't actually provide (e.g. "...say the following:" with no quote given, "...shown in this image:" with no image, a name/date/detail alluded to but never stated), don't just flag it as incomplete — fill in the missing piece directly in the question text using your own knowledge. Only fall back to a full replacement (per TOO NICHE FLAGS above) or "no_change" if you can't confidently determine what's missing.
+- If the question references something it doesn't actually provide (e.g. "...say the following:" with no quote given, "...shown in this image:" with no image, a name/date/detail alluded to but never stated), don't just flag it as incomplete — fill in the missing piece directly in the question text using your own knowledge. Only fall back to a full replacement (per TOO NICHE FLAGS and DIFFICULTY CALIBRATION above) or "no_change" if you can't confidently determine what's missing.
 
 YOUR TASK:
 1. Analyze the question, category, answers, and all user flag comments
@@ -22682,7 +22686,7 @@ def _is_multiple_choice_url(url):
     return "multiple choice" in (url or "")
 
 
-def _format_flagged_question_for_claude(doc):
+def _format_flagged_question_for_claude(doc, clarifications=None):
     url = doc.get("url", "")
     answers = doc.get("answers", [])
     question_type = "multiple choice" if _is_multiple_choice_url(url) else "free-text"
@@ -22706,17 +22710,53 @@ def _format_flagged_question_for_claude(doc):
         name = entry.get("display_name", "Unknown")
         comment = entry.get("message_content", "")
         lines.append(f"  [{name}]: {comment}")
+    if clarifications:
+        lines.append("\nMODERATOR GUIDANCE (chronological, from earlier review rounds):")
+        for entry in clarifications:
+            mod_name = entry.get("mod_name", "Unknown")
+            text = entry.get("text", "")
+            lines.append(f"  [{mod_name}]: {text}")
     return "\n".join(lines)
 
 
-async def _run_claude_review(submission_id, mod_user):
-    """Call Claude to evaluate a pending submission. Stores result in question_submissions doc."""
+def _format_flag_reports(doc):
+    """Render doc['audit'] entries as a Discord embed field value: name, timestamp, comment."""
+    entries = doc.get("audit", [])
+    if not entries:
+        return "—"
+    parts = []
+    for entry in entries:
+        name = entry.get("display_name", "Unknown")
+        comment = entry.get("message_content", "")
+        ts = entry.get("timestamp")
+        if isinstance(ts, (int, float)):
+            header = f"**{name}** — <t:{int(ts)}:f>"
+        else:
+            header = f"**{name}**"
+        parts.append(f"{header}\n{comment}")
+    return "\n\n".join(parts)[:1024]
+
+
+async def _run_claude_review(submission_id, mod_user, extra_guidance=None):
+    """Call Claude to evaluate a pending submission. Stores result in question_submissions doc.
+
+    extra_guidance: optional moderator-supplied clarification text for a re-ask; accumulates
+    across rounds in ai_clarifications so Claude sees the full guidance thread each time.
+    """
     if not anthropic_client:
         return
     sub = await db.question_submissions.find_one({"_id": _to_object_id(submission_id)})
     if not sub:
         return
     now = datetime.datetime.utcnow()
+    clarifications = list(sub.get("ai_clarifications", []))
+    if extra_guidance:
+        clarifications.append({
+            "mod_id": mod_user.id,
+            "mod_name": getattr(mod_user, "display_name", str(mod_user)),
+            "text": extra_guidance,
+            "at": now,
+        })
     # Fetch similar questions for duplicate detection
     similar_lines = []
     try:
@@ -22743,6 +22783,10 @@ async def _run_claude_review(submission_id, mod_user):
     )
     if similar_lines:
         user_content += "\nSIMILAR EXISTING QUESTIONS (check for duplicates):\n" + "\n".join(similar_lines)
+    if clarifications:
+        user_content += "\n\nMODERATOR GUIDANCE (chronological, from earlier review rounds):\n" + "\n".join(
+            f"  [{c.get('mod_name', 'Unknown')}]: {c.get('text', '')}" for c in clarifications
+        )
     # Call Claude
     ai_verdict = "uncertain"
     ai_reasoning = "Parse error"
@@ -22780,25 +22824,43 @@ async def _run_claude_review(submission_id, mod_user):
             "ai_suggested_edits": ai_suggested_edits,
             "ai_requested_by": mod_user.id,
             "ai_completed_at": now,
+            "ai_clarifications": clarifications,
         }},
     )
 
 
-async def _run_flagged_review(collection_name, doc_id, mod_user_id):
-    """Call Claude to evaluate a flagged question. Stores result in ai_review sub-doc."""
+async def _run_flagged_review(collection_name, doc_id, mod_user_id, mod_name=None, extra_guidance=None):
+    """Call Claude to evaluate a flagged question. Stores result in ai_review sub-doc.
+
+    extra_guidance: optional moderator-supplied clarification text for a re-ask; accumulates
+    across rounds in ai_review.clarifications so Claude sees the full guidance thread each time.
+    """
     if not anthropic_client:
         return {"ai_action": "no_change", "ai_reasoning": "Claude client not configured", "proposed_changes": {}}
     if collection_name in {"math_questions", "stats_questions"}:
         return {"ai_action": "no_change", "ai_reasoning": "Math/stats questions are generated at runtime — skipping.", "proposed_changes": {}}
     try:
         doc = await db[collection_name].find_one({"_id": _to_object_id(doc_id)})
-    except Exception:
-        return {"ai_action": "no_change", "ai_reasoning": "Document not found", "proposed_changes": {}}
+    except Exception as e:
+        sentry_sdk.capture_exception(e)
+        return {"ai_action": "no_change", "ai_reasoning": f"Error looking up document in '{collection_name}': {e}", "proposed_changes": {}}
     if not doc:
-        return {"ai_action": "no_change", "ai_reasoning": "Document not found", "proposed_changes": {}}
+        return {
+            "ai_action": "no_change",
+            "ai_reasoning": f"Document not found in '{collection_name}' — it may have been moved, deleted, or this message has a stale collection reference.",
+            "proposed_changes": {},
+        }
     if doc.get("url") == "scramble":
         return {"ai_action": "no_change", "ai_reasoning": "Scramble questions are generated at runtime — skipping.", "proposed_changes": {}}
-    user_content = _format_flagged_question_for_claude(doc)
+    clarifications = list((doc.get("ai_review") or {}).get("clarifications", []))
+    if extra_guidance:
+        clarifications.append({
+            "mod_id": mod_user_id,
+            "mod_name": mod_name or "Unknown",
+            "text": extra_guidance,
+            "at": datetime.datetime.utcnow(),
+        })
+    user_content = _format_flagged_question_for_claude(doc, clarifications=clarifications)
     ai_action = "no_change"
     ai_reasoning = "Parse error"
     proposed_changes = {}
@@ -22833,6 +22895,7 @@ async def _run_flagged_review(collection_name, doc_id, mod_user_id):
         "proposed_changes": proposed_changes,
         "ai_reviewed_at": datetime.datetime.utcnow(),
         "ai_reviewed_by": mod_user_id,
+        "clarifications": clarifications,
     }
     await db[collection_name].update_one(
         {"_id": _to_object_id(doc_id)},
@@ -23426,6 +23489,51 @@ class ApproveWithNoteModal(discord.ui.Modal, title="Approve submission"):
         await _approve_submission(interaction, self.submission_id, edited=False, notify_text=notify_text, notify=notify)
 
 
+def _build_submission_review_embed(fresh):
+    """Build the post-Claude-Review embed for a submission: base embed (submitter+timestamp
+    already included) plus verdict, suggested edits, and any moderator-guidance history."""
+    embed = _build_submission_embed(fresh)
+    verdict = fresh.get("ai_verdict", "uncertain")
+    verdict_emoji = {"approve": "✅", "reject": "❌", "uncertain": "❓"}.get(verdict, "❓")
+    embed.add_field(
+        name=f"{verdict_emoji} Claude verdict: {verdict.upper()}",
+        value=fresh.get("ai_reasoning", "")[:1024],
+        inline=False,
+    )
+    edits = fresh.get("ai_suggested_edits") or {}
+    if edits:
+        edits_text = "\n".join(f"**{k}:** {v}" for k, v in edits.items())
+        embed.add_field(name="💡 Suggested edits", value=edits_text[:1024], inline=False)
+    clarifications = fresh.get("ai_clarifications") or []
+    if clarifications:
+        history = "\n".join(f"**{c.get('mod_name', 'Unknown')}:** {c.get('text', '')}" for c in clarifications)
+        embed.add_field(name="🗣️ Moderator guidance", value=history[:1024], inline=False)
+    return embed
+
+
+class SubmissionReviewClarificationModal(discord.ui.Modal, title="Ask Claude Again"):
+    guidance = discord.ui.TextInput(
+        label="Additional guidance for Claude (optional)",
+        placeholder="e.g. Double-check the answer spelling, or look harder for duplicates",
+        style=discord.TextStyle.paragraph, required=False, max_length=300,
+    )
+
+    def __init__(self, submission_id):
+        super().__init__()
+        self.submission_id = submission_id
+
+    async def on_submit(self, interaction: discord.Interaction):
+        sub_id = self.submission_id
+        await interaction.response.defer()
+        guidance_text = (self.guidance.value or "").strip() or None
+        await _run_claude_review(sub_id, interaction.user, extra_guidance=guidance_text)
+        fresh = await db.question_submissions.find_one({"_id": _to_object_id(sub_id)})
+        embed = _build_submission_review_embed(fresh)
+        new_view = SubmissionReviewView(submission_id=sub_id, ai_done=True)
+        if interaction.message:
+            await interaction.message.edit(embed=embed, view=new_view)
+
+
 class SubmissionReviewView(discord.ui.View):
     def __init__(self, submission_id=None, ai_done=False):
         super().__init__(timeout=None)
@@ -23436,8 +23544,7 @@ class SubmissionReviewView(discord.ui.View):
             self.reject_btn.custom_id = f"submit:reject:{submission_id}"
             self.edit_btn.custom_id = f"submit:edit:{submission_id}"
         if ai_done:
-            self.claude_btn.disabled = True
-            self.claude_btn.label = "🤖 Reviewed"
+            self.claude_btn.label = "🔁 Ask Claude Again"
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         if not any(r.id == SUBMISSION_MOD_ROLE_ID for r in getattr(interaction.user, "roles", [])):
@@ -23460,23 +23567,13 @@ class SubmissionReviewView(discord.ui.View):
             await interaction.response.send_message("❌ Submission no longer pending.", ephemeral=True)
             return
         if sub.get("ai_completed_at"):
-            await interaction.response.send_message("❌ Claude review already run for this submission.", ephemeral=True)
+            # Already reviewed at least once — collect optional clarification before re-asking.
+            await interaction.response.send_modal(SubmissionReviewClarificationModal(sub_id))
             return
         await interaction.response.defer()
         await _run_claude_review(sub_id, interaction.user)
         fresh = await db.question_submissions.find_one({"_id": _to_object_id(sub_id)})
-        embed = _build_submission_embed(fresh)
-        verdict = fresh.get("ai_verdict", "uncertain")
-        verdict_emoji = {"approve": "✅", "reject": "❌", "uncertain": "❓"}.get(verdict, "❓")
-        embed.add_field(
-            name=f"{verdict_emoji} Claude verdict: {verdict.upper()}",
-            value=fresh.get("ai_reasoning", "")[:1024],
-            inline=False,
-        )
-        edits = fresh.get("ai_suggested_edits") or {}
-        if edits:
-            edits_text = "\n".join(f"**{k}:** {v}" for k, v in edits.items())
-            embed.add_field(name="💡 Suggested edits", value=edits_text[:1024], inline=False)
+        embed = _build_submission_review_embed(fresh)
         new_view = SubmissionReviewView(submission_id=sub_id, ai_done=True)
         if interaction.message:
             await interaction.message.edit(embed=embed, view=new_view)
@@ -24397,6 +24494,74 @@ class EditFlaggedQuestionModal(discord.ui.Modal, title="Edit & Apply Question Fi
                 await interaction.response.send_message(f"❌ Edit failed: {e}", ephemeral=True)
 
 
+async def _build_flagged_review_embed(col, doc_id, result):
+    """Build the post-Claude-Review embed for a flagged question: verdict, proposed changes,
+    flag report(s) (name + timestamp + comment), and any moderator-guidance history."""
+    ai_action = result.get("ai_action", "no_change")
+    ai_reasoning = result.get("ai_reasoning", "")
+    proposed = result.get("proposed_changes", {})
+    clarifications = result.get("clarifications", [])
+
+    flag_record = await db.flag_notifications.find_one({"doc_id": doc_id, "collection_name": col})
+    flaggers = (flag_record or {}).get("flaggers", [])
+    flagged_by = ", ".join(f.get("display_name", "Unknown") for f in flaggers if f.get("display_name")) or "Unknown"
+
+    try:
+        doc = await db[col].find_one({"_id": _to_object_id(doc_id)})
+        answers = doc.get("answers", [])
+        embed = discord.Embed(
+            title="🚩 Question Flagged",
+            color=discord.Color.red(),
+            timestamp=datetime.datetime.now(timezone.utc),
+        )
+        embed.add_field(name="👤 Flagged By", value=flagged_by, inline=True)
+        embed.add_field(name="❓ Question", value=f"**{doc.get('category','')}**: {doc.get('question','')}", inline=False)
+        embed.add_field(name="Answers", value=", ".join(str(a) for a in answers)[:512] or "—", inline=False)
+        embed.add_field(name="💬 Flag Report(s)", value=_format_flag_reports(doc), inline=False)
+        action_emoji = "🔄" if ai_action == "update" else "✅"
+        embed.add_field(name=f"{action_emoji} Claude: {ai_action.upper()}", value=ai_reasoning[:1024], inline=False)
+        if proposed:
+            embed.add_field(name="📝 Proposed changes", value="\n".join(f"**{k}:** {v}" for k, v in proposed.items())[:1024], inline=False)
+        if clarifications:
+            history = "\n".join(f"**{c.get('mod_name', 'Unknown')}:** {c.get('text', '')}" for c in clarifications)
+            embed.add_field(name="🗣️ Moderator guidance", value=history[:1024], inline=False)
+    except Exception:
+        snapshot = (flag_record or {}).get("question_snapshot", {})
+        embed = discord.Embed(title="🚩 Question Flagged (Claude reviewed)", color=discord.Color.red())
+        embed.add_field(name="👤 Flagged By", value=flagged_by, inline=True)
+        if snapshot.get("question"):
+            embed.add_field(name="❓ Question", value=snapshot["question"], inline=False)
+        embed.add_field(name="Verdict", value=f"{ai_action}: {ai_reasoning[:512]}", inline=False)
+    return embed
+
+
+class FlaggedReviewClarificationModal(discord.ui.Modal, title="Ask Claude Again"):
+    guidance = discord.ui.TextInput(
+        label="Additional guidance for Claude (optional)",
+        placeholder="e.g. Make the replacement harder, or focus only on the wording",
+        style=discord.TextStyle.paragraph, required=False, max_length=300,
+    )
+
+    def __init__(self, collection_name, doc_id):
+        super().__init__()
+        self.collection_name = collection_name
+        self.doc_id = doc_id
+
+    async def on_submit(self, interaction: discord.Interaction):
+        col, doc_id = self.collection_name, self.doc_id
+        await interaction.response.defer()
+        guidance_text = (self.guidance.value or "").strip() or None
+        result = await _run_flagged_review(
+            col, doc_id, interaction.user.id,
+            mod_name=interaction.user.display_name, extra_guidance=guidance_text,
+        )
+        embed = await _build_flagged_review_embed(col, doc_id, result)
+        new_view = FlaggedReviewView(collection_name=col, doc_id=doc_id, apply_enabled=(result.get("ai_action") == "update"))
+        new_view.claude_btn.label = "🔁 Ask Claude Again"
+        if interaction.message:
+            await interaction.message.edit(embed=embed, view=new_view)
+
+
 class FlaggedReviewView(discord.ui.View):
     def __init__(self, collection_name=None, doc_id=None, apply_enabled=False):
         super().__init__(timeout=None)
@@ -24428,42 +24593,16 @@ class FlaggedReviewView(discord.ui.View):
         if not col or not doc_id:
             await interaction.response.send_message("❌ Could not parse document ID.", ephemeral=True)
             return
+        existing = await db[col].find_one({"_id": _to_object_id(doc_id)}, {"ai_review": 1})
+        if existing and existing.get("ai_review"):
+            # Already reviewed at least once — collect optional clarification before re-asking.
+            await interaction.response.send_modal(FlaggedReviewClarificationModal(col, doc_id))
+            return
         await interaction.response.defer()
-        result = await _run_flagged_review(col, doc_id, interaction.user.id)
-        ai_action = result.get("ai_action", "no_change")
-        ai_reasoning = result.get("ai_reasoning", "")
-        proposed = result.get("proposed_changes", {})
-
-        flag_record = await db.flag_notifications.find_one({"doc_id": doc_id, "collection_name": col})
-        flaggers = (flag_record or {}).get("flaggers", [])
-        flagged_by = ", ".join(f.get("display_name", "Unknown") for f in flaggers if f.get("display_name")) or "Unknown"
-
-        # Rebuild embed with verdict
-        try:
-            doc = await db[col].find_one({"_id": _to_object_id(doc_id)})
-            answers = doc.get("answers", [])
-            embed = discord.Embed(
-                title="🚩 Question Flagged",
-                color=discord.Color.red(),
-                timestamp=datetime.datetime.now(timezone.utc),
-            )
-            embed.add_field(name="👤 Flagged By", value=flagged_by, inline=True)
-            embed.add_field(name="❓ Question", value=f"**{doc.get('category','')}**: {doc.get('question','')}", inline=False)
-            embed.add_field(name="Answers", value=", ".join(str(a) for a in answers)[:512] or "—", inline=False)
-            action_emoji = "🔄" if ai_action == "update" else "✅"
-            embed.add_field(name=f"{action_emoji} Claude: {ai_action.upper()}", value=ai_reasoning[:1024], inline=False)
-            if proposed:
-                embed.add_field(name="📝 Proposed changes", value="\n".join(f"**{k}:** {v}" for k, v in proposed.items())[:1024], inline=False)
-        except Exception:
-            snapshot = (flag_record or {}).get("question_snapshot", {})
-            embed = discord.Embed(title="🚩 Question Flagged (Claude reviewed)", color=discord.Color.red())
-            embed.add_field(name="👤 Flagged By", value=flagged_by, inline=True)
-            if snapshot.get("question"):
-                embed.add_field(name="❓ Question", value=snapshot["question"], inline=False)
-            embed.add_field(name="Verdict", value=f"{ai_action}: {ai_reasoning[:512]}", inline=False)
-        new_view = FlaggedReviewView(collection_name=col, doc_id=doc_id, apply_enabled=(ai_action == "update"))
-        new_view.claude_btn.disabled = True
-        new_view.claude_btn.label = "🤖 Reviewed"
+        result = await _run_flagged_review(col, doc_id, interaction.user.id, mod_name=interaction.user.display_name)
+        embed = await _build_flagged_review_embed(col, doc_id, result)
+        new_view = FlaggedReviewView(collection_name=col, doc_id=doc_id, apply_enabled=(result.get("ai_action") == "update"))
+        new_view.claude_btn.label = "🔁 Ask Claude Again"
         if interaction.message:
             await interaction.message.edit(embed=embed, view=new_view)
 
