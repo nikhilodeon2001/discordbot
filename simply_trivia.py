@@ -41,7 +41,8 @@ def get_current_question_for_flag():
         "trivia_url": simply_current_question.get("url", ""),
         "trivia_answer_list": simply_current_question.get("answers", []),
         "trivia_db": simply_current_question.get("db", "trivia_questions"),
-        "trivia_id": simply_current_question.get("_id")
+        "trivia_id": simply_current_question.get("_id"),
+        "trivia_message_link": simply_current_question.get("trivia_message_link"),
     }
 
 
@@ -60,7 +61,8 @@ def get_previous_question_for_flag():
         "trivia_url": simply_previous_question.get("url", ""),
         "trivia_answer_list": simply_previous_question.get("answers", []),
         "trivia_db": simply_previous_question.get("db", "trivia_questions"),
-        "trivia_id": simply_previous_question.get("_id")
+        "trivia_id": simply_previous_question.get("_id"),
+        "trivia_message_link": simply_previous_question.get("trivia_message_link"),
     }
 
 
@@ -485,14 +487,15 @@ async def start_simply_trivia(bot, db, channel_id, fuzzy_match_func):
                 image_buffer, scrambled_word = generate_scrambled_image(scramble_text(answers[0]))
                 file = discord.File(fp=image_buffer, filename="scramble.png")
                 embed.set_image(url="attachment://scramble.png")
-                await channel.send(embed=embed, file=file)
+                question_message = await channel.send(embed=embed, file=file)
             elif url and url.startswith("http"):
                 # Regular image URL
                 embed.set_image(url=url)
-                await channel.send(embed=embed)
+                question_message = await channel.send(embed=embed)
             else:
                 # No image
-                await channel.send(embed=embed)
+                question_message = await channel.send(embed=embed)
+            simply_current_question["trivia_message_link"] = question_message.jump_url
 
             print(f"📝 Asked: {category} - {question_text}")
             print(f"📝 Answer: {answers}")
