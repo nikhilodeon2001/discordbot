@@ -17477,7 +17477,9 @@ def render_safe_name(name):
     NFKC handles the common circled/fullwidth/math styles (Ⓢⓚⓨ, 𝕊𝕜𝕪, Ｓｋｙ -> Sky) while
     leaving genuinely accented names (José) intact; the supplement fold covers 🅢🅚🅨-style
     letters NFKC misses. Only applied at image-render time -- Discord text elsewhere renders
-    these glyphs fine, so stored display names are left untouched. See generate_scoreboard_image."""
+    these glyphs fine, so stored display names are left untouched. This is now the last-resort
+    fold: segment_name_fonts renders decorative styles as-is where a fallback font can draw them
+    and only falls back to this for glyphs no available font covers. See generate_scoreboard_image."""
     if not name:
         return name
     out = []
@@ -17489,6 +17491,122 @@ def render_safe_name(name):
                 break
         out.append(ch)
     return "".join(out)
+
+
+# Fallback fonts (tried after the primary DejaVuSans) that actually carry the decorative letter
+# styles players use in nicknames: NotoSansSymbols has the circled/squared/negative styles
+# (Enclosed Alphanumerics + Supplement -- Ⓢⓚⓨ, 🅢🅚🅨, 🄼🄾🄼) and NotoSansMath has the
+# mathematical bold/script/fraktur/double-struck styles (𝕊𝕜𝕪, 𝓢𝓴𝔂, 𝕳𝖔𝖙𝖊𝖑). Rendering a name
+# glyph-by-glyph from these lets the scoreboard show the fancy styles as-is instead of folding
+# them to plain letters. Both live in S3 and are fetched lazily by get_font on first use.
+_NAME_FALLBACK_FONTS = ("NotoSansSymbols-Regular.ttf", "NotoSansMath-Regular.ttf")
+
+# A permanent Unicode noncharacter -- no font maps it, so it always rasterizes as the font's
+# .notdef ("tofu" box) glyph. Comparing a character's rendered bitmap to this tells us whether a
+# font truly has a glyph for it, giving per-glyph coverage detection with no fonttools/cmap
+# dependency at runtime. Glyph presence is size-independent, so a single probe size suffices.
+_TOFU_SENTINEL = "﷐"
+_font_tofu_bitmap = {}
+_glyph_font_name_cache = {}
+
+
+def _glyph_probe_bitmap(font_obj, ch):
+    """Rasterize ch in font_obj at the fixed probe size and return the raw bitmap bytes."""
+    probe = Image.new("L", (48, 48), 0)
+    ImageDraw.Draw(probe).text((4, 4), ch, fill=255, font=font_obj)
+    return probe.tobytes()
+
+
+def _font_can_draw(font_name, ch):
+    """True if font_name has a real glyph for ch rather than the .notdef tofu box. Cached per
+    font's tofu bitmap; the primary DejaVuSans is probed first so plain names never touch S3
+    for the fallback fonts."""
+    font_obj = get_font(font_name, 24)
+    if font_name not in _font_tofu_bitmap:
+        _font_tofu_bitmap[font_name] = _glyph_probe_bitmap(font_obj, _TOFU_SENTINEL)
+    return _glyph_probe_bitmap(font_obj, ch) != _font_tofu_bitmap[font_name]
+
+
+def glyph_render_font_name(ch):
+    """Font file that can draw ch as-is: DejaVuSans if it has the glyph, else the first
+    decorative fallback (Symbols/Math) that does. Returns None when no available font has the
+    glyph, signalling the caller to fold ch to plain letters via render_safe_name. Cached per
+    character since coverage never changes."""
+    if ch in _glyph_font_name_cache:
+        return _glyph_font_name_cache[ch]
+    result = None
+    if ch.isspace() or _font_can_draw("DejaVuSans.ttf", ch):
+        result = "DejaVuSans.ttf"
+    else:
+        for font_name in _NAME_FALLBACK_FONTS:
+            if _font_can_draw(font_name, ch):
+                result = font_name
+                break
+    _glyph_font_name_cache[ch] = result
+    return result
+
+
+def segment_name_fonts(name):
+    """Split name into consecutive (text, font_name) runs, each drawable by a single font, so a
+    name mixing plain and decorative-Unicode letters renders glyph-accurate instead of as tofu.
+    Characters no available font can draw are folded to plain letters (render_safe_name) and
+    drawn with DejaVuSans, so a name never comes out as boxes. Adjacent same-font runs are
+    coalesced so later width/draw code walks as few segments as possible."""
+    segments = []
+    for ch in name:
+        font_name = glyph_render_font_name(ch)
+        if font_name is None:
+            ch = render_safe_name(ch)
+            font_name = "DejaVuSans.ttf"
+        if not ch:
+            continue
+        if segments and segments[-1][1] == font_name:
+            segments[-1] = (segments[-1][0] + ch, font_name)
+        else:
+            segments.append((ch, font_name))
+    return segments
+
+
+def _coalesce_segments(char_runs):
+    """Merge a per-character (char, font_name) stream back into (text, font_name) runs."""
+    out = []
+    for ch, font_name in char_runs:
+        if out and out[-1][1] == font_name:
+            out[-1] = (out[-1][0] + ch, font_name)
+        else:
+            out.append((ch, font_name))
+    return out
+
+
+def segment_line_width(segments, size):
+    """Rendered width of one line of (text, font_name) segments at the given point size,
+    measured with each segment's own font so mixed-font names lay out correctly."""
+    return sum(get_font(font_name, size).getlength(text) for text, font_name in segments)
+
+
+def wrap_name_segments(segments, size, max_width):
+    """Greedily wrap mixed-font name segments to fit max_width, preferring to break at spaces and
+    hard-breaking a single run only when it alone overflows. Last-resort path -- fit_name shrinks
+    the font first and only wraps a name still too wide at the smallest readable size."""
+    char_runs = [(ch, font_name) for text, font_name in segments for ch in text]
+    lines = []
+    current = []
+    last_space = -1
+    for ch, font_name in char_runs:
+        current.append((ch, font_name))
+        if ch == " ":
+            last_space = len(current)
+        if len(current) > 1 and segment_line_width(_coalesce_segments(current), size) > max_width:
+            if last_space > 0:
+                head, tail = current[:last_space], current[last_space:]
+            else:
+                head, tail = current[:-1], current[-1:]
+            lines.append(_coalesce_segments(head))
+            current = tail
+            last_space = -1
+    if current:
+        lines.append(_coalesce_segments(current))
+    return [line for line in lines if any(ch.strip() for ch, _ in line)]
 
 
 def generate_scoreboard_image(rows, title_outer_emoji="🏔️", title_inner_emoji="📈", title_text="Scoreboard"):
@@ -17536,25 +17654,28 @@ def generate_scoreboard_image(rows, title_outer_emoji="🏔️", title_inner_emo
         name_max_width; only wraps to a second line as a last resort once it's already at
         the smallest readable size and still doesn't fit. Also returns the name's actual
         rendered width, so later columns can sit right after the widest actual content
-        instead of always assuming a fixed worst-case width."""
+        instead of always assuming a fixed worst-case width.
+
+        The name is first split into per-font segments (segment_name_fonts) so decorative
+        Unicode styles render as-is; each returned line is a list of (text, font_name)
+        segments rather than a plain string, and the point size is shared across them."""
+        segments = segment_name_fonts(name)
         size = font_size
-        name_font = font
-        width = name_font.getbbox(name)[2] - name_font.getbbox(name)[0]
+        width = segment_line_width(segments, size)
         while width > name_max_width and size > name_min_font_size:
             size -= 1
-            name_font = get_font("DejaVuSans.ttf", size)
-            width = name_font.getbbox(name)[2] - name_font.getbbox(name)[0]
+            width = segment_line_width(segments, size)
         if width <= name_max_width:
-            return name_font, size, [name], width
-        lines = draw_text_wrapper(name, name_font, name_max_width)
-        lines = lines if lines else [name]
-        rendered_width = max(name_font.getbbox(line)[2] - name_font.getbbox(line)[0] for line in lines)
-        return name_font, size, lines, rendered_width
+            return size, [segments], width
+        lines = wrap_name_segments(segments, size, name_max_width) or [segments]
+        rendered_width = max(segment_line_width(line, size) for line in lines)
+        return size, lines, rendered_width
 
     # Precompute each row's name font/lines (shrinking first, wrapping only as a last
-    # resort) so row heights can grow instead of ever truncating.
-    name_render = [fit_name(render_safe_name(row["name"])) for row in rows]
-    row_heights = [max(row_height, len(lines) * (size + 6) + 16) for _, size, lines, _ in name_render]
+    # resort) so row heights can grow instead of ever truncating. fit_name folds decorative
+    # glyphs internally only where no font can draw them, so no render_safe_name wrapper here.
+    name_render = [fit_name(row["name"]) for row in rows]
+    row_heights = [max(row_height, len(lines) * (size + 6) + 16) for size, lines, _ in name_render]
     img_height = title_height + top_padding * 2 + sum(row_heights)
 
     def text_width(text, use_font=font):
@@ -17572,7 +17693,7 @@ def generate_scoreboard_image(rows, title_outer_emoji="🏔️", title_inner_emo
     # The lightning/score/delta cluster's own width is content-driven (widest actual
     # content, not a fixed worst-case), which is what lets the image shrink when everything
     # is short and grow only as far as something long actually requires.
-    max_name_render_width = max((w for _, _, _, w in name_render), default=0)
+    max_name_render_width = max((w for _, _, w in name_render), default=0)
     max_lightning_width = max((lightning_reserved_width(row["lightning_count"]) for row in rows), default=0)
     max_score_width = max((text_width(row["score_display"]) for row in rows), default=0)
     delta_widths = [text_width(row["delta_text"]) if row["delta_text"] else 0 for row in rows]
@@ -17625,7 +17746,7 @@ def generate_scoreboard_image(rows, title_outer_emoji="🏔️", title_inner_emo
     img.paste(outer_icon, (tx, ty_icon), outer_icon)
 
     y = title_height + top_padding
-    for row, (name_font, name_size, lines, _), height in zip(rows, name_render, row_heights):
+    for row, (name_size, lines, _), height in zip(rows, name_render, row_heights):
         row_center_y = y + height // 2 - font_size // 2
         name_center_y = y + height // 2 - name_size // 2
         icon_center_y = y + height // 2
@@ -17636,8 +17757,17 @@ def generate_scoreboard_image(rows, title_outer_emoji="🏔️", title_inner_emo
         else:
             draw.text((rank_x, row_center_y), row["rank_text"], fill=text_color, font=font)
 
-        name_text = "\n".join(lines)
-        draw.multiline_text((name_x, name_center_y), name_text, fill=text_color, font=name_font)
+        # Each line is a list of (text, font_name) segments (see fit_name), so draw segment by
+        # segment -- advancing x by each segment's own font -- instead of one multiline_text call,
+        # which can only use a single font. This is what renders mixed decorative/plain names.
+        line_y = name_center_y
+        for line in lines:
+            seg_x = name_x
+            for seg_text, seg_font_name in line:
+                seg_font = get_font(seg_font_name, name_size)
+                draw.text((seg_x, line_y), seg_text, fill=text_color, font=seg_font)
+                seg_x += seg_font.getlength(seg_text)
+            line_y += name_size + 6
 
         if row["lightning_count"] > 0:
             lightning_icon = render_emoji_icon("⚡", lightning_icon_size)
