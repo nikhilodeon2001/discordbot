@@ -22986,19 +22986,27 @@ def _companion_image_url(trivia_url):
     to, read off the sent message's embed. Returns None for text-only questions."""
     if trivia_url and is_valid_url(trivia_url):
         return trivia_url
-    try:
-        if current_answer_message is not None and current_answer_message.embeds:
-            emb_url = current_answer_message.embeds[0].image.url
-            if emb_url:
-                return emb_url
-    except Exception:
-        pass
+    msg = current_answer_message
+    if msg is not None:
+        try:
+            if msg.embeds:
+                img = msg.embeds[0].image
+                if img and (img.url or img.proxy_url):
+                    return img.url or img.proxy_url
+        except Exception:
+            pass
+        try:
+            if msg.attachments:
+                return msg.attachments[0].url
+        except Exception:
+            pass
     return None
 
 
 def _companion_display_question(trivia_url, trivia_category, trivia_question, answer_list, image_url):
     """The text to show above the image on the phone, mirroring what ask_question renders:
-    - Jeopardy image clues: no text (the clue is drawn into the image itself).
+    - Jeopardy in image mode: no text (the clue is drawn into the image). In text mode there's
+      no image, so the clue text shows.
     - Crossword: prefix the clue with the letter count, e.g. "[8 Letters] Harvest.".
     - Everything else: the plain question."""
     if (trivia_url or "").startswith("jeopardy") and image_url:
