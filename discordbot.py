@@ -23073,6 +23073,8 @@ def build_companion_reveal_state(solution_list):
     answer_list = cq.get("trivia_answer_list") or [""]
     trivia_url = cq.get("trivia_url", "")
     image_url = _companion_image_url(trivia_url)
+    # Blind rounds don't reveal the answer on Discord -- honor that here and never send it.
+    reveal_answer = "" if blind_mode else (solution_list[0] if solution_list else answer_list[0])
     return {
         "phase": "revealed",
         "question_key": question_asked_start,
@@ -23080,7 +23082,8 @@ def build_companion_reveal_state(solution_list):
         "question": _companion_display_question(
             trivia_url, cq.get("trivia_category", ""), cq.get("trivia_question", ""), answer_list, image_url),
         "image_url": image_url,
-        "correct_answer": solution_list[0] if solution_list else answer_list[0],
+        "correct_answer": reveal_answer,
+        "blind": bool(blind_mode),
         "scoreboard": _companion_scoreboard(),
     }
 
