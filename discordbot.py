@@ -17873,7 +17873,7 @@ def generate_scoreboard_image(rows, title_outer_emoji="🏔️", title_inner_emo
             draw.text((delta_x, row_center_y), row["delta_text"], fill=muted_color, font=font)
 
         if max_phone_width and row.get("via_companion"):
-            phone_icon = render_emoji_icon("📱", phone_icon_size)
+            phone_icon = render_emoji_icon("🌐", phone_icon_size)
             img.paste(phone_icon, (phone_x, icon_center_y - phone_icon_size // 2), phone_icon)
 
         y += height
