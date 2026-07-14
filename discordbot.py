@@ -17464,6 +17464,33 @@ def render_emoji_icon(emoji_char, target_size):
     return canvas
 
 
+# Enclosed Alphanumeric Supplement letter styles players use in nicknames -- squared (🄰),
+# negative-circled (🅐), and negative-squared (🅰) A-Z. Unlike circled/fullwidth/math styles
+# these have no NFKC decomposition, so fold them to plain A-Z by range arithmetic.
+_ENCLOSED_SUPPLEMENT_STARTS = (0x1F130, 0x1F150, 0x1F170)
+
+
+def render_safe_name(name):
+    """Fold decorative Unicode nickname styles down to plain letters an image font can draw,
+    so names don't come out as tofu boxes (□) in generated images like the scoreboard.
+
+    NFKC handles the common circled/fullwidth/math styles (Ⓢⓚⓨ, 𝕊𝕜𝕪, Ｓｋｙ -> Sky) while
+    leaving genuinely accented names (José) intact; the supplement fold covers 🅢🅚🅨-style
+    letters NFKC misses. Only applied at image-render time -- Discord text elsewhere renders
+    these glyphs fine, so stored display names are left untouched. See generate_scoreboard_image."""
+    if not name:
+        return name
+    out = []
+    for ch in unicodedata.normalize("NFKC", name):
+        cp = ord(ch)
+        for start in _ENCLOSED_SUPPLEMENT_STARTS:
+            if start <= cp <= start + 25:
+                ch = chr(ord("A") + cp - start)
+                break
+        out.append(ch)
+    return "".join(out)
+
+
 def generate_scoreboard_image(rows, title_outer_emoji="🏔️", title_inner_emoji="📈", title_text="Scoreboard"):
     """Render the per-question scoreboard as an image instead of a monospace table --
     columns are pixel-positioned, not padded/truncated strings, so long names never get
@@ -17526,7 +17553,7 @@ def generate_scoreboard_image(rows, title_outer_emoji="🏔️", title_inner_emo
 
     # Precompute each row's name font/lines (shrinking first, wrapping only as a last
     # resort) so row heights can grow instead of ever truncating.
-    name_render = [fit_name(row["name"]) for row in rows]
+    name_render = [fit_name(render_safe_name(row["name"])) for row in rows]
     row_heights = [max(row_height, len(lines) * (size + 6) + 16) for _, size, lines, _ in name_render]
     img_height = title_height + top_padding * 2 + sum(row_heights)
 
