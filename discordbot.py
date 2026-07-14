@@ -584,6 +584,13 @@ _companion_question_number = 0
 # tiles, scramble, math number set) into the Discord message; capture it so the phone shows it too.
 _companion_puzzle_text = None
 
+# The current question's footer warning (e.g. "🚨 One guess"), shown on the phone like on Discord.
+_companion_footer_text = None
+
+# user_ids who answered the current question correctly (from check_correct_responses_delete), so the
+# companion reveal can tell each player whether they got it right.
+_companion_correct_user_ids = set()
+
 # Add this global variable to hold the submission queue
 submission_queue = []
 max_queue_size = 100  # Number of submissions to accumulate before flushing
@@ -19374,6 +19381,7 @@ async def ask_question(trivia_category, trivia_question, trivia_url, trivia_answ
     """Ask the trivia question."""
     global current_answer_view, current_answer_message, current_report_view, current_countdown_button
     _companion_set_puzzle_text(None)  # cleared each question; set below for text-mode puzzles
+    _companion_set_footer_text(None)  # cleared each question; set from footer_text before the send
     await record_question_asked(trivia_db, trivia_id)
     # Define the numbered block emojis for questions 1 to 10
     numbered_blocks = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"]
@@ -19593,6 +19601,8 @@ async def ask_question(trivia_category, trivia_question, trivia_url, trivia_answ
 
     if len(message_body) > 4000:
         message_body = message_body[:3997] + "…"
+
+    _companion_set_footer_text(footer_text)  # question warning (e.g. one-guess) for the phone
 
     if send_image_flag:
         if image_url:
@@ -20143,10 +20153,12 @@ async def check_correct_responses_delete(question_ask_time, trivia_answer_list, 
 
     await update_answer_streaks(fastest_correct_user, fastest_correct_user_id)  # Update the correct answer streak for this user
    
-    # Hand this question's deltas + reveal mode to the companion scoreboard builder.
-    global _companion_last_points_gained, _companion_show_standings
+    # Hand this question's deltas + reveal mode to the companion scoreboard builder, plus the set of
+    # user_ids who got it right so the companion reveal can tell each player their result.
+    global _companion_last_points_gained, _companion_show_standings, _companion_correct_user_ids
     _companion_last_points_gained = points_gained_this_question
     _companion_show_standings = show_standings_after
+    _companion_correct_user_ids = {r[4] for r in correct_responses}
 
     # Add the current state of the scoreboard to round_data
     current_question_data = next((q for q in round_data["questions"] if q["question_number"] == question_number), None)
@@ -23060,6 +23072,7 @@ def build_companion_state(user_id=None):
         "choices": _companion_question_choices(answer_list, trivia_url),
         "image_url": image_url,
         "puzzle_text": _companion_puzzle_text,
+        "warning": _companion_footer_text,
         "modes": _companion_active_modes(),
         "round_overview": _companion_round_overview,
         "question_number": _companion_question_number,
@@ -23096,6 +23109,12 @@ def _companion_set_puzzle_text(text):
     _companion_puzzle_text = text
 
 
+def _companion_set_footer_text(text):
+    """The current question's footer warning (e.g. one-guess) for the phone, or None."""
+    global _companion_footer_text
+    _companion_footer_text = text
+
+
 def _companion_active_modes():
     """Round modifiers that differ from their default, for the companion legend. All toggles
     default off (shown when on); image_questions defaults on (shown as 'No Images' when off)."""
@@ -23115,6 +23134,18 @@ def _companion_active_modes():
     ]
     return [{"emoji": emoji, "label": label}
             for current, default, emoji, label in specs if bool(current) != bool(default)]
+
+
+def companion_reveal_extra(user_id):
+    """Per-user reveal info the SSE layer merges into the broadcast reveal for each connection:
+    every answer this user submitted, and whether they got it right (None if they didn't answer)."""
+    my_answers = [r.get("message_content") for r in collected_responses if r["user_id"] == user_id]
+    if not my_answers:
+        return {"my_answers": [], "result": None}
+    return {
+        "my_answers": my_answers,
+        "result": "correct" if user_id in _companion_correct_user_ids else "incorrect",
+    }
 
 
 def _companion_scoreboard():
@@ -26545,6 +26576,7 @@ if __name__ == "__main__":
                 resolve_member=companion_resolve_member,
                 get_state=build_companion_state,
                 submit_answer=companion_submit_answer,
+                reveal_extra=companion_reveal_extra,
             )
         except Exception as e:
             print(f"⚠️  Companion web app failed to start: {e}")

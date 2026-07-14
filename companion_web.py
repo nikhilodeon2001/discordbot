@@ -35,6 +35,7 @@ _subscribers = set()          # set[asyncio.Queue] — one per open SSE connecti
 _resolve_member = None        # callable(user_id:int) -> display_name:str | None
 _get_state = None             # callable(user_id:int|None) -> dict (sanitized live state)
 _submit_answer = None         # callable(user_id, display_name, text) -> {"ok":bool,"reason":str}
+_reveal_extra = None          # callable(user_id) -> {"my_answers":[...], "result":"correct"/"incorrect"/None}
 _session_secret = b""
 _oauth_client_id = ""
 _oauth_client_secret = ""
@@ -229,6 +230,13 @@ async def handle_stream(request):
         while True:
             try:
                 data = await asyncio.wait_for(queue.get(), timeout=_HEARTBEAT_SECONDS)
+                # The reveal is broadcast; personalize it per connection with this user's own
+                # submissions + result (copy so we never mutate the shared dict).
+                if _reveal_extra and isinstance(data, dict) and data.get("phase") == "revealed":
+                    try:
+                        data = {**data, **_reveal_extra(session["user_id"])}
+                    except Exception:
+                        pass
                 await _write_event(resp, data)
             except asyncio.TimeoutError:
                 await resp.write(b": heartbeat\n\n")
@@ -336,6 +344,10 @@ _INDEX_HTML = """<!doctype html>
   .choice:active { transform:scale(.99); }
   .status { margin-top:14px; font-size:.95rem; min-height:1.2em; }
   .ok { color:#3ddc84; } .bad { color:var(--red); }
+  .warn { display:inline-block; font-size:.82rem; font-weight:600; padding:6px 11px; border-radius:10px;
+    margin:0 0 14px; background:rgba(255,170,40,.14); border:1px solid rgba(255,170,40,.42); color:#ffb43a; }
+  .result { font-size:1.1rem; font-weight:800; letter-spacing:-.01em; margin:2px 0 10px; }
+  .result.correct { color:#3ddc84; } .result.incorrect { color:var(--red); } .result.none { color:var(--muted); }
   .sbtitle { font-size:.72rem; font-weight:700; text-transform:uppercase; letter-spacing:.08em;
     color:var(--muted); margin:20px 0 8px; }
   .sb { display:flex; flex-direction:column; gap:3px; max-height:46vh; overflow-y:auto; }
@@ -451,10 +463,21 @@ function render(state) {
   if (state.display_name) document.getElementById('me').textContent = 'Playing as ' + state.display_name;
 
   if (state.phase === 'revealed') {
-    let mine = '';
-    if (answeredKey === state.question_key) {
-      mine = '<div class="status">You answered' +
-        (answeredValue ? ': ' + esc(answeredValue) : ' this one') + '.</div>';
+    // All of this user's submissions (merged in per-connection by the SSE layer), falling back
+    // to the one we tracked locally this session.
+    var answers = (state.my_answers && state.my_answers.length) ? state.my_answers
+      : ((answeredKey === state.question_key && answeredValue) ? [answeredValue] : []);
+    var mine = answers.length
+      ? '<div class="status">Your answer' + (answers.length > 1 ? 's' : '') + ': ' +
+          answers.map(esc).join(', ') + '</div>'
+      : '';
+    var resultBanner = '';
+    if (!state.blind && state.result === 'correct') {
+      resultBanner = '<div class="result correct">✅ You got it right!</div>';
+    } else if (!state.blind && state.result === 'incorrect') {
+      resultBanner = '<div class="result incorrect">❌ Not quite</div>';
+    } else if (!state.blind && !answers.length) {
+      resultBanner = '<div class="result none">You didn\\'t answer this one.</div>';
     }
     const answerLine = state.blind
       ? '<div class="status">🙈 Answers are hidden this round.</div>'
@@ -462,7 +485,7 @@ function render(state) {
     app.innerHTML = '<div class="cat">' + esc(state.category || '') + '</div>' +
       (state.question ? '<div class="q">' + esc(state.question) + '</div>' : '') +
       imgHtml(state) +
-      answerLine + mine +
+      resultBanner + answerLine + mine +
       scoreboardHtml(state) + legendHtml(state) + roundHtml(state);
     if (countdownTimer) { clearInterval(countdownTimer); countdownTimer = null; }
     return;
@@ -511,7 +534,8 @@ function render(state) {
   app.innerHTML = '<div class="qhead"><span class="cat">' + esc(state.category || '') + '</span>' +
       '<span id="timer" class="timer">--</span></div>' +
       (state.question ? '<div class="q">' + esc(state.question) + '</div>' : '') +
-      imgHtml(state) + puzzleHtml(state) + inputHtml +
+      imgHtml(state) + puzzleHtml(state) +
+      (state.warning ? '<div class="warn">' + esc(state.warning) + '</div>' : '') + inputHtml +
       '<div id="status" class="status"></div>' + legendHtml(state) + roundHtml(state);
 
   if (isNew && !state.already_answered) { const i = document.getElementById('ans'); if (i) i.focus(); }
@@ -583,15 +607,16 @@ async def handle_health(request):
 # Startup
 # ---------------------------------------------------------------------------
 
-async def start_companion_web(*, resolve_member, get_state, submit_answer):
+async def start_companion_web(*, resolve_member, get_state, submit_answer, reveal_extra=None):
     """Bind the aiohttp server to $PORT and start serving. Called from the bot's main()
     before the long-running gather so Heroku sees the port bound promptly (avoids R10)."""
-    global _resolve_member, _get_state, _submit_answer
+    global _resolve_member, _get_state, _submit_answer, _reveal_extra
     global _session_secret, _oauth_client_id, _oauth_client_secret, _base_url
 
     _resolve_member = resolve_member
     _get_state = get_state
     _submit_answer = submit_answer
+    _reveal_extra = reveal_extra
 
     secret = os.getenv("COMPANION_SESSION_SECRET")
     if not secret:
