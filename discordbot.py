@@ -23034,6 +23034,7 @@ def build_companion_state(user_id=None):
         "is_multiple_choice": _is_multiple_choice_url(trivia_url),
         "choices": _companion_question_choices(answer_list, trivia_url),
         "image_url": image_url,
+        "modes": _companion_active_modes(),
         "ends_at": question_asked_end,
     }
     if user_id is not None:
@@ -23046,6 +23047,27 @@ def build_companion_state(user_id=None):
         if my_answer is not None:
             state["my_answer"] = my_answer
     return state
+
+
+def _companion_active_modes():
+    """Round modifiers that differ from their default, for the companion legend. All toggles
+    default off (shown when on); image_questions defaults on (shown as 'No Images' when off)."""
+    specs = [
+        (ghost_mode,      ghost_mode_default,      "👻", "Ghost"),
+        (god_mode,        god_mode_default,        "🎖️", "God"),
+        (yolo_mode,       yolo_mode_default,       "🔥", "Yolo"),
+        (blind_mode,      blind_mode_default,      "🙈", "Blind"),
+        (marx_mode,       marx_mode_default,       "🔨", "Marx"),
+        (sniper_mode,     sniper_mode_default,     "🎯", "Sniper"),
+        (cloak_mode,      cloak_mode_default,      "🕶️", "Cloak"),
+        (blitz_mode,      blitz_mode_default,      "🚀", "Blitz"),
+        (exact_mode,      exact_mode_default,      "🔍", "Exact"),
+        (golf_mode,       golf_mode_default,       "⛳", "Golf"),
+        (glyph_mode,      glyph_mode_default,      "🔐", "Glyph"),
+        (image_questions, image_questions_default, "🚫🖼️", "No Images"),
+    ]
+    return [{"emoji": emoji, "label": label}
+            for current, default, emoji, label in specs if bool(current) != bool(default)]
 
 
 def _companion_scoreboard():
@@ -23085,6 +23107,7 @@ def build_companion_reveal_state(solution_list):
         "correct_answer": reveal_answer,
         "blind": bool(blind_mode),
         "scoreboard": _companion_scoreboard(),
+        "modes": _companion_active_modes(),
     }
 
 
