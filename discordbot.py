@@ -25,6 +25,7 @@ import time
 import pytz
 from motor.motor_asyncio import AsyncIOMotorClient
 import difflib
+import regex
 import string
 from urllib.parse import urlparse 
 from urllib.parse import quote
@@ -17546,67 +17547,126 @@ def glyph_render_font_name(ch):
     return result
 
 
-def segment_name_fonts(name):
-    """Split name into consecutive (text, font_name) runs, each drawable by a single font, so a
-    name mixing plain and decorative-Unicode letters renders glyph-accurate instead of as tofu.
-    Characters no available font can draw are folded to plain letters (render_safe_name) and
-    drawn with DejaVuSans, so a name never comes out as boxes. Adjacent same-font runs are
-    coalesced so later width/draw code walks as few segments as possible."""
-    segments = []
-    for ch in name:
-        font_name = glyph_render_font_name(ch)
-        if font_name is None:
-            ch = render_safe_name(ch)
-            font_name = "DejaVuSans.ttf"
-        if not ch:
-            continue
-        if segments and segments[-1][1] == font_name:
-            segments[-1] = (segments[-1][0] + ch, font_name)
+# NotoColorEmojiLegacy renders color emoji as images (see render_emoji_icon); the text fonts above
+# have no emoji glyphs, so an emoji in a nickname (🔥, 👨‍💻, 🇺🇸, 👍🏽) is pasted in as its own icon
+# rather than folded to a tofu box. Cache which grapheme clusters it can actually draw.
+_emoji_render_cache = {}
+
+
+def _emoji_font_can_render(cluster):
+    """True if the color-emoji font produces a visible glyph for this grapheme cluster, so it can
+    be pasted as an icon (render_emoji_icon) instead of coming out as tofu. Cached per cluster."""
+    if cluster in _emoji_render_cache:
+        return _emoji_render_cache[cluster]
+    font_obj = get_font("NotoColorEmojiLegacy.ttf", 109)
+    tmp = Image.new("RGBA", (136, 136), (0, 0, 0, 0))
+    ImageDraw.Draw(tmp).text((0, 0), cluster, font=font_obj, embedded_color=True)
+    result = tmp.getbbox() is not None
+    _emoji_render_cache[cluster] = result
+    return result
+
+
+def _cluster_wants_emoji(cluster):
+    """True if a grapheme cluster carries an explicit emoji-presentation signal, so it should be
+    drawn as a color icon even though a text font nominally covers its base codepoints. Covers the
+    emoji variation selector (❤️), regional-indicator flag pairs (🇺🇸), keycaps (1️⃣), skin-tone
+    modifiers (👍🏽) and ZWJ sequences (👨‍💻) -- matching Unicode's emoji-presentation default so a
+    bare dual-use symbol (♥, ⚡) without a selector still renders as plain text."""
+    return any(
+        cp in (0xFE0F, 0x20E3, 0x200D)
+        or 0x1F1E6 <= cp <= 0x1F1FF   # regional indicators (flags)
+        or 0x1F3FB <= cp <= 0x1F3FF   # skin-tone modifiers
+        for cp in map(ord, cluster)
+    )
+
+
+def name_to_render_atoms(name):
+    """Break name into an ordered list of render atoms so it can be drawn glyph-accurate:
+
+        ("text", ch, font_name)  -- one character drawn with the named font
+        ("emoji", cluster)       -- one emoji grapheme cluster pasted as an icon
+
+    Names are split into grapheme clusters first (regex \\X) so multi-codepoint emoji -- ZWJ
+    sequences (👨‍💻), flags (🇺🇸), skin-tone (👍🏽) and variation-selector (❤️) forms -- stay whole.
+    A cluster with an emoji-presentation signal (_cluster_wants_emoji) the emoji font can draw
+    becomes an emoji atom; otherwise a cluster every text font can draw becomes text atoms (keeping
+    decorative styles as-is); otherwise the emoji font gets a turn; anything left is folded to plain
+    letters (render_safe_name) so a name never renders as tofu boxes."""
+    atoms = []
+    for cluster in regex.findall(r"\X", name):
+        char_fonts = [(ch, glyph_render_font_name(ch)) for ch in cluster]
+        if _cluster_wants_emoji(cluster) and _emoji_font_can_render(cluster):
+            atoms.append(("emoji", cluster))
+        elif all(font_name is not None for _, font_name in char_fonts):
+            atoms.extend(("text", ch, font_name) for ch, font_name in char_fonts)
+        elif _emoji_font_can_render(cluster):
+            atoms.append(("emoji", cluster))
         else:
-            segments.append((ch, font_name))
-    return segments
+            atoms.extend(("text", ch, "DejaVuSans.ttf") for ch in render_safe_name(cluster))
+    return atoms
 
 
-def _coalesce_segments(char_runs):
-    """Merge a per-character (char, font_name) stream back into (text, font_name) runs."""
-    out = []
-    for ch, font_name in char_runs:
-        if out and out[-1][1] == font_name:
-            out[-1] = (out[-1][0] + ch, font_name)
+def _merge_text_atoms(atoms):
+    """Coalesce consecutive same-font text atoms into ("text", text, font_name) runs so multi-mark
+    sequences shape correctly and fewer draw calls happen; emoji atoms pass through unchanged."""
+    runs = []
+    for atom in atoms:
+        if atom[0] == "text" and runs and runs[-1][0] == "text" and runs[-1][2] == atom[2]:
+            runs[-1] = ("text", runs[-1][1] + atom[1], atom[2])
         else:
-            out.append((ch, font_name))
-    return out
+            runs.append(atom)
+    return runs
 
 
-def segment_line_width(segments, size):
-    """Rendered width of one line of (text, font_name) segments at the given point size,
-    measured with each segment's own font so mixed-font names lay out correctly."""
-    return sum(get_font(font_name, size).getlength(text) for text, font_name in segments)
+def atoms_line_width(atoms, size):
+    """Rendered width of one line of render atoms at the given point size. Text runs are measured
+    in their own font; each emoji is a square icon sized to the text (see draw_name_atoms)."""
+    width = 0
+    for run in _merge_text_atoms(atoms):
+        if run[0] == "text":
+            width += get_font(run[2], size).getlength(run[1])
+        else:
+            width += size
+    return width
 
 
-def wrap_name_segments(segments, size, max_width):
-    """Greedily wrap mixed-font name segments to fit max_width, preferring to break at spaces and
-    hard-breaking a single run only when it alone overflows. Last-resort path -- fit_name shrinks
-    the font first and only wraps a name still too wide at the smallest readable size."""
-    char_runs = [(ch, font_name) for text, font_name in segments for ch in text]
+def wrap_name_atoms(atoms, size, max_width):
+    """Greedily wrap render atoms to fit max_width, preferring to break at spaces and hard-breaking
+    only when a single atom overflows. Emoji atoms are atomic and never split. Last-resort path --
+    fit_name shrinks the font first and only wraps a name still too wide at the smallest size."""
     lines = []
     current = []
-    last_space = -1
-    for ch, font_name in char_runs:
-        current.append((ch, font_name))
-        if ch == " ":
-            last_space = len(current)
-        if len(current) > 1 and segment_line_width(_coalesce_segments(current), size) > max_width:
-            if last_space > 0:
-                head, tail = current[:last_space], current[last_space:]
+    last_break = -1
+    for atom in atoms:
+        current.append(atom)
+        if atom[0] == "text" and atom[1] == " ":
+            last_break = len(current)
+        if len(current) > 1 and atoms_line_width(current, size) > max_width:
+            if last_break > 0:
+                head, tail = current[:last_break], current[last_break:]
             else:
                 head, tail = current[:-1], current[-1:]
-            lines.append(_coalesce_segments(head))
+            lines.append(head)
             current = tail
-            last_space = -1
+            last_break = -1
     if current:
-        lines.append(_coalesce_segments(current))
-    return [line for line in lines if any(ch.strip() for ch, _ in line)]
+        lines.append(current)
+    return [line for line in lines if any(not (a[0] == "text" and a[1].isspace()) for a in line)]
+
+
+def draw_name_atoms(draw, img, atoms, x, y, size, fill):
+    """Draw one line of render atoms starting at (x, y): text runs via draw.text (advancing by the
+    font's own width) and emoji via render_emoji_icon pasted as an icon sized to the text. Needs
+    img (not just draw) so the emoji icon can be alpha-composited in."""
+    for run in _merge_text_atoms(atoms):
+        if run[0] == "text":
+            run_font = get_font(run[2], size)
+            draw.text((x, y), run[1], fill=fill, font=run_font)
+            x += run_font.getlength(run[1])
+        else:
+            icon = render_emoji_icon(run[1], size)
+            img.paste(icon, (round(x), y), icon)
+            x += size
 
 
 def generate_scoreboard_image(rows, title_outer_emoji="🏔️", title_inner_emoji="📈", title_text="Scoreboard"):
@@ -17656,19 +17716,19 @@ def generate_scoreboard_image(rows, title_outer_emoji="🏔️", title_inner_emo
         rendered width, so later columns can sit right after the widest actual content
         instead of always assuming a fixed worst-case width.
 
-        The name is first split into per-font segments (segment_name_fonts) so decorative
-        Unicode styles render as-is; each returned line is a list of (text, font_name)
-        segments rather than a plain string, and the point size is shared across them."""
-        segments = segment_name_fonts(name)
+        The name is first split into render atoms (name_to_render_atoms) so decorative Unicode
+        styles render as-is and emoji become pasted icons; each returned line is a list of those
+        atoms rather than a plain string, and the point size is shared across them."""
+        atoms = name_to_render_atoms(name)
         size = font_size
-        width = segment_line_width(segments, size)
+        width = atoms_line_width(atoms, size)
         while width > name_max_width and size > name_min_font_size:
             size -= 1
-            width = segment_line_width(segments, size)
+            width = atoms_line_width(atoms, size)
         if width <= name_max_width:
-            return size, [segments], width
-        lines = wrap_name_segments(segments, size, name_max_width) or [segments]
-        rendered_width = max(segment_line_width(line, size) for line in lines)
+            return size, [atoms], width
+        lines = wrap_name_atoms(atoms, size, name_max_width) or [atoms]
+        rendered_width = max(atoms_line_width(line, size) for line in lines)
         return size, lines, rendered_width
 
     # Precompute each row's name font/lines (shrinking first, wrapping only as a last
@@ -17693,7 +17753,9 @@ def generate_scoreboard_image(rows, title_outer_emoji="🏔️", title_inner_emo
     # The lightning/score/delta cluster's own width is content-driven (widest actual
     # content, not a fixed worst-case), which is what lets the image shrink when everything
     # is short and grow only as far as something long actually requires.
-    max_name_render_width = max((w for _, _, w in name_render), default=0)
+    # ceil to an int: atoms_line_width measures with getlength (float), and this width feeds the
+    # lightning/score/delta column x-positions, which must be ints for img.paste of those icons.
+    max_name_render_width = math.ceil(max((w for _, _, w in name_render), default=0))
     max_lightning_width = max((lightning_reserved_width(row["lightning_count"]) for row in rows), default=0)
     max_score_width = max((text_width(row["score_display"]) for row in rows), default=0)
     delta_widths = [text_width(row["delta_text"]) if row["delta_text"] else 0 for row in rows]
@@ -17757,16 +17819,12 @@ def generate_scoreboard_image(rows, title_outer_emoji="🏔️", title_inner_emo
         else:
             draw.text((rank_x, row_center_y), row["rank_text"], fill=text_color, font=font)
 
-        # Each line is a list of (text, font_name) segments (see fit_name), so draw segment by
-        # segment -- advancing x by each segment's own font -- instead of one multiline_text call,
-        # which can only use a single font. This is what renders mixed decorative/plain names.
+        # Each line is a list of render atoms (see fit_name), drawn atom by atom -- text runs in
+        # their own font, emoji pasted as icons -- instead of one multiline_text call, which can
+        # only use a single font and can't paint color emoji. This renders mixed names correctly.
         line_y = name_center_y
         for line in lines:
-            seg_x = name_x
-            for seg_text, seg_font_name in line:
-                seg_font = get_font(seg_font_name, name_size)
-                draw.text((seg_x, line_y), seg_text, fill=text_color, font=seg_font)
-                seg_x += seg_font.getlength(seg_text)
+            draw_name_atoms(draw, img, line, name_x, line_y, name_size, text_color)
             line_y += name_size + 6
 
         if row["lightning_count"] > 0:
