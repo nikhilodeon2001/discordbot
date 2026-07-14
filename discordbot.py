@@ -570,6 +570,11 @@ question_asked_end = None
 question_responders = []  # Tracks users who responded during the current question
 round_responders = []
 
+# Latest reveal's per-question deltas + reveal mode, handed to the companion scoreboard so
+# the phone shows the same standings Discord does (respecting yolo-mode score masking).
+_companion_last_points_gained = {}
+_companion_show_standings = False
+
 # Add this global variable to hold the submission queue
 submission_queue = []
 max_queue_size = 100  # Number of submissions to accumulate before flushing
@@ -20123,6 +20128,11 @@ async def check_correct_responses_delete(question_ask_time, trivia_answer_list, 
 
     await update_answer_streaks(fastest_correct_user, fastest_correct_user_id)  # Update the correct answer streak for this user
    
+    # Hand this question's deltas + reveal mode to the companion scoreboard builder.
+    global _companion_last_points_gained, _companion_show_standings
+    _companion_last_points_gained = points_gained_this_question
+    _companion_show_standings = show_standings_after
+
     # Add the current state of the scoreboard to round_data
     current_question_data = next((q for q in round_data["questions"] if q["question_number"] == question_number), None)
     if current_question_data:
@@ -23038,6 +23048,25 @@ def build_companion_state(user_id=None):
     return state
 
 
+def _companion_scoreboard():
+    """Sanitized standings for the companion reveal screen, mirroring what Discord shows at
+    this transition (same rows, same yolo-mode masking)."""
+    if _companion_show_standings:
+        rows = _compute_standings_rows(_companion_last_points_gained)
+    else:
+        rows = _compute_standings_rows(
+            _companion_last_points_gained, sort_alphabetically=True, mask_score=True)
+    if not rows:
+        return []
+    return [{
+        "rank": r.get("rank_icon") or r.get("rank_text") or "",
+        "name": r.get("name", ""),
+        "score": r.get("score_display", ""),
+        "delta": r.get("delta_text", ""),
+        "lightning": r.get("lightning_count", 0),
+    } for r in rows]
+
+
 def build_companion_reveal_state(solution_list):
     """State pushed to phones at the reveal transition (safe to include the answer now)."""
     cq = current_question or {}
@@ -23052,6 +23081,7 @@ def build_companion_reveal_state(solution_list):
             trivia_url, cq.get("trivia_category", ""), cq.get("trivia_question", ""), answer_list, image_url),
         "image_url": image_url,
         "correct_answer": solution_list[0] if solution_list else answer_list[0],
+        "scoreboard": _companion_scoreboard(),
     }
 
 
