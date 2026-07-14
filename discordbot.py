@@ -19517,11 +19517,14 @@ async def ask_question(trivia_category, trivia_question, trivia_url, trivia_answ
             
     elif trivia_category == "Crossword":
         image_buffer, string_representation = generate_crossword_image(trivia_answer_list[0])
-        if image_questions == True: 
+        if image_questions == True:
             message_body += f"\u200b\n\u200b\n{number_block} **{get_category_title(trivia_category, trivia_url)}**\n\n[{len(trivia_answer_list[0])} Letters] {trivia_question}\n"
             send_image_flag = True
         else:
-            message_body += f"\u200b\n\u200b\n{number_block} **{get_category_title(trivia_category, trivia_url)}**\n\n[{len(trivia_answer_list[0])} Letters] {trivia_question}\n\n{string_representation}\n"
+            # Escape the blank underscores -- Discord reads `_..._` as italics, which eats the
+            # blanks and italicizes the letters between them.
+            safe_representation = string_representation.replace("_", "\\_")
+            message_body += f"\u200b\n\u200b\n{number_block} **{get_category_title(trivia_category, trivia_url)}**\n\n[{len(trivia_answer_list[0])} Letters] {trivia_question}\n\n{safe_representation}\n"
         
     elif "multiple choice" in trivia_url:
         if trivia_answer_list[0] in {"True", "False"}:
