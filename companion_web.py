@@ -327,6 +327,7 @@ _INDEX_HTML = """<!doctype html>
   button.primary:active { transform:translateY(1px); }
   button.primary:disabled { opacity:.5; box-shadow:none; cursor:default; }
   .choices { display:grid; gap:10px; }
+  .ortype { text-align:center; color:var(--muted); font-size:.78rem; margin:14px 0 10px; }
   .choice { padding:15px 16px; font-size:1.02rem; text-align:left; border-radius:14px;
     border:1px solid var(--line); background:rgba(127,127,127,.06); color:inherit; cursor:pointer;
     transition:border-color .12s, transform .06s; }
@@ -362,7 +363,7 @@ _INDEX_HTML = """<!doctype html>
   <footer class="foot"><span class="footmark"></span>Live Trivia &amp; Games</footer>
 </div>
 <script>
-let es = null, countdownTimer = null, endsAt = 0, currentKey = null, answeredKey = null;
+let es = null, countdownTimer = null, endsAt = 0, currentKey = null, answeredKey = null, answeredValue = null;
 var DISCORD_SVG = '<svg viewBox="0 -28.5 256 256" fill="currentColor" aria-hidden="true"><path d="M216.856 16.597A208.502 208.502 0 0 0 164.042 0c-2.275 4.113-4.933 9.645-6.766 14.046-19.692-2.961-39.203-2.961-58.533 0-1.832-4.4-4.55-9.933-6.846-14.046a207.809 207.809 0 0 0-52.855 16.638C5.618 67.147-3.443 116.4 1.087 164.956c22.169 16.555 43.653 26.612 64.775 33.193A161.094 161.094 0 0 0 79.735 175.3a136.413 136.413 0 0 1-21.846-10.632 108.636 108.636 0 0 0 5.356-4.237c42.122 19.702 87.89 19.702 129.51 0a131.66 131.66 0 0 0 5.355 4.237 136.07 136.07 0 0 1-21.886 10.653c4.006 8.02 8.638 15.67 13.873 22.848 21.142-6.581 42.646-16.637 64.815-33.213 5.316-56.288-9.081-105.09-38.056-148.36ZM85.474 135.095c-12.645 0-23.015-11.805-23.015-26.18s10.149-26.2 23.015-26.2c12.867 0 23.236 11.804 23.015 26.2.02 14.375-10.148 26.18-23.015 26.18Zm85.051 0c-12.645 0-23.014-11.805-23.014-26.18s10.148-26.2 23.014-26.2c12.867 0 23.236 11.804 23.015 26.2 0 14.375-10.148 26.18-23.015 26.18Z"/></svg>';
 
 function imgHtml(state) {
@@ -392,7 +393,10 @@ function render(state) {
 
   if (state.phase === 'revealed') {
     let mine = '';
-    if (answeredKey === state.question_key) mine = '<div class="status">You answered this one.</div>';
+    if (answeredKey === state.question_key) {
+      mine = '<div class="status">You answered' +
+        (answeredValue ? ': ' + esc(answeredValue) : ' this one') + '.</div>';
+    }
     app.innerHTML = '<div class="cat">' + esc(state.category || '') + '</div>' +
       (state.question ? '<div class="q">' + esc(state.question) + '</div>' : '') +
       imgHtml(state) +
@@ -411,17 +415,25 @@ function render(state) {
 
   // open
   const isNew = state.question_key !== currentKey;
+  if (isNew) answeredValue = null;
   currentKey = state.question_key;
   endsAt = state.ends_at || 0;
 
   let inputHtml;
   const already = state.already_answered || answeredKey === state.question_key;
   if (already) {
-    inputHtml = '<div class="status ok">🔒 Locked in! Waiting for the reveal…</div>';
+    const shown = (answeredKey === state.question_key && answeredValue) || state.my_answer || '';
+    inputHtml = '<div class="status ok">🔒 Locked in' + (shown ? ': ' + esc(shown) : '!') + '</div>' +
+      '<div class="idle" style="padding:6px 0">Waiting for the reveal…</div>';
   } else if (state.is_multiple_choice && (state.choices || []).length) {
+    // Multiple choice: click a choice, or type the letter/answer — both submit the same way.
     inputHtml = '<div class="choices">' + state.choices.map(function (c) {
       return '<button class="choice" onclick="submit(\\'' + esc(c.letter) + '\\')">' + esc(c.text) + '</button>';
-    }).join('') + '</div>';
+    }).join('') + '</div>' +
+      '<div class="ortype">or type your answer</div>' +
+      '<input id="ans" type="text" autocomplete="off" autocapitalize="off" ' +
+      'placeholder="Type a letter or the answer…" onkeydown="if(event.key===\\'Enter\\')submitText()">' +
+      '<button class="primary" onclick="submitText()">Submit</button>';
   } else {
     inputHtml = '<input id="ans" type="text" autocomplete="off" autocapitalize="off" ' +
       'placeholder="Type your answer…" onkeydown="if(event.key===\\'Enter\\')submitText()">' +
@@ -457,6 +469,7 @@ async function submit(answer) {
     const data = await r.json();
     if (data.ok) {
       answeredKey = currentKey;
+      answeredValue = answer;
       setStatus('🔒 Locked in: ' + answer, 'ok');
       const inp = document.getElementById('ans'); if (inp) inp.disabled = true;
       document.querySelectorAll('.choice').forEach(function (b) { b.disabled = true; });

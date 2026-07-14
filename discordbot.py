@@ -23027,11 +23027,14 @@ def build_companion_state(user_id=None):
         "ends_at": question_asked_end,
     }
     if user_id is not None:
-        already = (
+        my_answer = next((r.get("message_content") for r in collected_responses
+                          if r["user_id"] == user_id), None)
+        state["already_answered"] = (
             (current_answer_view is not None and user_id in current_answer_view.answered_user_ids)
-            or any(r["user_id"] == user_id for r in collected_responses)
+            or my_answer is not None
         )
-        state["already_answered"] = already
+        if my_answer is not None:
+            state["my_answer"] = my_answer
     return state
 
 
