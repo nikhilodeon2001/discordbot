@@ -356,7 +356,7 @@ _INDEX_HTML = """<!doctype html>
     <div class="brandmark" role="img" aria-label="Live Trivia and Games logo"></div>
     <h1>Live Trivia <span class="amp">&amp;</span> Games</h1>
   </header>
-  <div class="sub">Answer live from your phone — private, timed, and scored right alongside everyone in the channel.</div>
+  <div class="sub">Answer live from your phone or computer — private, timed, and scored right alongside everyone in the channel.</div>
   <div id="app" class="card"><div class="idle">Loading…</div></div>
   <div id="me" class="me"></div>
   <footer class="foot"><span class="footmark"></span>Live Trivia &amp; Games</footer>
@@ -384,7 +384,7 @@ function render(state) {
   if (state.authenticated === false) {
     app.innerHTML = '<div class="hero"><div class="mascot"></div>' +
       '<h2>Ready to play?</h2>' +
-      '<p>Log in with Discord to answer live questions privately from your phone.</p>' +
+      '<p>Log in with Discord to answer live questions privately from your phone or computer.</p>' +
       '<a class="login" href="/login">' + DISCORD_SVG + 'Login with Discord</a></div>';
     return;
   }
