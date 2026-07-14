@@ -269,7 +269,7 @@ async def end_of_round(sent_message=None):
                     updated_embed.description = (updated_embed.description or "") + f"\n\n{blurb}"
                     await sent_message.edit(embed=updated_embed)
                     print(f"✅ Merged update notification into round-end message in main channel")
-                except (discord.NotFound, discord.HTTPException) as e:
+                except (discord.NotFound, discord.HTTPException, aiohttp.ClientError) as e:
                     print(f"❌ Failed to merge update notification into main channel message: {e}")
                     if channel:
                         await safe_send(channel, blurb)
@@ -21680,12 +21680,12 @@ async def start_trivia():
                         button.label = f"Starting in {i}s"
                         try:
                             await msg.edit(embed=embed, view=view)
-                        except (discord.NotFound, discord.HTTPException):
+                        except (discord.NotFound, discord.HTTPException, aiohttp.ClientError):
                             return
                         await asyncio.sleep(1)
                     try:
                         await msg.edit(embed=embed, view=None)
-                    except (discord.NotFound, discord.HTTPException):
+                    except (discord.NotFound, discord.HTTPException, aiohttp.ClientError):
                         pass
 
                 # Wait for a player to be present before starting
@@ -21769,7 +21769,7 @@ async def start_trivia():
                             current_countdown_button.style = discord.ButtonStyle.danger if remaining <= 3 else discord.ButtonStyle.secondary
                         try:
                             await current_answer_message.edit(view=view_to_edit)
-                        except (discord.NotFound, discord.HTTPException):
+                        except (discord.NotFound, discord.HTTPException, aiohttp.ClientError):
                             break
                 #await safe_send(channel, "\u200b\n🛑 TIME 🛑\n\u200b")
                 
@@ -21823,7 +21823,7 @@ async def start_trivia():
                                     edit_kwargs["embed"] = embed
 
                         await current_answer_message.edit(**edit_kwargs)
-                    except (discord.NotFound, discord.HTTPException):
+                    except (discord.NotFound, discord.HTTPException, aiohttp.ClientError):
                         pass
                     previous_answer_message = current_answer_message
                     current_answer_view = None
@@ -21910,7 +21910,7 @@ async def start_trivia():
                             updated_embed = sent_round_end_message.embeds[0] if sent_round_end_message.embeds else discord.Embed()
                             updated_embed.description = (updated_embed.description or "") + f"\n\n{blurb}"
                             await sent_round_end_message.edit(embed=updated_embed)
-                        except (discord.NotFound, discord.HTTPException):
+                        except (discord.NotFound, discord.HTTPException, aiohttp.ClientError):
                             await safe_send(channel, blurb)
                     else:
                         await safe_send(channel, blurb)
