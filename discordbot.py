@@ -580,6 +580,10 @@ _companion_show_standings = False
 _companion_round_overview = []
 _companion_question_number = 0
 
+# In text mode (image_questions off), generated types render a text puzzle body (crossword blank
+# tiles, scramble, math number set) into the Discord message; capture it so the phone shows it too.
+_companion_puzzle_text = None
+
 # Add this global variable to hold the submission queue
 submission_queue = []
 max_queue_size = 100  # Number of submissions to accumulate before flushing
@@ -19369,6 +19373,7 @@ def apply_glyphs(text):
 async def ask_question(trivia_category, trivia_question, trivia_url, trivia_answer_list, question_number, trivia_db=None, trivia_id=None, trivia_paragraph=None):
     """Ask the trivia question."""
     global current_answer_view, current_answer_message, current_report_view, current_countdown_button
+    _companion_set_puzzle_text(None)  # cleared each question; set below for text-mode puzzles
     await record_question_asked(trivia_db, trivia_id)
     # Define the numbered block emojis for questions 1 to 10
     numbered_blocks = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"]
@@ -19490,6 +19495,7 @@ async def ask_question(trivia_category, trivia_question, trivia_url, trivia_answ
             send_image_flag = True
         else:
             message_body += f"\u200b\n\u200b\n{number_block}🧩 **{get_category_title(trivia_category, trivia_url)}**\n\n{trivia_question}\n{scramble}\n"
+            _companion_set_puzzle_text(scramble)
 
     elif trivia_url == "median":
         image_buffer, new_solution, num_set = generate_median_question()
@@ -19525,6 +19531,7 @@ async def ask_question(trivia_category, trivia_question, trivia_url, trivia_answ
             # blanks and italicizes the letters between them.
             safe_representation = string_representation.replace("_", "\\_")
             message_body += f"\u200b\n\u200b\n{number_block} **{get_category_title(trivia_category, trivia_url)}**\n\n[{len(trivia_answer_list[0])} Letters] {trivia_question}\n\n{safe_representation}\n"
+            _companion_set_puzzle_text(string_representation)  # raw tiles for the phone (HTML shows _ literally)
         
     elif "multiple choice" in trivia_url:
         if trivia_answer_list[0] in {"True", "False"}:
@@ -23052,6 +23059,7 @@ def build_companion_state(user_id=None):
         "is_multiple_choice": _is_multiple_choice_url(trivia_url),
         "choices": _companion_question_choices(answer_list, trivia_url),
         "image_url": image_url,
+        "puzzle_text": _companion_puzzle_text,
         "modes": _companion_active_modes(),
         "round_overview": _companion_round_overview,
         "question_number": _companion_question_number,
@@ -23080,6 +23088,12 @@ def _companion_set_question_number(n):
     """Record which question (1-indexed) the round is on, for the companion overview highlight."""
     global _companion_question_number
     _companion_question_number = n
+
+
+def _companion_set_puzzle_text(text):
+    """Text-mode puzzle body (crossword tiles, scramble, math set) for the phone, or None."""
+    global _companion_puzzle_text
+    _companion_puzzle_text = text
 
 
 def _companion_active_modes():
