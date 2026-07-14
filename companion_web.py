@@ -430,7 +430,7 @@ function scoreboardHtml(state) {
       (r.lightning ? '<span class="sblight">⚡' + r.lightning + '</span>' : '') +
       '<span class="sbscore">' + esc(r.score || '') + '</span>' +
       (r.delta ? '<span class="sbdelta">' + esc(r.delta) + '</span>' : '') +
-      (r.via_companion ? '<span class="sbapp" title="Answered via the app">📱</span>' : '') +
+      (r.via_companion ? '<span class="sbapp" title="Answered via the app">🌐</span>' : '') +
     '</div>';
   }).join('') + '</div>';
 }
