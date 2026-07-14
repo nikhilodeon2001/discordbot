@@ -318,6 +318,8 @@ _INDEX_HTML = """<!doctype html>
   .q { font-size:1.3rem; font-weight:650; line-height:1.34; margin-bottom:20px; letter-spacing:-.01em; }
   .qimage { display:block; width:100%; max-height:44vh; object-fit:contain; border-radius:12px;
     margin:0 0 16px; background:rgba(127,127,127,.06); }
+  .puzzle { font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:1.35rem;
+    letter-spacing:.18em; text-align:center; margin:2px 0 18px; color:var(--fg); overflow-x:auto; }
   input[type=text] { width:100%; padding:15px 16px; font-size:1.05rem; border-radius:14px;
     border:1px solid var(--line); background:rgba(127,127,127,.08); color:inherit; }
   input[type=text]:focus { outline:none; border-color:var(--blue); box-shadow:0 0 0 3px rgba(30,160,255,.25); }
@@ -419,6 +421,10 @@ function scoreboardHtml(state) {
   }).join('') + '</div>';
 }
 
+function puzzleHtml(state) {
+  return state.puzzle_text ? '<div class="puzzle">' + esc(state.puzzle_text) + '</div>' : '';
+}
+
 function imgHtml(state) {
   return state.image_url
     ? '<img class="qimage" src="' + esc(state.image_url) + '" alt="Question image" ' +
@@ -505,7 +511,7 @@ function render(state) {
   app.innerHTML = '<div class="qhead"><span class="cat">' + esc(state.category || '') + '</span>' +
       '<span id="timer" class="timer">--</span></div>' +
       (state.question ? '<div class="q">' + esc(state.question) + '</div>' : '') +
-      imgHtml(state) + inputHtml +
+      imgHtml(state) + puzzleHtml(state) + inputHtml +
       '<div id="status" class="status"></div>' + legendHtml(state) + roundHtml(state);
 
   if (isNew && !state.already_answered) { const i = document.getElementById('ans'); if (i) i.focus(); }
