@@ -358,6 +358,7 @@ _INDEX_HTML = """<!doctype html>
   .sblight { flex:none; font-size:.82rem; color:var(--muted); margin-right:6px; }
   .sbscore { flex:none; font-variant-numeric:tabular-nums; font-weight:700; }
   .sbdelta { flex:none; color:#3ddc84; font-weight:600; font-size:.85em; margin-left:4px; }
+  .sbapp { flex:none; font-size:.9rem; margin-left:2px; }
   .legend { display:flex; flex-wrap:wrap; gap:6px; margin-top:16px; }
   .lchip { font-size:.72rem; font-weight:600; padding:4px 9px; border-radius:999px;
     background:rgba(127,127,127,.10); border:1px solid var(--line); color:var(--muted); }
@@ -397,7 +398,7 @@ _INDEX_HTML = """<!doctype html>
   <footer class="foot"><span class="footmark"></span>Live Trivia &amp; Games</footer>
 </div>
 <script>
-let es = null, countdownTimer = null, endsAt = 0, currentKey = null, answeredKey = null, answeredValue = null;
+let es = null, countdownTimer = null, endsAt = 0, currentKey = null, answeredKey = null, answeredValue = null, oneGuess = false;
 var DISCORD_SVG = '<svg viewBox="0 -28.5 256 256" fill="currentColor" aria-hidden="true"><path d="M216.856 16.597A208.502 208.502 0 0 0 164.042 0c-2.275 4.113-4.933 9.645-6.766 14.046-19.692-2.961-39.203-2.961-58.533 0-1.832-4.4-4.55-9.933-6.846-14.046a207.809 207.809 0 0 0-52.855 16.638C5.618 67.147-3.443 116.4 1.087 164.956c22.169 16.555 43.653 26.612 64.775 33.193A161.094 161.094 0 0 0 79.735 175.3a136.413 136.413 0 0 1-21.846-10.632 108.636 108.636 0 0 0 5.356-4.237c42.122 19.702 87.89 19.702 129.51 0a131.66 131.66 0 0 0 5.355 4.237 136.07 136.07 0 0 1-21.886 10.653c4.006 8.02 8.638 15.67 13.873 22.848 21.142-6.581 42.646-16.637 64.815-33.213 5.316-56.288-9.081-105.09-38.056-148.36ZM85.474 135.095c-12.645 0-23.015-11.805-23.015-26.18s10.149-26.2 23.015-26.2c12.867 0 23.236 11.804 23.015 26.2.02 14.375-10.148 26.18-23.015 26.18Zm85.051 0c-12.645 0-23.014-11.805-23.014-26.18s10.148-26.2 23.014-26.2c12.867 0 23.236 11.804 23.015 26.2 0 14.375-10.148 26.18-23.015 26.18Z"/></svg>';
 
 function roundHtml(state) {
@@ -429,6 +430,7 @@ function scoreboardHtml(state) {
       (r.lightning ? '<span class="sblight">⚡' + r.lightning + '</span>' : '') +
       '<span class="sbscore">' + esc(r.score || '') + '</span>' +
       (r.delta ? '<span class="sbdelta">' + esc(r.delta) + '</span>' : '') +
+      (r.via_companion ? '<span class="sbapp" title="Answered via the app">📱</span>' : '') +
     '</div>';
   }).join('') + '</div>';
 }
@@ -504,6 +506,7 @@ function render(state) {
   if (isNew) answeredValue = null;
   currentKey = state.question_key;
   endsAt = state.ends_at || 0;
+  oneGuess = !!state.warning;  // one-guess questions lock after a submit (see submit())
 
   let inputHtml;
   const prior = (answeredKey === state.question_key && answeredValue) || state.my_answer || '';
@@ -562,9 +565,17 @@ async function submit(answer) {
     if (data.ok) {
       answeredKey = currentKey;
       answeredValue = answer;
-      // Multiple submissions allowed (like Discord typing): confirm, keep inputs usable.
-      setStatus('✓ Submitted: ' + answer + ' — you can submit again', 'ok');
-      const inp = document.getElementById('ans'); if (inp) { inp.value = ''; inp.focus(); }
+      if (oneGuess) {
+        // One-guess question: lock the inputs after the single allowed submit.
+        setStatus('🔒 Locked in: ' + answer, 'ok');
+        const inp = document.getElementById('ans'); if (inp) inp.disabled = true;
+        document.querySelectorAll('.choice').forEach(function (b) { b.disabled = true; });
+        const btn = document.querySelector('button.primary'); if (btn) btn.disabled = true;
+      } else {
+        // Free-text: multiple submissions allowed (like Discord typing).
+        setStatus('✓ Submitted: ' + answer + ' — you can submit again', 'ok');
+        const inp = document.getElementById('ans'); if (inp) { inp.value = ''; inp.focus(); }
+      }
     } else if (data.reason === 'already') {
       answeredKey = currentKey; setStatus('You already answered this question.', 'ok');
     } else if (data.reason === 'closed') {

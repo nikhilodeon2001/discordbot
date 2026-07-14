@@ -591,6 +591,9 @@ _companion_footer_text = None
 # companion reveal can tell each player whether they got it right.
 _companion_correct_user_ids = set()
 
+# subset of the above who got it right via a companion-app (web) answer, for the 📱 scoreboard icon.
+_companion_web_correct_user_ids = set()
+
 # Add this global variable to hold the submission queue
 submission_queue = []
 max_queue_size = 100  # Number of submissions to accumulate before flushing
@@ -19926,7 +19929,8 @@ async def check_correct_responses_delete(question_ask_time, trivia_answer_list, 
     
     # Define the first item in the list as trivia_answer
     trivia_answer = trivia_answer_list[0]  
-    correct_responses = [] 
+    correct_responses = []
+    web_correct_user_ids = set()  # who got it right via a companion-app answer (for the 📱 icon)
     has_responses = False
 
     fastest_correct_user = None
@@ -20045,7 +20049,9 @@ async def check_correct_responses_delete(question_ask_time, trivia_answer_list, 
                     points = round(points / 5) * 5
 
             correct_responses.append((display_name, points, response_time, message_content, sender_id, message, None))
-    
+            if response.get("source") == "web":
+                web_correct_user_ids.add(sender_id)
+
             # Check if this is the fastest/slowest correct response so far
             if golf_mode:
                 # In golf mode, track the slowest responder
@@ -20155,10 +20161,12 @@ async def check_correct_responses_delete(question_ask_time, trivia_answer_list, 
    
     # Hand this question's deltas + reveal mode to the companion scoreboard builder, plus the set of
     # user_ids who got it right so the companion reveal can tell each player their result.
-    global _companion_last_points_gained, _companion_show_standings, _companion_correct_user_ids
+    global _companion_last_points_gained, _companion_show_standings
+    global _companion_correct_user_ids, _companion_web_correct_user_ids
     _companion_last_points_gained = points_gained_this_question
     _companion_show_standings = show_standings_after
     _companion_correct_user_ids = {r[4] for r in correct_responses}
+    _companion_web_correct_user_ids = web_correct_user_ids
 
     # Add the current state of the scoreboard to round_data
     current_question_data = next((q for q in round_data["questions"] if q["question_number"] == question_number), None)
@@ -20715,6 +20723,7 @@ def _compute_standings_rows(points_gained_this_question=None, row_notes=None,
             "score_display": score_display,
             "delta_text": delta_text,
             "lightning_count": fastest_count,
+            "via_companion": user_id in _companion_web_correct_user_ids,
         })
 
     return rows
@@ -23079,12 +23088,14 @@ def build_companion_state(user_id=None):
         "ends_at": question_asked_end,
     }
     if user_id is not None:
-        # Only the multiple-choice button truly locks a user (one answer on Discord); typed
-        # answers can be resubmitted, so don't lock just because a prior response exists.
-        state["already_answered"] = (
-            current_answer_view is not None and user_id in current_answer_view.answered_user_ids)
         my_answer = next((r.get("message_content") for r in collected_responses
                           if r["user_id"] == user_id), None)
+        # Lock when they used the multiple-choice button, or answered a one-guess question (footer
+        # warning present). Free-text answers can be resubmitted, so a prior response alone doesn't lock.
+        state["already_answered"] = (
+            (current_answer_view is not None and user_id in current_answer_view.answered_user_ids)
+            or (_companion_footer_text is not None and my_answer is not None)
+        )
         if my_answer is not None:
             state["my_answer"] = my_answer
     return state
@@ -23164,6 +23175,7 @@ def _companion_scoreboard():
         "score": r.get("score_display", ""),
         "delta": r.get("delta_text", ""),
         "lightning": r.get("lightning_count", 0),
+        "via_companion": r.get("via_companion", False),
     } for r in rows]
 
 
@@ -23213,12 +23225,17 @@ def companion_submit_answer(user_id, display_name, text):
         return {"ok": False, "reason": "closed"}
     if current_answer_view is not None and user_id in current_answer_view.answered_user_ids:
         return {"ok": False, "reason": "already"}
+    # One-guess questions (those with a footer warning) lock after the first answer, like the
+    # multiple-choice button; free-text questions allow repeat submits (matching Discord typing).
+    if _companion_footer_text and any(r["user_id"] == user_id for r in collected_responses):
+        return {"ok": False, "reason": "already"}
     collected_responses.append({
         "user_id": user_id,
         "display_name": display_name,
         "message_content": text,
         "response_time": now,
         "message": None,
+        "source": "web",  # marks a companion-app answer, for the 📱 scoreboard indicator
     })
     return {"ok": True}
 
