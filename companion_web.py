@@ -421,10 +421,13 @@ function render(state) {
       mine = '<div class="status">You answered' +
         (answeredValue ? ': ' + esc(answeredValue) : ' this one') + '.</div>';
     }
+    const answerLine = state.blind
+      ? '<div class="status">🙈 Answers are hidden this round.</div>'
+      : '<div class="status ok">✅ Answer: ' + esc(state.correct_answer || '') + '</div>';
     app.innerHTML = '<div class="cat">' + esc(state.category || '') + '</div>' +
       (state.question ? '<div class="q">' + esc(state.question) + '</div>' : '') +
       imgHtml(state) +
-      '<div class="status ok">✅ Answer: ' + esc(state.correct_answer || '') + '</div>' + mine +
+      answerLine + mine +
       scoreboardHtml(state);
     if (countdownTimer) { clearInterval(countdownTimer); countdownTimer = null; }
     return;
