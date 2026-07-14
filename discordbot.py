@@ -17725,6 +17725,7 @@ def generate_scoreboard_image(rows, title_outer_emoji="🏔️", title_inner_emo
     font_size = 16
     rank_icon_size = 20
     lightning_icon_size = 15
+    phone_icon_size = 16
 
     font = get_font("DejaVuSans.ttf", font_size)
     title_font = get_font("DejaVuSans-Bold.ttf", 18)
@@ -17787,12 +17788,16 @@ def generate_scoreboard_image(rows, title_outer_emoji="🏔️", title_inner_emo
     max_score_width = max((text_width(row["score_display"]) for row in rows), default=0)
     delta_widths = [text_width(row["delta_text"]) if row["delta_text"] else 0 for row in rows]
     max_delta_width = max(delta_widths, default=0)
+    # 📱 column for companion-answered rows -- only reserved if at least one row has it.
+    max_phone_width = phone_icon_size if any(row.get("via_companion") for row in rows) else 0
 
     cluster_width = max_score_width
     if max_lightning_width:
         cluster_width += max_lightning_width + col_gap
     if max_delta_width:
         cluster_width += max_delta_width + col_gap
+    if max_phone_width:
+        cluster_width += max_phone_width + col_gap
 
     content_right_edge = name_x + max_name_render_width + col_gap + cluster_width + side_margin
 
@@ -17812,6 +17817,7 @@ def generate_scoreboard_image(rows, title_outer_emoji="🏔️", title_inner_emo
     lightning_x = cluster_left
     score_x = lightning_x + (max_lightning_width + col_gap if max_lightning_width else 0)
     delta_x = score_x + max_score_width + col_gap
+    phone_x = cluster_left + cluster_width - max_phone_width  # 📱 sits at the far right of the cluster
 
     img = Image.new("RGB", (img_width, img_height), color=background_color)
     draw = ImageDraw.Draw(img)
@@ -17865,6 +17871,10 @@ def generate_scoreboard_image(rows, title_outer_emoji="🏔️", title_inner_emo
 
         if row["delta_text"]:
             draw.text((delta_x, row_center_y), row["delta_text"], fill=muted_color, font=font)
+
+        if max_phone_width and row.get("via_companion"):
+            phone_icon = render_emoji_icon("📱", phone_icon_size)
+            img.paste(phone_icon, (phone_x, icon_center_y - phone_icon_size // 2), phone_icon)
 
         y += height
 
