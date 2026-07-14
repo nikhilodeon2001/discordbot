@@ -337,13 +337,13 @@ _INDEX_HTML = """<!doctype html>
   .sbtitle { font-size:.72rem; font-weight:700; text-transform:uppercase; letter-spacing:.08em;
     color:var(--muted); margin:20px 0 8px; }
   .sb { display:flex; flex-direction:column; gap:3px; max-height:46vh; overflow-y:auto; }
-  .sbrow { display:flex; align-items:center; gap:9px; padding:8px 11px; border-radius:11px;
+  .sbrow { display:flex; align-items:center; gap:8px; padding:8px 11px; border-radius:11px;
     background:rgba(127,127,127,.07); font-size:.94rem; }
   .sbrank { min-width:1.5em; text-align:center; flex:none; }
   .sbname { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  .sblight { flex:none; font-size:.8rem; color:var(--muted); }
+  .sblight { flex:none; font-size:.82rem; color:var(--muted); margin-right:6px; }
   .sbscore { flex:none; font-variant-numeric:tabular-nums; font-weight:700; }
-  .sbdelta { color:#3ddc84; font-weight:600; font-size:.85em; }
+  .sbdelta { flex:none; color:#3ddc84; font-weight:600; font-size:.85em; margin-left:4px; }
   .legend { display:flex; flex-wrap:wrap; gap:6px; margin-top:16px; }
   .lchip { font-size:.72rem; font-weight:600; padding:4px 9px; border-radius:999px;
     background:rgba(127,127,127,.10); border:1px solid var(--line); color:var(--muted); }
@@ -395,8 +395,8 @@ function scoreboardHtml(state) {
       '<span class="sbrank">' + esc(r.rank || '') + '</span>' +
       '<span class="sbname">' + esc(r.name || '') + '</span>' +
       (r.lightning ? '<span class="sblight">⚡' + r.lightning + '</span>' : '') +
-      '<span class="sbscore">' + esc(r.score || '') +
-        (r.delta ? ' <span class="sbdelta">' + esc(r.delta) + '</span>' : '') + '</span>' +
+      '<span class="sbscore">' + esc(r.score || '') + '</span>' +
+      (r.delta ? '<span class="sbdelta">' + esc(r.delta) + '</span>' : '') +
     '</div>';
   }).join('') + '</div>';
 }
