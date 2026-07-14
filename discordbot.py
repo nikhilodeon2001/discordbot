@@ -22969,6 +22969,23 @@ def _companion_question_choices(trivia_answer_list, trivia_url):
     return choices
 
 
+def _companion_image_url(trivia_url):
+    """The question's image URL for the phone, if any. For normal image questions trivia_url
+    *is* the image URL (ask_question sets image_url = trivia_url when is_valid_url); for
+    bot-generated images (math/trig/etc.) fall back to the URL Discord rehosted the attachment
+    to, read off the sent message's embed. Returns None for text-only questions."""
+    if trivia_url and is_valid_url(trivia_url):
+        return trivia_url
+    try:
+        if current_answer_message is not None and current_answer_message.embeds:
+            emb_url = current_answer_message.embeds[0].image.url
+            if emb_url:
+                return emb_url
+    except Exception:
+        pass
+    return None
+
+
 def build_companion_state(user_id=None):
     """Sanitized live-question state for the companion. CRITICAL: never leak the correct
     answer (trivia_answer_list[0]) while a question is open."""
@@ -22991,6 +23008,7 @@ def build_companion_state(user_id=None):
         "question": cq.get("trivia_question", ""),
         "is_multiple_choice": _is_multiple_choice_url(trivia_url),
         "choices": _companion_question_choices(answer_list, trivia_url),
+        "image_url": _companion_image_url(trivia_url),
         "ends_at": question_asked_end,
     }
     if user_id is not None:
@@ -23011,6 +23029,7 @@ def build_companion_reveal_state(solution_list):
         "question_key": question_asked_start,
         "category": cq.get("trivia_category", ""),
         "question": cq.get("trivia_question", ""),
+        "image_url": _companion_image_url(cq.get("trivia_url", "")),
         "correct_answer": solution_list[0] if solution_list else answer_list[0],
     }
 
