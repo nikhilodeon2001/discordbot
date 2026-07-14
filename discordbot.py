@@ -575,6 +575,11 @@ round_responders = []
 _companion_last_points_gained = {}
 _companion_show_standings = False
 
+# This round's category lineup (as shown in the Discord round preview) + the question we're on,
+# so the companion can show the same overview and highlight the current question.
+_companion_round_overview = []
+_companion_question_number = 0
+
 # Add this global variable to hold the submission queue
 submission_queue = []
 max_queue_size = 100  # Number of submissions to accumulate before flushing
@@ -21951,7 +21956,8 @@ async def start_trivia():
 
             # Randomly select n questions
             print_selected_questions(selected_questions)
-            
+            _companion_set_round(selected_questions)
+
             question_number = 1
             while question_number <= questions_per_round:
                 randomize_embed_color()
@@ -21978,6 +21984,7 @@ async def start_trivia():
                     "trivia_db": trivia_db,
                     "trivia_id": trivia_id
                 }
+                _companion_set_question_number(question_number)
 
                 
                 collected_responses.clear()
@@ -23043,6 +23050,8 @@ def build_companion_state(user_id=None):
         "choices": _companion_question_choices(answer_list, trivia_url),
         "image_url": image_url,
         "modes": _companion_active_modes(),
+        "round_overview": _companion_round_overview,
+        "question_number": _companion_question_number,
         "ends_at": question_asked_end,
     }
     if user_id is not None:
@@ -23055,6 +23064,19 @@ def build_companion_state(user_id=None):
         if my_answer is not None:
             state["my_answer"] = my_answer
     return state
+
+
+def _companion_set_round(selected_questions):
+    """Capture this round's category lineup (same titles as the Discord round preview) for the
+    companion's round overview. Called once per round after the lineup is finalized."""
+    global _companion_round_overview
+    _companion_round_overview = [get_category_title(q[0], q[2]) for q in selected_questions]
+
+
+def _companion_set_question_number(n):
+    """Record which question (1-indexed) the round is on, for the companion overview highlight."""
+    global _companion_question_number
+    _companion_question_number = n
 
 
 def _companion_active_modes():
@@ -23116,6 +23138,8 @@ def build_companion_reveal_state(solution_list):
         "blind": bool(blind_mode),
         "scoreboard": _companion_scoreboard(),
         "modes": _companion_active_modes(),
+        "round_overview": _companion_round_overview,
+        "question_number": _companion_question_number,
     }
 
 
