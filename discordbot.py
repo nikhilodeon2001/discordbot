@@ -23055,12 +23055,12 @@ def build_companion_state(user_id=None):
         "ends_at": question_asked_end,
     }
     if user_id is not None:
+        # Only the multiple-choice button truly locks a user (one answer on Discord); typed
+        # answers can be resubmitted, so don't lock just because a prior response exists.
+        state["already_answered"] = (
+            current_answer_view is not None and user_id in current_answer_view.answered_user_ids)
         my_answer = next((r.get("message_content") for r in collected_responses
                           if r["user_id"] == user_id), None)
-        state["already_answered"] = (
-            (current_answer_view is not None and user_id in current_answer_view.answered_user_ids)
-            or my_answer is not None
-        )
         if my_answer is not None:
             state["my_answer"] = my_answer
     return state
@@ -23156,14 +23156,14 @@ def companion_resolve_member(user_id):
 
 
 def companion_submit_answer(user_id, display_name, text):
-    """Inject a phone answer into collected_responses. Mirrors the button flow at
-    AnswerButtonView._handle_click: server-authoritative timestamp, one-answer-per-user
-    across all surfaces (scan of collected_responses — the single source of truth)."""
+    """Inject a phone answer into collected_responses with a server-authoritative timestamp.
+    Matches Discord's typed-answer behavior: a user may submit multiple answers (grading may
+    only look at the first) -- the only lock is the multiple-choice button, which is one-and-done
+    on Discord (answered_user_ids), so a button answer blocks further submits like it does there."""
     now = time.time()
     if question_asked_start is None or question_asked_end is None or not (question_asked_start <= now <= question_asked_end):
         return {"ok": False, "reason": "closed"}
-    if (current_answer_view is not None and user_id in current_answer_view.answered_user_ids) \
-            or any(r["user_id"] == user_id for r in collected_responses):
+    if current_answer_view is not None and user_id in current_answer_view.answered_user_ids:
         return {"ok": False, "reason": "already"}
     collected_responses.append({
         "user_id": user_id,
