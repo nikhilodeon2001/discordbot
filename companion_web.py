@@ -477,24 +477,29 @@ function render(state) {
   endsAt = state.ends_at || 0;
 
   let inputHtml;
-  const already = state.already_answered || answeredKey === state.question_key;
-  if (already) {
-    const shown = (answeredKey === state.question_key && answeredValue) || state.my_answer || '';
-    inputHtml = '<div class="status ok">🔒 Locked in' + (shown ? ': ' + esc(shown) : '!') + '</div>' +
+  const prior = (answeredKey === state.question_key && answeredValue) || state.my_answer || '';
+  if (state.already_answered) {
+    // Locked only when they used the multiple-choice button (one answer on Discord).
+    inputHtml = '<div class="status ok">🔒 Locked in' + (prior ? ': ' + esc(prior) : '!') + '</div>' +
       '<div class="idle" style="padding:6px 0">Waiting for the reveal…</div>';
-  } else if (state.is_multiple_choice && (state.choices || []).length) {
-    // Multiple choice: click a choice, or type the letter/answer — both submit the same way.
-    inputHtml = '<div class="choices">' + state.choices.map(function (c) {
-      return '<button class="choice" onclick="submit(\\'' + esc(c.letter) + '\\')">' + esc(c.text) + '</button>';
-    }).join('') + '</div>' +
-      '<div class="ortype">or type your answer</div>' +
-      '<input id="ans" type="text" autocomplete="off" autocapitalize="off" ' +
-      'placeholder="Type a letter or the answer…" onkeydown="if(event.key===\\'Enter\\')submitText()">' +
-      '<button class="primary" onclick="submitText()">Submit</button>';
   } else {
-    inputHtml = '<input id="ans" type="text" autocomplete="off" autocapitalize="off" ' +
-      'placeholder="Type your answer…" onkeydown="if(event.key===\\'Enter\\')submitText()">' +
-      '<button class="primary" onclick="submitText()">Submit</button>';
+    if (state.is_multiple_choice && (state.choices || []).length) {
+      // Multiple choice: click a choice, or type the letter/answer — both submit the same way.
+      inputHtml = '<div class="choices">' + state.choices.map(function (c) {
+        return '<button class="choice" onclick="submit(\\'' + esc(c.letter) + '\\')">' + esc(c.text) + '</button>';
+      }).join('') + '</div>' +
+        '<div class="ortype">or type your answer</div>' +
+        '<input id="ans" type="text" autocomplete="off" autocapitalize="off" ' +
+        'placeholder="Type a letter or the answer…" onkeydown="if(event.key===\\'Enter\\')submitText()">' +
+        '<button class="primary" onclick="submitText()">Submit</button>';
+    } else {
+      inputHtml = '<input id="ans" type="text" autocomplete="off" autocapitalize="off" ' +
+        'placeholder="Type your answer…" onkeydown="if(event.key===\\'Enter\\')submitText()">' +
+        '<button class="primary" onclick="submitText()">Submit</button>';
+    }
+    // Multiple answers are allowed (like typing in Discord): note the last one, keep inputs open.
+    if (prior) inputHtml = '<div class="status ok">✓ Submitted: ' + esc(prior) +
+      ' — you can submit again</div>' + inputHtml;
   }
 
   app.innerHTML = '<div class="qhead"><span class="cat">' + esc(state.category || '') + '</span>' +
@@ -503,7 +508,7 @@ function render(state) {
       imgHtml(state) + inputHtml +
       '<div id="status" class="status"></div>' + legendHtml(state) + roundHtml(state);
 
-  if (isNew && !already) { const i = document.getElementById('ans'); if (i) i.focus(); }
+  if (isNew && !state.already_answered) { const i = document.getElementById('ans'); if (i) i.focus(); }
   if (countdownTimer) clearInterval(countdownTimer);
   fmtRemaining();
   countdownTimer = setInterval(fmtRemaining, 250);
@@ -527,10 +532,9 @@ async function submit(answer) {
     if (data.ok) {
       answeredKey = currentKey;
       answeredValue = answer;
-      setStatus('🔒 Locked in: ' + answer, 'ok');
-      const inp = document.getElementById('ans'); if (inp) inp.disabled = true;
-      document.querySelectorAll('.choice').forEach(function (b) { b.disabled = true; });
-      const btn = document.querySelector('button.primary'); if (btn) btn.disabled = true;
+      // Multiple submissions allowed (like Discord typing): confirm, keep inputs usable.
+      setStatus('✓ Submitted: ' + answer + ' — you can submit again', 'ok');
+      const inp = document.getElementById('ans'); if (inp) { inp.value = ''; inp.focus(); }
     } else if (data.reason === 'already') {
       answeredKey = currentKey; setStatus('You already answered this question.', 'ok');
     } else if (data.reason === 'closed') {
