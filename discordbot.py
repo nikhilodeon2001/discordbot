@@ -683,6 +683,7 @@ if prod_or_stage == "stage":
     FLAGGED_QUESTIONS_CHANNEL_ID = 1448901996257083493
     SUBMISSION_REVIEW_CHANNEL_ID = 1507145799698612446
     DM_RELAY_CHANNEL_ID = 1516676523547955301
+    ADMIN_CHANNEL_ID = 1526448192940544010
     SUBMISSION_MOD_ROLE_ID = 1416587636709134408
     TOP_CONTRIBUTOR_ROLE_ID = 1507142100892778740
     CHAT_CHANNEL_ID = 1423894429466366032
@@ -733,6 +734,7 @@ elif prod_or_stage == "prod":
     FLAGGED_QUESTIONS_CHANNEL_ID = 1448895124183453696
     SUBMISSION_REVIEW_CHANNEL_ID = 1507247678004924477
     DM_RELAY_CHANNEL_ID = 1516676355482452018
+    ADMIN_CHANNEL_ID = 1418354659336130703
     SUBMISSION_MOD_ROLE_ID = 1411059745774764193
     TOP_CONTRIBUTOR_ROLE_ID = 1507246658688254064
     CHAT_CHANNEL_ID = 1386209234319839282
@@ -18908,13 +18910,8 @@ async def sync_bumper_king_with_role():
                 
                 # Add role to the correct person if they don't have it
                 if target_member not in role_members:
-                    try:
-                        await target_member.add_roles(bumper_king_role)
+                    if await _grant_role_or_alert(target_member, bumper_king_role, "Bumper King role sync"):
                         print(f"Added Bumper King role to {target_member.display_name}")
-                    except discord.Forbidden:
-                        print(f"No permission to add Bumper King role to {target_member.display_name}")
-                    except Exception as e:
-                        print(f"Error adding role to {target_member.display_name}: {e}")
                 else:
                     print(f"Bumper King role already correctly assigned to {target_member.display_name}")
             
@@ -22079,6 +22076,31 @@ async def ensure_bumper_role(guild: discord.Guild) -> discord.Role:
         role = await guild.create_role(name=BUMPER_ROLE_NAME, reason="Create Bumper King role")
     return role
 
+async def _grant_role_or_alert(member: discord.Member, role: discord.Role, reason: str, channel=None) -> bool:
+    """Add `role` to `member`, retrying once. On persistent failure, post a
+    visible warning so mods know a crown role didn't actually get applied."""
+    last_err = None
+    for attempt in range(2):
+        try:
+            await member.add_roles(role, reason=reason)
+            return True
+        except Exception as e:
+            last_err = e
+            if attempt == 0:
+                await asyncio.sleep(2)
+    print(f"⚠️ failed to add role {role.name} to {member.id} after retry: {last_err}")
+    alert_channel = channel or get_bot().get_channel(ADMIN_CHANNEL_ID)
+    if alert_channel:
+        await safe_send(
+            alert_channel,
+            f"⚠️ <@&{SUBMISSION_MOD_ROLE_ID}> Couldn't grant **{role.name}** to "
+            f"<@{member.id}> after retrying ({last_err}). This is likely a role "
+            f"hierarchy/permissions issue in server settings — the bot's role "
+            f"needs to sit above **{role.name}**. Please check and assign manually.",
+        )
+    return False
+
+
 async def assign_bumper_king(guild: discord.Guild, new_user_id: int | None):
     role = await ensure_bumper_role(guild)
 
@@ -22098,10 +22120,7 @@ async def assign_bumper_king(guild: discord.Guild, new_user_id: int | None):
         print("⚠️ New bumper not in guild (cannot assign role).")
         return
 
-    try:
-        await member.add_roles(role, reason="Bumper crown granted")
-    except Exception as e:
-        print(f"⚠️ add role failed: {e}")
+    await _grant_role_or_alert(member, role, "Bumper crown granted")
 
 
 
@@ -24749,10 +24768,7 @@ async def sync_crown_roles():
             except Exception:
                 member = None
         if member and role not in member.roles:
-            try:
-                await member.add_roles(role, reason=add_reason)
-            except (discord.Forbidden, Exception) as e:
-                print(f"⚠️ sync_crown_roles: failed to add role: {e}")
+            if not await _grant_role_or_alert(member, role, add_reason):
                 return
             try:
                 await member.send(dm_text)
