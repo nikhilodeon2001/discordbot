@@ -394,8 +394,8 @@ function render(state) {
     let mine = '';
     if (answeredKey === state.question_key) mine = '<div class="status">You answered this one.</div>';
     app.innerHTML = '<div class="cat">' + esc(state.category || '') + '</div>' +
+      (state.question ? '<div class="q">' + esc(state.question) + '</div>' : '') +
       imgHtml(state) +
-      '<div class="q">' + esc(state.question || '') + '</div>' +
       '<div class="status ok">✅ Answer: ' + esc(state.correct_answer || '') + '</div>' + mine;
     if (countdownTimer) { clearInterval(countdownTimer); countdownTimer = null; }
     return;
@@ -430,8 +430,8 @@ function render(state) {
 
   app.innerHTML = '<div class="qhead"><span class="cat">' + esc(state.category || '') + '</span>' +
       '<span id="timer" class="timer">--</span></div>' +
-      imgHtml(state) +
-      '<div class="q">' + esc(state.question || '') + '</div>' + inputHtml +
+      (state.question ? '<div class="q">' + esc(state.question) + '</div>' : '') +
+      imgHtml(state) + inputHtml +
       '<div id="status" class="status"></div>';
 
   if (isNew && !already) { const i = document.getElementById('ans'); if (i) i.focus(); }
