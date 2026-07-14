@@ -22986,6 +22986,19 @@ def _companion_image_url(trivia_url):
     return None
 
 
+def _companion_display_question(trivia_url, trivia_category, trivia_question, answer_list, image_url):
+    """The text to show above the image on the phone, mirroring what ask_question renders:
+    - Jeopardy image clues: no text (the clue is drawn into the image itself).
+    - Crossword: prefix the clue with the letter count, e.g. "[8 Letters] Harvest.".
+    - Everything else: the plain question."""
+    if (trivia_url or "").startswith("jeopardy") and image_url:
+        return ""
+    if trivia_category == "Crossword":
+        answer = answer_list[0] if answer_list else ""
+        return f"[{len(answer)} Letters] {trivia_question}"
+    return trivia_question
+
+
 def build_companion_state(user_id=None):
     """Sanitized live-question state for the companion. CRITICAL: never leak the correct
     answer (trivia_answer_list[0]) while a question is open."""
@@ -23001,14 +23014,16 @@ def build_companion_state(user_id=None):
         return {"phase": "idle"}
     trivia_url = cq.get("trivia_url", "")
     answer_list = cq.get("trivia_answer_list", []) or []
+    image_url = _companion_image_url(trivia_url)
     state = {
         "phase": "open",
         "question_key": question_asked_start,
         "category": cq.get("trivia_category", ""),
-        "question": cq.get("trivia_question", ""),
+        "question": _companion_display_question(
+            trivia_url, cq.get("trivia_category", ""), cq.get("trivia_question", ""), answer_list, image_url),
         "is_multiple_choice": _is_multiple_choice_url(trivia_url),
         "choices": _companion_question_choices(answer_list, trivia_url),
-        "image_url": _companion_image_url(trivia_url),
+        "image_url": image_url,
         "ends_at": question_asked_end,
     }
     if user_id is not None:
@@ -23024,12 +23039,15 @@ def build_companion_reveal_state(solution_list):
     """State pushed to phones at the reveal transition (safe to include the answer now)."""
     cq = current_question or {}
     answer_list = cq.get("trivia_answer_list") or [""]
+    trivia_url = cq.get("trivia_url", "")
+    image_url = _companion_image_url(trivia_url)
     return {
         "phase": "revealed",
         "question_key": question_asked_start,
         "category": cq.get("trivia_category", ""),
-        "question": cq.get("trivia_question", ""),
-        "image_url": _companion_image_url(cq.get("trivia_url", "")),
+        "question": _companion_display_question(
+            trivia_url, cq.get("trivia_category", ""), cq.get("trivia_question", ""), answer_list, image_url),
+        "image_url": image_url,
         "correct_answer": solution_list[0] if solution_list else answer_list[0],
     }
 
