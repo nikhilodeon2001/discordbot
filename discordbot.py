@@ -86,6 +86,9 @@ from tournament import setup_tournament_system, active_tournaments
 # Okra Hunt escape room import
 from okra_hunt import OkraHunt
 
+# Companion web app (phone answer submission) — see companion_web.py
+import companion_web
+
 # Mini-games system import
 try:
     import mini_games
@@ -21973,6 +21976,10 @@ async def start_trivia():
                 question_ask_time, new_question, new_solution = await ask_question(trivia_category, trivia_question, trivia_url, trivia_answer_list, question_number, trivia_db=trivia_db, trivia_id=trivia_id, trivia_paragraph=trivia_paragraph)
                 question_message_link = current_answer_message.jump_url if current_answer_message else None
                 current_question["trivia_message_link"] = question_message_link
+                try:
+                    companion_web.publish_state(build_companion_state())
+                except Exception as e:
+                    print(f"companion publish (open) failed: {e}")
                 for remaining in range(question_time - 1, -1, -1):
                     await asyncio.sleep(1)
                     if current_countdown_button is not None:
@@ -22006,6 +22013,10 @@ async def start_trivia():
                     trivia_category, trivia_url, trivia_db=trivia_db, trivia_id=trivia_id,
                     show_standings_after=show_standings_after,
                 )
+                try:
+                    companion_web.publish_state(build_companion_reveal_state(solution_list))
+                except Exception as e:
+                    print(f"companion publish (reveal) failed: {e}")
 
                 if current_answer_view is not None:
                     current_answer_view.stop()
@@ -22919,6 +22930,108 @@ IMPORTANT:
 
 def _is_multiple_choice_url(url):
     return "multiple choice" in (url or "")
+
+
+# ---------------------------------------------------------------------------
+# Companion web app hooks (see companion_web.py)
+#
+# These bridge the in-memory live-trivia state to the phone companion. They read the
+# same module globals the Discord surfaces use (current_question, collected_responses,
+# question_asked_start/end, current_answer_view) so a web answer is a first-class entry
+# in collected_responses — graded and timed identically, with no changes to grading.
+# ---------------------------------------------------------------------------
+
+def _companion_question_choices(trivia_answer_list, trivia_url):
+    """Choice labels for the phone UI, mirroring build_answer_view (never marks the
+    correct one). Returns a list of {"letter","text"} or [] for non-MC questions."""
+    if not _is_multiple_choice_url(trivia_url) or not trivia_answer_list:
+        return []
+    if trivia_answer_list[0].strip().lower() in {"true", "false"}:
+        return [{"letter": "True", "text": "True"}, {"letter": "False", "text": "False"}]
+    choices = []
+    for option_text in trivia_answer_list[1:]:
+        match = re.match(r'^\s*([A-Za-z])[.\)]', option_text)
+        if match:
+            choices.append({"letter": match.group(1).upper(), "text": option_text.strip()})
+    return choices
+
+
+def build_companion_state(user_id=None):
+    """Sanitized live-question state for the companion. CRITICAL: never leak the correct
+    answer (trivia_answer_list[0]) while a question is open."""
+    now = time.time()
+    cq = current_question
+    is_open = (
+        cq is not None
+        and question_asked_start is not None
+        and question_asked_end is not None
+        and question_asked_start <= now <= question_asked_end
+    )
+    if not is_open:
+        return {"phase": "idle"}
+    trivia_url = cq.get("trivia_url", "")
+    answer_list = cq.get("trivia_answer_list", []) or []
+    state = {
+        "phase": "open",
+        "question_key": question_asked_start,
+        "category": cq.get("trivia_category", ""),
+        "question": cq.get("trivia_question", ""),
+        "is_multiple_choice": _is_multiple_choice_url(trivia_url),
+        "choices": _companion_question_choices(answer_list, trivia_url),
+        "ends_at": question_asked_end,
+    }
+    if user_id is not None:
+        already = (
+            (current_answer_view is not None and user_id in current_answer_view.answered_user_ids)
+            or any(r["user_id"] == user_id for r in collected_responses)
+        )
+        state["already_answered"] = already
+    return state
+
+
+def build_companion_reveal_state(solution_list):
+    """State pushed to phones at the reveal transition (safe to include the answer now)."""
+    cq = current_question or {}
+    answer_list = cq.get("trivia_answer_list") or [""]
+    return {
+        "phase": "revealed",
+        "question_key": question_asked_start,
+        "category": cq.get("trivia_category", ""),
+        "question": cq.get("trivia_question", ""),
+        "correct_answer": solution_list[0] if solution_list else answer_list[0],
+    }
+
+
+def companion_resolve_member(user_id):
+    """Return the guild nickname for a Discord user id, or None if not a member.
+    Backs the anti-impersonation check + keeps attribution consistent with scoring."""
+    guild = bot.get_guild(OKRAN_GUILD_ID)
+    if guild is None:
+        return None
+    member = guild.get_member(int(user_id))
+    if member is None:
+        return None
+    return member.display_name
+
+
+def companion_submit_answer(user_id, display_name, text):
+    """Inject a phone answer into collected_responses. Mirrors the button flow at
+    AnswerButtonView._handle_click: server-authoritative timestamp, one-answer-per-user
+    across all surfaces (scan of collected_responses — the single source of truth)."""
+    now = time.time()
+    if question_asked_start is None or question_asked_end is None or not (question_asked_start <= now <= question_asked_end):
+        return {"ok": False, "reason": "closed"}
+    if (current_answer_view is not None and user_id in current_answer_view.answered_user_ids) \
+            or any(r["user_id"] == user_id for r in collected_responses):
+        return {"ok": False, "reason": "already"}
+    collected_responses.append({
+        "user_id": user_id,
+        "display_name": display_name,
+        "message_content": text,
+        "response_time": now,
+        "message": None,
+    })
+    return {"ok": True}
 
 
 def _format_flagged_question_for_claude(doc, clarifications=None):
@@ -26266,6 +26379,17 @@ if __name__ == "__main__":
         if mini_game_audio_bot and discord_mini_game_audio_bot_token:
             print("🎵 Starting mini-game audio bot...")
             tasks.append(mini_game_audio_bot.start(discord_mini_game_audio_bot_token))
+
+        # Start the companion web app first so Heroku sees $PORT bound promptly (avoids R10
+        # boot timeout); it then serves alongside the bot on the same event loop.
+        try:
+            await companion_web.start_companion_web(
+                resolve_member=companion_resolve_member,
+                get_state=build_companion_state,
+                submit_answer=companion_submit_answer,
+            )
+        except Exception as e:
+            print(f"⚠️  Companion web app failed to start: {e}")
 
         await asyncio.gather(*tasks)
 
