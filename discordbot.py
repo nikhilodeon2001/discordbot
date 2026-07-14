@@ -21971,17 +21971,24 @@ async def start_trivia():
 
                 
                 collected_responses.clear()
+                question_ask_time, new_question, new_solution = await ask_question(trivia_category, trivia_question, trivia_url, trivia_answer_list, question_number, trivia_db=trivia_db, trivia_id=trivia_id, trivia_paragraph=trivia_paragraph)
+                # Anchor the answer window to when the question is actually visible. Posting can take a
+                # few seconds (image render/upload), so stamping this before ask_question started the
+                # window — and the countdown — early, making the button lag behind the real deadline.
                 question_asked_start = time.time()
                 question_asked_end = question_asked_start + question_time
-                question_ask_time, new_question, new_solution = await ask_question(trivia_category, trivia_question, trivia_url, trivia_answer_list, question_number, trivia_db=trivia_db, trivia_id=trivia_id, trivia_paragraph=trivia_paragraph)
                 question_message_link = current_answer_message.jump_url if current_answer_message else None
                 current_question["trivia_message_link"] = question_message_link
                 try:
                     companion_web.publish_state(build_companion_state())
                 except Exception as e:
                     print(f"companion publish (open) failed: {e}")
-                for remaining in range(question_time - 1, -1, -1):
-                    await asyncio.sleep(1)
+                # Wall-clock-synced countdown: recompute remaining from the real deadline each tick so
+                # the button reflects the true time left and hits 0 exactly at question_asked_end —
+                # matching the phone/web pill (which uses Math.ceil) — instead of accumulating per-edit
+                # drift from a fixed-count sleep(1) loop.
+                while True:
+                    remaining = max(0, math.ceil(question_asked_end - time.time()))
                     if current_countdown_button is not None:
                         view_to_edit = current_answer_view if current_answer_view is not None else current_report_view
                         if remaining == 0:
@@ -21993,6 +22000,12 @@ async def start_trivia():
                             await current_answer_message.edit(view=view_to_edit)
                         except (discord.NotFound, discord.HTTPException, aiohttp.ClientError):
                             break
+                    if remaining <= 0:
+                        break
+                    await asyncio.sleep(min(1.0, max(0.0, question_asked_end - time.time())))
+                # Grading grace: let a last-instant in-flight Discord message arrive before we snapshot
+                # collected_responses (the old slow countdown provided this buffer implicitly).
+                await asyncio.sleep(1)
                 #await safe_send(channel, "\u200b\n🛑 TIME 🛑\n\u200b")
                 
                 solution_list = []
