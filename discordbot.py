@@ -22064,7 +22064,7 @@ async def start_trivia():
                             view_to_edit.remove_item(current_countdown_button)
                         else:
                             current_countdown_button.label = f"⏳ {remaining}s"
-                            current_countdown_button.style = discord.ButtonStyle.danger if remaining <= 3 else discord.ButtonStyle.secondary
+                            current_countdown_button.style = discord.ButtonStyle.danger if remaining <= 5 else discord.ButtonStyle.secondary
                         try:
                             await current_answer_message.edit(view=view_to_edit)
                         except (discord.NotFound, discord.HTTPException, aiohttp.ClientError):
