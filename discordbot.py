@@ -17735,14 +17735,21 @@ def wrap_name_atoms(atoms, size, max_width):
 
 def line_font_metrics(atoms, size):
     """Max (ascent, descent) across the distinct fonts a line's text atoms use, at the given point
-    size. Different font files declare very different ascent/descent at the same point size (e.g.
-    NotoSansSymbols' ascent is ~60% larger than DejaVuSans') -- drawing every run at one shared
-    "top" y, as if they shared line metrics, is what made circled/math-styled runs render visibly
-    lower than plain text. This is the box row_heights/draw_name_atoms lay a line out against.
+    size, each clamped to no more than DejaVuSans' own ascent/descent. Different font files declare
+    very different ascent/descent at the same point size (e.g. NotoSansSymbols' ascent is ~60%
+    larger than DejaVuSans'), even though the glyphs they actually draw (small circled/boxed
+    letters) aren't visually any taller -- letting that inflated em-box through blows up
+    row_heights (name_block_height) and puts far more space above rows using a fallback font than
+    their neighbors. The clamp keeps row height sane; it doesn't reintroduce the older sinking-text
+    bug, since draw_name_atoms already draws every run baseline-anchored (anchor="ls") rather than
+    from a shared "top" y, so mixed-font lines stay aligned regardless of the allocated box size.
     Emoji-only lines (no text atoms) fall back to DejaVuSans so a line always has real metrics."""
     fonts = {run[2] for run in atoms if run[0] == "text"} or {"DejaVuSans.ttf"}
+    base_ascent, base_descent = get_font("DejaVuSans.ttf", size).getmetrics()
     metrics = [get_font(font_name, size).getmetrics() for font_name in fonts]
-    return max(a for a, _ in metrics), max(d for _, d in metrics)
+    ascent = max(min(a, base_ascent) for a, _ in metrics)
+    descent = max(min(d, base_descent) for _, d in metrics)
+    return ascent, descent
 
 
 def draw_name_atoms(draw, img, atoms, x, baseline_y, size, fill, ascent, descent):
@@ -25617,13 +25624,38 @@ class BulkSubmitModal(discord.ui.Modal, title="Bulk Submit Questions"):
 
 
 
-@bot.tree.command(name="newintro", description="Generate a new custom intro-image banner (owner only)", guild=discord.Object(id=OKRAN_GUILD_ID))
+@bot.tree.command(name="newintro", description="Generate a new custom intro-image banner, or upload your own (owner only)", guild=discord.Object(id=OKRAN_GUILD_ID))
+@discord.app_commands.describe(image="Optional: upload your own image instead of generating one")
 @discord.app_commands.default_permissions(administrator=True)
-async def newintro_command(interaction: discord.Interaction):
+async def newintro_command(interaction: discord.Interaction, image: discord.Attachment = None):
+    global pending_intro_preview_view
     if interaction.user.id != okrag_id:
         await interaction.response.send_message("❌ Not available here.", ephemeral=True)
         return
-    await interaction.response.send_modal(NewIntroModal(interaction.user.id))
+    if image is None:
+        await interaction.response.send_modal(NewIntroModal(interaction.user.id))
+        return
+    if not (image.content_type or "").startswith("image/"):
+        await interaction.response.send_message("❌ That attachment isn't an image.", ephemeral=True)
+        return
+    await interaction.response.defer()
+    image_bytes = await image.read()
+    if pending_intro_preview_view is not None:
+        for item in pending_intro_preview_view.children:
+            item.disabled = True
+        if pending_intro_preview_view.message:
+            try:
+                await pending_intro_preview_view.message.edit(view=pending_intro_preview_view)
+            except Exception:
+                pass
+    view = IntroImagePreviewView(interaction.user.id, image_bytes, source="uploaded")
+    preview_message = await interaction.followup.send(
+        content="Preview — uploaded image",
+        file=discord.File(io.BytesIO(image_bytes), filename="intro_preview.png"),
+        view=view,
+    )
+    view.message = preview_message
+    pending_intro_preview_view = view
 
 
 @bot.tree.command(name="newavatar", description="Generate a custom AI avatar edit for a user (owner only)", guild=discord.Object(id=OKRAN_GUILD_ID))
