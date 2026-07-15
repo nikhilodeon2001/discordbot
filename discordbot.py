@@ -6570,10 +6570,12 @@ async def collect_rapidfire_answers(all_questions, user_data, answered_questions
     """
     Background task to collect answers during rapid fire challenge
     """
+    consecutive_errors = 0
     while not stop_event.is_set():
         try:
             timeout = 0.5
             message = await get_bot().wait_for("message", timeout=timeout, check=check)
+            consecutive_errors = 0  # a successful receive means the bot/loop is healthy
 
             # Delete user's message immediately to keep channel clean
             #try:
@@ -6618,9 +6620,18 @@ async def collect_rapidfire_answers(all_questions, user_data, answered_questions
                 print(f"Rapid Fire no match: {display_name} -> '{content}'")
 
         except asyncio.TimeoutError:
+            consecutive_errors = 0  # no message this tick, but wait_for is working fine
             continue
         except Exception as e:
+            # A persistent failure here (e.g. the game was cancelled and this orphaned
+            # collector is calling wait_for on a torn-down bot loop) must NOT hot-loop and
+            # flood the logs. Back off, and give up after a short streak so the task exits.
+            consecutive_errors += 1
             print(f"Error in rapid fire answer collection: {e}")
+            if consecutive_errors >= 10:
+                print("Rapid fire answer collection: repeated errors — stopping collector.")
+                break
+            await asyncio.sleep(0.5)
             continue
 
 
