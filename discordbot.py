@@ -11095,8 +11095,7 @@ async def ask_microscopic_challenge(winner, winner_id, num=3):
             if right_answer == True:
                 break
 
-            # Create zoomed image (using blur as approximation for zoom)
-            microscopic_image_blurred = await blur_image(microscopic_image_url, blur_strength=zoom_level)
+            microscopic_image_blurred = await zoom_image(microscopic_image_url, zoom_level=zoom_level)
 
             message = f"\u200b\n⚠️🚨 **Everyone's in!**\n"
             message += f"\n🗣💬❓ **Image {microscopic_num}** of {num}: Who or what is THIS?!?\n"
