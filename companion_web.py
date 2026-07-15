@@ -340,8 +340,14 @@ _INDEX_HTML = """<!doctype html>
   .ortype { text-align:center; color:var(--muted); font-size:.78rem; margin:14px 0 10px; }
   .choice { padding:15px 16px; font-size:1.02rem; text-align:left; border-radius:14px;
     border:1px solid var(--line); background:rgba(127,127,127,.06); color:inherit; cursor:pointer;
-    transition:border-color .12s, transform .06s; }
+    display:flex; align-items:center; gap:10px;
+    transition:border-color .12s, background-color .12s, box-shadow .12s, transform .06s; }
   .choice:active { transform:scale(.99); }
+  .choice.selected { border-color:var(--blue); background:rgba(30,160,255,.18);
+    box-shadow:0 0 0 2px rgba(30,160,255,.45) inset; font-weight:700; }
+  .choice .tick { margin-left:auto; flex:none; font-weight:800; color:var(--blue); }
+  .choice.dim { opacity:.45; }
+  .choice.selected:disabled, .choice.selected.dim { opacity:1; }
   .status { margin-top:14px; font-size:.95rem; min-height:1.2em; }
   .ok { color:#3ddc84; } .bad { color:var(--red); }
   .warn { display:inline-block; font-size:.82rem; font-weight:600; padding:6px 11px; border-radius:10px;
@@ -520,7 +526,10 @@ function render(state) {
     if (state.is_multiple_choice && (state.choices || []).length) {
       // Multiple choice: click a choice, or type the letter/answer — both submit the same way.
       inputHtml = '<div class="choices">' + state.choices.map(function (c) {
-        return '<button class="choice" onclick="submit(\\'' + esc(c.letter) + '\\')">' + esc(c.text) + '</button>';
+        var sel = (answeredKey === state.question_key && answeredValue === c.letter);
+        return '<button class="choice' + (sel ? ' selected' : '') + '" data-letter="' + esc(c.letter) + '" ' +
+          'onclick="choose(this,\\'' + esc(c.letter) + '\\')">' +
+          esc(c.text) + (sel ? '<span class="tick">✓</span>' : '') + '</button>';
       }).join('') + '</div>' +
         '<div class="ortype">or type your answer</div>' +
         '<input id="ans" type="text" autocomplete="off" autocapitalize="off" ' +
@@ -557,6 +566,18 @@ function setStatus(msg, cls) {
   if (el) { el.textContent = msg; el.className = 'status ' + (cls || ''); }
 }
 
+function markChoice(letter) {
+  // Give the tapped multiple-choice option an obvious selected state (no-op for typed answers).
+  document.querySelectorAll('.choice').forEach(function (b) {
+    var on = b.getAttribute('data-letter') === letter;
+    b.classList.toggle('selected', on);
+    var tick = b.querySelector('.tick');
+    if (on && !tick) { var t = document.createElement('span'); t.className = 'tick'; t.textContent = '✓'; b.appendChild(t); }
+    else if (!on && tick) { tick.remove(); }
+  });
+}
+function choose(el, letter) { markChoice(letter); submit(letter); }
+
 async function submit(answer) {
   try {
     const r = await fetch('/api/answer', {
@@ -567,11 +588,15 @@ async function submit(answer) {
     if (data.ok) {
       answeredKey = currentKey;
       answeredValue = answer;
+      markChoice(answer);  // highlight the chosen option (no-op for typed free-text)
       if (oneGuess) {
         // One-guess question: lock the inputs after the single allowed submit.
         setStatus('🔒 Locked in: ' + answer, 'ok');
         const inp = document.getElementById('ans'); if (inp) inp.disabled = true;
-        document.querySelectorAll('.choice').forEach(function (b) { b.disabled = true; });
+        document.querySelectorAll('.choice').forEach(function (b) {
+          b.disabled = true;
+          if (b.getAttribute('data-letter') !== answer) b.classList.add('dim');
+        });
         const btn = document.querySelector('button.primary'); if (btn) btn.disabled = true;
       } else {
         // Free-text: multiple submissions allowed (like Discord typing).
