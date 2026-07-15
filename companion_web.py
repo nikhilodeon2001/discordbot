@@ -555,19 +555,18 @@ function render(state) {
   } else {
     if (state.is_multiple_choice && (state.choices || []).length) {
       // Multiple choice: click a choice, or type the letter/answer — both submit the same way.
+      // Simple mode shows bare letters (no answer text) for fast, spoiler-free tapping.
       inputHtml = '<div class="choices">' + state.choices.map(function (c) {
         var sel = (answeredKey === state.question_key && answeredValue === c.letter);
+        var label = simpleMode ? esc(c.letter) : esc(c.text);
         return '<button class="choice' + (sel ? ' selected' : '') + '" data-letter="' + esc(c.letter) + '" ' +
           'onclick="choose(this,\\'' + esc(c.letter) + '\\')">' +
-          esc(c.text) + (sel ? '<span class="tick">✓</span>' : '') + '</button>';
-      }).join('') + '</div>';
-      if (!simpleMode) {
-        // Simple mode skips the free-text fallback — choice buttons only.
-        inputHtml += '<div class="ortype">or type your answer</div>' +
-          '<input id="ans" type="text" autocomplete="off" autocapitalize="off" ' +
-          'placeholder="Type a letter or the answer…" onkeydown="if(event.key===\\'Enter\\')submitText()">' +
-          '<button class="primary" onclick="submitText()">Submit</button>';
-      }
+          label + (sel ? '<span class="tick">✓</span>' : '') + '</button>';
+      }).join('') + '</div>' +
+        '<div class="ortype">or type your answer</div>' +
+        '<input id="ans" type="text" autocomplete="off" autocapitalize="off" ' +
+        'placeholder="Type a letter or the answer…" onkeydown="if(event.key===\\'Enter\\')submitText()">' +
+        '<button class="primary" onclick="submitText()">Submit</button>';
     } else {
       inputHtml = '<input id="ans" type="text" autocomplete="off" autocapitalize="off" ' +
         'placeholder="Type your answer…" onkeydown="if(event.key===\\'Enter\\')submitText()">' +
