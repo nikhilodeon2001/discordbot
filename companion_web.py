@@ -309,12 +309,24 @@ _INDEX_HTML = """<!doctype html>
     display:flex; flex-direction:column; align-items:center;
     padding:26px 16px calc(26px + env(safe-area-inset-bottom)); }
   .wrap { width:100%; max-width:520px; }
-  .brand { display:flex; align-items:center; gap:12px; }
+  .brand { display:flex; align-items:center; justify-content:space-between; gap:12px; }
+  .brandhead { display:flex; align-items:center; gap:12px; min-width:0; }
   .brandmark { width:46px; height:46px; flex:none; border-radius:13px;
     background:#000 var(--play) center/cover no-repeat;
     box-shadow:0 4px 14px rgba(0,0,0,.35), inset 0 0 0 1px rgba(255,255,255,.07); }
   h1 { font-size:1.5rem; font-weight:800; letter-spacing:-.02em; margin:0; line-height:1.05; }
   h1 .amp { color:var(--blue); }
+  .simple-toggle { display:flex; align-items:center; gap:8px; flex:none; cursor:pointer; }
+  .simple-toggle span.lbl { font-size:.72rem; font-weight:700; letter-spacing:.02em; color:var(--muted); white-space:nowrap; }
+  .switch { position:relative; display:inline-block; width:40px; height:23px; flex:none; }
+  .switch input { position:absolute; inset:0; opacity:0; margin:0; cursor:pointer; }
+  .switch .track { position:absolute; inset:0; border-radius:999px; background:rgba(127,127,127,.20);
+    border:1px solid var(--line); transition:background-color .15s, border-color .15s; }
+  .switch .thumb { position:absolute; top:2px; left:2px; width:17px; height:17px; border-radius:50%;
+    background:#fff; box-shadow:0 1px 3px rgba(0,0,0,.35); transition:transform .15s; }
+  .switch input:checked ~ .track { background:var(--blue); border-color:var(--blue); }
+  .switch input:checked ~ .track .thumb { transform:translateX(17px); }
+  .switch input:focus-visible ~ .track { box-shadow:0 0 0 3px rgba(30,160,255,.30); }
   .sub { color:var(--muted); font-size:.86rem; margin:13px 2px 20px; line-height:1.45; }
   .card { background:var(--card); border:1px solid var(--line); border-radius:20px; padding:22px;
     box-shadow:0 12px 32px rgba(0,0,0,.20); }
@@ -396,8 +408,17 @@ _INDEX_HTML = """<!doctype html>
 <body>
 <div class="wrap">
   <header class="brand">
-    <div class="brandmark" role="img" aria-label="Live Trivia and Games logo"></div>
-    <h1>Live Trivia <span class="amp">&amp;</span> Games</h1>
+    <div class="brandhead">
+      <div class="brandmark" role="img" aria-label="Live Trivia and Games logo"></div>
+      <h1>Live Trivia <span class="amp">&amp;</span> Games</h1>
+    </div>
+    <label class="simple-toggle">
+      <span class="lbl">Simple mode</span>
+      <span class="switch">
+        <input type="checkbox" id="simpleToggle" onchange="onSimpleToggle(this.checked)">
+        <span class="track"><span class="thumb"></span></span>
+      </span>
+    </label>
   </header>
   <div class="sub">Answer live from your phone or computer — private, timed, and scored right alongside everyone in the channel.</div>
   <div id="app" class="card"><div class="idle">Loading…</div></div>
@@ -406,6 +427,7 @@ _INDEX_HTML = """<!doctype html>
 </div>
 <script>
 let es = null, countdownTimer = null, endsAt = 0, currentKey = null, answeredKey = null, answeredValue = null, oneGuess = false;
+let simpleMode = false, lastState = null;
 var DISCORD_SVG = '<svg viewBox="0 -28.5 256 256" fill="currentColor" aria-hidden="true"><path d="M216.856 16.597A208.502 208.502 0 0 0 164.042 0c-2.275 4.113-4.933 9.645-6.766 14.046-19.692-2.961-39.203-2.961-58.533 0-1.832-4.4-4.55-9.933-6.846-14.046a207.809 207.809 0 0 0-52.855 16.638C5.618 67.147-3.443 116.4 1.087 164.956c22.169 16.555 43.653 26.612 64.775 33.193A161.094 161.094 0 0 0 79.735 175.3a136.413 136.413 0 0 1-21.846-10.632 108.636 108.636 0 0 0 5.356-4.237c42.122 19.702 87.89 19.702 129.51 0a131.66 131.66 0 0 0 5.355 4.237 136.07 136.07 0 0 1-21.886 10.653c4.006 8.02 8.638 15.67 13.873 22.848 21.142-6.581 42.646-16.637 64.815-33.213 5.316-56.288-9.081-105.09-38.056-148.36ZM85.474 135.095c-12.645 0-23.015-11.805-23.015-26.18s10.149-26.2 23.015-26.2c12.867 0 23.236 11.804 23.015 26.2.02 14.375-10.148 26.18-23.015 26.18Zm85.051 0c-12.645 0-23.014-11.805-23.014-26.18s10.148-26.2 23.014-26.2c12.867 0 23.236 11.804 23.015 26.2 0 14.375-10.148 26.18-23.015 26.18Z"/></svg>';
 
 function roundHtml(state) {
@@ -460,8 +482,14 @@ function fmtRemaining() {
   if (rem <= 0 && countdownTimer) { clearInterval(countdownTimer); countdownTimer = null; }
 }
 
+function onSimpleToggle(checked) {
+  simpleMode = checked;
+  if (lastState) render(lastState);
+}
+
 function render(state) {
   const app = document.getElementById('app');
+  lastState = state;
   if (state.authenticated === false) {
     app.innerHTML = '<div class="hero"><div class="mascot"></div>' +
       '<h2>Ready to play?</h2>' +
@@ -492,11 +520,13 @@ function render(state) {
     const answerLine = state.blind
       ? '<div class="status">🙈 Answers are hidden this round.</div>'
       : '<div class="status ok">✅ Answer: ' + esc(state.correct_answer || '') + '</div>';
-    app.innerHTML = '<div class="cat">' + esc(state.category || '') + '</div>' +
-      (state.question ? '<div class="q">' + esc(state.question) + '</div>' : '') +
-      imgHtml(state) +
-      resultBanner + answerLine + mine +
-      scoreboardHtml(state) + legendHtml(state) + roundHtml(state);
+    app.innerHTML = simpleMode
+      ? resultBanner + answerLine
+      : '<div class="cat">' + esc(state.category || '') + '</div>' +
+        (state.question ? '<div class="q">' + esc(state.question) + '</div>' : '') +
+        imgHtml(state) +
+        resultBanner + answerLine + mine +
+        scoreboardHtml(state) + legendHtml(state) + roundHtml(state);
     if (countdownTimer) { clearInterval(countdownTimer); countdownTimer = null; }
     return;
   }
@@ -521,7 +551,7 @@ function render(state) {
   if (state.already_answered) {
     // Locked only when they used the multiple-choice button (one answer on Discord).
     inputHtml = '<div class="status ok">🔒 Locked in' + (prior ? ': ' + esc(prior) : '!') + '</div>' +
-      '<div class="idle" style="padding:6px 0">Waiting for the reveal…</div>';
+      (simpleMode ? '' : '<div class="idle" style="padding:6px 0">Waiting for the reveal…</div>');
   } else {
     if (state.is_multiple_choice && (state.choices || []).length) {
       // Multiple choice: click a choice, or type the letter/answer — both submit the same way.
@@ -530,11 +560,14 @@ function render(state) {
         return '<button class="choice' + (sel ? ' selected' : '') + '" data-letter="' + esc(c.letter) + '" ' +
           'onclick="choose(this,\\'' + esc(c.letter) + '\\')">' +
           esc(c.text) + (sel ? '<span class="tick">✓</span>' : '') + '</button>';
-      }).join('') + '</div>' +
-        '<div class="ortype">or type your answer</div>' +
-        '<input id="ans" type="text" autocomplete="off" autocapitalize="off" ' +
-        'placeholder="Type a letter or the answer…" onkeydown="if(event.key===\\'Enter\\')submitText()">' +
-        '<button class="primary" onclick="submitText()">Submit</button>';
+      }).join('') + '</div>';
+      if (!simpleMode) {
+        // Simple mode skips the free-text fallback — choice buttons only.
+        inputHtml += '<div class="ortype">or type your answer</div>' +
+          '<input id="ans" type="text" autocomplete="off" autocapitalize="off" ' +
+          'placeholder="Type a letter or the answer…" onkeydown="if(event.key===\\'Enter\\')submitText()">' +
+          '<button class="primary" onclick="submitText()">Submit</button>';
+      }
     } else {
       inputHtml = '<input id="ans" type="text" autocomplete="off" autocapitalize="off" ' +
         'placeholder="Type your answer…" onkeydown="if(event.key===\\'Enter\\')submitText()">' +
@@ -545,12 +578,14 @@ function render(state) {
       ' — you can submit again</div>' + inputHtml;
   }
 
-  app.innerHTML = '<div class="qhead"><span class="cat">' + esc(state.category || '') + '</span>' +
-      '<span id="timer" class="timer">--</span></div>' +
-      (state.question ? '<div class="q">' + esc(state.question) + '</div>' : '') +
-      imgHtml(state) + puzzleHtml(state) +
-      (state.warning ? '<div class="warn">' + esc(state.warning) + '</div>' : '') + inputHtml +
-      '<div id="status" class="status"></div>' + legendHtml(state) + roundHtml(state);
+  app.innerHTML = simpleMode
+    ? inputHtml + '<div id="status" class="status"></div>'
+    : '<div class="qhead"><span class="cat">' + esc(state.category || '') + '</span>' +
+        '<span id="timer" class="timer">--</span></div>' +
+        (state.question ? '<div class="q">' + esc(state.question) + '</div>' : '') +
+        imgHtml(state) + puzzleHtml(state) +
+        (state.warning ? '<div class="warn">' + esc(state.warning) + '</div>' : '') + inputHtml +
+        '<div id="status" class="status"></div>' + legendHtml(state) + roundHtml(state);
 
   if (isNew && !state.already_answered) { const i = document.getElementById('ans'); if (i) i.focus(); }
   if (countdownTimer) clearInterval(countdownTimer);
