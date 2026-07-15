@@ -17692,18 +17692,35 @@ def wrap_name_atoms(atoms, size, max_width):
     return [line for line in lines if any(not (a[0] == "text" and a[1].isspace()) for a in line)]
 
 
-def draw_name_atoms(draw, img, atoms, x, y, size, fill):
-    """Draw one line of render atoms starting at (x, y): text runs via draw.text (advancing by the
-    font's own width) and emoji via render_emoji_icon pasted as an icon sized to the text. Needs
-    img (not just draw) so the emoji icon can be alpha-composited in."""
+def line_font_metrics(atoms, size):
+    """Max (ascent, descent) across the distinct fonts a line's text atoms use, at the given point
+    size. Different font files declare very different ascent/descent at the same point size (e.g.
+    NotoSansSymbols' ascent is ~60% larger than DejaVuSans') -- drawing every run at one shared
+    "top" y, as if they shared line metrics, is what made circled/math-styled runs render visibly
+    lower than plain text. This is the box row_heights/draw_name_atoms lay a line out against.
+    Emoji-only lines (no text atoms) fall back to DejaVuSans so a line always has real metrics."""
+    fonts = {run[2] for run in atoms if run[0] == "text"} or {"DejaVuSans.ttf"}
+    metrics = [get_font(font_name, size).getmetrics() for font_name in fonts]
+    return max(a for a, _ in metrics), max(d for _, d in metrics)
+
+
+def draw_name_atoms(draw, img, atoms, x, baseline_y, size, fill, ascent, descent):
+    """Draw one line of render atoms with its left edge at x and text baseline at baseline_y: text
+    runs via draw.text with anchor="ls" (left/baseline) -- so each font positions its own glyphs
+    relative to its own baseline instead of a shared top origin, which is what keeps mixed-font
+    runs (plain + circled + math) vertically aligned regardless of their differing ascent metrics.
+    Emoji are pasted as size-by-size icons vertically centered in the line's [baseline - ascent,
+    baseline + descent] box (ascent/descent from line_font_metrics). Needs img (not just draw) so
+    the emoji icon can be alpha-composited in."""
     for run in _merge_text_atoms(atoms):
         if run[0] == "text":
             run_font = get_font(run[2], size)
-            draw.text((x, y), run[1], fill=fill, font=run_font)
+            draw.text((x, baseline_y), run[1], fill=fill, font=run_font, anchor="ls")
             x += run_font.getlength(run[1])
         else:
+            icon_top = baseline_y - ascent + (ascent + descent - size) // 2
             icon = render_emoji_icon(run[1], size)
-            img.paste(icon, (round(x), y), icon)
+            img.paste(icon, (round(x), round(icon_top)), icon)
             x += size
 
 
@@ -17774,7 +17791,15 @@ def generate_scoreboard_image(rows, title_outer_emoji="🏔️", title_inner_emo
     # resort) so row heights can grow instead of ever truncating. fit_name folds decorative
     # glyphs internally only where no font can draw them, so no render_safe_name wrapper here.
     name_render = [fit_name(row["name"]) for row in rows]
-    row_heights = [max(row_height, len(lines) * (size + 6) + 16) for size, lines, _ in name_render]
+
+    def name_block_height(size, lines):
+        """Total vertical space a name's (possibly multi-font, possibly wrapped) lines need,
+        using each line's real ascent+descent (line_font_metrics) rather than assuming every
+        line is DejaVuSans-sized -- a circled/math-styled line can need more vertical room than
+        the point size alone would suggest."""
+        return sum(ascent + descent + 6 for ascent, descent in (line_font_metrics(line, size) for line in lines)) + 16
+
+    row_heights = [max(row_height, name_block_height(size, lines)) for size, lines, _ in name_render]
     img_height = title_height + top_padding * 2 + sum(row_heights)
 
     def text_width(text, use_font=font):
@@ -17854,7 +17879,6 @@ def generate_scoreboard_image(rows, title_outer_emoji="🏔️", title_inner_emo
     y = title_height + top_padding
     for row, (name_size, lines, _), height in zip(rows, name_render, row_heights):
         row_center_y = y + height // 2 - font_size // 2
-        name_center_y = y + height // 2 - name_size // 2
         icon_center_y = y + height // 2
 
         if row["rank_icon"]:
@@ -17864,12 +17888,16 @@ def generate_scoreboard_image(rows, title_outer_emoji="🏔️", title_inner_emo
             draw.text((rank_x, row_center_y), row["rank_text"], fill=text_color, font=font)
 
         # Each line is a list of render atoms (see fit_name), drawn atom by atom -- text runs in
-        # their own font, emoji pasted as icons -- instead of one multiline_text call, which can
-        # only use a single font and can't paint color emoji. This renders mixed names correctly.
-        line_y = name_center_y
-        for line in lines:
-            draw_name_atoms(draw, img, line, name_x, line_y, name_size, text_color)
-            line_y += name_size + 6
+        # their own font (baseline-aligned via draw_name_atoms), emoji pasted as icons -- instead
+        # of one multiline_text call, which can only use a single font, can't paint color emoji,
+        # and would align mixed fonts by a naive shared top instead of a shared baseline.
+        line_metrics = [line_font_metrics(line, name_size) for line in lines]
+        block_height = sum(ascent + descent + 6 for ascent, descent in line_metrics)
+        line_top_y = y + height // 2 - block_height // 2
+        for line, (ascent, descent) in zip(lines, line_metrics):
+            baseline_y = line_top_y + ascent
+            draw_name_atoms(draw, img, line, name_x, baseline_y, name_size, text_color, ascent, descent)
+            line_top_y += ascent + descent + 6
 
         if row["lightning_count"] > 0:
             lightning_icon = render_emoji_icon("⚡", lightning_icon_size)
