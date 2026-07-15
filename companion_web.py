@@ -381,6 +381,7 @@ _INDEX_HTML = """<!doctype html>
   .idle { text-align:center; color:var(--muted); padding:10px 0 6px; line-height:1.5; }
   .idle .big { display:block; font-weight:650; color:var(--fg); margin:2px 0 2px; }
   .me { font-size:.78rem; color:var(--muted); margin-top:20px; text-align:center; }
+  .logout { color:var(--blue); text-decoration:none; font-weight:600; }
   .foot { display:flex; align-items:center; justify-content:center; gap:8px; margin-top:16px;
     color:var(--muted); font-size:.72rem; font-weight:600; opacity:.85; }
   .footmark { width:16px; height:16px; border-radius:5px; background:#000 var(--play) center/cover no-repeat; }
@@ -462,7 +463,8 @@ function render(state) {
       '<a class="login" href="/login">' + DISCORD_SVG + 'Login with Discord</a></div>';
     return;
   }
-  if (state.display_name) document.getElementById('me').textContent = 'Playing as ' + state.display_name;
+  if (state.display_name) document.getElementById('me').innerHTML = 'Playing as ' + esc(state.display_name) +
+    ' · <a class="logout" href="/logout">Log out</a>';
 
   if (state.phase === 'revealed') {
     // All of this user's submissions (merged in per-connection by the SSE layer), falling back
