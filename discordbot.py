@@ -3302,23 +3302,29 @@ async def ask_element_challenge(winner, winner_id, num=7):
         file = discord.File(fp=element_image_buffer, filename="element.png")
         embed = discord.Embed()
         embed.set_image(url="attachment://element.png")
-        await safe_send(channel, content=message, embed=embed, file=file)   
+        await safe_send(channel, content=message, embed=embed, file=file)
 
-        if element_question_type == "single":
-            if game_mode == "normal":
-                redacted_element_summary = replace_element_references(element_summary, element_name=element_name)
-            elif game_mode == "okrap":
-                redacted_element_summary = replace_element_references(element_summary, element_name=element_name, element_symbol=element_symbol)
-            message = f"\n🔍🧪 {redacted_element_summary}\n"
-            await safe_send(channel, message)
-
-        if game_mode == "normal" and (element_question_type == "multiple-single-answer" or element_question_type == "single"):
-            file = discord.File(fp=element_crossword_buffer, filename="element.png")
-            embed = discord.Embed()
-            embed.set_image(url="attachment://element.png")
-            await safe_send(channel, embed=embed, file=file)   
-
+        # Arm the listener immediately after the main image/question — wait_for has no
+        # backlog, so blocking sends here would silently drop a fast/knowledgeable guess.
+        # The summary and crossword below are optional extra hints, not required to
+        # answer, so send them concurrently instead of delaying the listener.
         start_time = asyncio.get_event_loop().time()
+
+        async def send_element_extras():
+            if element_question_type == "single":
+                if game_mode == "normal":
+                    redacted_element_summary = replace_element_references(element_summary, element_name=element_name)
+                elif game_mode == "okrap":
+                    redacted_element_summary = replace_element_references(element_summary, element_name=element_name, element_symbol=element_symbol)
+                await safe_send(channel, f"\n🔍🧪 {redacted_element_summary}\n")
+
+            if game_mode == "normal" and (element_question_type == "multiple-single-answer" or element_question_type == "single"):
+                crossword_file = discord.File(fp=element_crossword_buffer, filename="element.png")
+                crossword_embed = discord.Embed()
+                crossword_embed.set_image(url="attachment://element.png")
+                await safe_send(channel, embed=crossword_embed, file=crossword_file)
+
+        asyncio.create_task(send_element_extras())
 
         def check(m):
             target_channel = _active_game_channel or channel
@@ -4367,7 +4373,8 @@ async def ask_music_challenge(winner, winner_id, num=7):
 
         message = f"\u200b\n⚠️🚨 Everyone's in!\n\n🎼🔢 **Sequence {music_num}** of {num} (Treble Clef 𝄞)\n\u200b"
         await safe_send(channel, content=message, file=image_file, embed=embed)
-        await asyncio.sleep(2)
+        # Arm the listener immediately — wait_for has no backlog, so a sleep here
+        # would silently drop a fast reply sent before the bot starts listening.
 
         start_time = asyncio.get_event_loop().time()
         answered = False
@@ -8832,7 +8839,17 @@ async def ask_audio_question_challenge(winner, winner_id, num=7):
             await safe_send(channel, message)
 
             full_question = f"The category is {category}... {question}"
-            question_mp3, actual_model = text_to_speech(full_question, model=selected_voice_model)
+            # text_to_speech() makes a synchronous Deepgram HTTP call and blocks — run it
+            # off the event loop so it doesn't stall every other concurrent game/guild
+            # (including this game's own message listener below) while it waits. Pass an
+            # explicit unique filename: running in a thread pool means calls could now
+            # overlap, and the default timestamp-only filename has no such uniqueness.
+            loop = asyncio.get_running_loop()
+            tts_filename = f"audio_{uuid.uuid4().hex}.mp3"
+            question_mp3, actual_model = await loop.run_in_executor(
+                None,
+                lambda q=full_question, f=tts_filename, m=selected_voice_model: text_to_speech(q, filename=f, model=m),
+            )
 
             # Notify if fallback model was used
             if actual_model != selected_voice_model and actual_model:
@@ -10730,11 +10747,13 @@ async def ask_chess_challenge(winner, winner_id, num=5):
             file = discord.File(fp=img_buf, filename="chess.png")
             embed.set_image(url="attachment://chess.png")
             await safe_send(channel, embed=embed, file=file)
-            if game_mode == "normal":
-                await safe_send(channel, f"\u200b\n **Hint**: {hint}\u200b\n")
-                await asyncio.sleep(2)
-
+            # Arm the listener immediately after the board is shown — wait_for has no
+            # backlog, so a sleep (or a blocking send) here would silently drop a fast
+            # reply. The hint (if any) is optional context, not required to answer, so
+            # send it concurrently instead of delaying the listener.
             start_time = asyncio.get_event_loop().time()
+            if game_mode == "normal":
+                asyncio.create_task(safe_send(channel, f"\u200b\n **Hint**: {hint}\u200b\n"))
 
             def check(m):
                 target_channel = _active_game_channel or channel
@@ -11757,7 +11776,8 @@ async def ask_tally_challenge(winner, winner_id, num=3):
             image_file = discord.File(estimation_buffer, filename="estimation.png")
             embed = discord.Embed().set_image(url="attachment://estimation.png")
             await safe_send(channel, content="", file=image_file, embed=embed)
-        await asyncio.sleep(2)
+        # Arm the listener immediately — wait_for has no backlog, so a sleep here
+        # would silently drop a fast reply sent before the bot starts listening.
 
         start_time = asyncio.get_event_loop().time()
 
@@ -12096,8 +12116,9 @@ async def ask_currency_challenge(winner, winner_id, num=7):
         print(actual_converted_amount)
 
         await safe_send(channel, message)
-        await asyncio.sleep(2)
-                
+        # Arm the listener immediately — wait_for has no backlog, so a sleep here
+        # would silently drop a fast reply sent before the bot starts listening.
+
         start_time = asyncio.get_event_loop().time()
         user_guesses = {}  # {user_id: (display_name, guess)}
         processed_users = set()
@@ -12315,7 +12336,8 @@ async def ask_myopic_challenge(winner, winner_id, num=3):
             )
 
             await safe_send(channel, content=prompt, file=file, embed=embed)
-            await asyncio.sleep(1)
+            # Arm the listener immediately — wait_for has no backlog, so a sleep here
+            # would silently drop a fast reply sent before the bot starts listening.
 
             start_time = asyncio.get_event_loop().time()
             processed_users = set()
@@ -20598,6 +20620,15 @@ async def update_round_streaks(user, user_id, roast_task=None):
 
         sent_message = await safe_send(channel, embeds=embeds_to_send, use_embed=False)
 
+        # Painting redeem — arm the reply listener immediately so a fast response isn't
+        # lost to the roast-logging/pacing delay below (wait_for has no backlog: anything
+        # sent before the listener starts is silently dropped).
+        category_result = None
+        show_theme_picker = ai_on and banked > 0 and user != "OkraStrut" and winner_coffees <= 100
+        if show_theme_picker:
+            categories = museum_categories()
+            category_result = await ask_category(user, categories, winner_coffees, user_id, skip_message=True)
+
         if roast_text and sent_message is not None:
             test_channel = bot.get_channel(ROAST_TEST_CHANNEL_ID)
             if test_channel:
@@ -20615,15 +20646,8 @@ async def update_round_streaks(user, user_id, roast_task=None):
 
         reset_embed_color()
 
-        # Painting redeem — the theme prompt (if any) was already shown in the winner message above
         if ai_on and banked > 0:
-            category_result = None
-            if user != "OkraStrut" and winner_coffees <= 100:
-                # Start listening immediately — the prompt was already shown in the winner message,
-                # so any delay here risks missing a fast reply.
-                categories = museum_categories()
-                category_result = await ask_category(user, categories, winner_coffees, user_id, skip_message=True)
-            else:
+            if not show_theme_picker:
                 await asyncio.sleep(5)
             ok = await generate_round_summary_image(
                 round_data, user, user_id, winner_coffees,
