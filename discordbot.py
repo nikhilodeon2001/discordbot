@@ -13622,7 +13622,9 @@ async def ask_list_question(winner, winner_id, num=7):
 
     # Extract question details
     clue = list_question["question"]
-    answers = list_question["answers"]
+    # dict.fromkeys dedupes while preserving order, guarding against a duplicate entry in the
+    # stored answers array double-counting num_answers and double-printing a checklist line.
+    answers = list(dict.fromkeys(list_question["answers"]))
     category = list_question["category"]
     url = list_question.get("url", "")
     qid = list_question["_id"]
@@ -13713,7 +13715,7 @@ async def ask_list_question(winner, winner_id, num=7):
             mark = "✅" if ans in winner_answers else "❌"
             result_lines.append(f"{mark} {ans}")
         result_text = "\n".join(result_lines)
-        await safe_send(channel, f"\u200b\n📋 **<@{winner_id}>'s Answers:**\n\n{result_text}\n\u200b")
+        await safe_send(channel, f"\u200b\n📋 **<@{list_winner_id}>'s Answers:**\n\n{result_text}\n\u200b")
 
         await asyncio.sleep(5)
         return list_winner_id
@@ -15863,8 +15865,14 @@ async def is_avatar_blacklisted(user_id):
     return await db.avatar_blacklist.find_one({"_id": user_id}) is not None
 
 
-async def get_blacklist_image_url():
-    """Return the shared replacement image URL shown for every blacklisted user, if set."""
+async def get_blacklist_image_url(user_id=None):
+    """Return the replacement image URL for a blacklisted user: their own custom image if
+    they have one, else the shared default. Pass user_id=None (or omit) to get just the
+    shared default."""
+    if user_id is not None:
+        entry = await db.avatar_blacklist.find_one({"_id": user_id})
+        if entry and entry.get("custom_image_url"):
+            return entry["custom_image_url"]
     config = await db.avatar_blacklist_config.find_one({"_id": "config"})
     return config.get("image_url") if config else None
 
@@ -15942,6 +15950,44 @@ async def save_blacklist_image_bytes(image_bytes: bytes) -> str:
         {"$set": {"image_url": image_url, "updated_at": generated_at}},
         upsert=True,
     )
+    return image_url
+
+
+async def save_blacklist_image_bytes_for_user(member, image_bytes: bytes, actor_id: int) -> str:
+    """Resize and store image_bytes as member's custom blacklist replacement image, and
+    blacklist member in the same upsert if not already blacklisted (matching the same
+    resize/S3 convention as save_blacklist_image_bytes, but keyed per-user like
+    save_custom_avatar_bytes). Preserves the original added_by/added_at if member is
+    already blacklisted, so re-uploading a custom image doesn't clobber blacklist audit info."""
+    loop = asyncio.get_running_loop()
+
+    def resize_image():
+        img = Image.open(io.BytesIO(image_bytes)).resize((256, 256))
+        buffer = io.BytesIO()
+        img.save(buffer, format="PNG")
+        return buffer.getvalue()
+
+    resized = await loop.run_in_executor(None, resize_image)
+
+    s3_key = f"avatar-blacklist/{member.id}.png"
+    session = aioboto3.Session()
+    async with session.client("s3") as s3_client:
+        await s3_client.put_object(
+            Bucket=S3_BUCKET_NAME, Key=s3_key, Body=resized, ContentType="image/png"
+        )
+    generated_at = datetime.datetime.utcnow()
+    image_url = f"https://{S3_BUCKET_NAME}.s3.us-east-2.amazonaws.com/{s3_key}?v={int(generated_at.timestamp())}"
+
+    existing = await db.avatar_blacklist.find_one({"_id": member.id})
+    update = {"$set": {
+        "custom_image_url": image_url,
+        "custom_image_s3_key": s3_key,
+        "custom_image_updated_at": generated_at,
+    }}
+    if not existing:
+        update["$set"]["added_by"] = actor_id
+        update["$set"]["added_at"] = generated_at
+    await db.avatar_blacklist.update_one({"_id": member.id}, update, upsert=True)
     return image_url
 
 
@@ -20314,7 +20360,7 @@ async def check_correct_responses_delete(question_ask_time, trivia_answer_list, 
         author_icon_url = None
         if fastest_correct_user_id is not None:
             if await is_avatar_blacklisted(fastest_correct_user_id):
-                author_icon_url = await get_blacklist_image_url()
+                author_icon_url = await get_blacklist_image_url(fastest_correct_user_id)
             else:
                 author_icon_url = await get_cached_okra_avatar_url(fastest_correct_user_id) if okra_avatar_enabled else None
                 if not author_icon_url:
@@ -20459,7 +20505,7 @@ async def update_round_streaks(user, user_id, roast_task=None):
         member = None
         okra_avatar_task = None
         if await is_avatar_blacklisted(user_id):
-            avatar_url = await get_blacklist_image_url()
+            avatar_url = await get_blacklist_image_url(user_id)
         else:
             try:
                 guild = bot.get_guild(OKRAN_GUILD_ID)
@@ -25685,6 +25731,39 @@ async def setblacklistimage_command(interaction: discord.Interaction, image: dis
         sentry_sdk.capture_exception(e)
         print(f"❌ setblacklistimage_command: {e}")
         await interaction.followup.send("❌ Something went wrong.", ephemeral=True)
+
+
+@bot.tree.command(name="blacklistavatar", description="Blacklist a user's avatar and set their custom replacement image (owner only)", guild=discord.Object(id=OKRAN_GUILD_ID))
+@discord.app_commands.default_permissions(administrator=True)
+async def blacklistavatar_command(interaction: discord.Interaction, member: discord.Member, image: discord.Attachment):
+    if interaction.user.id != okrag_id:
+        await interaction.response.send_message("❌ Not available here.", ephemeral=True)
+        return
+    if not (image.content_type or "").startswith("image/"):
+        await interaction.response.send_message("❌ That attachment isn't an image.", ephemeral=True)
+        return
+    await interaction.response.defer(ephemeral=True)
+    try:
+        image_bytes = await image.read()
+        image_url = await save_blacklist_image_bytes_for_user(member, image_bytes, interaction.user.id)
+        await interaction.followup.send(f"✅ Blacklisted {member.display_name} with a custom image:\n{image_url}", ephemeral=True)
+    except Exception as e:
+        sentry_sdk.capture_exception(e)
+        print(f"❌ blacklistavatar_command: {e}")
+        await interaction.followup.send("❌ Something went wrong.", ephemeral=True)
+
+
+@bot.tree.command(name="unblacklistavatar", description="Remove a user from the avatar blacklist (owner only)", guild=discord.Object(id=OKRAN_GUILD_ID))
+@discord.app_commands.default_permissions(administrator=True)
+async def unblacklistavatar_command(interaction: discord.Interaction, member: discord.Member):
+    if interaction.user.id != okrag_id:
+        await interaction.response.send_message("❌ Not available here.", ephemeral=True)
+        return
+    result = await db.avatar_blacklist.delete_one({"_id": member.id})
+    if result.deleted_count:
+        await interaction.response.send_message(f"✅ Removed {member.display_name} from the avatar blacklist.", ephemeral=True)
+    else:
+        await interaction.response.send_message(f"{member.display_name} was not on the avatar blacklist.", ephemeral=True)
 
 
 @bot.tree.command(name="checkupdate", description="Check for a pending self-update right now (owner only)", guild=discord.Object(id=OKRAN_GUILD_ID))

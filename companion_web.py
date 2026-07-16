@@ -357,6 +357,7 @@ _INDEX_HTML = """<!doctype html>
   .choice:active { transform:scale(.99); }
   .choice.selected { border-color:var(--blue); background:rgba(30,160,255,.18);
     box-shadow:0 0 0 2px rgba(30,160,255,.45) inset; font-weight:700; }
+  .choice.simple { justify-content:center; text-align:center; }
   .choice .tick { margin-left:auto; flex:none; font-weight:800; color:var(--blue); }
   .choice.dim { opacity:.45; }
   .choice.selected:disabled, .choice.selected.dim { opacity:1; }
@@ -559,7 +560,7 @@ function render(state) {
       inputHtml = '<div class="choices">' + state.choices.map(function (c) {
         var sel = (answeredKey === state.question_key && answeredValue === c.letter);
         var label = simpleMode ? esc(c.letter) : esc(c.text);
-        return '<button class="choice' + (sel ? ' selected' : '') + '" data-letter="' + esc(c.letter) + '" ' +
+        return '<button class="choice' + (simpleMode ? ' simple' : '') + (sel ? ' selected' : '') + '" data-letter="' + esc(c.letter) + '" ' +
           'onclick="choose(this,\\'' + esc(c.letter) + '\\')">' +
           label + (sel ? '<span class="tick">✓</span>' : '') + '</button>';
       }).join('') + '</div>' +
