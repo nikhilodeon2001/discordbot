@@ -1,4 +1,4 @@
-# OkraStrut — the TriviaSphere Discord Bot
+# OkraStrut — Discord Trivia & Games Bot
 
 [Join the Discord](https://discord.gg/VwCAwugmtw)
 
