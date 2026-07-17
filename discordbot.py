@@ -591,6 +591,11 @@ _companion_footer_text = None
 # companion reveal can tell each player whether they got it right.
 _companion_correct_user_ids = set()
 
+# user_ids who already flagged the current question via the companion app -- cleared each time a
+# new question opens (alongside collected_responses.clear()), so this is a one-flag-per-question
+# guard with no Mongo round trip, mirroring current_answer_view.answered_user_ids.
+_companion_flagged_user_ids = set()
+
 # subset of the above who got it right via a companion-app (web) answer, for the 📱 scoreboard icon.
 _companion_web_correct_user_ids = set()
 
@@ -815,6 +820,8 @@ except ImportError:
 CLAUDE_MODEL = "claude-opus-4-7"
 
 MAX_SUBMISSIONS_PER_24H = 100
+MAX_FLAGS_PER_24H = 100  # per-user daily cap on companion (web) flags -- see companion_submit_flag
+MAX_COMPANION_ANSWERS_PER_QUESTION = 10  # per-user cap on companion (web) answer submits for one question
 POINTS_FOR_APPROVAL = 1
 TOP_CONTRIBUTOR_WINDOW_DAYS = 7
 QUESTION_SUBMISSIONS_RETENTION_DAYS = 7
@@ -824,6 +831,7 @@ PERKS_COMMAND_ID = None
 OKRAFX_COMMAND_ID = None
 
 _submission_locks = {}  # submitter_id -> asyncio.Lock (rate-limit TOCTOU guard)
+_flag_locks = {}  # user_id -> asyncio.Lock (rate-limit TOCTOU guard for companion flags)
 _submitter_attribution_cache = OrderedDict()  # (db_name, _id) -> attribution string; bounded LRU
 _SUBMITTER_CACHE_MAX = 256
 
@@ -13339,7 +13347,7 @@ async def send_flag_notification(question, flag_reason, display_name, flag_messa
         traceback.print_exc()
 
 
-async def update_audit_question(question, message_content, display_name, flag_message=None, user_id=None):
+async def update_audit_question(question, message_content, display_name, flag_message=None, user_id=None, source="Discord"):
     if question:
         if question["trivia_db"] in {"math", "stats"}:
             return
@@ -13348,7 +13356,7 @@ async def update_audit_question(question, message_content, display_name, flag_me
         document_id = question["trivia_id"]
 
         audit_entry = {
-            "display_name": f"{display_name} (Discord)",
+            "display_name": f"{display_name} ({source})",
             "message_content": message_content,
             "timestamp": time.time(),
         }
@@ -13389,9 +13397,7 @@ async def record_edit_credits(collection_name, doc_id, audit_entries):
         if user_id is None or user_id in seen_user_ids or user_id == okrag_id:
             continue
         seen_user_ids.add(user_id)
-        display_name = entry.get("display_name", "")
-        if display_name.endswith(" (Discord)"):
-            display_name = display_name[: -len(" (Discord)")]
+        display_name = re.sub(r" \((?:Discord|Web)\)$", "", entry.get("display_name", ""))
         try:
             await db.edit_credits.insert_one({
                 "user_id": user_id,
@@ -22191,8 +22197,9 @@ async def start_trivia():
                 }
                 _companion_set_question_number(question_number)
 
-                
+
                 collected_responses.clear()
+                _companion_flagged_user_ids.clear()
                 question_ask_time, new_question, new_solution = await ask_question(trivia_category, trivia_question, trivia_url, trivia_answer_list, question_number, trivia_db=trivia_db, trivia_id=trivia_id, trivia_paragraph=trivia_paragraph)
                 # Anchor the answer window to when the question is actually visible. Posting can take a
                 # few seconds (image render/upload), so stamping this before ask_question started the
@@ -23302,20 +23309,24 @@ def _companion_set_footer_text(text):
 
 def _companion_active_modes():
     """Round modifiers that differ from their default, for the companion legend. All toggles
-    default off (shown when on); image_questions defaults on (shown as 'No Images' when off)."""
+    default off (shown when on); image_questions defaults on (shown as 'No Images' when off).
+    Labels and emoji pairs match the actual in-game keyword/announcement text (see
+    prompt_user_for_response's keyword_config and reset_round_options's #keyword toggles) --
+    NOT the bare internal variable names, which drift from what players see (e.g. god_mode is
+    announced as "Dicktator", exact_mode as "Poindexter")."""
     specs = [
-        (ghost_mode,      ghost_mode_default,      "👻", "Ghost"),
-        (god_mode,        god_mode_default,        "🎖️", "God"),
-        (yolo_mode,       yolo_mode_default,       "🔥", "Yolo"),
-        (blind_mode,      blind_mode_default,      "🙈", "Blind"),
-        (marx_mode,       marx_mode_default,       "🔨", "Marx"),
-        (sniper_mode,     sniper_mode_default,     "🎯", "Sniper"),
-        (cloak_mode,      cloak_mode_default,      "🕶️", "Cloak"),
-        (blitz_mode,      blitz_mode_default,      "🚀", "Blitz"),
-        (exact_mode,      exact_mode_default,      "🔍", "Exact"),
-        (golf_mode,       golf_mode_default,       "⛳", "Golf"),
-        (glyph_mode,      glyph_mode_default,      "🔐", "Glyph"),
-        (image_questions, image_questions_default, "🚫🖼️", "No Images"),
+        (ghost_mode,      ghost_mode_default,      "👻🎃", "Ghost"),
+        (god_mode,        god_mode_default,        "🎖️🍆", "Dicktator"),
+        (yolo_mode,       yolo_mode_default,       "🔥🤘", "Yolo"),
+        (blind_mode,      blind_mode_default,      "🙈🚫", "Blind"),
+        (marx_mode,       marx_mode_default,       "🚩🔨", "Marx"),
+        (sniper_mode,     sniper_mode_default,     "🧢🎤", "Sniper"),
+        (cloak_mode,      cloak_mode_default,      "🫥🕶️", "Cloak"),
+        (blitz_mode,      blitz_mode_default,      "🏆⚡", "Blitz"),
+        (exact_mode,      exact_mode_default,      "🤓🔍", "Poindexter"),
+        (golf_mode,       golf_mode_default,       "⛳📉", "Golf"),
+        (glyph_mode,      glyph_mode_default,      "🔐🛡️", "Glyph"),
+        (image_questions, image_questions_default, "❌📷", "No Images"),
     ]
     return [{"emoji": emoji, "label": label}
             for current, default, emoji, label in specs if bool(current) != bool(default)]
@@ -23403,6 +23414,11 @@ def companion_submit_answer(user_id, display_name, text):
     # multiple-choice button; free-text questions allow repeat submits (matching Discord typing).
     if _companion_footer_text and any(r["user_id"] == user_id for r in collected_responses):
         return {"ok": False, "reason": "already"}
+    # Cap repeat free-text submits per question -- a script could otherwise flood
+    # collected_responses for the whole open window (check_correct_responses_delete scans it
+    # linearly at grading time), well beyond anything a human re-guessing would produce.
+    if sum(1 for r in collected_responses if r["user_id"] == user_id) >= MAX_COMPANION_ANSWERS_PER_QUESTION:
+        return {"ok": False, "reason": "too_many_attempts"}
     collected_responses.append({
         "user_id": user_id,
         "display_name": display_name,
@@ -23411,6 +23427,29 @@ def companion_submit_answer(user_id, display_name, text):
         "message": None,
         "source": "web",  # marks a companion-app answer, for the 📱 scoreboard indicator
     })
+    return {"ok": True}
+
+
+async def companion_submit_flag(user_id, display_name, reasons, detail):
+    """Flag whatever `current_question` currently is -- never a client-supplied id, so the flag
+    target moves the instant the next question opens (current_question is reassigned then).
+    Reuses the same moderation pipeline Discord's /flag command uses (update_audit_question ->
+    send_flag_notification), tagged with source="Web" for attribution."""
+    if current_question is None:
+        return {"ok": False, "reason": "no_question"}
+    if user_id in _companion_flagged_user_ids:
+        return {"ok": False, "reason": "already_flagged"}
+    async with _get_flag_lock(user_id):
+        if await _count_flags_last_24h(user_id) >= MAX_FLAGS_PER_24H:
+            return {"ok": False, "reason": "rate_limited"}
+        try:
+            await db.companion_flags.insert_one({"user_id": user_id, "timestamp": datetime.datetime.utcnow()})
+        except Exception as e:
+            sentry_sdk.capture_exception(e)
+    _companion_flagged_user_ids.add(user_id)
+    reasons_text = ", ".join(FlagReasonModal.REASON_LABELS.get(r, r) for r in reasons)
+    reason_text = f"({reasons_text}) {detail}".strip()
+    await update_audit_question(current_question, reason_text, display_name, None, user_id=user_id, source="Web")
     return {"ok": True}
 
 
@@ -23740,11 +23779,31 @@ async def ensure_roast_indexes():
         print(f"⚠️ ensure_roast_indexes: {e}")
 
 
+async def ensure_flag_indexes():
+    try:
+        await db.companion_flags.create_index("user_id")
+        # TTL index: a companion-flag rate-limit record auto-deletes a day after it's created --
+        # no bot-side cleanup loop needed. A small buffer over 24h avoids evicting a doc right
+        # before the rolling-window count would have naturally excluded it anyway.
+        await db.companion_flags.create_index("timestamp", expireAfterSeconds=90000)
+    except Exception as e:
+        sentry_sdk.capture_exception(e)
+        print(f"⚠️ ensure_flag_indexes: {e}")
+
+
 async def _count_submissions_last_24h(submitter_id):
     cutoff = datetime.datetime.utcnow() - datetime.timedelta(hours=24)
     return await db.question_submissions.count_documents({
         "submitter_id": submitter_id,
         "submitted_at": {"$gte": cutoff},
+    })
+
+
+async def _count_flags_last_24h(user_id):
+    cutoff = datetime.datetime.utcnow() - datetime.timedelta(hours=24)
+    return await db.companion_flags.count_documents({
+        "user_id": user_id,
+        "timestamp": {"$gte": cutoff},
     })
 
 
@@ -23766,6 +23825,14 @@ def _get_submission_lock(submitter_id):
     if lock is None:
         lock = asyncio.Lock()
         _submission_locks[submitter_id] = lock
+    return lock
+
+
+def _get_flag_lock(user_id):
+    lock = _flag_locks.get(user_id)
+    if lock is None:
+        lock = asyncio.Lock()
+        _flag_locks[user_id] = lock
     return lock
 
 
@@ -26207,6 +26274,12 @@ async def on_ready():
         sentry_sdk.capture_exception(_e)
         print(f"⚠️ user-submission startup hook: {_e}")
 
+    try:
+        await ensure_flag_indexes()
+    except Exception as _e:
+        sentry_sdk.capture_exception(_e)
+        print(f"⚠️ flag index startup hook: {_e}")
+
     if museum_backfill_enabled and (museum_backfill_task is None or museum_backfill_task.done()):
         museum_backfill_task = asyncio.create_task(run_museum_archive_backfill_loop())
         print("🏛️ Museum archive backfill loop started")
@@ -26867,6 +26940,7 @@ if __name__ == "__main__":
                 get_state=build_companion_state,
                 submit_answer=companion_submit_answer,
                 reveal_extra=companion_reveal_extra,
+                submit_flag=companion_submit_flag,
             )
         except Exception as e:
             print(f"⚠️  Companion web app failed to start: {e}")
