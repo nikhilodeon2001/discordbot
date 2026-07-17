@@ -18,3 +18,6 @@ fonts/
 # Local dev instructions for Claude Code - not for the shared repo
 CLAUDE.md
 .claude/
+
+# Transient output from replace_okrastrut_readme_messages.py
+okrastrut_readme_migration.json
