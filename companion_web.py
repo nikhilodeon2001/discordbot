@@ -115,8 +115,20 @@ async def _write_event(resp, data: dict):
 # OAuth2
 # ---------------------------------------------------------------------------
 
-def _redirect_uri():
-    return f"{_base_url.rstrip('/')}/auth/callback"
+def _request_origin(request):
+    """(scheme, host) for the hostname the client actually used, so login works correctly no
+    matter which registered custom domain (e.g. clubokra.com or triviasphere.com) a request
+    arrives on -- COMPANION_BASE_URL alone can't express "one app, multiple public domains."
+    Heroku's router sets X-Forwarded-Proto/X-Forwarded-Host to the real public-facing values;
+    request.scheme/request.host are the fallback for local dev, where those aren't set."""
+    scheme = request.headers.get("X-Forwarded-Proto", request.scheme)
+    host = request.headers.get("X-Forwarded-Host", request.host)
+    return scheme, host
+
+
+def _redirect_uri(request):
+    scheme, host = _request_origin(request)
+    return f"{scheme}://{host}/auth/callback"
 
 
 async def handle_login(request):
@@ -125,7 +137,7 @@ async def handle_login(request):
     state = base64.urlsafe_b64encode(os.urandom(16)).decode().rstrip("=")
     params = {
         "client_id": _oauth_client_id,
-        "redirect_uri": _redirect_uri(),
+        "redirect_uri": _redirect_uri(request),
         "response_type": "code",
         "scope": "identify",
         "state": state,
@@ -134,9 +146,10 @@ async def handle_login(request):
     }
     url = "https://discord.com/api/oauth2/authorize?" + urllib.parse.urlencode(params)
     resp = web.HTTPFound(url)
+    scheme, _ = _request_origin(request)
     resp.set_cookie(
         _STATE_COOKIE, _sign({"state": state, "exp": time.time() + _STATE_TTL}),
-        max_age=_STATE_TTL, httponly=True, secure=_base_url.startswith("https"), samesite="Lax",
+        max_age=_STATE_TTL, httponly=True, secure=(scheme == "https"), samesite="Lax",
     )
     return resp
 
@@ -154,7 +167,7 @@ async def handle_callback(request):
             "client_secret": _oauth_client_secret,
             "grant_type": "authorization_code",
             "code": code,
-            "redirect_uri": _redirect_uri(),
+            "redirect_uri": _redirect_uri(request),
         }
         async with http.post(
             "https://discord.com/api/oauth2/token",
@@ -185,9 +198,10 @@ async def handle_callback(request):
 
     session = {"user_id": user_id, "display_name": display_name, "exp": time.time() + _SESSION_TTL}
     resp = web.HTTPFound("/")
+    scheme, _ = _request_origin(request)
     resp.set_cookie(
         _SESSION_COOKIE, _sign(session),
-        max_age=_SESSION_TTL, httponly=True, secure=_base_url.startswith("https"), samesite="Lax",
+        max_age=_SESSION_TTL, httponly=True, secure=(scheme == "https"), samesite="Lax",
     )
     resp.del_cookie(_STATE_COOKIE)
     return resp
