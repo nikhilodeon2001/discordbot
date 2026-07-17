@@ -36,6 +36,7 @@ _resolve_member = None        # callable(user_id:int) -> display_name:str | None
 _get_state = None             # callable(user_id:int|None) -> dict (sanitized live state)
 _submit_answer = None         # callable(user_id, display_name, text) -> {"ok":bool,"reason":str}
 _reveal_extra = None          # callable(user_id) -> {"my_answers":[...], "result":"correct"/"incorrect"/None}
+_submit_flag = None           # async callable(user_id, display_name, reasons, detail) -> {"ok":bool,"reason":str}
 _session_secret = b""
 _oauth_client_id = ""
 _oauth_client_secret = ""
@@ -50,6 +51,13 @@ _HEARTBEAT_SECONDS = 25       # under Heroku's 55s idle-connection timeout
 # crude per-user submit rate limit: user_id -> last submit epoch
 _last_submit = {}
 _SUBMIT_MIN_INTERVAL = 0.4
+
+# crude per-user flag rate limit: user_id -> last flag-attempt epoch. Looser than the answer
+# debounce since flagging is a rarer, more deliberate action; the real anti-abuse (one flag per
+# question, a daily cap) lives server-side in discordbot.py's companion_submit_flag.
+_last_flag = {}
+_FLAG_MIN_INTERVAL = 2.0
+_FLAG_REASONS = {"category", "question", "answer", "too_niche", "other"}
 
 
 # ---------------------------------------------------------------------------
@@ -272,6 +280,35 @@ async def handle_answer(request):
     return web.json_response(result, status=status)
 
 
+async def handle_flag(request):
+    session = _session_from_request(request)
+    if not session:
+        return web.json_response({"ok": False, "reason": "unauthenticated"}, status=401)
+
+    user_id = session["user_id"]
+    now = time.time()
+    last = _last_flag.get(user_id, 0)
+    if now - last < _FLAG_MIN_INTERVAL:
+        return web.json_response({"ok": False, "reason": "rate_limited"}, status=429)
+    _last_flag[user_id] = now
+
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"ok": False, "reason": "bad_request"}, status=400)
+    reasons = [r for r in (body.get("reasons") or []) if r in _FLAG_REASONS]
+    if not reasons:
+        return web.json_response({"ok": False, "reason": "empty"}, status=400)
+    detail = str(body.get("detail") or "").strip()[:500]
+
+    result = (
+        await _submit_flag(user_id, session["display_name"], reasons, detail)
+        if _submit_flag else {"ok": False, "reason": "unavailable"}
+    )
+    status = 200 if result.get("ok") else 409
+    return web.json_response(result, status=status)
+
+
 # ---------------------------------------------------------------------------
 # UI
 # ---------------------------------------------------------------------------
@@ -328,8 +365,38 @@ _INDEX_HTML = """<!doctype html>
   .switch input:checked ~ .track .thumb { transform:translateX(17px); }
   .switch input:focus-visible ~ .track { box-shadow:0 0 0 3px rgba(30,160,255,.30); }
   .sub { color:var(--muted); font-size:.86rem; margin:13px 2px 20px; line-height:1.45; }
-  .card { background:var(--card); border:1px solid var(--line); border-radius:20px; padding:22px;
+  .card { position:relative; background:var(--card); border:1px solid var(--line); border-radius:20px; padding:22px;
     box-shadow:0 12px 32px rgba(0,0,0,.20); }
+  .flagbtn { position:absolute; top:16px; right:16px; width:34px; height:34px; border-radius:50%;
+    border:1px solid var(--line); background:rgba(127,127,127,.08); color:var(--muted); font-size:1rem;
+    cursor:pointer; display:flex; align-items:center; justify-content:center; z-index:1;
+    transition:background-color .12s, border-color .12s, opacity .12s; }
+  .flagbtn:active { transform:scale(.95); }
+  .flagbtn.flagged { color:var(--red); background:rgba(255,42,42,.14); border-color:rgba(255,42,42,.35); cursor:default; }
+  .flagbtn:disabled { opacity:.6; cursor:default; }
+  .modal-backdrop { position:fixed; inset:0; background:rgba(0,0,0,.55); display:flex; align-items:flex-end;
+    justify-content:center; z-index:50; padding:0; }
+  @media (min-width:560px) { .modal-backdrop { align-items:center; padding:16px; } }
+  .modal { width:100%; max-width:480px; background:var(--bg2); border:1px solid var(--line);
+    border-radius:20px 20px 0 0; padding:22px; padding-bottom:calc(22px + env(safe-area-inset-bottom));
+    box-shadow:0 -8px 32px rgba(0,0,0,.35); max-height:85vh; overflow-y:auto; }
+  @media (min-width:560px) { .modal { border-radius:20px; } }
+  .modal h3 { margin:0 0 4px; font-size:1.1rem; font-weight:800; }
+  .modal .modalsub { color:var(--muted); font-size:.82rem; margin:0 0 16px; line-height:1.4; }
+  .reasons { display:flex; flex-direction:column; gap:8px; margin-bottom:14px; }
+  .reasonrow { display:flex; align-items:center; gap:10px; padding:11px 13px; border-radius:12px;
+    border:1px solid var(--line); background:rgba(127,127,127,.06); cursor:pointer; font-size:.95rem; }
+  .reasonrow input { margin:0; }
+  #flagDetail { width:100%; padding:13px 14px; font-size:.95rem; border-radius:12px;
+    border:1px solid var(--line); background:rgba(127,127,127,.08); color:inherit; resize:vertical;
+    min-height:70px; font-family:inherit; margin-bottom:14px; box-sizing:border-box; }
+  .modalbtns { display:flex; gap:10px; }
+  .modalbtns button { flex:1; padding:13px; border-radius:12px; font-size:.95rem; font-weight:700;
+    cursor:pointer; }
+  .modalbtns .cancel { background:transparent; color:inherit; border:1px solid var(--line); }
+  .modalbtns .submit { background:linear-gradient(180deg,var(--blue),var(--blue-600)); color:#fff; border:none; }
+  .modalbtns .submit:disabled { opacity:.5; cursor:default; }
+  .modalstatus { margin-top:10px; font-size:.86rem; min-height:1.2em; }
   .qhead { display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:14px; }
   .cat { font-size:.7rem; font-weight:700; text-transform:uppercase; letter-spacing:.1em; color:var(--muted); }
   .timer { flex:none; font-variant-numeric:tabular-nums; font-weight:800; font-size:.74rem;
@@ -428,7 +495,11 @@ _INDEX_HTML = """<!doctype html>
 </div>
 <script>
 let es = null, countdownTimer = null, endsAt = 0, currentKey = null, answeredKey = null, answeredValue = null, oneGuess = false;
-let simpleMode = true, lastState = null;
+let simpleMode = true, lastState = null, flaggedKey = null, flagSubmitting = false;
+var FLAG_REASONS = [
+  ['category', 'Category'], ['question', 'Question'], ['answer', 'Answer'],
+  ['too_niche', 'Too Niche'], ['other', 'Other'],
+];
 var DISCORD_SVG = '<svg viewBox="0 -28.5 256 256" fill="currentColor" aria-hidden="true"><path d="M216.856 16.597A208.502 208.502 0 0 0 164.042 0c-2.275 4.113-4.933 9.645-6.766 14.046-19.692-2.961-39.203-2.961-58.533 0-1.832-4.4-4.55-9.933-6.846-14.046a207.809 207.809 0 0 0-52.855 16.638C5.618 67.147-3.443 116.4 1.087 164.956c22.169 16.555 43.653 26.612 64.775 33.193A161.094 161.094 0 0 0 79.735 175.3a136.413 136.413 0 0 1-21.846-10.632 108.636 108.636 0 0 0 5.356-4.237c42.122 19.702 87.89 19.702 129.51 0a131.66 131.66 0 0 0 5.355 4.237 136.07 136.07 0 0 1-21.886 10.653c4.006 8.02 8.638 15.67 13.873 22.848 21.142-6.581 42.646-16.637 64.815-33.213 5.316-56.288-9.081-105.09-38.056-148.36ZM85.474 135.095c-12.645 0-23.015-11.805-23.015-26.18s10.149-26.2 23.015-26.2c12.867 0 23.236 11.804 23.015 26.2.02 14.375-10.148 26.18-23.015 26.18Zm85.051 0c-12.645 0-23.014-11.805-23.014-26.18s10.148-26.2 23.014-26.2c12.867 0 23.236 11.804 23.015 26.2 0 14.375-10.148 26.18-23.015 26.18Z"/></svg>';
 
 function roundHtml(state) {
@@ -467,6 +538,14 @@ function scoreboardHtml(state) {
 
 function puzzleHtml(state) {
   return state.puzzle_text ? '<div class="puzzle">' + esc(state.puzzle_text) + '</div>' : '';
+}
+
+function flagHtml(state) {
+  var isFlagged = flaggedKey === state.question_key;
+  return '<button type="button" class="flagbtn' + (isFlagged ? ' flagged' : '') + '" ' +
+    (isFlagged ? 'disabled ' : '') + 'onclick="openFlagModal()" ' +
+    'aria-label="' + (isFlagged ? 'Question flagged' : 'Flag this question') + '" ' +
+    'title="' + (isFlagged ? 'Flagged' : 'Flag this question') + '">🚩</button>';
 }
 
 function imgHtml(state) {
@@ -521,13 +600,13 @@ function render(state) {
     const answerLine = state.blind
       ? '<div class="status">🙈 Answers are hidden this round.</div>'
       : '<div class="status ok">✅ Answer: ' + esc(state.correct_answer || '') + '</div>';
-    app.innerHTML = simpleMode
+    app.innerHTML = flagHtml(state) + (simpleMode
       ? resultBanner + answerLine
       : '<div class="cat">' + esc(state.category || '') + '</div>' +
         (state.question ? '<div class="q">' + esc(state.question) + '</div>' : '') +
         imgHtml(state) +
         resultBanner + answerLine + mine +
-        scoreboardHtml(state) + legendHtml(state) + roundHtml(state);
+        scoreboardHtml(state) + legendHtml(state) + roundHtml(state));
     if (countdownTimer) { clearInterval(countdownTimer); countdownTimer = null; }
     return;
   }
@@ -542,7 +621,7 @@ function render(state) {
 
   // open
   const isNew = state.question_key !== currentKey;
-  if (isNew) answeredValue = null;
+  if (isNew) { answeredValue = null; flaggedKey = null; }
   currentKey = state.question_key;
   endsAt = state.ends_at || 0;
   oneGuess = !!state.warning;  // one-guess questions lock after a submit (see submit())
@@ -578,14 +657,14 @@ function render(state) {
       ' — you can submit again</div>' + inputHtml;
   }
 
-  app.innerHTML = simpleMode
+  app.innerHTML = flagHtml(state) + (simpleMode
     ? inputHtml + '<div id="status" class="status"></div>'
     : '<div class="qhead"><span class="cat">' + esc(state.category || '') + '</span>' +
         '<span id="timer" class="timer">--</span></div>' +
         (state.question ? '<div class="q">' + esc(state.question) + '</div>' : '') +
         imgHtml(state) + puzzleHtml(state) +
         (state.warning ? '<div class="warn">' + esc(state.warning) + '</div>' : '') + inputHtml +
-        '<div id="status" class="status"></div>' + legendHtml(state) + roundHtml(state);
+        '<div id="status" class="status"></div>' + legendHtml(state) + roundHtml(state));
 
   if (isNew && !state.already_answered) { const i = document.getElementById('ans'); if (i) i.focus(); }
   if (countdownTimer) clearInterval(countdownTimer);
@@ -642,6 +721,8 @@ async function submit(answer) {
       answeredKey = currentKey; setStatus('You already answered this question.', 'ok');
     } else if (data.reason === 'closed') {
       setStatus("⏰ That question just closed.", 'bad');
+    } else if (data.reason === 'too_many_attempts') {
+      setStatus("You've hit the max number of guesses for this question.", 'bad');
     } else {
       setStatus('Could not submit (' + (data.reason || 'error') + ').', 'bad');
     }
@@ -650,6 +731,75 @@ async function submit(answer) {
 function submitText() {
   const inp = document.getElementById('ans');
   if (inp && inp.value.trim()) submit(inp.value.trim());
+}
+
+function openFlagModal() {
+  if (flagSubmitting || document.getElementById('flagBackdrop')) return;
+  const backdrop = document.createElement('div');
+  backdrop.id = 'flagBackdrop';
+  backdrop.className = 'modal-backdrop';
+  backdrop.onclick = function (e) { if (e.target === backdrop) closeFlagModal(); };
+  backdrop.innerHTML = '<div class="modal">' +
+    '<h3>Flag Question</h3>' +
+    '<div class="modalsub">What\\'s wrong with this question? Select all that apply.</div>' +
+    '<div class="reasons">' + FLAG_REASONS.map(function (r) {
+      return '<label class="reasonrow"><input type="checkbox" value="' + r[0] + '">' + esc(r[1]) + '</label>';
+    }).join('') + '</div>' +
+    '<textarea id="flagDetail" maxlength="500" placeholder="Provide more detail (optional — recommended if you selected \\'Other\\')"></textarea>' +
+    '<div class="modalbtns">' +
+      '<button type="button" class="cancel" onclick="closeFlagModal()">Cancel</button>' +
+      '<button type="button" class="submit" id="flagSubmitBtn" onclick="submitFlag()">Submit</button>' +
+    '</div>' +
+    '<div class="modalstatus" id="flagModalStatus"></div>' +
+  '</div>';
+  document.body.appendChild(backdrop);
+}
+
+function closeFlagModal() {
+  const el = document.getElementById('flagBackdrop');
+  if (el) el.remove();
+}
+
+async function submitFlag() {
+  const backdrop = document.getElementById('flagBackdrop');
+  if (!backdrop) return;
+  const reasons = Array.prototype.slice.call(backdrop.querySelectorAll('.reasons input:checked'))
+    .map(function (i) { return i.value; });
+  const statusEl = document.getElementById('flagModalStatus');
+  if (!reasons.length) {
+    if (statusEl) { statusEl.textContent = 'Select at least one reason.'; statusEl.className = 'modalstatus bad'; }
+    return;
+  }
+  const detail = (document.getElementById('flagDetail') || {}).value || '';
+  flagSubmitting = true;
+  const btn = document.getElementById('flagSubmitBtn'); if (btn) btn.disabled = true;
+  try {
+    const r = await fetch('/api/flag', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({reasons: reasons, detail: detail}),
+    });
+    const data = await r.json();
+    if (data.ok) {
+      flaggedKey = currentKey;
+      closeFlagModal();
+      if (lastState) render(lastState);
+    } else if (data.reason === 'already_flagged') {
+      flaggedKey = currentKey;
+      closeFlagModal();
+      if (lastState) render(lastState);
+    } else if (data.reason === 'rate_limited') {
+      if (statusEl) { statusEl.textContent = "You've flagged too many questions today."; statusEl.className = 'modalstatus bad'; }
+    } else if (data.reason === 'no_question') {
+      if (statusEl) { statusEl.textContent = 'No live question to flag right now.'; statusEl.className = 'modalstatus bad'; }
+    } else {
+      if (statusEl) { statusEl.textContent = 'Could not submit (' + (data.reason || 'error') + ').'; statusEl.className = 'modalstatus bad'; }
+    }
+  } catch (e) {
+    if (statusEl) { statusEl.textContent = 'Network error — try again.'; statusEl.className = 'modalstatus bad'; }
+  } finally {
+    flagSubmitting = false;
+    if (btn) btn.disabled = false;
+  }
 }
 
 function connect() {
@@ -680,16 +830,17 @@ async def handle_health(request):
 # Startup
 # ---------------------------------------------------------------------------
 
-async def start_companion_web(*, resolve_member, get_state, submit_answer, reveal_extra=None):
+async def start_companion_web(*, resolve_member, get_state, submit_answer, reveal_extra=None, submit_flag=None):
     """Bind the aiohttp server to $PORT and start serving. Called from the bot's main()
     before the long-running gather so Heroku sees the port bound promptly (avoids R10)."""
-    global _resolve_member, _get_state, _submit_answer, _reveal_extra
+    global _resolve_member, _get_state, _submit_answer, _reveal_extra, _submit_flag
     global _session_secret, _oauth_client_id, _oauth_client_secret, _base_url
 
     _resolve_member = resolve_member
     _get_state = get_state
     _submit_answer = submit_answer
     _reveal_extra = reveal_extra
+    _submit_flag = submit_flag
 
     secret = os.getenv("COMPANION_SESSION_SECRET")
     if not secret:
@@ -711,6 +862,7 @@ async def start_companion_web(*, resolve_member, get_state, submit_answer, revea
         web.get("/api/current", handle_current),
         web.get("/api/stream", handle_stream),
         web.post("/api/answer", handle_answer),
+        web.post("/api/flag", handle_flag),
     ])
 
     runner = web.AppRunner(app)
