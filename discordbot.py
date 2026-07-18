@@ -19714,6 +19714,7 @@ async def ask_question(trivia_category, trivia_question, trivia_url, trivia_answ
             
     elif trivia_category == "Crossword":
         image_buffer, string_representation = generate_crossword_image(trivia_answer_list[0])
+        footer_text = "🚨 Full word required"
         if image_questions == True:
             message_body += f"\u200b\n\u200b\n{number_block} **{get_category_title(trivia_category, trivia_url)}**\n\n[{len(trivia_answer_list[0])} Letters] {trivia_question}\n"
             send_image_flag = True
