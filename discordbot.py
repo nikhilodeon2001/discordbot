@@ -18060,11 +18060,14 @@ def generate_crossword_image(answer, prefill=0.5):
     # Define the grid size
     cell_size = 60  # Each cell is 60x60 pixels
     img_width = cell_size * answer_length
-    img_height = cell_size
+    bottom_padding = 24  # transparent gap so the embed footer isn't flush against the tiles
+    img_height = cell_size + bottom_padding
 
-    # Create a blank image
-    img = Image.new('RGB', (img_width, img_height), color=(255, 255, 255))
+    # Create a transparent image, then fill in just the tile row as opaque white so the
+    # padding beneath it lets Discord's embed background show through as blank space.
+    img = Image.new('RGBA', (img_width, img_height), (255, 255, 255, 0))
     draw = ImageDraw.Draw(img)
+    draw.rectangle([0, 0, img_width, cell_size], fill=(255, 255, 255, 255))
 
     # Load the font
     font = get_font("DejaVuSans.ttf", 30)
@@ -19806,6 +19809,10 @@ async def ask_question(trivia_category, trivia_question, trivia_url, trivia_answ
         embed = discord.Embed()
         if footer_text:
             embed.set_footer(text=footer_text)
+            # safe_send only auto-fills embed.description "if content and not embed.description" --
+            # pre-setting it here (with a trailing zero-width-space line) is the only way to keep a
+            # blank line above the footer, since clean_leading_trailing_junk would otherwise strip it.
+            embed.description = clean_leading_trailing_junk(message_body) + "\n​"
         message = await safe_send(channel, message_body, embed=embed, **view_kwargs)
 
     current_answer_view = answer_view

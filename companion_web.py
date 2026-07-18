@@ -709,11 +709,11 @@ function render(state) {
       }).join('') + '</div>' +
         '<div class="ortype">or type your answer</div>' +
         '<input id="ans" type="text" autocomplete="off" autocapitalize="off" ' +
-        'placeholder="Type a letter or the answer…" onkeydown="if(event.key===\\'Enter\\')submitText()">' +
+        'placeholder="Type a letter or the answer…" onpaste="return false" onkeydown="if(event.key===\\'Enter\\')submitText()">' +
         '<button class="primary" onclick="submitText()">Submit</button>';
     } else {
       inputHtml = '<input id="ans" type="text" autocomplete="off" autocapitalize="off" ' +
-        'placeholder="Type your answer…" onkeydown="if(event.key===\\'Enter\\')submitText()">' +
+        'placeholder="Type your answer…" onpaste="return false" onkeydown="if(event.key===\\'Enter\\')submitText()">' +
         '<button class="primary" onclick="submitText()">Submit</button>';
     }
     // Multiple answers are allowed (like typing in Discord): note the last one, keep inputs open.
