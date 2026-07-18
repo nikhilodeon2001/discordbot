@@ -109,7 +109,7 @@ except ImportError:
 
 simply_trivia_task = None
 
-embed_color_default = discord.Color.green()
+embed_color_default = discord.Color(0x146DE8)
 embed_color = embed_color_default
 
 from self_update import self_update
@@ -408,9 +408,12 @@ async def send_question_queen_submit_ad():
 # Kill switch + content for the periodic Okra Lab announcement (posted to the
 # trivia channel each round, and once to the announcements channel via
 # sync_okra_lab_announcement's de-dupe). To ship a new announcement, set
-# okra_lab_announcement_text to the new body text.
-okra_lab_announcement_enabled = False
-okra_lab_announcement_text = "⛓️🔐 **Bondage**: More multiple choice [Game Mode]\n"
+# okra_lab_announcement_text to the new body text. Set
+# okra_lab_announcement_show_new_badge = False to omit the "✨ NEW ✨" header,
+# e.g. for announcements (like a rebrand) that aren't a new feature pitch.
+okra_lab_announcement_enabled = True
+okra_lab_announcement_text = "🔵 **Live Trivia & Games is now TriviaSphere!** Same games, same Okrans, new name.\n"
+okra_lab_announcement_show_new_badge = False
 
 
 async def sync_okra_lab_announcement(content):
@@ -2874,7 +2877,7 @@ async def ask_okra_says_challenge(winner, winner_id, num=1):
         await asyncio.sleep(1)
 
         # Show pattern animation
-        embed = discord.Embed(title="👀 Watch the pattern!", color=discord.Color.blue())
+        embed = discord.Embed(title="👀 Watch the pattern!", color=discord.Color(0x146DE8))
         embed.description = " ".join(["▪️"] * pattern_length)
         pattern_msg = await safe_send(channel, embed=embed)
 
@@ -9580,7 +9583,7 @@ async def ask_sports_logos_challenge(winner, winner_id, num=7):
             # Create the embed
             question_embed = discord.Embed(
                 description=description,
-                color=discord.Color.blue()
+                color=discord.Color(0x146DE8)
             )
 
             if footer_text:
@@ -13869,7 +13872,7 @@ async def ask_survey_question():
         common = Counter(norm).most_common(3)
         if common:
             words = ', '.join(f'"{w.capitalize()}"' for w, _ in common)
-            await safe_send(channel, f"\u200b\n📚🔤 Okrans say Live Trivia is: {words}.")
+            await safe_send(channel, f"\u200b\n📚🔤 Okrans say TriviaSphere is: {words}.")
 
         # Optional: generate image
         try:
@@ -14089,7 +14092,7 @@ async def categorize_text(input_text, title):
 async def get_wikipedia_article(max_words=3, max_length=16):
     base_url = "https://en.wikipedia.org/w/api.php"
     headers = {
-        "User-Agent": f"Live Trivia & Games/2.4 ({user_agent_email})"
+        "User-Agent": f"TriviaSphere/2.4 ({user_agent_email})"
     }
 
     async with aiohttp.ClientSession(headers=headers) as session:
@@ -14565,7 +14568,7 @@ def build_museum_social_caption(museum_post, is_archive=False):
         f"Okra's Muse: {museum_post['muse']}",
         f"Creation Date: {museum_post['creation_date']}",
         "",
-        "Made in Live Trivia & Games.",
+        "Made in TriviaSphere.",
     ])
     if discord_invite_url:
         lines.append(f"Play with us: {discord_invite_url}")
@@ -22096,12 +22099,12 @@ async def start_trivia():
                 # Build the round-start banner (help-the-game ad + Royalty now live in the round-end message)
                 lab_block = ""
                 if okra_lab_announcement_enabled and okra_lab_announcement_text:
-                    lab_message = "✨ **NEW** ✨\n"
+                    lab_message = "✨ **NEW** ✨\n" if okra_lab_announcement_show_new_badge else ""
                     lab_message += f"{okra_lab_announcement_text}\n"
                     await sync_okra_lab_announcement(lab_message)
                     lab_block = f"\n{lab_message}"
 
-                start_message = f"​\n​\n🎉🤹‍♂️ **Live Trivia & Games**\n"
+                start_message = f"​\n​\n🎉🤹‍♂️ **TriviaSphere**\n"
                 start_message += lab_block
 
                 #if current_longest_round_streak["user"] is not None and await get_coffees(current_longest_round_streak["user_id"]) > 0:
@@ -22355,7 +22358,7 @@ async def start_trivia():
                 )
                 round_end_embed = discord.Embed()
                 round_end_embed.description = message
-                round_end_embed.set_footer(text="\U0001f3a8 Live Trivia & Games is a pure hobby effort.")
+                round_end_embed.set_footer(text="\U0001f3a8 TriviaSphere is a pure hobby effort.")
                 sent_round_end_message = await safe_send(channel, embed=round_end_embed)
 
 
@@ -22640,7 +22643,7 @@ async def on_message(message):
         if relay_channel:
             embed = discord.Embed(
                 description=message.content or "*(no text content)*",
-                color=discord.Color.blurple(),
+                color=discord.Color(0x146DE8),
                 timestamp=message.created_at,
             )
             embed.set_author(
@@ -23884,7 +23887,7 @@ async def _is_self_duplicate(submitter_id, question_text):
 
 
 def _build_submission_embed(sub):
-    color = discord.Color.blurple()
+    color = discord.Color(0x146DE8)
     if sub.get("status") == "approved":
         color = discord.Color.green()
     elif sub.get("status") == "rejected":
@@ -24573,7 +24576,7 @@ def _build_batch_page_embed(item, pos, total):
     type_label = "Multiple Choice" if is_mc else "Free Text"
     embed = discord.Embed(
         title=f"📋 Review {pos + 1} of {total} — {item.get('category', 'Unknown')}",
-        color=discord.Color.blurple(),
+        color=discord.Color(0x146DE8),
     )
     q_text = item.get("question", "")
     embed.add_field(name="Question", value=q_text[:1024], inline=False)
@@ -24926,7 +24929,7 @@ class BatchSummaryView(discord.ui.View):
                 f"✅ **Approve:** {approve_n}   ❌ **Reject:** {reject_n}   ✏️ **Edit:** {edit_n}\n\n"
                 f"Mod decisions made: {decided}/{total}"
             ),
-            color=discord.Color.blurple(),
+            color=discord.Color(0x146DE8),
         )
         return embed
 
@@ -25553,7 +25556,7 @@ async def sync_crown_roles():
     await _grant(
         new_contributor_id,
         "Question Queen — submitting (last 7 days)",
-        f"👑 Congrats! You've earned one of the Question Queen crowns on Live Trivia!\n\n"
+        f"👑 Congrats! You've earned one of the Question Queen crowns on TriviaSphere!\n\n"
         f"You've submitted the most approved questions over the last 7 days. As a reward, you now unlock:\n\n"
         f"• Unlock all Okran perks 🎁\n"
         f"• Change your username color with `/okrafx` 🎨\n"
@@ -25564,7 +25567,7 @@ async def sync_crown_roles():
     await _grant(
         new_editor_id,
         "Question Queen — editing (last 7 days)",
-        f"👑 Congrats! You've earned one of the Question Queen crowns on Live Trivia!\n\n"
+        f"👑 Congrats! You've earned one of the Question Queen crowns on TriviaSphere!\n\n"
         f"You've had the most flags lead to an edited question over the last 7 days. As a reward, you now unlock:\n\n"
         f"• Unlock all Okran perks 🎁\n"
         f"• Change your username color with `/okrafx` 🎨\n"
@@ -26074,10 +26077,10 @@ async def editors_command(interaction: discord.Interaction):
             pass
 
 
-@bot.tree.command(name="perks", description="See how to unlock Live Trivia perks", guild=discord.Object(id=OKRAN_GUILD_ID))
+@bot.tree.command(name="perks", description="See how to unlock TriviaSphere perks", guild=discord.Object(id=OKRAN_GUILD_ID))
 async def perks_command(interaction: discord.Interaction):
     embed = discord.Embed(
-        title="🔓✨ Unlock ALL Live Trivia Perks",
+        title="🔓✨ Unlock ALL TriviaSphere Perks",
         url="https://discord.com/channels/1367682586079395902/role-subscriptions",
     )
     await interaction.response.send_message(embed=embed, ephemeral=True)
@@ -26535,7 +26538,7 @@ async def tournament(interaction: discord.Interaction, action: str):
             await interaction.response.send_message("❌ Failed to add test players", ephemeral=True)
     elif action == "stats":
         stats = await bot._tournament_stats.get_player_stats(str(interaction.user.id), str(interaction.guild.id))
-        embed = discord.Embed(title=f"🏆 Stats - {interaction.user.display_name}", color=discord.Color.blue())
+        embed = discord.Embed(title=f"🏆 Stats - {interaction.user.display_name}", color=discord.Color(0x146DE8))
         embed.add_field(name="Tournaments", value=stats["tournaments_played"], inline=True)
         embed.add_field(name="Wins", value=stats["wins"], inline=True)
         await interaction.response.send_message(embed=embed)

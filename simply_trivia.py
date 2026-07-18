@@ -478,7 +478,7 @@ async def start_simply_trivia(bot, db, channel_id, fuzzy_match_func):
 
             embed = discord.Embed(
                 description=f"**{category}**\n\n{question_text}",
-                color=discord.Color.blue()
+                color=discord.Color(0x146DE8)
             )
 
             # Handle special URL types
@@ -961,7 +961,7 @@ def create_answers_alltime_embed(all_time):
     """
     embed = discord.Embed(
         title="🏆 Most Correct Answers - ALL TIME",
-        color=discord.Color.blue(),
+        color=discord.Color(0x146DE8),
         timestamp=datetime.now(timezone.utc)
     )
 
@@ -995,7 +995,7 @@ def create_answers_24h_embed(past_24h):
     """
     embed = discord.Embed(
         title="⏰ Most Correct Answers - PAST 24 HOURS",
-        color=discord.Color.blue(),
+        color=discord.Color(0x146DE8),
         timestamp=datetime.now(timezone.utc)
     )
 
@@ -1029,7 +1029,7 @@ def create_answers_7d_embed(past_7d):
     """
     embed = discord.Embed(
         title="📅 Most Correct Answers - PAST 7 DAYS",
-        color=discord.Color.blue(),
+        color=discord.Color(0x146DE8),
         timestamp=datetime.now(timezone.utc)
     )
 
