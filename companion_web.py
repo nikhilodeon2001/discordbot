@@ -432,14 +432,12 @@ _INDEX_HTML = """<!doctype html>
   .sub { color:var(--muted); font-size:.86rem; margin:13px 2px 20px; line-height:1.45; }
   .card { position:relative; background:var(--card); border:1px solid var(--line); border-radius:20px; padding:22px;
     box-shadow:0 12px 32px rgba(0,0,0,.20); }
-  .flagbtn { position:absolute; top:16px; right:16px; width:34px; height:34px; border-radius:50%;
-    border:1px solid var(--line); background:rgba(127,127,127,.08); color:var(--muted); font-size:1rem;
-    cursor:pointer; display:flex; align-items:center; justify-content:center; z-index:1;
+  .flagbar { display:block; width:100%; margin-top:14px; padding:15px; border-radius:14px;
+    border:1px solid rgba(247,26,20,.4); background:rgba(247,26,20,.14); color:var(--red);
+    font-size:.95rem; font-weight:700; text-align:center; cursor:pointer;
     transition:background-color .12s, border-color .12s, opacity .12s; }
-  .flagbtn:active { transform:scale(.95); }
-  .flagbtn.flagged { color:var(--red); background:rgba(247,26,20,.14); border-color:rgba(247,26,20,.35); cursor:default; }
-  .flagbtn:disabled { opacity:.6; cursor:default; }
-  .simple-body { margin-top:38px; }
+  .flagbar:active { transform:scale(.99); }
+  .flagbar.flagged, .flagbar:disabled { opacity:.6; cursor:default; }
   .modal-backdrop { position:fixed; inset:0; background:rgba(0,0,0,.55); display:flex; align-items:flex-end;
     justify-content:center; z-index:50; padding:0; }
   @media (min-width:560px) { .modal-backdrop { align-items:center; padding:16px; } }
@@ -463,7 +461,7 @@ _INDEX_HTML = """<!doctype html>
   .modalbtns .submit { background:linear-gradient(180deg,var(--blue),var(--blue-600)); color:#fff; border:none; }
   .modalbtns .submit:disabled { opacity:.5; cursor:default; }
   .modalstatus { margin-top:10px; font-size:.86rem; min-height:1.2em; }
-  .qhead { display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:14px; padding-right:40px; }
+  .qhead { display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:14px; }
   .cat { font-size:.7rem; font-weight:700; text-transform:uppercase; letter-spacing:.1em; color:var(--muted); }
   .timer { flex:none; font-variant-numeric:tabular-nums; font-weight:800; font-size:.74rem;
     padding:4px 10px; border-radius:999px; background:rgba(20,109,232,.16); color:var(--blue); }
@@ -608,10 +606,10 @@ function puzzleHtml(state) {
 
 function flagHtml(state) {
   var isFlagged = flaggedKey === state.question_key;
-  return '<button type="button" class="flagbtn' + (isFlagged ? ' flagged' : '') + '" ' +
+  return '<button type="button" class="flagbar' + (isFlagged ? ' flagged' : '') + '" ' +
     (isFlagged ? 'disabled ' : '') + 'onclick="openFlagModal()" ' +
-    'aria-label="' + (isFlagged ? 'Question flagged' : 'Flag this question') + '" ' +
-    'title="' + (isFlagged ? 'Flagged' : 'Flag this question') + '">🚩</button>';
+    'aria-label="' + (isFlagged ? 'Question flagged' : 'Flag this question') + '">' +
+    (isFlagged ? '🚩 Flagged' : '🚩 Flag this question') + '</button>';
 }
 
 function imgHtml(state) {
@@ -666,13 +664,13 @@ function render(state) {
     const answerLine = state.blind
       ? '<div class="status">🙈 Answers are hidden this round.</div>'
       : '<div class="status ok">✅ Answer: ' + esc(state.correct_answer || '') + '</div>';
-    app.innerHTML = flagHtml(state) + (simpleMode
-      ? '<div class="simple-body">' + resultBanner + answerLine + '</div>'
+    app.innerHTML = simpleMode
+      ? resultBanner + answerLine + flagHtml(state)
       : '<div class="cat">' + esc(state.category || '') + '</div>' +
         (state.question ? '<div class="q">' + esc(state.question) + '</div>' : '') +
         imgHtml(state) +
-        resultBanner + answerLine + mine +
-        scoreboardHtml(state) + legendHtml(state) + roundHtml(state));
+        resultBanner + answerLine + flagHtml(state) + mine +
+        scoreboardHtml(state) + legendHtml(state) + roundHtml(state);
     if (countdownTimer) { clearInterval(countdownTimer); countdownTimer = null; }
     return;
   }
@@ -723,14 +721,14 @@ function render(state) {
       ' — you can submit again</div>' + inputHtml;
   }
 
-  app.innerHTML = flagHtml(state) + (simpleMode
-    ? '<div class="simple-body">' + inputHtml + '<div id="status" class="status"></div></div>'
+  app.innerHTML = simpleMode
+    ? inputHtml + '<div id="status" class="status"></div>' + flagHtml(state)
     : '<div class="qhead"><span class="cat">' + esc(state.category || '') + '</span>' +
         '<span id="timer" class="timer">--</span></div>' +
         (state.question ? '<div class="q">' + esc(state.question) + '</div>' : '') +
         imgHtml(state) + puzzleHtml(state) +
         (state.warning ? '<div class="warn">' + esc(state.warning) + '</div>' : '') + inputHtml +
-        '<div id="status" class="status"></div>' + legendHtml(state) + roundHtml(state));
+        '<div id="status" class="status"></div>' + flagHtml(state) + legendHtml(state) + roundHtml(state);
 
   if (isNew && !state.already_answered) { const i = document.getElementById('ans'); if (i) i.focus(); }
   if (countdownTimer) clearInterval(countdownTimer);
