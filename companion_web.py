@@ -132,6 +132,20 @@ def _redirect_uri(request):
     return f"{scheme}://{host}/auth/callback"
 
 
+@web.middleware
+async def _https_enforcement_middleware(request, handler):
+    """Redirect plain-HTTP requests to HTTPS before any route (esp. /login) can build an
+    http:// OAuth redirect_uri, which Discord rejects since only the https:// variant is
+    registered per domain. X-Forwarded-Proto is only set by Heroku's router, so its absence
+    (local dev) leaves requests untouched."""
+    if request.headers.get("X-Forwarded-Proto") == "http":
+        _, host = _request_origin(request)
+        resp = web.HTTPMovedPermanently(f"https://{host}{request.rel_url}")
+        resp.headers["Strict-Transport-Security"] = "max-age=63072000; includeSubDomains"
+        raise resp
+    return await handler(request)
+
+
 async def handle_login(request):
     if not _oauth_client_id or not _oauth_client_secret:
         return web.Response(text="Companion login is not configured yet.", status=503)
@@ -918,7 +932,7 @@ async def start_companion_web(*, resolve_member, get_state, submit_answer, revea
     _oauth_client_secret = os.getenv("DISCORD_OAUTH_CLIENT_SECRET", "")
     _base_url = os.getenv("COMPANION_BASE_URL", "")
 
-    app = web.Application()
+    app = web.Application(middlewares=[_https_enforcement_middleware])
     app.add_routes([
         web.get("/", handle_index),
         web.get("/healthz", handle_health),
