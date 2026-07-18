@@ -590,7 +590,7 @@ class TournamentManager:
             embed = discord.Embed(
                 title="🏆 Tournament Starting!",
                 description=f"**{len(all_players)} players** signed up. Beginning Points Race phase...",
-                color=discord.Color.blue()
+                color=discord.Color(0x146DE8)
             )
             player_list = "\n".join([f"• {p['display_name']}" for p in all_players])
             embed.add_field(name="\u200b\n👥 Players", value=player_list, inline=False)
@@ -613,7 +613,7 @@ class TournamentManager:
             embed = discord.Embed(
                 title="🏆 Tournament Starting!",
                 description=f"**{len(all_players)} players** signed up. Beginning round-robin phase...",
-                color=discord.Color.blue()
+                color=discord.Color(0x146DE8)
             )
             player_list = "\n".join([f"• {p['display_name']}" for p in all_players])
             embed.add_field(name="\u200b\n👥 Players", value=player_list, inline=False)
@@ -960,7 +960,7 @@ class TournamentManager:
         question_embed = discord.Embed(
             title=f"⚡ Question {question_num}/{POINTS_RACE_QUESTIONS}: {category_text}",
             description="",  # Will be filled during reveal
-            color=discord.Color.blue()
+            color=discord.Color(0x146DE8)
         )
 
         # Add image if available
@@ -1292,7 +1292,7 @@ class TournamentManager:
         # Create standings embed
         embed = discord.Embed(
             title=f"🏁 Points Race Standings - After Question {question_num}/{POINTS_RACE_QUESTIONS}",
-            color=discord.Color.blue()
+            color=discord.Color(0x146DE8)
         )
 
         standings_text = ""
@@ -2048,7 +2048,7 @@ class TournamentManager:
             # First embed - Score info
             score_embed = discord.Embed(
                 title="**Score**",
-                color=discord.Color.blue()
+                color=discord.Color(0x146DE8)
             )
 
             # Add individual player scores
@@ -2095,7 +2095,7 @@ class TournamentManager:
                     question_embed = discord.Embed(
                         title=question_title,
                         description="",  # Start with empty description
-                        color=discord.Color.blue()
+                        color=discord.Color(0x146DE8)
                     )
 
                     # Add image if URL starts with http
@@ -2184,7 +2184,7 @@ class TournamentManager:
                     question_embed = discord.Embed(
                         title=question_title,
                         description=question["prompt"],
-                        color=discord.Color.blue()
+                        color=discord.Color(0x146DE8)
                     )
 
                     question_url = question.get("url", "")
@@ -2204,7 +2204,7 @@ class TournamentManager:
                 question_embed = discord.Embed(
                     title=question_title,
                     description=question["prompt"],
-                    color=discord.Color.blue()
+                    color=discord.Color(0x146DE8)
                 )
 
                 # Add image if URL starts with http
@@ -2644,7 +2644,7 @@ class TournamentManager:
         
         embed = discord.Embed(
             title=f"Tournament Status - {tournament['status'].upper()}",
-            color=discord.Color.blue()
+            color=discord.Color(0x146DE8)
         )
         
         embed.add_field(

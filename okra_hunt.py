@@ -559,7 +559,7 @@ class OkraHunt:
                 embed = discord.Embed(
                     title="🎯 Already Completed",
                     description=f"**{user.display_name}** already has access to the next level!",
-                    color=discord.Color.blue()
+                    color=discord.Color(0x146DE8)
                 )
 
             elif status == "error":
@@ -922,7 +922,7 @@ class OkraHunt:
             embed = discord.Embed(
                 title="🏆 Hunt Leaderboard",
                 description="No players currently in the hunt!",
-                color=discord.Color.blue()
+                color=discord.Color(0x146DE8)
             )
             return embed
 
