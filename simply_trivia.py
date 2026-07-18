@@ -5,9 +5,11 @@ Tracks first-to-answer and streaks
 """
 
 import asyncio
+import time
 import discord
 from datetime import datetime, timezone
 import discordbot
+import companion_web
 from discordbot import update_audit_question, generate_scrambled_image, scramble_text
 
 # Configuration
@@ -20,10 +22,20 @@ first_answer_time = None
 first_answerer = None
 additional_answerers = []
 any_guess_received = False
+question_message = None  # the Discord message the current question was sent as (see companion helpers below)
 
 # Question tracking for /flag functionality (shared with discordbot.py)
 simply_current_question = None
 simply_previous_question = None
+
+# --- Companion web app state (see companion_web.py + discordbot.py's companion hooks) ---
+_companion_question_key = None      # time.time() float set at question-open; a change-detection key
+_companion_answers = []             # [{"user_id","text","correct"}] -- every raw guess this question, Discord + web
+_companion_correct_user_ids = set() # who got this question right (Discord + web)
+_companion_web_user_ids = set()     # who answered via the companion app this question, for the 🌐 icon
+_companion_flagged_user_ids = set() # one-flag-per-question guard, reset each question
+_companion_last_streak = 0          # streak value at the last reveal, read by _companion_scoreboard()
+_fuzzy_match_func = None            # captured once so companion callbacks (invoked outside the loop) can reach it
 
 
 def get_current_question_for_flag():
@@ -365,6 +377,211 @@ class SimplyTriviaFlagQuestionView(discord.ui.View):
             )
 
 
+# --- Companion web app hooks (see companion_web.py + discordbot.py's build_companion_state and
+# friends, which these mirror for Simply Trivia's simpler, round-less, timer-less, streak-based
+# game model) ---
+
+def _companion_image_url(url, message):
+    """Reuses discordbot's image-resolution logic (handles bot-generated attachments like
+    scramble images), passing our own sent message instead of the main game's."""
+    return discordbot._companion_image_url(url, message)
+
+
+def _companion_question_text(q):
+    text = q.get("question", "")
+    if q.get("url", "").startswith("jeopardy"):
+        text = discordbot.jeopardy_html_to_discord(text)
+    return text
+
+
+def build_companion_state(user_id=None):
+    """Sanitized live-question state for the companion. No round/modes/timer concepts exist in
+    Simply Trivia, so those fields are always empty/absent."""
+    if active_question is None:
+        return {"phase": "idle"}
+    q = active_question
+    url = q.get("url", "")
+    category = q.get("category", "Trivia")
+    answers = q.get("answers", []) or []
+    image_url = _companion_image_url(url, question_message)
+    question_text = _companion_question_text(q)
+    display_question = discordbot._companion_display_question(url, category, question_text, answers, image_url)
+    state = {
+        "phase": "open",
+        "question_key": _companion_question_key,
+        "category": category,
+        "question": display_question,
+        "image_url": image_url,
+        "is_multiple_choice": False,
+        "choices": [],
+        "puzzle_text": None,
+        "warning": None,
+        "modes": [],
+        "round_overview": [],
+        "question_number": 0,
+    }
+    if user_id is not None:
+        mine = [a["text"] for a in _companion_answers if a["user_id"] == user_id]
+        if mine:
+            state["my_answer"] = mine[-1]
+        # Free-text, always resubmittable -- Simply Trivia has no one-guess/multiple-choice lock.
+        state["already_answered"] = False
+    return state
+
+
+def _companion_scoreboard():
+    """Simply Trivia has no points/round scoreboard -- just who got THIS question right, mirroring
+    the same {rank, name, score, delta, lightning, via_companion} row shape the companion's
+    scoreboardHtml() renders, so the 🌐 app-answer icon still works unchanged."""
+    rows = []
+    if first_answerer:
+        rows.append({
+            "rank": "🥇",
+            "name": first_answerer.display_name,
+            "score": f"🔥 {_companion_last_streak}" if _companion_last_streak > 1 else "",
+            "delta": "",
+            "lightning": 0,
+            "via_companion": first_answerer.id in _companion_web_user_ids,
+        })
+    for user in additional_answerers:
+        rows.append({
+            "rank": "✅",
+            "name": user.display_name,
+            "score": "",
+            "delta": "",
+            "lightning": 0,
+            "via_companion": user.id in _companion_web_user_ids,
+        })
+    return rows
+
+
+def build_companion_reveal_state(main_answer):
+    """State pushed to phones at the reveal transition."""
+    q = active_question or {}
+    url = q.get("url", "")
+    category = q.get("category", "Trivia")
+    answers = q.get("answers", []) or []
+    image_url = _companion_image_url(url, question_message)
+    return {
+        "phase": "revealed",
+        "question_key": _companion_question_key,
+        "category": category,
+        "question": discordbot._companion_display_question(
+            url, category, _companion_question_text(q), answers, image_url),
+        "image_url": image_url,
+        "correct_answer": main_answer,
+        "blind": False,
+        "scoreboard": _companion_scoreboard(),
+        "modes": [],
+        "round_overview": [],
+        "question_number": 0,
+    }
+
+
+def companion_reveal_extra(user_id):
+    """Per-connection reveal personalization: every answer this user submitted this question, and
+    whether they got it right (None if they didn't answer)."""
+    mine = [a["text"] for a in _companion_answers if a["user_id"] == user_id]
+    if not mine:
+        return {"my_answers": [], "result": None}
+    return {
+        "my_answers": mine,
+        "result": "correct" if user_id in _companion_correct_user_ids else "incorrect",
+    }
+
+
+def companion_submit_answer(user_id, display_name, text):
+    """Inject a phone answer into the same first-to-answer tracking a Discord-typed guess uses."""
+    if active_question is None:
+        return {"ok": False, "reason": "closed"}
+    _companion_web_user_ids.add(user_id)
+    _record_guess(_CompanionUser(user_id, display_name), text, _fuzzy_match_func)
+    return {"ok": True}
+
+
+async def companion_submit_flag(user_id, display_name, reasons, detail):
+    """Flag whatever `active_question` currently is -- never a client-supplied id. Reuses the same
+    shared moderation pipeline and abuse-rate-limit budget the main game's companion flag uses
+    (discordbot.py's _get_flag_lock/_count_flags_last_24h/MAX_FLAGS_PER_24H/db.companion_flags),
+    tagged with the same [SIMPLY_TRIVIA - CURRENT] prefix the existing Discord-side flag modal
+    uses, and source="Web" for attribution."""
+    if active_question is None:
+        return {"ok": False, "reason": "no_question"}
+    if user_id in _companion_flagged_user_ids:
+        return {"ok": False, "reason": "already_flagged"}
+    async with discordbot._get_flag_lock(user_id):
+        if await discordbot._count_flags_last_24h(user_id) >= discordbot.MAX_FLAGS_PER_24H:
+            return {"ok": False, "reason": "rate_limited"}
+        await discordbot.db.companion_flags.insert_one({"user_id": user_id, "timestamp": datetime.now(timezone.utc)})
+    _companion_flagged_user_ids.add(user_id)
+    reasons_text = ", ".join(discordbot.FlagReasonModal.REASON_LABELS.get(r, r) for r in reasons)
+    reason_text = f"[SIMPLY_TRIVIA - CURRENT] ({reasons_text}) {detail}".strip()
+    question_for_audit = get_current_question_for_flag()
+    await update_audit_question(question_for_audit, reason_text, display_name, None, user_id=user_id, source="Web")
+    return {"ok": True}
+
+
+class _CompanionUser:
+    """Lightweight stand-in for a discord.Member, so a companion (web) answerer can be tracked by
+    the same first_answerer/additional_answerers logic and reveal-embed .mention usage as a real
+    Discord message author. Never appears in a real Discord message, so it simply won't match
+    anything in the channel.history() reaction-scanning loop at reveal time -- expected, not an
+    error."""
+
+    def __init__(self, user_id, display_name):
+        self.id = user_id
+        self.display_name = display_name
+
+    @property
+    def mention(self):
+        return f"<@{self.id}>"
+
+
+def _record_guess(user, text, fuzzy_match_func):
+    """Check `text` against active_question's answers; track first/additional correct answerers
+    (shared by the Discord on_message path and the companion web-answer path) and every raw guess
+    (so the companion can show "my answers" and correct/incorrect on reveal). Returns True if the
+    guess matched."""
+    global first_answerer, first_answer_time, additional_answerers, any_guess_received
+
+    any_guess_received = True
+    matched = False
+
+    for correct_answer in active_question["answers"]:
+        if fuzzy_match_func(
+            text,
+            correct_answer,
+            active_question.get("category", ""),
+            active_question.get("url", ""),
+            ignore_exact_mode=True
+        ):
+            matched = True
+            current_time = asyncio.get_event_loop().time()
+
+            # First correct answer
+            if first_answerer is None:
+                first_answerer = user
+                first_answer_time = current_time
+                # Don't react yet - wait until 3s window closes
+
+            # Additional correct answers within 3 seconds
+            elif (current_time - first_answer_time) <= 3.0:
+                if user.id != first_answerer.id:
+                    # Avoid duplicates -- compare by id, not object identity: a companion (web)
+                    # answerer is a fresh _CompanionUser instance on every submit, unlike a
+                    # discord.Member, which discord.py reuses for the same user.
+                    if not any(u.id == user.id for u in additional_answerers):
+                        additional_answerers.append(user)
+                        # Don't react yet - wait until 3s window closes
+
+            break  # Found a match, stop checking other answers
+
+    _companion_answers.append({"user_id": user.id, "text": text, "correct": matched})
+    if matched:
+        _companion_correct_user_ids.add(user.id)
+    return matched
+
+
 async def handle_answer(message, bot, db, fuzzy_match_func):
     """
     Handle incoming answers in Simply Trivia channel
@@ -376,40 +593,11 @@ async def handle_answer(message, bot, db, fuzzy_match_func):
         db: MongoDB database instance
         fuzzy_match_func: Reference to fuzzy_match function from discordbot
     """
-    global active_question, first_answer_time, first_answerer, additional_answerers, any_guess_received
-
     # Ignore if no active question or message is from bot
     if not active_question or message.author.bot:
         return
 
-    any_guess_received = True
-
-    # Check if answer is correct against any valid answer
-    for correct_answer in active_question["answers"]:
-        if fuzzy_match_func(
-            message.content,
-            correct_answer,
-            active_question.get("category", ""),
-            active_question.get("url", ""),
-            ignore_exact_mode=True
-        ):
-            current_time = asyncio.get_event_loop().time()
-
-            # First correct answer
-            if first_answerer is None:
-                first_answerer = message.author
-                first_answer_time = current_time
-                # Don't react yet - wait until 3s window closes
-
-            # Additional correct answers within 3 seconds
-            elif (current_time - first_answer_time) <= 3.0:
-                if message.author.id != first_answerer.id:
-                    # Avoid duplicates
-                    if message.author not in additional_answerers:
-                        additional_answerers.append(message.author)
-                        # Don't react yet - wait until 3s window closes
-
-            break  # Found a match, stop checking other answers
+    _record_guess(message.author, message.content, fuzzy_match_func)
 
 
 async def start_simply_trivia(bot, db, channel_id, fuzzy_match_func):
@@ -433,6 +621,9 @@ async def start_simply_trivia(bot, db, channel_id, fuzzy_match_func):
 
     print(f"🎯 Simply Trivia started in channel: {channel.name}")
 
+    global _fuzzy_match_func
+    _fuzzy_match_func = fuzzy_match_func
+
     # Load previous question from MongoDB on startup
     await load_simply_previous_question(db)
 
@@ -452,7 +643,8 @@ async def start_simply_trivia(bot, db, channel_id, fuzzy_match_func):
 
             # Move current question to previous before setting new question
             global active_question, first_answerer, first_answer_time, additional_answerers, any_guess_received
-            global simply_current_question, simply_previous_question
+            global simply_current_question, simply_previous_question, question_message
+            global _companion_question_key, _companion_last_streak
 
             if simply_current_question is not None:
                 simply_previous_question = simply_current_question.copy()
@@ -496,6 +688,16 @@ async def start_simply_trivia(bot, db, channel_id, fuzzy_match_func):
                 # No image
                 question_message = await channel.send(embed=embed)
             simply_current_question["trivia_message_link"] = question_message.jump_url
+
+            _companion_question_key = time.time()
+            _companion_answers.clear()
+            _companion_correct_user_ids.clear()
+            _companion_web_user_ids.clear()
+            _companion_flagged_user_ids.clear()
+            try:
+                companion_web.publish_state(build_companion_state(), game="simply")
+            except Exception as e:
+                print(f"companion publish (simply, open) failed: {e}")
 
             print(f"📝 Asked: {category} - {question_text}")
             print(f"📝 Answer: {answers}")
@@ -584,6 +786,7 @@ async def start_simply_trivia(bot, db, channel_id, fuzzy_match_func):
                     upsert=True
                 )
                 streak = new_streak
+                _companion_last_streak = streak
 
                 # Record correct answer for stats
                 await record_correct_answer(
@@ -636,12 +839,19 @@ async def start_simply_trivia(bot, db, channel_id, fuzzy_match_func):
                 except Exception as e:
                     print(f"❌ Failed to reset streaks: {e}")
 
+                _companion_last_streak = 0
+
                 await discordbot.record_question_outcome(question.get("db"), question.get("_id"), False, any_guess_received)
 
                 answer_text = f"**Answer:** {main_answer}"
                 embed = discord.Embed(description=answer_text, color=discord.Color.red())
 
             await channel.send(embed=embed)
+
+            try:
+                companion_web.publish_state(build_companion_reveal_state(main_answer), game="simply")
+            except Exception as e:
+                print(f"companion publish (simply, reveal) failed: {e}")
 
             # Store question ID to avoid repeating
             if question.get("_id"):

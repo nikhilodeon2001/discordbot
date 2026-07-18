@@ -32,12 +32,13 @@ from aiohttp import web
 # Module state (set by start_companion_web)
 # ---------------------------------------------------------------------------
 
-_subscribers = set()          # set[asyncio.Queue] — one per open SSE connection
+_GAMES = ("main", "simply")
+_subscribers = {g: set() for g in _GAMES}   # game -> set[asyncio.Queue], one queue per open SSE connection
 _resolve_member = None        # callable(user_id:int) -> display_name:str | None
-_get_state = None             # callable(user_id:int|None) -> dict (sanitized live state)
-_submit_answer = None         # callable(user_id, display_name, text) -> {"ok":bool,"reason":str}
-_reveal_extra = None          # callable(user_id) -> {"my_answers":[...], "result":"correct"/"incorrect"/None}
-_submit_flag = None           # async callable(user_id, display_name, reasons, detail) -> {"ok":bool,"reason":str}
+_get_state = None             # callable(user_id:int|None, game:str) -> dict (sanitized live state)
+_submit_answer = None         # callable(user_id, display_name, text, game) -> {"ok":bool,"reason":str}
+_reveal_extra = None          # callable(user_id, game) -> {"my_answers":[...], "result":"correct"/"incorrect"/None}
+_submit_flag = None           # async callable(user_id, display_name, reasons, detail, game) -> {"ok":bool,"reason":str}
 _session_secret = b""
 _oauth_client_id = ""
 _oauth_client_secret = ""
@@ -96,16 +97,26 @@ def _session_from_request(request):
 # SSE publish (called from the bot's game loop)
 # ---------------------------------------------------------------------------
 
-def publish_state(state: dict):
-    """Fan a state dict out to all connected SSE clients. Never raises."""
+def publish_state(state: dict, game: str = "main"):
+    """Fan a state dict out to SSE clients currently viewing `game`. Never raises."""
     try:
-        for queue in list(_subscribers):
+        for queue in list(_subscribers.get(game, ())):
             try:
                 queue.put_nowait(state)
             except Exception:
                 pass
     except Exception:
         pass
+
+
+def _game_from_request(request):
+    game = request.query.get("game", "main")
+    return game if game in _GAMES else "main"
+
+
+def _game_from_body(body):
+    game = body.get("game", "main")
+    return game if game in _GAMES else "main"
 
 
 async def _write_event(resp, data: dict):
@@ -236,7 +247,8 @@ async def handle_current(request):
     session = _session_from_request(request)
     if not session:
         return web.json_response({"authenticated": False}, status=401)
-    state = _get_state(session["user_id"]) if _get_state else {"phase": "idle"}
+    game = _game_from_request(request)
+    state = _get_state(session["user_id"], game) if _get_state else {"phase": "idle"}
     state = dict(state)
     state["authenticated"] = True
     state["display_name"] = session["display_name"]
@@ -247,6 +259,7 @@ async def handle_stream(request):
     session = _session_from_request(request)
     if not session:
         return web.json_response({"authenticated": False}, status=401)
+    game = _game_from_request(request)
 
     resp = web.StreamResponse(
         headers={
@@ -259,11 +272,11 @@ async def handle_stream(request):
     await resp.prepare(request)
 
     queue = asyncio.Queue(maxsize=32)
-    _subscribers.add(queue)
+    _subscribers[game].add(queue)
     try:
         # Send current state immediately so a fresh connection renders without waiting.
         if _get_state:
-            await _write_event(resp, _get_state(session["user_id"]))
+            await _write_event(resp, _get_state(session["user_id"], game))
         while True:
             try:
                 data = await asyncio.wait_for(queue.get(), timeout=_HEARTBEAT_SECONDS)
@@ -271,7 +284,7 @@ async def handle_stream(request):
                 # submissions + result (copy so we never mutate the shared dict).
                 if _reveal_extra and isinstance(data, dict) and data.get("phase") == "revealed":
                     try:
-                        data = {**data, **_reveal_extra(session["user_id"])}
+                        data = {**data, **_reveal_extra(session["user_id"], game)}
                     except Exception:
                         pass
                 await _write_event(resp, data)
@@ -280,7 +293,7 @@ async def handle_stream(request):
     except (asyncio.CancelledError, ConnectionResetError, ConnectionError):
         pass
     finally:
-        _subscribers.discard(queue)
+        _subscribers[game].discard(queue)
     return resp
 
 
@@ -303,8 +316,9 @@ async def handle_answer(request):
     answer = (body.get("answer") or "").strip()
     if not answer:
         return web.json_response({"ok": False, "reason": "empty"}, status=400)
+    game = _game_from_body(body)
 
-    result = _submit_answer(user_id, session["display_name"], answer) if _submit_answer else {"ok": False, "reason": "unavailable"}
+    result = _submit_answer(user_id, session["display_name"], answer, game) if _submit_answer else {"ok": False, "reason": "unavailable"}
     status = 200 if result.get("ok") else 409
     return web.json_response(result, status=status)
 
@@ -329,9 +343,10 @@ async def handle_flag(request):
     if not reasons:
         return web.json_response({"ok": False, "reason": "empty"}, status=400)
     detail = str(body.get("detail") or "").strip()[:500]
+    game = _game_from_body(body)
 
     result = (
-        await _submit_flag(user_id, session["display_name"], reasons, detail)
+        await _submit_flag(user_id, session["display_name"], reasons, detail, game)
         if _submit_flag else {"ok": False, "reason": "unavailable"}
     )
     status = 200 if result.get("ok") else 409
@@ -545,6 +560,13 @@ _INDEX_HTML = """<!doctype html>
       <div class="brandlogo" role="img" aria-label="TriviaSphere logo"></div>
     </div>
     <label class="simple-toggle">
+      <span class="lbl">Simply Trivia</span>
+      <span class="switch">
+        <input type="checkbox" id="gameToggle" onchange="onGameToggle(this.checked)">
+        <span class="track"><span class="thumb"></span></span>
+      </span>
+    </label>
+    <label class="simple-toggle">
       <span class="lbl">Detail mode</span>
       <span class="switch">
         <input type="checkbox" id="simpleToggle" onchange="onSimpleToggle(this.checked)">
@@ -552,7 +574,7 @@ _INDEX_HTML = """<!doctype html>
       </span>
     </label>
   </header>
-  <div class="sub">Answer live from your phone or computer — private, timed, and scored right alongside everyone in the channel.</div>
+  <div id="subtext" class="sub">Answer live from your phone or computer — private, timed, and scored right alongside everyone in the channel.</div>
   <div id="app" class="card"><div class="idle">Loading…</div></div>
   <div id="me" class="me"></div>
   <footer class="foot"><span class="footlogo" role="img" aria-label="TriviaSphere"></span></footer>
@@ -560,6 +582,7 @@ _INDEX_HTML = """<!doctype html>
 <script>
 let es = null, countdownTimer = null, endsAt = 0, currentKey = null, answeredKey = null, answeredValue = null, oneGuess = false;
 let simpleMode = true, lastState = null, flaggedKey = null, flagSubmitting = false;
+let currentGame = localStorage.getItem('okra_game') || 'main';
 var FLAG_REASONS = [
   ['category', 'Category'], ['question', 'Question'], ['answer', 'Answer'],
   ['too_niche', 'Too Niche'], ['other', 'Other'],
@@ -631,16 +654,25 @@ function onSimpleToggle(checked) {
   if (lastState) render(lastState);
 }
 
+function onGameToggle(checked) {
+  currentGame = checked ? 'simply' : 'main';
+  localStorage.setItem('okra_game', currentGame);
+  loadGame(currentGame);
+}
+
 function render(state) {
   const app = document.getElementById('app');
+  const sub = document.getElementById('subtext');
   lastState = state;
   if (state.authenticated === false) {
+    if (sub) sub.style.display = '';
     app.innerHTML = '<div class="hero"><div class="mascot"></div>' +
       '<h2>Ready to play?</h2>' +
       '<p>Log in with Discord to answer live questions privately from your phone or computer.</p>' +
       '<a class="login" href="/login">' + DISCORD_SVG + 'Login with Discord</a></div>';
     return;
   }
+  if (sub) sub.style.display = 'none';
   if (state.display_name) document.getElementById('me').innerHTML = 'Playing as ' + esc(state.display_name) +
     ' · <a class="logout" href="/logout">Log out</a>';
 
@@ -721,19 +753,22 @@ function render(state) {
       ' — you can submit again</div>' + inputHtml;
   }
 
+  const timerHtml = state.ends_at ? '<span id="timer" class="timer">--</span>' : '';
   app.innerHTML = simpleMode
-    ? inputHtml + '<div id="status" class="status"></div>' + flagHtml(state)
+    ? inputHtml + '<div id="status" class="status"></div>' + legendHtml(state) + flagHtml(state)
     : '<div class="qhead"><span class="cat">' + esc(state.category || '') + '</span>' +
-        '<span id="timer" class="timer">--</span></div>' +
+        timerHtml + '</div>' +
         (state.question ? '<div class="q">' + esc(state.question) + '</div>' : '') +
         imgHtml(state) + puzzleHtml(state) +
         (state.warning ? '<div class="warn">' + esc(state.warning) + '</div>' : '') + inputHtml +
         '<div id="status" class="status"></div>' + flagHtml(state) + legendHtml(state) + roundHtml(state);
 
   if (isNew && !state.already_answered) { const i = document.getElementById('ans'); if (i) i.focus(); }
-  if (countdownTimer) clearInterval(countdownTimer);
-  fmtRemaining();
-  countdownTimer = setInterval(fmtRemaining, 250);
+  if (countdownTimer) { clearInterval(countdownTimer); countdownTimer = null; }
+  if (state.ends_at) {
+    fmtRemaining();
+    countdownTimer = setInterval(fmtRemaining, 250);
+  }
 }
 
 function esc(s) { return String(s).replace(/[&<>"']/g, function (c) {
@@ -760,7 +795,7 @@ async function submit(answer) {
   try {
     const r = await fetch('/api/answer', {
       method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({answer: answer}),
+      body: JSON.stringify({answer: answer, game: currentGame}),
     });
     const data = await r.json();
     if (data.ok) {
@@ -840,7 +875,7 @@ async function submitFlag() {
   try {
     const r = await fetch('/api/flag', {
       method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({reasons: reasons, detail: detail}),
+      body: JSON.stringify({reasons: reasons, detail: detail, game: currentGame}),
     });
     const data = await r.json();
     if (data.ok) {
@@ -867,14 +902,23 @@ async function submitFlag() {
 }
 
 function connect() {
-  es = new EventSource('/api/stream');
+  es = new EventSource('/api/stream?game=' + encodeURIComponent(currentGame));
   es.onmessage = function (ev) { try { render(JSON.parse(ev.data)); } catch (e) {} };
   es.onerror = function () { /* EventSource auto-reconnects */ };
 }
 
-fetch('/api/current').then(function (r) { return r.json(); })
-  .then(function (s) { render(s); if (s.authenticated !== false) connect(); })
-  .catch(function () { render({phase: 'idle', authenticated: true}); connect(); });
+function loadGame(game) {
+  currentGame = game;
+  if (es) { es.close(); es = null; }
+  currentKey = null; answeredKey = null; answeredValue = null; endsAt = 0; flaggedKey = null;
+  if (countdownTimer) { clearInterval(countdownTimer); countdownTimer = null; }
+  fetch('/api/current?game=' + encodeURIComponent(game)).then(function (r) { return r.json(); })
+    .then(function (s) { render(s); if (s.authenticated !== false) connect(); })
+    .catch(function () { render({phase: 'idle', authenticated: true}); connect(); });
+}
+
+document.getElementById('gameToggle').checked = (currentGame === 'simply');
+loadGame(currentGame);
 </script>
 </body>
 </html>

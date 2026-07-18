@@ -22226,7 +22226,7 @@ async def start_trivia():
                 question_message_link = current_answer_message.jump_url if current_answer_message else None
                 current_question["trivia_message_link"] = question_message_link
                 try:
-                    companion_web.publish_state(build_companion_state())
+                    companion_web.publish_state(build_companion_state(), game="main")
                 except Exception as e:
                     print(f"companion publish (open) failed: {e}")
                 # Wall-clock-synced countdown: recompute remaining from the real deadline each tick so
@@ -22273,7 +22273,7 @@ async def start_trivia():
                     show_standings_after=show_standings_after,
                 )
                 try:
-                    companion_web.publish_state(build_companion_reveal_state(solution_list))
+                    companion_web.publish_state(build_companion_reveal_state(solution_list), game="main")
                 except Exception as e:
                     print(f"companion publish (reveal) failed: {e}")
 
@@ -23214,14 +23214,17 @@ def _companion_question_choices(trivia_answer_list, trivia_url):
     return choices
 
 
-def _companion_image_url(trivia_url):
+def _companion_image_url(trivia_url, message=None):
     """The question's image URL for the phone, if any. For normal image questions trivia_url
     *is* the image URL (ask_question sets image_url = trivia_url when is_valid_url); for
     bot-generated images (math/trig/etc.) fall back to the URL Discord rehosted the attachment
-    to, read off the sent message's embed. Returns None for text-only questions."""
+    to, read off the sent message's embed. Returns None for text-only questions.
+
+    `message` defaults to the main game's `current_answer_message`; other companion-enabled game
+    modes (e.g. Simply Trivia) pass their own sent message instead."""
     if trivia_url and is_valid_url(trivia_url):
         return trivia_url
-    msg = current_answer_message
+    msg = message if message is not None else current_answer_message
     if msg is not None:
         try:
             if msg.embeds:
@@ -23467,6 +23470,29 @@ async def companion_submit_flag(user_id, display_name, reasons, detail):
     reason_text = f"({reasons_text}) {detail}".strip()
     await update_audit_question(current_question, reason_text, display_name, None, user_id=user_id, source="Web")
     return {"ok": True}
+
+
+# Multi-game routing: the companion app is reached through the same domain/session for every
+# game (a toggle in the page picks which one, see companion_web.py's `game` query/body param),
+# so these dispatch to whichever game's own companion hooks apply. companion_resolve_member is
+# NOT routed -- both games share the same guild, so membership resolution is identical either way.
+
+def _companion_route_state(user_id, game):
+    return simply_trivia.build_companion_state(user_id) if game == "simply" else build_companion_state(user_id)
+
+
+def _companion_route_submit_answer(user_id, display_name, text, game):
+    return simply_trivia.companion_submit_answer(user_id, display_name, text) if game == "simply" else companion_submit_answer(user_id, display_name, text)
+
+
+def _companion_route_reveal_extra(user_id, game):
+    return simply_trivia.companion_reveal_extra(user_id) if game == "simply" else companion_reveal_extra(user_id)
+
+
+async def _companion_route_submit_flag(user_id, display_name, reasons, detail, game):
+    if game == "simply":
+        return await simply_trivia.companion_submit_flag(user_id, display_name, reasons, detail)
+    return await companion_submit_flag(user_id, display_name, reasons, detail)
 
 
 def _format_flagged_question_for_claude(doc, clarifications=None):
@@ -26953,10 +26979,10 @@ if __name__ == "__main__":
         try:
             await companion_web.start_companion_web(
                 resolve_member=companion_resolve_member,
-                get_state=build_companion_state,
-                submit_answer=companion_submit_answer,
-                reveal_extra=companion_reveal_extra,
-                submit_flag=companion_submit_flag,
+                get_state=_companion_route_state,
+                submit_answer=_companion_route_submit_answer,
+                reveal_extra=_companion_route_reveal_extra,
+                submit_flag=_companion_route_submit_flag,
             )
         except Exception as e:
             print(f"⚠️  Companion web app failed to start: {e}")
