@@ -435,6 +435,8 @@ _INDEX_HTML = """<!doctype html>
     background:var(--header-logo) left center/contain no-repeat; }
   .simple-toggle { display:flex; align-items:center; gap:8px; flex:none; cursor:pointer; }
   .simple-toggle span.lbl { font-size:.72rem; font-weight:700; letter-spacing:.02em; color:var(--muted); white-space:nowrap; }
+  .game-toggle .lbl { transition:color .15s; }
+  .game-toggle .lbl.active { color:var(--fg); }
   .switch { position:relative; display:inline-block; width:40px; height:23px; flex:none; }
   .switch input { position:absolute; inset:0; opacity:0; margin:0; cursor:pointer; }
   .switch .track { position:absolute; inset:0; border-radius:999px; background:rgba(127,127,127,.20);
@@ -559,19 +561,13 @@ _INDEX_HTML = """<!doctype html>
     <div class="brandhead">
       <div class="brandlogo" role="img" aria-label="TriviaSphere logo"></div>
     </div>
-    <label class="simple-toggle">
-      <span class="lbl">Simply Trivia</span>
+    <label class="simple-toggle game-toggle">
+      <span class="lbl" id="gameToggleLeft">Trivia &amp; Games</span>
       <span class="switch">
         <input type="checkbox" id="gameToggle" onchange="onGameToggle(this.checked)">
         <span class="track"><span class="thumb"></span></span>
       </span>
-    </label>
-    <label class="simple-toggle">
-      <span class="lbl">Detail mode</span>
-      <span class="switch">
-        <input type="checkbox" id="simpleToggle" onchange="onSimpleToggle(this.checked)">
-        <span class="track"><span class="thumb"></span></span>
-      </span>
+      <span class="lbl" id="gameToggleRight">Simply Trivia</span>
     </label>
   </header>
   <div id="subtext" class="sub">Answer live from your phone or computer — private, timed, and scored right alongside everyone in the channel.</div>
@@ -654,9 +650,17 @@ function onSimpleToggle(checked) {
   if (lastState) render(lastState);
 }
 
+function syncGameToggleLabels(isSimply) {
+  var left = document.getElementById('gameToggleLeft');
+  var right = document.getElementById('gameToggleRight');
+  if (left) left.classList.toggle('active', !isSimply);
+  if (right) right.classList.toggle('active', isSimply);
+}
+
 function onGameToggle(checked) {
   currentGame = checked ? 'simply' : 'main';
   localStorage.setItem('okra_game', currentGame);
+  syncGameToggleLabels(checked);
   loadGame(currentGame);
 }
 
@@ -918,6 +922,7 @@ function loadGame(game) {
 }
 
 document.getElementById('gameToggle').checked = (currentGame === 'simply');
+syncGameToggleLabels(currentGame === 'simply');
 loadGame(currentGame);
 </script>
 </body>
