@@ -14418,7 +14418,7 @@ async def get_image_url_from_s3(streak_message=None):
         message = "\u200b\n"
         if streak_message:
             message += f"{streak_message}\n\n"
-        message += "🖼️✨ A masterpiece from the [**Okra Museum**](https://clubokra.com/okra-museum)\n"
+        message += "🖼️✨ A masterpiece from the [**Okra Museum**](https://triviasphere.com/okra-museum)\n"
         message += f"\n**{museum_post['title']}**\n"
         message += f"By {museum_post['muse']}, {museum_post['creation_date']}\n\u200b"
 
@@ -14572,7 +14572,7 @@ def build_museum_social_caption(museum_post, is_archive=False):
     ])
     if discord_invite_url:
         lines.append(f"Play with us: {discord_invite_url}")
-    lines.append("Visit the Okra Museum: https://clubokra.com/okra-museum")
+    lines.append("Visit the Okra Museum: https://triviasphere.com/okra-museum")
     return "\n".join(lines)
 
 
@@ -15746,7 +15746,7 @@ async def generate_round_summary_image(round_data, winner, winner_id, winner_cof
 
             buffer = await loop.run_in_executor(None, process_image)
             jump_url, social_post = await upload_image_to_s3(buffer, winner, image_description, winner_id)
-            museum_link = jump_url or "https://clubokra.com/okra-museum"
+            museum_link = jump_url or "https://triviasphere.com/okra-museum"
 
             message = f"🔥💖 **<@{winner_id}>**, you've done well. I drew this **for you**.\n"
             message += f"\n**I call it**...*{image_description}*\n"
@@ -15791,7 +15791,7 @@ async def generate_round_summary_image(round_data, winner, winner_id, winner_cof
 
                     buffer = await loop.run_in_executor(None, process_fallback_image)
                     jump_url, social_post = await upload_image_to_s3(buffer, winner, image_description, winner_id)
-                    museum_link = jump_url or "https://clubokra.com/okra-museum"
+                    museum_link = jump_url or "https://triviasphere.com/okra-museum"
 
                     message = f"😈😉 <@{winner_id}> Naughty naughty, I'll have to pick another.\n\n"
                     message += f"\nI call it: '{image_description}'\n"
@@ -20596,7 +20596,7 @@ async def update_round_streaks(user, user_id, roast_task=None):
 
         if streak > 1:
             winner_text = f"🏆 **Winner**: **<@{user_id}>**...🔥{current_longest_round_streak['streak']} in a row!\n"
-            winner_text += f"\n▶️ **[Discord Stats](https://clubokra.com/leaderboard)**\n"
+            winner_text += f"\n▶️ **[Discord Stats](https://triviasphere.com/leaderboard)**\n"
             winner_text += roast_block
 
             if streak % discount_streak_amount == 0:
@@ -20604,7 +20604,7 @@ async def update_round_streaks(user, user_id, roast_task=None):
                 winner_text += f"\n⚖️ Going forward **<@{user_id}>** will incur a **-{discount_fraction}%** handicap.\n"
         else:
             winner_text = f"🏆 **Winner**: **<@{user_id}>**!\n"
-            winner_text += f"\n▶️ **[Live Stats](https://clubokra.com/leaderboard)**\n"
+            winner_text += f"\n▶️ **[Live Stats](https://triviasphere.com/leaderboard)**\n"
             winner_text += roast_block
 
         # Winner text + avatar in the first embed (avatar renders below the text within
@@ -21434,15 +21434,15 @@ async def round_start_messages():
         # If the user is in the Hall of Sovereigns, only show the message if top_count == 6
         if username in sovereigns:
             if top_count == 6:
-                await safe_send(channel, f"👑  {username} is #1 across the board. We bow to you.\n\n▶️ [Live trivia stats available](https://clubokra.com)\n")
+                await safe_send(channel, f"👑  {username} is #1 across the board. We bow to you.\n\n▶️ [Live trivia stats available](https://triviasphere.com)\n")
         else:
             # For users not in the Hall of Sovereigns, show all applicable messages
             if top_count == 6:
-                await safe_send(channel, f"👑  {username} is #1 across the board. We bow to you.\n\n▶️ [Live trivia stats available](https://clubokra.com)\n")
+                await safe_send(channel, f"👑  {username} is #1 across the board. We bow to you.\n\n▶️ [Live trivia stats available](https://triviasphere.com)\n")
             elif top_count == 5:
-                await safe_send(channel, f"🔥​  {username} is on fire! Only 1 leaderboard left.\n\n▶️ [Live trivia stats available](https://clubokra.com)\n")
+                await safe_send(channel, f"🔥​  {username} is on fire! Only 1 leaderboard left.\n\n▶️ [Live trivia stats available](https://triviasphere.com)\n")
             elif top_count == 4:
-                await safe_send(channel, f"🌡️  {username} is heating up! Only 2 leaderboards left.\n\n▶️ [Live trivia stats available](https://clubokra.com)\n")
+                await safe_send(channel, f"🌡️  {username} is heating up! Only 2 leaderboards left.\n\n▶️ [Live trivia stats available](https://triviasphere.com)\n")
     return None
 
 

@@ -118,7 +118,7 @@ async def _write_event(resp, data: dict):
 
 def _request_origin(request):
     """(scheme, host) for the hostname the client actually used, so login works correctly no
-    matter which registered custom domain (e.g. clubokra.com or triviasphere.com) a request
+    matter which registered custom domain (e.g. triviasphere.com or a staging domain) a request
     arrives on -- COMPANION_BASE_URL alone can't express "one app, multiple public domains."
     Heroku's router sets X-Forwarded-Proto/X-Forwarded-Host to the real public-facing values;
     request.scheme/request.host are the fallback for local dev, where those aren't set."""
