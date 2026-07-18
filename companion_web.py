@@ -439,6 +439,7 @@ _INDEX_HTML = """<!doctype html>
   .flagbtn:active { transform:scale(.95); }
   .flagbtn.flagged { color:var(--red); background:rgba(247,26,20,.14); border-color:rgba(247,26,20,.35); cursor:default; }
   .flagbtn:disabled { opacity:.6; cursor:default; }
+  .simple-body { margin-top:38px; }
   .modal-backdrop { position:fixed; inset:0; background:rgba(0,0,0,.55); display:flex; align-items:flex-end;
     justify-content:center; z-index:50; padding:0; }
   @media (min-width:560px) { .modal-backdrop { align-items:center; padding:16px; } }
@@ -462,7 +463,7 @@ _INDEX_HTML = """<!doctype html>
   .modalbtns .submit { background:linear-gradient(180deg,var(--blue),var(--blue-600)); color:#fff; border:none; }
   .modalbtns .submit:disabled { opacity:.5; cursor:default; }
   .modalstatus { margin-top:10px; font-size:.86rem; min-height:1.2em; }
-  .qhead { display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:14px; }
+  .qhead { display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:14px; padding-right:40px; }
   .cat { font-size:.7rem; font-weight:700; text-transform:uppercase; letter-spacing:.1em; color:var(--muted); }
   .timer { flex:none; font-variant-numeric:tabular-nums; font-weight:800; font-size:.74rem;
     padding:4px 10px; border-radius:999px; background:rgba(20,109,232,.16); color:var(--blue); }
@@ -666,7 +667,7 @@ function render(state) {
       ? '<div class="status">🙈 Answers are hidden this round.</div>'
       : '<div class="status ok">✅ Answer: ' + esc(state.correct_answer || '') + '</div>';
     app.innerHTML = flagHtml(state) + (simpleMode
-      ? resultBanner + answerLine
+      ? '<div class="simple-body">' + resultBanner + answerLine + '</div>'
       : '<div class="cat">' + esc(state.category || '') + '</div>' +
         (state.question ? '<div class="q">' + esc(state.question) + '</div>' : '') +
         imgHtml(state) +
@@ -723,7 +724,7 @@ function render(state) {
   }
 
   app.innerHTML = flagHtml(state) + (simpleMode
-    ? inputHtml + '<div id="status" class="status"></div>'
+    ? '<div class="simple-body">' + inputHtml + '<div id="status" class="status"></div></div>'
     : '<div class="qhead"><span class="cat">' + esc(state.category || '') + '</span>' +
         '<span id="timer" class="timer">--</span></div>' +
         (state.question ? '<div class="q">' + esc(state.question) + '</div>' : '') +
