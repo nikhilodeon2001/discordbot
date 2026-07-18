@@ -17470,9 +17470,15 @@ def generate_jeopardy_image(question_text, category_text=None):
         content_top = category_top_margin + (category_bbox[3] - category_bbox[1]) + single_line_height  # category block + one blank line
 
     # Question is centered within whatever space remains below the category (or the whole
-    # image, if there's no category).
+    # image, if there's no category), then nudged up by one line -- perfect centering left an
+    # inconsistently large gap above short questions since it centers the whole block regardless
+    # of how many lines it wraps to. The floor keeps long (near-full-height) questions from
+    # rising into the category.
     text_x = (img_width - text_width) // 2
-    text_y = content_top + (img_height - content_top - text_height) // 2
+    line_bbox = draw.textbbox((0, 0), "Ag", font=font)
+    line_height = line_bbox[3] - line_bbox[1]
+    centered_y = content_top + (img_height - content_top - text_height) // 2
+    text_y = max(content_top + 20, centered_y - line_height)
 
     # Draw the question text on the image
     draw.multiline_text((text_x, text_y), wrapped_text, fill=text_color, font=font, align="center")
@@ -22349,7 +22355,6 @@ async def start_trivia():
             if show_round_end_message:
                 ad_body = await send_question_queen_submit_ad()
                 message = (
-                    "\u200b\n"
                     "\U0001f9d8\u200d\u2642\ufe0f **Relax. Stretch. Meditate.**\n\n"
                     "\U0001f49a [Unlock Perks](https://discord.com/channels/1367682586079395902/role-subscriptions)\n"
                     "\U0001f4a1 [Leave Feedback](https://forms.gle/iWvmN24pfGEGSy7n7)\n"
