@@ -676,8 +676,11 @@ async def start_simply_trivia(bot, db, channel_id, fuzzy_match_func):
             answers = question.get("answers", [])
             main_answer = answers[0] if answers else "Unknown"
 
+            flag_token = companion_web.make_flag_token(question.get("db", "trivia_questions"), question.get("_id"), category, main_answer)
+            flag_url = f"{companion_web.get_base_url()}/flag?t={flag_token}"
+
             embed = discord.Embed(
-                description=f"**{category}**\n\n{question_text}",
+                description=f"[**{category}**]({flag_url})\n\n{question_text}",
                 color=discord.Color(0x146DE8)
             )
 
@@ -799,7 +802,7 @@ async def start_simply_trivia(bot, db, channel_id, fuzzy_match_func):
                     tag = " 🌐" if user.id in _companion_web_user_ids else ""
                     return f"{user.mention}{tag}"
 
-                answer_text = f"**Answer:** {main_answer}\n\n"
+                answer_text = f"[**Answer:** {main_answer}]({flag_url})\n\n"
                 if streak > 1:
                     answer_text += f"🏆 {_mention_with_indicator(first_answerer)} got it first! 🔥 Streak: {streak}"
                 else:
@@ -844,7 +847,7 @@ async def start_simply_trivia(bot, db, channel_id, fuzzy_match_func):
 
                 await discordbot.record_question_outcome(question.get("db"), question.get("_id"), False, any_guess_received)
 
-                answer_text = f"**Answer:** {main_answer}"
+                answer_text = f"[**Answer:** {main_answer}]({flag_url})"
                 embed = discord.Embed(description=answer_text, color=discord.Color.red())
 
             await channel.send(embed=embed)

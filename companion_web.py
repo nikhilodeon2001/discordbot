@@ -23,6 +23,7 @@ import json
 import os
 import time
 import urllib.parse
+from html import escape as html_escape
 
 import aiohttp
 import boto3
@@ -39,6 +40,7 @@ _get_state = None             # callable(user_id:int|None, game:str) -> dict (sa
 _submit_answer = None         # callable(user_id, display_name, text, game) -> {"ok":bool,"reason":str}
 _reveal_extra = None          # callable(user_id, game) -> {"my_answers":[...], "result":"correct"/"incorrect"/None}
 _submit_flag = None           # async callable(user_id, display_name, reasons, detail, game) -> {"ok":bool,"reason":str}
+_submit_anon_flag = None      # async callable(trivia_db, trivia_id, cat_hint, ans_hint, reasons, detail, ip_hash) -> {"ok":bool,"reason":str}
 _session_secret = b""
 _oauth_client_id = ""
 _oauth_client_secret = ""
@@ -60,6 +62,16 @@ _SUBMIT_MIN_INTERVAL = 0.4
 _last_flag = {}
 _FLAG_MIN_INTERVAL = 2.0
 _FLAG_REASONS = {"category", "question", "answer", "too_niche", "other"}
+
+# Anonymous (no-login) flag links embedded in Simply Trivia embeds -- see make_flag_token() and
+# simply_trivia.py. 90 days is generous but bounds how long a leaked/scraped link stays valid.
+_FLAG_TOKEN_TTL = 90 * 86400
+
+# crude per-IP anonymous-flag debounce: ip_hash -> last flag epoch. The real anti-abuse (per-
+# question cap, per-IP daily cap) lives server-side in discordbot.py's anonymous_submit_flag,
+# same split of responsibilities as the logged-in flag flow above.
+_anon_last_flag = {}
+_ANON_FLAG_MIN_INTERVAL = 5.0
 
 
 # ---------------------------------------------------------------------------
@@ -91,6 +103,35 @@ def _unsign(token: str):
 
 def _session_from_request(request):
     return _unsign(request.cookies.get(_SESSION_COOKIE, ""))
+
+
+def get_base_url():
+    """Public accessor for the companion app's base URL, so other modules (e.g. simply_trivia.py,
+    building a flag link for an embed) don't need to reach into the private `_base_url` global."""
+    return _base_url
+
+
+def make_flag_token(trivia_db, trivia_id, category, answer):
+    """Sign a token identifying one specific (possibly historical) question, for the no-login
+    'flag this question' link embedded in Simply Trivia messages. Unlike the logged-in companion
+    flag flow (which always targets 'whatever is currently live'), a link clicked from an old
+    Discord message needs to carry its own question identity, since by the time it's clicked the
+    live question has long since moved on. `category`/`answer` are carried along only for display
+    on the flag page -- the moderation report itself re-reads the question fresh from Mongo."""
+    return _sign({
+        "db": trivia_db,
+        "id": str(trivia_id),
+        "cat": (category or "")[:200],
+        "ans": (answer or "")[:200],
+        "exp": time.time() + _FLAG_TOKEN_TTL,
+    })
+
+
+def _client_ip_hash(request):
+    """HMAC the requester's IP (never store it raw) for anonymous-flag rate limiting/dedup."""
+    fwd = request.headers.get("X-Forwarded-For", "")
+    ip = fwd.split(",")[0].strip() if fwd else (request.remote or "")
+    return hmac.new(_session_secret, ip.encode(), hashlib.sha256).hexdigest()
 
 
 # ---------------------------------------------------------------------------
@@ -348,6 +389,183 @@ async def handle_flag(request):
     result = (
         await _submit_flag(user_id, session["display_name"], reasons, detail, game)
         if _submit_flag else {"ok": False, "reason": "unavailable"}
+    )
+    status = 200 if result.get("ok") else 409
+    return web.json_response(result, status=status)
+
+
+# ---------------------------------------------------------------------------
+# Anonymous (no-login) flag page -- linked directly from Simply Trivia embed headers
+# ---------------------------------------------------------------------------
+
+_FLAG_PAGE_HTML = """<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Flag Question — TriviaSphere</title>
+<meta name="theme-color" content="#06080D" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#F8F8F8" media="(prefers-color-scheme: light)">
+<link rel="icon" type="image/webp" href="/assets/logo-mark.webp">
+<style>
+  :root {
+    color-scheme: light dark;
+    --blue:#146DE8; --blue-600:#0A4FB5; --red:#F71A14;
+    --bg:#06080D; --bg2:#0E1219; --fg:#F8F8F8; --muted:rgba(248,248,248,.58);
+    --card:rgba(248,248,248,.05); --line:rgba(248,248,248,.10);
+  }
+  @media (prefers-color-scheme: light) {
+    :root { --bg:#F8F8F8; --bg2:#FCFCFC; --fg:#06080D; --muted:rgba(6,8,13,.55);
+            --card:#ffffff; --line:rgba(6,8,13,.10); }
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  body { margin:0; min-height:100vh; color:var(--fg);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Inter,sans-serif;
+    background:radial-gradient(1100px 560px at 50% -12%, rgba(20,109,232,.14), transparent 60%),
+               linear-gradient(180deg,var(--bg),var(--bg2)); background-attachment:fixed;
+    display:flex; flex-direction:column; align-items:center;
+    padding:26px 16px calc(26px + env(safe-area-inset-bottom)); }
+  .wrap { width:100%; max-width:480px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:20px; padding:22px;
+    box-shadow:0 12px 32px rgba(0,0,0,.20); }
+  .card h3 { margin:0 0 4px; font-size:1.15rem; font-weight:800; }
+  .qctx { margin:10px 0 16px; padding:13px 14px; border-radius:12px; border:1px solid var(--line);
+    background:rgba(127,127,127,.06); }
+  .qctx .cat { font-size:.7rem; font-weight:700; text-transform:uppercase; letter-spacing:.1em;
+    color:var(--muted); margin-bottom:4px; }
+  .qctx .ans { font-size:.92rem; font-weight:600; }
+  .modalsub { color:var(--muted); font-size:.85rem; margin:0 0 14px; line-height:1.4; }
+  .reasons { display:flex; flex-direction:column; gap:8px; margin-bottom:14px; }
+  .reasonrow { display:flex; align-items:center; gap:10px; padding:11px 13px; border-radius:12px;
+    border:1px solid var(--line); background:rgba(127,127,127,.06); cursor:pointer; font-size:.95rem; }
+  .reasonrow input { margin:0; }
+  #flagDetail { width:100%; padding:13px 14px; font-size:.95rem; border-radius:12px;
+    border:1px solid var(--line); background:rgba(127,127,127,.08); color:inherit; resize:vertical;
+    min-height:70px; font-family:inherit; margin-bottom:14px; box-sizing:border-box; }
+  button.primary { width:100%; padding:15px; font-size:1.02rem; font-weight:700;
+    border:none; border-radius:14px; color:#fff; cursor:pointer;
+    background:linear-gradient(180deg,var(--blue),var(--blue-600)); box-shadow:0 6px 16px rgba(20,109,232,.30); }
+  button.primary:disabled { opacity:.5; box-shadow:none; cursor:default; }
+  .status { margin-top:12px; font-size:.9rem; min-height:1.2em; }
+  .bad { color:var(--red); }
+  .done { text-align:center; font-size:1.02rem; font-weight:650; padding:20px 0; color:#3ddc84; }
+  .foot { text-align:center; margin-top:16px; color:var(--muted); font-size:.72rem; font-weight:600; opacity:.85; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="card">
+    <h3>Flag this question</h3>
+    <div class="qctx">
+      <div class="cat">__CATEGORY__</div>
+      <div class="ans">Answer: __ANSWER__</div>
+    </div>
+    <div class="modalsub">What's wrong with this question? Select all that apply.</div>
+    <div class="reasons">
+      <label class="reasonrow"><input type="checkbox" value="category">Category</label>
+      <label class="reasonrow"><input type="checkbox" value="question">Question</label>
+      <label class="reasonrow"><input type="checkbox" value="answer">Answer</label>
+      <label class="reasonrow"><input type="checkbox" value="too_niche">Too Niche</label>
+      <label class="reasonrow"><input type="checkbox" value="other">Other</label>
+    </div>
+    <textarea id="flagDetail" maxlength="500" placeholder="Provide more detail (optional — recommended if you selected 'Other')"></textarea>
+    <button type="button" class="primary" id="flagSubmitBtn" onclick="submitFlag()">Submit</button>
+    <div class="status" id="flagStatus"></div>
+  </div>
+  <div class="foot">TriviaSphere · No login required</div>
+</div>
+<script>
+var TOKEN = __TOKEN_JSON__;
+async function submitFlag() {
+  var reasons = Array.prototype.slice.call(document.querySelectorAll('.reasons input:checked')).map(function (i) { return i.value; });
+  var statusEl = document.getElementById('flagStatus');
+  if (!reasons.length) { statusEl.textContent = 'Select at least one reason.'; statusEl.className = 'status bad'; return; }
+  var detail = (document.getElementById('flagDetail') || {}).value || '';
+  var btn = document.getElementById('flagSubmitBtn');
+  btn.disabled = true;
+  try {
+    var r = await fetch('/api/flag_anon', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({t: TOKEN, reasons: reasons, detail: detail}),
+    });
+    var data = await r.json();
+    if (data.ok) {
+      document.querySelector('.card').innerHTML = '<div class="done">✅ Thanks — this question has been flagged for review.</div>';
+    } else if (data.reason === 'duplicate') {
+      statusEl.textContent = "You've already flagged this question."; statusEl.className = 'status bad';
+    } else if (data.reason === 'rate_limited') {
+      statusEl.textContent = "You're flagging too fast — try again later."; statusEl.className = 'status bad';
+    } else if (data.reason === 'question_cap') {
+      statusEl.textContent = 'This question has already received enough reports — thanks!'; statusEl.className = 'status bad';
+    } else if (data.reason === 'expired') {
+      statusEl.textContent = 'This flag link has expired.'; statusEl.className = 'status bad';
+    } else {
+      statusEl.textContent = 'Could not submit (' + (data.reason || 'error') + ').'; statusEl.className = 'status bad';
+    }
+  } catch (e) {
+    statusEl.textContent = 'Network error — try again.'; statusEl.className = 'status bad';
+  } finally {
+    btn.disabled = false;
+  }
+}
+</script>
+</body>
+</html>
+"""
+
+_FLAG_EXPIRED_HTML = """<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Link Expired — TriviaSphere</title>
+</head>
+<body style="font-family:-apple-system,BlinkMacSystemFont,sans-serif;text-align:center;padding:60px 20px;color:#666">
+  <h2>This flag link is invalid or has expired.</h2>
+</body>
+</html>
+"""
+
+
+async def handle_flag_page(request):
+    payload = _unsign(request.query.get("t", ""))
+    if not payload:
+        return web.Response(text=_FLAG_EXPIRED_HTML, content_type="text/html", status=400)
+    html = (_FLAG_PAGE_HTML
+            .replace("__CATEGORY__", html_escape(payload.get("cat") or "Trivia"))
+            .replace("__ANSWER__", html_escape(payload.get("ans") or ""))
+            .replace("__TOKEN_JSON__", json.dumps(request.query.get("t", ""))))
+    return web.Response(text=html, content_type="text/html")
+
+
+async def handle_flag_anon(request):
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"ok": False, "reason": "bad_request"}, status=400)
+
+    payload = _unsign(str(body.get("t") or ""))
+    if not payload:
+        return web.json_response({"ok": False, "reason": "expired"}, status=400)
+    trivia_db = payload.get("db")
+    trivia_id = payload.get("id")
+    if not trivia_db or not trivia_id:
+        return web.json_response({"ok": False, "reason": "bad_request"}, status=400)
+
+    reasons = [r for r in (body.get("reasons") or []) if r in _FLAG_REASONS]
+    if not reasons:
+        return web.json_response({"ok": False, "reason": "empty"}, status=400)
+    detail = str(body.get("detail") or "").strip()[:500]
+
+    ip_hash = _client_ip_hash(request)
+    now = time.time()
+    if now - _anon_last_flag.get(ip_hash, 0) < _ANON_FLAG_MIN_INTERVAL:
+        return web.json_response({"ok": False, "reason": "rate_limited"}, status=429)
+    _anon_last_flag[ip_hash] = now
+
+    result = (
+        await _submit_anon_flag(trivia_db, trivia_id, payload.get("cat"), payload.get("ans"), reasons, detail, ip_hash)
+        if _submit_anon_flag else {"ok": False, "reason": "unavailable"}
     )
     status = 200 if result.get("ok") else 409
     return web.json_response(result, status=status)
@@ -958,10 +1176,10 @@ async def handle_logo_mark(request):
 # Startup
 # ---------------------------------------------------------------------------
 
-async def start_companion_web(*, resolve_member, get_state, submit_answer, reveal_extra=None, submit_flag=None):
+async def start_companion_web(*, resolve_member, get_state, submit_answer, reveal_extra=None, submit_flag=None, submit_anon_flag=None):
     """Bind the aiohttp server to $PORT and start serving. Called from the bot's main()
     before the long-running gather so Heroku sees the port bound promptly (avoids R10)."""
-    global _resolve_member, _get_state, _submit_answer, _reveal_extra, _submit_flag
+    global _resolve_member, _get_state, _submit_answer, _reveal_extra, _submit_flag, _submit_anon_flag
     global _session_secret, _oauth_client_id, _oauth_client_secret, _base_url
 
     _resolve_member = resolve_member
@@ -969,6 +1187,7 @@ async def start_companion_web(*, resolve_member, get_state, submit_answer, revea
     _submit_answer = submit_answer
     _reveal_extra = reveal_extra
     _submit_flag = submit_flag
+    _submit_anon_flag = submit_anon_flag
 
     secret = os.getenv("COMPANION_SESSION_SECRET")
     if not secret:
@@ -993,6 +1212,8 @@ async def start_companion_web(*, resolve_member, get_state, submit_answer, revea
         web.get("/api/stream", handle_stream),
         web.post("/api/answer", handle_answer),
         web.post("/api/flag", handle_flag),
+        web.get("/flag", handle_flag_page),
+        web.post("/api/flag_anon", handle_flag_anon),
     ])
 
     runner = web.AppRunner(app)

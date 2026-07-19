@@ -825,6 +825,8 @@ CLAUDE_MODEL = "claude-opus-4-7"
 MAX_SUBMISSIONS_PER_24H = 100
 MAX_FLAGS_PER_24H = 100  # per-user daily cap on companion (web) flags -- see companion_submit_flag
 MAX_COMPANION_ANSWERS_PER_QUESTION = 10  # per-user cap on companion (web) answer submits for one question
+ANON_FLAG_PER_QUESTION_CAP = 10  # max no-login flags one question can accumulate via a Simply Trivia flag link
+ANON_FLAG_PER_IP_DAILY_CAP = 20  # per-IP daily cap on no-login flags -- see anonymous_submit_flag
 POINTS_FOR_APPROVAL = 1
 TOP_CONTRIBUTOR_WINDOW_DAYS = 7
 QUESTION_SUBMISSIONS_RETENTION_DAYS = 7
@@ -23472,6 +23474,55 @@ async def companion_submit_flag(user_id, display_name, reasons, detail):
     return {"ok": True}
 
 
+async def anonymous_submit_flag(trivia_db, trivia_id, category_hint, answer_hint, reasons, detail, ip_hash):
+    """Flag a specific (possibly historical) question identified by a signed token from a Simply
+    Trivia embed link (see companion_web.make_flag_token / simply_trivia.py). Unlike
+    companion_submit_flag, there's no Discord identity behind this -- the whole point is a
+    no-login flag flow -- so abuse control is IP-hash based instead of user_id based, and the
+    flagged question comes from the token rather than `current_question`."""
+    trivia_id_obj = _to_object_id(trivia_id)
+    trivia_id_str = str(trivia_id_obj)
+
+    if await db.companion_flags.find_one({"ip_hash": ip_hash, "trivia_id": trivia_id_str}):
+        return {"ok": False, "reason": "duplicate"}
+    question_flag_count = await db.companion_flags.count_documents({"trivia_id": trivia_id_str, "ip_hash": {"$exists": True}})
+    if question_flag_count >= ANON_FLAG_PER_QUESTION_CAP:
+        return {"ok": False, "reason": "question_cap"}
+    cutoff = datetime.datetime.utcnow() - datetime.timedelta(hours=24)
+    ip_flag_count = await db.companion_flags.count_documents({"ip_hash": ip_hash, "timestamp": {"$gte": cutoff}})
+    if ip_flag_count >= ANON_FLAG_PER_IP_DAILY_CAP:
+        return {"ok": False, "reason": "rate_limited"}
+
+    try:
+        await db.companion_flags.insert_one({
+            "ip_hash": ip_hash,
+            "trivia_id": trivia_id_str,
+            "timestamp": datetime.datetime.utcnow(),
+        })
+    except Exception as e:
+        sentry_sdk.capture_exception(e)
+
+    # Re-read the question fresh from Mongo rather than trusting the token's cat/ans hints, so the
+    # moderation report reflects the current document even if it's been edited since this link was
+    # generated; the hints are a fallback only if the document has since been deleted.
+    doc = None
+    try:
+        doc = await db[trivia_db].find_one(_id_filter(trivia_id_obj))
+    except Exception as e:
+        sentry_sdk.capture_exception(e)
+    question = {
+        "trivia_db": trivia_db,
+        "trivia_id": trivia_id_obj,
+        "trivia_category": (doc or {}).get("category", category_hint or "N/A"),
+        "trivia_question": (doc or {}).get("question", ""),
+        "trivia_answer_list": (doc or {}).get("answers", [answer_hint] if answer_hint else []),
+    }
+    reasons_text = ", ".join(FlagReasonModal.REASON_LABELS.get(r, r) for r in reasons)
+    reason_text = f"({reasons_text}) {detail}".strip()
+    await update_audit_question(question, reason_text, "Anonymous", user_id=None, source="Web (Anon)")
+    return {"ok": True}
+
+
 # Multi-game routing: the companion app is reached through the same domain/session for every
 # game (a toggle in the page picks which one, see companion_web.py's `game` query/body param),
 # so these dispatch to whichever game's own companion hooks apply. companion_resolve_member is
@@ -23824,6 +23875,9 @@ async def ensure_roast_indexes():
 async def ensure_flag_indexes():
     try:
         await db.companion_flags.create_index("user_id")
+        # Compound index for anonymous_submit_flag's per-(ip_hash, question) dedup lookup and
+        # per-question cap count -- both filter on trivia_id, the dedup lookup also filters ip_hash.
+        await db.companion_flags.create_index([("trivia_id", 1), ("ip_hash", 1)])
         # TTL index: a companion-flag rate-limit record auto-deletes a day after it's created --
         # no bot-side cleanup loop needed. A small buffer over 24h avoids evicting a doc right
         # before the rolling-window count would have naturally excluded it anyway.
@@ -26983,6 +27037,7 @@ if __name__ == "__main__":
                 submit_answer=_companion_route_submit_answer,
                 reveal_extra=_companion_route_reveal_extra,
                 submit_flag=_companion_route_submit_flag,
+                submit_anon_flag=anonymous_submit_flag,
             )
         except Exception as e:
             print(f"⚠️  Companion web app failed to start: {e}")
