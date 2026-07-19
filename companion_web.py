@@ -618,15 +618,13 @@ async def handle_flag_page(request):
             '<span>Associated with your Discord account</span></div>'
             f'<a class="authswitch" href="/logout?next={return_param}">Switch</a></div>'
         )
-    elif COMPANION_APP_ENABLED:
+    else:
         auth_block = (
             f'<a class="authcard authcard--out" href="/login?next={return_param}">'
             f'<span class="authicon">{_DISCORD_ICON_SVG}</span>'
             '<div class="authtext"><b>Link Discord account</b>'
             '<span>Optional — attaches your name to this report</span></div></a>'
         )
-    else:
-        auth_block = ""
 
     html = (_FLAG_PAGE_HTML
             .replace("__CATEGORY__", html_escape(payload.get("cat") or "Trivia"))
@@ -1284,8 +1282,57 @@ loadGame(currentGame);
 """
 _INDEX_HTML = _INDEX_HTML.replace("__PLAY_LOGO__", _PLAY_LOGO).replace("__OKRA_LOGO__", _OKRA_LOGO)
 
+_COMING_SOON_HTML = """<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>TriviaSphere — Coming Soon</title>
+<meta name="theme-color" content="#06080D" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#F8F8F8" media="(prefers-color-scheme: light)">
+<link rel="icon" type="image/webp" href="/assets/logo-mark.webp">
+<style>
+  :root {
+    color-scheme: light dark;
+    --blue:#146DE8; --bg:#06080D; --bg2:#0E1219; --fg:#F8F8F8; --muted:rgba(248,248,248,.58);
+    --card:rgba(248,248,248,.05); --line:rgba(248,248,248,.10);
+  }
+  @media (prefers-color-scheme: light) {
+    :root { --bg:#F8F8F8; --bg2:#FCFCFC; --fg:#06080D; --muted:rgba(6,8,13,.55);
+            --card:#ffffff; --line:rgba(6,8,13,.10); }
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; min-height:100vh; color:var(--fg);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Inter,sans-serif;
+    background:radial-gradient(1100px 560px at 50% -12%, rgba(20,109,232,.14), transparent 60%),
+               linear-gradient(180deg,var(--bg),var(--bg2)); background-attachment:fixed;
+    display:flex; flex-direction:column; align-items:center; justify-content:center;
+    padding:26px 16px calc(26px + env(safe-area-inset-bottom)); }
+  .wrap { width:100%; max-width:420px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:20px; padding:30px 22px;
+    box-shadow:0 12px 32px rgba(0,0,0,.20); text-align:center; }
+  .mark { width:44px; height:44px; margin:0 auto 16px;
+    background:url(/assets/logo-mark.webp) center/contain no-repeat; }
+  .card h1 { margin:0 0 8px; font-size:1.3rem; font-weight:800; }
+  .card p { margin:0; color:var(--muted); font-size:.92rem; line-height:1.5; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="card">
+    <div class="mark" role="img" aria-label="TriviaSphere"></div>
+    <h1>Coming Soon</h1>
+    <p>The TriviaSphere companion app isn't live yet — check back soon!</p>
+  </div>
+</div>
+</body>
+</html>
+"""
+
 
 async def handle_index(request):
+    if not COMPANION_APP_ENABLED:
+        return web.Response(text=_COMING_SOON_HTML, content_type="text/html")
     return web.Response(text=_INDEX_HTML, content_type="text/html")
 
 
@@ -1339,18 +1386,18 @@ async def start_companion_web(*, resolve_member, get_state, submit_answer, revea
 
     app = web.Application(middlewares=[_https_enforcement_middleware])
     routes = [
+        web.get("/", handle_index),
         web.get("/healthz", handle_health),
         web.get("/assets/logo-header.webp", handle_logo_header),
         web.get("/assets/logo-mark.webp", handle_logo_mark),
+        web.get("/login", handle_login),
         web.get("/logout", handle_logout),
+        web.get("/auth/callback", handle_callback),
         web.get("/flag", handle_flag_page),
         web.post("/api/flag_anon", handle_flag_anon),
     ]
     if COMPANION_APP_ENABLED:
         routes.extend([
-            web.get("/", handle_index),
-            web.get("/login", handle_login),
-            web.get("/auth/callback", handle_callback),
             web.get("/api/current", handle_current),
             web.get("/api/stream", handle_stream),
             web.post("/api/answer", handle_answer),
