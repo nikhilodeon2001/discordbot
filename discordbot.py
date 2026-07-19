@@ -414,7 +414,7 @@ async def send_question_queen_submit_ad():
 # {base_url} is substituted with companion_web.get_base_url() at post time, so
 # the same text is correct whether this deploy is staging or prod.
 okra_lab_announcement_enabled = True
-okra_lab_announcement_text = "📱 **The companion app is live!**\nKeep your answers private with a convenient companion experience — {base_url} works great on computer or mobile.\n"
+okra_lab_announcement_text = "📱 **The companion app is live!**\nKeep your answers private with a convenient companion experience — {base_url} works great on computer or mobile.\n\n*Currently in Beta and available to all.*\n"
 okra_lab_announcement_show_new_badge = True
 
 
