@@ -420,6 +420,14 @@ async def handle_flag(request):
 # Anonymous (no-login) flag page -- linked directly from Simply Trivia embed headers
 # ---------------------------------------------------------------------------
 
+# Same Discord glyph as the main companion app's "Login with Discord" button (there it's built
+# into a JS string, DISCORD_SVG below -- this page is server-rendered, so it's static HTML here).
+_DISCORD_ICON_SVG = (
+    '<svg viewBox="0 -28.5 256 256" fill="currentColor" aria-hidden="true">'
+    '<path d="M216.856 16.597A208.502 208.502 0 0 0 164.042 0c-2.275 4.113-4.933 9.645-6.766 14.046-19.692-2.961-39.203-2.961-58.533 0-1.832-4.4-4.55-9.933-6.846-14.046a207.809 207.809 0 0 0-52.855 16.638C5.618 67.147-3.443 116.4 1.087 164.956c22.169 16.555 43.653 26.612 64.775 33.193A161.094 161.094 0 0 0 79.735 175.3a136.413 136.413 0 0 1-21.846-10.632 108.636 108.636 0 0 0 5.356-4.237c42.122 19.702 87.89 19.702 129.51 0a131.66 131.66 0 0 0 5.355 4.237 136.07 136.07 0 0 1-21.886 10.653c4.006 8.02 8.638 15.67 13.873 22.848 21.142-6.581 42.646-16.637 64.815-33.213 5.316-56.288-9.081-105.09-38.056-148.36ZM85.474 135.095c-12.645 0-23.015-11.805-23.015-26.18s10.149-26.2 23.015-26.2c12.867 0 23.236 11.804 23.015 26.2.02 14.375-10.148 26.18-23.015 26.18Zm85.051 0c-12.645 0-23.014-11.805-23.014-26.18s10.148-26.2 23.014-26.2c12.867 0 23.236 11.804 23.015 26.2 0 14.375-10.148 26.18-23.015 26.18Z"/>'
+    '</svg>'
+)
+
 _FLAG_PAGE_HTML = """<!doctype html>
 <html lang="en">
 <head>
@@ -450,21 +458,36 @@ _FLAG_PAGE_HTML = """<!doctype html>
   .wrap { width:100%; max-width:480px; }
   .card { background:var(--card); border:1px solid var(--line); border-radius:20px; padding:22px;
     box-shadow:0 12px 32px rgba(0,0,0,.20); }
-  .card h3 { margin:0 0 4px; font-size:1.15rem; font-weight:800; }
-  .qctx { margin:10px 0 16px; padding:13px 14px; border-radius:12px; border:1px solid var(--line);
+  .cardhead { display:flex; align-items:center; gap:10px; margin:0 0 4px; }
+  .cardhead .mark { width:26px; height:26px; flex:none;
+    background:url(/assets/logo-mark.webp) center/contain no-repeat; }
+  .card h3 { margin:0; font-size:1.15rem; font-weight:800; }
+  .qctx { margin:10px 0 16px; padding:14px; border-radius:12px; border:1px solid var(--line);
     background:rgba(127,127,127,.06); }
   .qctx .cat { font-size:.7rem; font-weight:700; text-transform:uppercase; letter-spacing:.1em;
     color:var(--muted); margin-bottom:4px; }
-  .qctx .q { font-size:.92rem; font-weight:600; line-height:1.35; }
-  .qctx .ans { font-size:.92rem; font-weight:600; margin-top:8px; }
-  .authblock { font-size:.82rem; margin:0 0 14px; line-height:1.4; }
-  .loggedas { color:#3ddc84; }
-  .loggedas .switch { color:var(--muted); margin-left:6px; }
-  .loginlink, .switch a { color:var(--blue); text-decoration:none; font-weight:600; }
+  .qctx .q { font-size:1rem; font-weight:700; line-height:1.45; }
+  .qctx .ansdivider { height:1px; background:var(--line); margin:14px 0 12px; }
+  .qctx .anslabel { font-size:.68rem; font-weight:700; text-transform:uppercase; letter-spacing:.1em;
+    color:var(--muted); margin-bottom:3px; }
+  .qctx .ansval { font-size:1.02rem; font-weight:800; color:#3ddc84; line-height:1.4; }
+  .authcard { display:flex; align-items:center; gap:11px; padding:12px 14px; border-radius:14px;
+    border:1px solid var(--line); margin:0 0 16px; text-decoration:none; color:inherit; }
+  .authcard--out { background:rgba(88,101,242,.10); border-color:rgba(88,101,242,.35); cursor:pointer; }
+  .authcard--out:active { transform:scale(.99); }
+  .authcard--in { background:rgba(61,220,132,.08); border-color:rgba(61,220,132,.30); }
+  .authicon { flex:none; width:20px; height:20px; display:flex; align-items:center; justify-content:center; }
+  .authcard--out .authicon { color:#5865f2; }
+  .authcard--in .authicon { color:#3ddc84; font-weight:800; font-size:1rem; }
+  .authtext { flex:1; min-width:0; display:flex; flex-direction:column; gap:1px; font-size:.9rem; font-weight:700; }
+  .authtext span { font-size:.76rem; font-weight:500; color:var(--muted); }
+  .authswitch { flex:none; font-size:.8rem; font-weight:700; color:var(--blue); text-decoration:none; }
   .modalsub { color:var(--muted); font-size:.85rem; margin:0 0 14px; line-height:1.4; }
   .reasons { display:flex; flex-direction:column; gap:8px; margin-bottom:14px; }
   .reasonrow { display:flex; align-items:center; gap:10px; padding:11px 13px; border-radius:12px;
-    border:1px solid var(--line); background:rgba(127,127,127,.06); cursor:pointer; font-size:.95rem; }
+    border:1px solid var(--line); background:rgba(127,127,127,.06); cursor:pointer; font-size:.95rem;
+    transition:border-color .12s, background-color .12s; }
+  .reasonrow:has(input:checked) { border-color:var(--blue); background:rgba(20,109,232,.10); }
   .reasonrow input { margin:0; }
   #flagDetail { width:100%; padding:13px 14px; font-size:.95rem; border-radius:12px;
     border:1px solid var(--line); background:rgba(127,127,127,.08); color:inherit; resize:vertical;
@@ -482,7 +505,7 @@ _FLAG_PAGE_HTML = """<!doctype html>
 <body>
 <div class="wrap">
   <div class="card">
-    <h3>Flag this question</h3>
+    <div class="cardhead"><span class="mark" role="img" aria-label="TriviaSphere"></span><h3>Flag this question</h3></div>
     <div class="qctx">
       <div class="cat">__CATEGORY__</div>
       <div class="q">__QUESTION__</div>
@@ -571,23 +594,33 @@ async def handle_flag_page(request):
     )
     answers = ctx.get("answers") or []
     answer_text = ", ".join(str(a) for a in answers) if isinstance(answers, list) else str(answers)
-    answer_block = f'<div class="ans">Answer: {html_escape(answer_text)}</div>' if ctx.get("revealed") and answer_text else ""
+    answer_block = (
+        f'<div class="ansdivider"></div><div class="anslabel">Answer</div><div class="ansval">{html_escape(answer_text)}</div>'
+        if ctx.get("revealed") and answer_text else ""
+    )
 
     # Attribution is never silent: an existing companion session gets stated explicitly (with a
     # way to switch accounts), and logging in is framed as an explicit "associate this report
     # with your account" action rather than a generic sign-in wall -- either way it's opt-in,
-    # submitting without it still works and stays anonymous.
+    # submitting without it still works and stays anonymous. Both render as a tappable card (icon +
+    # short bold title + muted subtitle) rather than a plain sentence, so it isn't easy to miss.
     next_path = "/flag?t=" + request.query.get("t", "")
     return_param = urllib.parse.quote(next_path, safe="")
     session = _session_from_request(request)
     if session:
         auth_block = (
-            '<div class="authblock loggedas">✓ This report will be associated with your Discord account: '
-            f'<b>{html_escape(session["display_name"])}</b>'
-            f'<span class="switch"> · <a href="/logout?next={return_param}">Not you? Switch account</a></span></div>'
+            '<div class="authcard authcard--in"><span class="authicon">✓</span>'
+            f'<div class="authtext"><b>Flagging as {html_escape(session["display_name"])}</b>'
+            '<span>Associated with your Discord account</span></div>'
+            f'<a class="authswitch" href="/logout?next={return_param}">Switch</a></div>'
         )
     else:
-        auth_block = f'<div class="authblock"><a class="loginlink" href="/login?next={return_param}">Associate this report with your Discord account (optional)</a></div>'
+        auth_block = (
+            f'<a class="authcard authcard--out" href="/login?next={return_param}">'
+            f'<span class="authicon">{_DISCORD_ICON_SVG}</span>'
+            '<div class="authtext"><b>Link Discord account</b>'
+            '<span>Optional — attaches your name to this report</span></div></a>'
+        )
 
     html = (_FLAG_PAGE_HTML
             .replace("__CATEGORY__", html_escape(payload.get("cat") or "Trivia"))
