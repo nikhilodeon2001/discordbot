@@ -676,11 +676,13 @@ async def start_simply_trivia(bot, db, channel_id, fuzzy_match_func):
             answers = question.get("answers", [])
             main_answer = answers[0] if answers else "Unknown"
 
-            flag_token = companion_web.make_flag_token(question.get("db", "trivia_questions"), question.get("_id"), category, main_answer)
-            flag_url = f"{companion_web.get_base_url()}/flag?t={flag_token}"
+            # No answer embedded in this token -- it's linked from the still-open question, so the
+            # answer must stay unrecoverable (not just hidden client-side) until it's revealed.
+            flag_token_q = companion_web.make_flag_token(question.get("db", "trivia_questions"), question.get("_id"), category, question_text)
+            flag_url_q = f"{companion_web.get_base_url()}/flag?t={flag_token_q}"
 
             embed = discord.Embed(
-                description=f"[**{category}**]({flag_url})\n\n{question_text}",
+                description=f"[**{category}**]({flag_url_q})\n\n{question_text}",
                 color=discord.Color(0x146DE8)
             )
 
@@ -740,6 +742,9 @@ async def start_simply_trivia(bot, db, channel_id, fuzzy_match_func):
             # Reveal answer
             answers = question.get("answers", [])
             main_answer = answers[0] if answers else "Unknown"
+
+            flag_token_a = companion_web.make_flag_token(question.get("db", "trivia_questions"), question.get("_id"), category, question_text, answer=main_answer, revealed=True)
+            flag_url_a = f"{companion_web.get_base_url()}/flag?t={flag_token_a}"
 
             if first_answerer:
                 # React to everyone who got it right (first + additional), in the order they
@@ -802,7 +807,7 @@ async def start_simply_trivia(bot, db, channel_id, fuzzy_match_func):
                     tag = " 🌐" if user.id in _companion_web_user_ids else ""
                     return f"{user.mention}{tag}"
 
-                answer_text = f"[**Answer:** {main_answer}]({flag_url})\n\n"
+                answer_text = f"[**Answer:**]({flag_url_a}) {main_answer}\n\n"
                 if streak > 1:
                     answer_text += f"🏆 {_mention_with_indicator(first_answerer)} got it first! 🔥 Streak: {streak}"
                 else:
@@ -847,7 +852,7 @@ async def start_simply_trivia(bot, db, channel_id, fuzzy_match_func):
 
                 await discordbot.record_question_outcome(question.get("db"), question.get("_id"), False, any_guess_received)
 
-                answer_text = f"[**Answer:** {main_answer}]({flag_url})"
+                answer_text = f"[**Answer:**]({flag_url_a}) {main_answer}"
                 embed = discord.Embed(description=answer_text, color=discord.Color.red())
 
             await channel.send(embed=embed)

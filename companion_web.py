@@ -111,20 +111,30 @@ def get_base_url():
     return _base_url
 
 
-def make_flag_token(trivia_db, trivia_id, category, answer):
+def make_flag_token(trivia_db, trivia_id, category, question_text, answer=None, revealed=False):
     """Sign a token identifying one specific (possibly historical) question, for the no-login
     'flag this question' link embedded in Simply Trivia messages. Unlike the logged-in companion
     flag flow (which always targets 'whatever is currently live'), a link clicked from an old
     Discord message needs to carry its own question identity, since by the time it's clicked the
-    live question has long since moved on. `category`/`answer` are carried along only for display
-    on the flag page -- the moderation report itself re-reads the question fresh from Mongo."""
-    return _sign({
+    live question has long since moved on. `category`/`question_text`/`answer` are carried along
+    only for display on the flag page -- the moderation report itself re-reads the question fresh
+    from Mongo.
+
+    `answer` is only ever embedded when `revealed=True` (i.e. this token came from the post-reveal
+    answer link, not the still-open question link) -- the token is signed, not encrypted, so
+    leaving the answer out entirely (rather than just hiding it client-side) is what actually
+    prevents a player from decoding an unrevealed question's link to see the answer early."""
+    payload = {
         "db": trivia_db,
         "id": str(trivia_id),
         "cat": (category or "")[:200],
-        "ans": (answer or "")[:200],
+        "q": (question_text or "")[:400],
+        "revealed": bool(revealed),
         "exp": time.time() + _FLAG_TOKEN_TTL,
-    })
+    }
+    if revealed and answer:
+        payload["ans"] = str(answer)[:200]
+    return _sign(payload)
 
 
 def _client_ip_hash(request):
@@ -433,7 +443,8 @@ _FLAG_PAGE_HTML = """<!doctype html>
     background:rgba(127,127,127,.06); }
   .qctx .cat { font-size:.7rem; font-weight:700; text-transform:uppercase; letter-spacing:.1em;
     color:var(--muted); margin-bottom:4px; }
-  .qctx .ans { font-size:.92rem; font-weight:600; }
+  .qctx .q { font-size:.92rem; font-weight:600; line-height:1.35; }
+  .qctx .ans { font-size:.92rem; font-weight:600; margin-top:8px; }
   .modalsub { color:var(--muted); font-size:.85rem; margin:0 0 14px; line-height:1.4; }
   .reasons { display:flex; flex-direction:column; gap:8px; margin-bottom:14px; }
   .reasonrow { display:flex; align-items:center; gap:10px; padding:11px 13px; border-radius:12px;
@@ -458,7 +469,8 @@ _FLAG_PAGE_HTML = """<!doctype html>
     <h3>Flag this question</h3>
     <div class="qctx">
       <div class="cat">__CATEGORY__</div>
-      <div class="ans">Answer: __ANSWER__</div>
+      <div class="q">__QUESTION__</div>
+      __ANSWER_BLOCK__
     </div>
     <div class="modalsub">What's wrong with this question? Select all that apply.</div>
     <div class="reasons">
@@ -531,9 +543,15 @@ async def handle_flag_page(request):
     payload = _unsign(request.query.get("t", ""))
     if not payload:
         return web.Response(text=_FLAG_EXPIRED_HTML, content_type="text/html", status=400)
+    # The answer is only ever shown (and only ever present at all -- see make_flag_token) when
+    # this token came from the post-reveal answer link, never the still-open question link --
+    # otherwise flagging would let a player read the answer before answering.
+    answer = payload.get("ans") if payload.get("revealed") else None
+    answer_block = f'<div class="ans">Answer: {html_escape(answer)}</div>' if answer else ""
     html = (_FLAG_PAGE_HTML
             .replace("__CATEGORY__", html_escape(payload.get("cat") or "Trivia"))
-            .replace("__ANSWER__", html_escape(payload.get("ans") or ""))
+            .replace("__QUESTION__", html_escape(payload.get("q") or ""))
+            .replace("__ANSWER_BLOCK__", answer_block)
             .replace("__TOKEN_JSON__", json.dumps(request.query.get("t", ""))))
     return web.Response(text=html, content_type="text/html")
 
@@ -563,8 +581,9 @@ async def handle_flag_anon(request):
         return web.json_response({"ok": False, "reason": "rate_limited"}, status=429)
     _anon_last_flag[ip_hash] = now
 
+    answer_hint = payload.get("ans") if payload.get("revealed") else None
     result = (
-        await _submit_anon_flag(trivia_db, trivia_id, payload.get("cat"), payload.get("ans"), reasons, detail, ip_hash)
+        await _submit_anon_flag(trivia_db, trivia_id, payload.get("cat"), payload.get("q"), answer_hint, reasons, detail, ip_hash)
         if _submit_anon_flag else {"ok": False, "reason": "unavailable"}
     )
     status = 200 if result.get("ok") else 409
@@ -682,6 +701,12 @@ _INDEX_HTML = """<!doctype html>
   @media (min-width:560px) { .modal { border-radius:20px; } }
   .modal h3 { margin:0 0 4px; font-size:1.1rem; font-weight:800; }
   .modal .modalsub { color:var(--muted); font-size:.82rem; margin:0 0 16px; line-height:1.4; }
+  .modalqctx { margin:10px 0 16px; padding:13px 14px; border-radius:12px; border:1px solid var(--line);
+    background:rgba(127,127,127,.06); }
+  .modalqctx .modalcat { font-size:.68rem; font-weight:700; text-transform:uppercase; letter-spacing:.1em;
+    color:var(--muted); margin-bottom:4px; }
+  .modalqctx .modalq { font-size:.9rem; font-weight:600; line-height:1.35; }
+  .modalqctx .modalans { font-size:.9rem; font-weight:600; margin-top:8px; }
   .reasons { display:flex; flex-direction:column; gap:8px; margin-bottom:14px; }
   .reasonrow { display:flex; align-items:center; gap:10px; padding:11px 13px; border-radius:12px;
     border:1px solid var(--line); background:rgba(127,127,127,.06); cursor:pointer; font-size:.95rem; }
@@ -1056,12 +1081,23 @@ function submitText() {
 
 function openFlagModal() {
   if (flagSubmitting || document.getElementById('flagBackdrop')) return;
+  const state = lastState || {};
+  // Never show the answer while the question is still open (or during a blind round, where it's
+  // intentionally withheld even after reveal) -- otherwise flagging would let a player read the
+  // answer before answering it.
+  const revealed = state.phase === 'revealed' && !state.blind;
+  const qctx = '<div class="modalqctx">' +
+    '<div class="modalcat">' + esc(state.category || '') + '</div>' +
+    (state.question ? '<div class="modalq">' + esc(state.question) + '</div>' : '') +
+    (revealed && state.correct_answer ? '<div class="modalans">Answer: ' + esc(state.correct_answer) + '</div>' : '') +
+  '</div>';
   const backdrop = document.createElement('div');
   backdrop.id = 'flagBackdrop';
   backdrop.className = 'modal-backdrop';
   backdrop.onclick = function (e) { if (e.target === backdrop) closeFlagModal(); };
   backdrop.innerHTML = '<div class="modal">' +
     '<h3>Flag Question</h3>' +
+    qctx +
     '<div class="modalsub">What\\'s wrong with this question? Select all that apply.</div>' +
     '<div class="reasons">' + FLAG_REASONS.map(function (r) {
       return '<label class="reasonrow"><input type="checkbox" value="' + r[0] + '">' + esc(r[1]) + '</label>';
