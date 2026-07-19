@@ -4952,7 +4952,7 @@ class FlagReasonModal(discord.ui.Modal, title="Flag Question"):
         max_length=500,
     )
 
-    def __init__(self, question, question_type, display_name, flag_message, embed_message):
+    def __init__(self, question, question_type, display_name, flag_message, embed_message, include_answer=False):
         super().__init__()
         self.question = question
         self.question_type = question_type  # "current" or "previous"
@@ -4962,7 +4962,15 @@ class FlagReasonModal(discord.ui.Modal, title="Flag Question"):
 
         category = (question or {}).get("trivia_category") or "Unknown category"
         question_text = (question or {}).get("trivia_question") or ""
-        self.question_preview.content = f"**{category}**\n{question_text}"[:4000]
+        preview = f"**{category}**\n{question_text}"
+        if include_answer:
+            # include_answer is only ever True once this question's answer is already public
+            # (see call sites) -- the full accepted-answer set, not just the primary one.
+            answers = (question or {}).get("trivia_answer_list") or []
+            answer_text = ", ".join(str(a) for a in answers) if isinstance(answers, list) else str(answers)
+            if answer_text:
+                preview += f"\n\n**Answer:** {answer_text}"
+        self.question_preview.content = preview[:4000]
 
     async def on_submit(self, interaction: discord.Interaction):
         selected = self.reason_label.component.values
@@ -5045,7 +5053,7 @@ class GrantImageCreditModal(discord.ui.Modal, title="Grant Image Credit"):
 class FlagQuestionView(discord.ui.View):
     """View with buttons to select which question to flag"""
 
-    def __init__(self, current_question, previous_question, user_id, display_name, flag_message):
+    def __init__(self, current_question, previous_question, user_id, display_name, flag_message, current_revealed=False):
         super().__init__(timeout=None)  # No timeout - buttons stay active until message is deleted
         self.current_question = current_question
         self.previous_question = previous_question
@@ -5053,6 +5061,7 @@ class FlagQuestionView(discord.ui.View):
         self.display_name = display_name
         self.flag_message = flag_message  # Original interaction/message (can be None for slash commands)
         self.embed_message = None  # Will be set after sending the embed
+        self.current_revealed = current_revealed  # True if current_question's answer is already public
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         """Check if the user interacting is the one who initiated the flag"""
@@ -5075,7 +5084,7 @@ class FlagQuestionView(discord.ui.View):
             return
 
         # Show the modal to collect reason
-        modal = FlagReasonModal(self.current_question, "current", self.display_name, self.flag_message, self.embed_message)
+        modal = FlagReasonModal(self.current_question, "current", self.display_name, self.flag_message, self.embed_message, include_answer=self.current_revealed)
         await interaction.response.send_modal(modal)
 
     @discord.ui.button(label="Previous Question", style=discord.ButtonStyle.danger, emoji="◀️")
@@ -5088,8 +5097,8 @@ class FlagQuestionView(discord.ui.View):
             )
             return
 
-        # Show the modal to collect reason
-        modal = FlagReasonModal(self.previous_question, "previous", self.display_name, self.flag_message, self.embed_message)
+        # Show the modal to collect reason -- a previous round is always fully revealed already.
+        modal = FlagReasonModal(self.previous_question, "previous", self.display_name, self.flag_message, self.embed_message, include_answer=True)
         await interaction.response.send_modal(modal)
 
     @discord.ui.button(label="Cancel", style=discord.ButtonStyle.secondary, emoji="❌")
@@ -5429,9 +5438,10 @@ class CheckUpdateConfirmView(discord.ui.View):
 
 
 class ReportQuestionView(discord.ui.View):
-    def __init__(self, question):
+    def __init__(self, question, revealed=False):
         super().__init__(timeout=None)
         self.question = question
+        self.revealed = revealed  # True once this question's answer is already public (see call sites)
 
     @discord.ui.button(label="🚩", style=discord.ButtonStyle.secondary, row=0)
     async def report_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -5440,6 +5450,7 @@ class ReportQuestionView(discord.ui.View):
             interaction.user.display_name,
             interaction.message,
             None,
+            include_answer=self.revealed,
         )
         await interaction.response.send_modal(modal)
 
@@ -20452,8 +20463,9 @@ async def check_correct_responses_delete(question_ask_time, trivia_answer_list, 
         if author_name:
             answer_embed.set_author(name=author_name, icon_url=author_icon_url)
         # Same flag button as the question message -- tags the same current_question,
-        # since this embed is revealing the answer to that same question.
-        await safe_send(channel, embed=answer_embed, file=scoreboard_file, view=ReportQuestionView(current_question))
+        # since this embed is revealing the answer to that same question. revealed=True: this
+        # embed's own text already shows the answer to everyone, so the flag modal can too.
+        await safe_send(channel, embed=answer_embed, file=scoreboard_file, view=ReportQuestionView(current_question, revealed=True))
     elif show_standings_after:
         # No answer-reveal content this question (e.g. blind mode, no correct responses) --
         # still show the scoreboard on its own rather than silently dropping it.
@@ -26191,10 +26203,22 @@ async def flag_command(interaction: discord.Interaction):
     """Unified slash command - works in both main trivia and Simply Trivia channels"""
 
     # Detect which channel we're in and get appropriate questions
+    current_revealed = False
     if interaction.channel_id == channel_id:
         # Main trivia channel - use current_question/previous_question
         current_q = current_question
         prev_q = previous_question
+        # Same "is it still open" check the companion state builder uses (build_companion_state)
+        # -- once the round's window has closed, the answer is already public everywhere else,
+        # so it's safe to show here too.
+        now = time.time()
+        current_still_open = (
+            current_q is not None
+            and question_asked_start is not None
+            and question_asked_end is not None
+            and question_asked_start <= now <= question_asked_end
+        )
+        current_revealed = current_q is not None and not current_still_open
     elif interaction.channel_id == SIMPLY_TRIVIA_CHANNEL_ID:
         # Simply Trivia channel - import from simply_trivia module
         try:
@@ -26259,7 +26283,8 @@ async def flag_command(interaction: discord.Interaction):
         previous_question=prev_q,
         user_id=interaction.user.id,
         display_name=interaction.user.display_name,
-        flag_message=None  # No message object for slash commands
+        flag_message=None,  # No message object for slash commands
+        current_revealed=current_revealed,
     )
 
     # Send as ephemeral response
@@ -26275,24 +26300,6 @@ async def flag_command(interaction: discord.Interaction):
     except Exception as e:
         print(f"Error showing flag selection: {e}")
         await interaction.response.send_message("❌ Error showing flag options.", ephemeral=True)
-
-
-@bot.tree.context_menu(name="Flag Question", guild=discord.Object(id=OKRAN_GUILD_ID))
-async def flag_question_context_menu(interaction: discord.Interaction, message: discord.Message):
-    question = None
-    if current_question and current_answer_message and message.id == current_answer_message.id:
-        question = current_question
-    elif previous_question and previous_answer_message and message.id == previous_answer_message.id:
-        question = previous_question
-
-    if not question:
-        await interaction.response.send_message(
-            "❌ This message isn't a recognized trivia question.", ephemeral=True
-        )
-        return
-
-    modal = FlagReasonModal(question, "current", interaction.user.display_name, message, None)
-    await interaction.response.send_modal(modal)
 
 
 @bot.tree.context_menu(name="Grant Image Credit", guild=discord.Object(id=OKRAN_GUILD_ID))
