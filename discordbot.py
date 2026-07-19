@@ -412,7 +412,7 @@ async def send_question_queen_submit_ad():
 # okra_lab_announcement_show_new_badge = False to omit the "✨ NEW ✨" header,
 # e.g. for announcements (like a rebrand) that aren't a new feature pitch.
 okra_lab_announcement_enabled = True
-okra_lab_announcement_text = "🚩 **Flagging just got simpler!**\nClick the links to report.\n"
+okra_lab_announcement_text = "📱 **The companion app is live!**\nKeep your answers private with a convenient companion experience — https://play.triviasphere.com works great on computer or mobile.\n"
 okra_lab_announcement_show_new_badge = True
 
 
