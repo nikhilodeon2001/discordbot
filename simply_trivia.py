@@ -738,7 +738,7 @@ async def start_simply_trivia(bot, db, channel_id, fuzzy_match_func):
                     users_to_react = [first_answerer] + additional_answerers
                     reacted_users = set()
 
-                    async for msg in channel.history(limit=50):
+                    async for msg in channel.history(limit=50, oldest_first=True):
                         if msg.author.id in [user.id for user in users_to_react] and msg.author.id not in reacted_users:
                             # Check if this message contains a correct answer
                             for correct_answer in answers:
@@ -798,15 +798,19 @@ async def start_simply_trivia(bot, db, channel_id, fuzzy_match_func):
 
                 await discordbot.record_question_outcome(question.get("db"), question.get("_id"), True, any_guess_received)
 
+                def _mention_with_indicator(user):
+                    tag = " 🌐" if user.id in _companion_web_user_ids else ""
+                    return f"{user.mention}{tag}"
+
                 answer_text = f"**Answer:** {main_answer}\n\n"
                 if streak > 1:
-                    answer_text += f"🏆 {first_answerer.mention} got it first! 🔥 Streak: {streak}"
+                    answer_text += f"🏆 {_mention_with_indicator(first_answerer)} got it first! 🔥 Streak: {streak}"
                 else:
-                    answer_text += f"🏆 {first_answerer.mention} got it first!"
+                    answer_text += f"🏆 {_mention_with_indicator(first_answerer)} got it first!"
 
                 # Add additional answerers if any
                 if additional_answerers:
-                    also_got = ", ".join([user.mention for user in additional_answerers])
+                    also_got = ", ".join(_mention_with_indicator(user) for user in additional_answerers)
                     answer_text += f"\n✅ Also got it: {also_got}"
 
                 embed = discord.Embed(description=answer_text, color=discord.Color.green())

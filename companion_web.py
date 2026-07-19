@@ -439,8 +439,8 @@ _INDEX_HTML = """<!doctype html>
   .game-toggle .lbl.active { color:var(--fg); }
   .switch { position:relative; display:inline-block; width:40px; height:23px; flex:none; }
   .switch input { position:absolute; inset:0; opacity:0; margin:0; cursor:pointer; }
-  .switch .track { position:absolute; inset:0; border-radius:999px; background:rgba(127,127,127,.20);
-    border:1px solid var(--line); transition:background-color .15s, border-color .15s; }
+  .switch .track { position:absolute; inset:0; border-radius:999px; background:rgba(255,180,58,.55);
+    border:1px solid rgba(255,180,58,.7); transition:background-color .15s, border-color .15s; }
   .switch .thumb { position:absolute; top:2px; left:2px; width:17px; height:17px; border-radius:50%;
     background:#fff; box-shadow:0 1px 3px rgba(0,0,0,.35); transition:transform .15s; }
   .switch input:checked ~ .track { background:var(--blue); border-color:var(--blue); }
