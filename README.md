@@ -124,7 +124,7 @@ A continuous, always-on trivia mode running in a dedicated channel:
 
 ### Other Systems
 - **Bumper King**: Tracks the last user to bump the server on Disboard. Bumper King earns a role and the exclusive `/okrafx` color-change command
-- **Question Flagging** (`/flag`): Players flag bad questions for moderator review, stored in an audit collection with context
+- **Question Flagging**: Players flag bad questions for moderator review, stored in an audit collection with context. Three ways in: click the flag link embedded in the category/answer text (no login required), use the `/flag` slash command, or flag from the companion web app — the old 🚩 reaction button has been removed
 - **AI Personalities**: Bot can respond in 14 different personas (Shakespeare, Pirate, Noir Detective, Hype Man, Roast Comic, Haiku Poet, and more) powered by GPT
 
 ---
