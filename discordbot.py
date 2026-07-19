@@ -23945,6 +23945,17 @@ async def ensure_flag_indexes():
         print(f"⚠️ ensure_flag_indexes: {e}")
 
 
+async def ensure_simply_streaks_indexes():
+    try:
+        # For get_longest_streaks' all-time sort+limit
+        await db.simply_trivia_top_streaks.create_index([("streak_count", -1)])
+        # For get_longest_streaks_24h/_7d's ended_at range filter + streak_count sort
+        await db.simply_trivia_top_streaks.create_index([("ended_at", 1), ("streak_count", -1)])
+    except Exception as e:
+        sentry_sdk.capture_exception(e)
+        print(f"⚠️ ensure_simply_streaks_indexes: {e}")
+
+
 async def _count_submissions_last_24h(submitter_id):
     cutoff = datetime.datetime.utcnow() - datetime.timedelta(hours=24)
     return await db.question_submissions.count_documents({
@@ -26418,6 +26429,12 @@ async def on_ready():
     except Exception as _e:
         sentry_sdk.capture_exception(_e)
         print(f"⚠️ flag index startup hook: {_e}")
+
+    try:
+        await ensure_simply_streaks_indexes()
+    except Exception as _e:
+        sentry_sdk.capture_exception(_e)
+        print(f"⚠️ simply streaks index startup hook: {_e}")
 
     if museum_backfill_enabled and (museum_backfill_task is None or museum_backfill_task.done()):
         museum_backfill_task = asyncio.create_task(run_museum_archive_backfill_loop())

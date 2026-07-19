@@ -196,46 +196,27 @@ async def save_simply_previous_question(db):
 
 async def check_and_record_top_streak(db, user_id, user_name, streak_count):
     """
-    Check if a streak qualifies for top 100 and record it if so
+    Record a completed streak. get_longest_streaks/_24h/_7d each sort and limit
+    at read time, so every streak is logged here regardless of size -- pruning at
+    write time would silently drop streaks that fall below whatever the all-time
+    high-water mark happens to be, making the 24h/7d "recent activity" views miss
+    everyday streaks that never had a chance to compete against the all-time record.
 
     Args:
         db: MongoDB database instance
         user_id: Discord user ID
         user_name: Discord user display name
-        streak_count: The streak count to check
+        streak_count: The streak count to record
     """
     if streak_count == 0:
         return  # Don't record zero streaks
 
-    collection = db["simply_trivia_top_streaks"]
-
-    # Get current count of top streaks
-    count = await collection.count_documents({})
-
-    if count < 100:
-        # Less than 100 entries, always add
-        await collection.insert_one({
-            "user_id": user_id,
-            "user_name": user_name,
-            "streak_count": streak_count,
-            "ended_at": datetime.now(timezone.utc)
-        })
-    else:
-        # Find the 100th place streak (smallest in top 100)
-        top_100 = await collection.find().sort("streak_count", 1).limit(1).to_list(1)
-
-        if top_100 and streak_count > top_100[0]["streak_count"]:
-            # This streak is better than 100th place
-            # Insert new record
-            await collection.insert_one({
-                "user_id": user_id,
-                "user_name": user_name,
-                "streak_count": streak_count,
-                "ended_at": datetime.now(timezone.utc)
-            })
-
-            # Remove the now-101st entry (the old 100th place)
-            await collection.delete_one({"_id": top_100[0]["_id"]})
+    await db["simply_trivia_top_streaks"].insert_one({
+        "user_id": user_id,
+        "user_name": user_name,
+        "streak_count": streak_count,
+        "ended_at": datetime.now(timezone.utc)
+    })
 
 
 async def record_correct_answer(db, user_id, user_name, question_id):
