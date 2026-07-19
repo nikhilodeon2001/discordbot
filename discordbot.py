@@ -22141,7 +22141,7 @@ async def start_trivia():
                     await sync_okra_lab_announcement(lab_message)
                     lab_block = f"\n{lab_message}"
 
-                start_message = f"​\n​\n🎉🤹‍♂️ **TriviaSphere**\n"
+                start_message = f"​\n​\n❓🌐 **TriviaSphere**\n"
                 start_message += lab_block
 
                 #if current_longest_round_streak["user"] is not None and await get_coffees(current_longest_round_streak["user_id"]) > 0:
