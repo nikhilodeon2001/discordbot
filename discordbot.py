@@ -411,8 +411,10 @@ async def send_question_queen_submit_ad():
 # okra_lab_announcement_text to the new body text. Set
 # okra_lab_announcement_show_new_badge = False to omit the "✨ NEW ✨" header,
 # e.g. for announcements (like a rebrand) that aren't a new feature pitch.
+# {base_url} is substituted with companion_web.get_base_url() at post time, so
+# the same text is correct whether this deploy is staging or prod.
 okra_lab_announcement_enabled = True
-okra_lab_announcement_text = "📱 **The companion app is live!**\nKeep your answers private with a convenient companion experience — https://play.triviasphere.com works great on computer or mobile.\n"
+okra_lab_announcement_text = "📱 **The companion app is live!**\nKeep your answers private with a convenient companion experience — {base_url} works great on computer or mobile.\n"
 okra_lab_announcement_show_new_badge = True
 
 
@@ -22135,7 +22137,7 @@ async def start_trivia():
                 lab_block = ""
                 if okra_lab_announcement_enabled and okra_lab_announcement_text:
                     lab_message = "✨🧪 **NEW from the Okra Lab!** 🧪✨\n\n" if okra_lab_announcement_show_new_badge else ""
-                    lab_message += f"{okra_lab_announcement_text}\n"
+                    lab_message += f"{okra_lab_announcement_text.replace('{base_url}', companion_web.get_base_url())}\n"
                     await sync_okra_lab_announcement(lab_message)
                     lab_block = f"\n{lab_message}"
 
