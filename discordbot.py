@@ -22134,7 +22134,7 @@ async def start_trivia():
                 # Build the round-start banner (help-the-game ad + Royalty now live in the round-end message)
                 lab_block = ""
                 if okra_lab_announcement_enabled and okra_lab_announcement_text:
-                    lab_message = "✨ **NEW** ✨\n" if okra_lab_announcement_show_new_badge else ""
+                    lab_message = "✨🧪 **NEW from the Okra Lab!** 🧪✨\n\n" if okra_lab_announcement_show_new_badge else ""
                     lab_message += f"{okra_lab_announcement_text}\n"
                     await sync_okra_lab_announcement(lab_message)
                     lab_block = f"\n{lab_message}"
