@@ -40,7 +40,8 @@ _get_state = None             # callable(user_id:int|None, game:str) -> dict (sa
 _submit_answer = None         # callable(user_id, display_name, text, game) -> {"ok":bool,"reason":str}
 _reveal_extra = None          # callable(user_id, game) -> {"my_answers":[...], "result":"correct"/"incorrect"/None}
 _submit_flag = None           # async callable(user_id, display_name, reasons, detail, game) -> {"ok":bool,"reason":str}
-_submit_anon_flag = None      # async callable(trivia_db, trivia_id, cat_hint, ans_hint, reasons, detail, ip_hash) -> {"ok":bool,"reason":str}
+_submit_anon_flag = None      # async callable(trivia_db, trivia_id, cat_hint, question_hint, ans_hint, reasons, detail, ip_hash, user_id, display_name) -> {"ok":bool,"reason":str}
+_get_flag_reveal_context = None  # async callable(trivia_db, trivia_id) -> {"revealed": bool, "answers": [...]}
 _session_secret = b""
 _oauth_client_id = ""
 _oauth_client_secret = ""
@@ -111,29 +112,28 @@ def get_base_url():
     return _base_url
 
 
-def make_flag_token(trivia_db, trivia_id, category, question_text, answer=None, revealed=False):
+def make_flag_token(trivia_db, trivia_id, category, question_text):
     """Sign a token identifying one specific (possibly historical) question, for the no-login
     'flag this question' link embedded in Simply Trivia messages. Unlike the logged-in companion
     flag flow (which always targets 'whatever is currently live'), a link clicked from an old
     Discord message needs to carry its own question identity, since by the time it's clicked the
-    live question has long since moved on. `category`/`question_text`/`answer` are carried along
-    only for display on the flag page -- the moderation report itself re-reads the question fresh
-    from Mongo.
+    live question has long since moved on. `category`/`question_text` are carried along only for
+    display on the flag page -- the moderation report itself re-reads the question fresh from
+    Mongo.
 
-    `answer` is only ever embedded when `revealed=True` (i.e. this token came from the post-reveal
-    answer link, not the still-open question link) -- the token is signed, not encrypted, so
-    leaving the answer out entirely (rather than just hiding it client-side) is what actually
-    prevents a player from decoding an unrevealed question's link to see the answer early."""
+    The answer is never embedded here -- one token per question covers both the still-open link
+    and the post-reveal link, since whether the answer is safe to show is now checked live on
+    every page load (handle_flag_page calls the injected get_flag_reveal_context callback) rather
+    than decided once at link-creation time. That also means an old link keeps working correctly
+    long after its question has since been revealed, instead of staying frozen at whatever was
+    true when it was created."""
     payload = {
         "db": trivia_db,
         "id": str(trivia_id),
         "cat": (category or "")[:200],
         "q": (question_text or "")[:400],
-        "revealed": bool(revealed),
         "exp": time.time() + _FLAG_TOKEN_TTL,
     }
-    if revealed and answer:
-        payload["ans"] = str(answer)[:200]
     return _sign(payload)
 
 
@@ -561,11 +561,17 @@ async def handle_flag_page(request):
     payload = _unsign(request.query.get("t", ""))
     if not payload:
         return web.Response(text=_FLAG_EXPIRED_HTML, content_type="text/html", status=400)
-    # The answer is only ever shown (and only ever present at all -- see make_flag_token) when
-    # this token came from the post-reveal answer link, never the still-open question link --
-    # otherwise flagging would let a player read the answer before answering.
-    answer = payload.get("ans") if payload.get("revealed") else None
-    answer_block = f'<div class="ans">Answer: {html_escape(answer)}</div>' if answer else ""
+    # Checked live, not read from the token (which never carries the answer -- see
+    # make_flag_token) -- this is what lets the same link correctly start showing the answer once
+    # the question is actually revealed, rather than being frozen at whatever was true when the
+    # link was created.
+    ctx = (
+        await _get_flag_reveal_context(payload.get("db"), payload.get("id"))
+        if _get_flag_reveal_context else {"revealed": False, "answers": []}
+    )
+    answers = ctx.get("answers") or []
+    answer_text = ", ".join(str(a) for a in answers) if isinstance(answers, list) else str(answers)
+    answer_block = f'<div class="ans">Answer: {html_escape(answer_text)}</div>' if ctx.get("revealed") and answer_text else ""
 
     # Attribution is never silent: an existing companion session gets stated explicitly (with a
     # way to switch accounts), and logging in is framed as an explicit "associate this report
@@ -617,7 +623,14 @@ async def handle_flag_anon(request):
         return web.json_response({"ok": False, "reason": "rate_limited"}, status=429)
     _anon_last_flag[ip_hash] = now
 
-    answer_hint = payload.get("ans") if payload.get("revealed") else None
+    # Live check, same as handle_flag_page -- the token itself never carries the answer. This
+    # answer_hint only ever matters as a fallback inside anonymous_submit_flag, if its own fresh
+    # Mongo re-fetch there somehow fails to find the document.
+    ctx = (
+        await _get_flag_reveal_context(trivia_db, trivia_id)
+        if _get_flag_reveal_context else {"revealed": False, "answers": []}
+    )
+    answer_hint = ", ".join(str(a) for a in ctx.get("answers") or []) if ctx.get("revealed") else None
 
     # An existing companion session identifies the flagger for real -- see handle_flag_page's
     # explicit "this report will be associated with..." messaging, never applied silently.
@@ -1255,10 +1268,11 @@ async def handle_logo_mark(request):
 # Startup
 # ---------------------------------------------------------------------------
 
-async def start_companion_web(*, resolve_member, get_state, submit_answer, reveal_extra=None, submit_flag=None, submit_anon_flag=None):
+async def start_companion_web(*, resolve_member, get_state, submit_answer, reveal_extra=None, submit_flag=None, submit_anon_flag=None, get_flag_reveal_context=None):
     """Bind the aiohttp server to $PORT and start serving. Called from the bot's main()
     before the long-running gather so Heroku sees the port bound promptly (avoids R10)."""
     global _resolve_member, _get_state, _submit_answer, _reveal_extra, _submit_flag, _submit_anon_flag
+    global _get_flag_reveal_context
     global _session_secret, _oauth_client_id, _oauth_client_secret, _base_url
 
     _resolve_member = resolve_member
@@ -1267,6 +1281,7 @@ async def start_companion_web(*, resolve_member, get_state, submit_answer, revea
     _reveal_extra = reveal_extra
     _submit_flag = submit_flag
     _submit_anon_flag = submit_anon_flag
+    _get_flag_reveal_context = get_flag_reveal_context
 
     secret = os.getenv("COMPANION_SESSION_SECRET")
     if not secret:
