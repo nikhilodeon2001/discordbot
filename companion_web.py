@@ -33,6 +33,10 @@ from aiohttp import web
 # Module state (set by start_companion_web)
 # ---------------------------------------------------------------------------
 
+# Companion app (logged-in live play) hasn't launched yet -- only the flagging surface
+# (the /flag links already embedded in live questions) should be reachable while it's off.
+COMPANION_APP_ENABLED = False
+
 _GAMES = ("main", "simply")
 _subscribers = {g: set() for g in _GAMES}   # game -> set[asyncio.Queue], one queue per open SSE connection
 _resolve_member = None        # callable(user_id:int) -> display_name:str | None
@@ -614,13 +618,15 @@ async def handle_flag_page(request):
             '<span>Associated with your Discord account</span></div>'
             f'<a class="authswitch" href="/logout?next={return_param}">Switch</a></div>'
         )
-    else:
+    elif COMPANION_APP_ENABLED:
         auth_block = (
             f'<a class="authcard authcard--out" href="/login?next={return_param}">'
             f'<span class="authicon">{_DISCORD_ICON_SVG}</span>'
             '<div class="authtext"><b>Link Discord account</b>'
             '<span>Optional — attaches your name to this report</span></div></a>'
         )
+    else:
+        auth_block = ""
 
     html = (_FLAG_PAGE_HTML
             .replace("__CATEGORY__", html_escape(payload.get("cat") or "Trivia"))
@@ -1332,21 +1338,25 @@ async def start_companion_web(*, resolve_member, get_state, submit_answer, revea
     _base_url = os.getenv("COMPANION_BASE_URL", "")
 
     app = web.Application(middlewares=[_https_enforcement_middleware])
-    app.add_routes([
-        web.get("/", handle_index),
+    routes = [
         web.get("/healthz", handle_health),
         web.get("/assets/logo-header.webp", handle_logo_header),
         web.get("/assets/logo-mark.webp", handle_logo_mark),
-        web.get("/login", handle_login),
         web.get("/logout", handle_logout),
-        web.get("/auth/callback", handle_callback),
-        web.get("/api/current", handle_current),
-        web.get("/api/stream", handle_stream),
-        web.post("/api/answer", handle_answer),
-        web.post("/api/flag", handle_flag),
         web.get("/flag", handle_flag_page),
         web.post("/api/flag_anon", handle_flag_anon),
-    ])
+    ]
+    if COMPANION_APP_ENABLED:
+        routes.extend([
+            web.get("/", handle_index),
+            web.get("/login", handle_login),
+            web.get("/auth/callback", handle_callback),
+            web.get("/api/current", handle_current),
+            web.get("/api/stream", handle_stream),
+            web.post("/api/answer", handle_answer),
+            web.post("/api/flag", handle_flag),
+        ])
+    app.add_routes(routes)
 
     runner = web.AppRunner(app)
     await runner.setup()
