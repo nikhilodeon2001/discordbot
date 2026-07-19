@@ -23474,12 +23474,14 @@ async def companion_submit_flag(user_id, display_name, reasons, detail):
     return {"ok": True}
 
 
-async def anonymous_submit_flag(trivia_db, trivia_id, category_hint, question_hint, answer_hint, reasons, detail, ip_hash):
+async def anonymous_submit_flag(trivia_db, trivia_id, category_hint, question_hint, answer_hint, reasons, detail, ip_hash, user_id=None, display_name=None):
     """Flag a specific (possibly historical) question identified by a signed token from a Simply
-    Trivia embed link (see companion_web.make_flag_token / simply_trivia.py). Unlike
-    companion_submit_flag, there's no Discord identity behind this -- the whole point is a
-    no-login flag flow -- so abuse control is IP-hash based instead of user_id based, and the
-    flagged question comes from the token rather than `current_question`."""
+    Trivia embed link (see companion_web.make_flag_token / simply_trivia.py). No login is required
+    to reach this at all, so abuse control is always IP-hash based regardless of identity, and the
+    flagged question comes from the token rather than `current_question`. `user_id`/`display_name`
+    are populated only when the flagger has an existing companion session (companion_web.py's
+    handle_flag_anon reads it) -- companion_web.py's /flag page always states this explicitly to
+    the visitor rather than attributing silently."""
     trivia_id_obj = _to_object_id(trivia_id)
     trivia_id_str = str(trivia_id_obj)
 
@@ -23494,11 +23496,14 @@ async def anonymous_submit_flag(trivia_db, trivia_id, category_hint, question_hi
         return {"ok": False, "reason": "rate_limited"}
 
     try:
-        await db.companion_flags.insert_one({
+        flag_doc = {
             "ip_hash": ip_hash,
             "trivia_id": trivia_id_str,
             "timestamp": datetime.datetime.utcnow(),
-        })
+        }
+        if user_id is not None:
+            flag_doc["user_id"] = user_id
+        await db.companion_flags.insert_one(flag_doc)
     except Exception as e:
         sentry_sdk.capture_exception(e)
 
@@ -23519,7 +23524,9 @@ async def anonymous_submit_flag(trivia_db, trivia_id, category_hint, question_hi
     }
     reasons_text = ", ".join(FlagReasonModal.REASON_LABELS.get(r, r) for r in reasons)
     reason_text = f"({reasons_text}) {detail}".strip()
-    await update_audit_question(question, reason_text, "Anonymous", user_id=None, source="Web (Anon)")
+    reporter_name = display_name or "Anonymous"
+    source = "Web" if user_id is not None else "Web (Anon)"
+    await update_audit_question(question, reason_text, reporter_name, user_id=user_id, source=source)
     return {"ok": True}
 
 
