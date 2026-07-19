@@ -194,6 +194,17 @@ def _redirect_uri(request):
     return f"{scheme}://{host}/auth/callback"
 
 
+def _safe_next(request):
+    """Validate a `next` redirect target (used by /login and /logout to return the visitor to
+    where they started, e.g. a /flag page) is same-site -- starts with a single `/`, not `//`
+    (which browsers treat as protocol-relative, i.e. an external host) -- so it can't be used as
+    an open redirect."""
+    next_path = request.query.get("next", "")
+    if next_path.startswith("/") and not next_path.startswith("//"):
+        return next_path
+    return "/"
+
+
 @web.middleware
 async def _https_enforcement_middleware(request, handler):
     """Redirect plain-HTTP requests to HTTPS before any route (esp. /login) can build an
@@ -212,6 +223,7 @@ async def handle_login(request):
     if not _oauth_client_id or not _oauth_client_secret:
         return web.Response(text="Companion login is not configured yet.", status=503)
     state = base64.urlsafe_b64encode(os.urandom(16)).decode().rstrip("=")
+    next_path = _safe_next(request)
     params = {
         "client_id": _oauth_client_id,
         "redirect_uri": _redirect_uri(request),
@@ -225,7 +237,7 @@ async def handle_login(request):
     resp = web.HTTPFound(url)
     scheme, _ = _request_origin(request)
     resp.set_cookie(
-        _STATE_COOKIE, _sign({"state": state, "exp": time.time() + _STATE_TTL}),
+        _STATE_COOKIE, _sign({"state": state, "next": next_path, "exp": time.time() + _STATE_TTL}),
         max_age=_STATE_TTL, httponly=True, secure=(scheme == "https"), samesite="Lax",
     )
     return resp
@@ -274,7 +286,7 @@ async def handle_callback(request):
         )
 
     session = {"user_id": user_id, "display_name": display_name, "exp": time.time() + _SESSION_TTL}
-    resp = web.HTTPFound("/")
+    resp = web.HTTPFound(cookie_state.get("next") or "/")
     scheme, _ = _request_origin(request)
     resp.set_cookie(
         _SESSION_COOKIE, _sign(session),
@@ -285,7 +297,7 @@ async def handle_callback(request):
 
 
 async def handle_logout(request):
-    resp = web.HTTPFound("/")
+    resp = web.HTTPFound(_safe_next(request))
     resp.del_cookie(_SESSION_COOKIE)
     return resp
 
@@ -445,6 +457,10 @@ _FLAG_PAGE_HTML = """<!doctype html>
     color:var(--muted); margin-bottom:4px; }
   .qctx .q { font-size:.92rem; font-weight:600; line-height:1.35; }
   .qctx .ans { font-size:.92rem; font-weight:600; margin-top:8px; }
+  .authblock { font-size:.82rem; margin:0 0 14px; line-height:1.4; }
+  .loggedas { color:#3ddc84; }
+  .loggedas .switch { color:var(--muted); margin-left:6px; }
+  .loginlink, .switch a { color:var(--blue); text-decoration:none; font-weight:600; }
   .modalsub { color:var(--muted); font-size:.85rem; margin:0 0 14px; line-height:1.4; }
   .reasons { display:flex; flex-direction:column; gap:8px; margin-bottom:14px; }
   .reasonrow { display:flex; align-items:center; gap:10px; padding:11px 13px; border-radius:12px;
@@ -472,6 +488,7 @@ _FLAG_PAGE_HTML = """<!doctype html>
       <div class="q">__QUESTION__</div>
       __ANSWER_BLOCK__
     </div>
+    __AUTH_BLOCK__
     <div class="modalsub">What's wrong with this question? Select all that apply.</div>
     <div class="reasons">
       <label class="reasonrow"><input type="checkbox" value="category">Category</label>
@@ -502,7 +519,8 @@ async function submitFlag() {
     });
     var data = await r.json();
     if (data.ok) {
-      document.querySelector('.card').innerHTML = '<div class="done">✅ Thanks — this question has been flagged for review.</div>';
+      document.querySelector('.card').innerHTML = '<div class="done">✅ Thanks — this question has been flagged for review.<br>You can close this tab now.</div>';
+      setTimeout(function () { window.close(); }, 1200);  // best-effort -- most browsers won't allow closing a tab they didn't open via script, so this silently no-ops there; the message above is the real dismiss path
     } else if (data.reason === 'duplicate') {
       statusEl.textContent = "You've already flagged this question."; statusEl.className = 'status bad';
     } else if (data.reason === 'rate_limited') {
@@ -548,10 +566,28 @@ async def handle_flag_page(request):
     # otherwise flagging would let a player read the answer before answering.
     answer = payload.get("ans") if payload.get("revealed") else None
     answer_block = f'<div class="ans">Answer: {html_escape(answer)}</div>' if answer else ""
+
+    # Attribution is never silent: an existing companion session gets stated explicitly (with a
+    # way to switch accounts), and logging in is framed as an explicit "associate this report
+    # with your account" action rather than a generic sign-in wall -- either way it's opt-in,
+    # submitting without it still works and stays anonymous.
+    next_path = "/flag?t=" + request.query.get("t", "")
+    return_param = urllib.parse.quote(next_path, safe="")
+    session = _session_from_request(request)
+    if session:
+        auth_block = (
+            '<div class="authblock loggedas">✓ This report will be associated with your Discord account: '
+            f'<b>{html_escape(session["display_name"])}</b>'
+            f'<span class="switch"> · <a href="/logout?next={return_param}">Not you? Switch account</a></span></div>'
+        )
+    else:
+        auth_block = f'<div class="authblock"><a class="loginlink" href="/login?next={return_param}">Associate this report with your Discord account (optional)</a></div>'
+
     html = (_FLAG_PAGE_HTML
             .replace("__CATEGORY__", html_escape(payload.get("cat") or "Trivia"))
             .replace("__QUESTION__", html_escape(payload.get("q") or ""))
             .replace("__ANSWER_BLOCK__", answer_block)
+            .replace("__AUTH_BLOCK__", auth_block)
             .replace("__TOKEN_JSON__", json.dumps(request.query.get("t", ""))))
     return web.Response(text=html, content_type="text/html")
 
@@ -582,8 +618,15 @@ async def handle_flag_anon(request):
     _anon_last_flag[ip_hash] = now
 
     answer_hint = payload.get("ans") if payload.get("revealed") else None
+
+    # An existing companion session identifies the flagger for real -- see handle_flag_page's
+    # explicit "this report will be associated with..." messaging, never applied silently.
+    session = _session_from_request(request)
+    user_id = session["user_id"] if session else None
+    display_name = session["display_name"] if session else None
+
     result = (
-        await _submit_anon_flag(trivia_db, trivia_id, payload.get("cat"), payload.get("q"), answer_hint, reasons, detail, ip_hash)
+        await _submit_anon_flag(trivia_db, trivia_id, payload.get("cat"), payload.get("q"), answer_hint, reasons, detail, ip_hash, user_id, display_name)
         if _submit_anon_flag else {"ok": False, "reason": "unavailable"}
     )
     status = 200 if result.get("ok") else 409
