@@ -794,11 +794,16 @@ _INDEX_HTML = """<!doctype html>
     background:rgba(127,127,127,.06); }
   .modalqctx .modalcat { font-size:.68rem; font-weight:700; text-transform:uppercase; letter-spacing:.1em;
     color:var(--muted); margin-bottom:4px; }
-  .modalqctx .modalq { font-size:.9rem; font-weight:600; line-height:1.35; }
-  .modalqctx .modalans { font-size:.9rem; font-weight:600; margin-top:8px; }
+  .modalqctx .modalq { font-size:.95rem; font-weight:700; line-height:1.4; }
+  .modalqctx .modalansdivider { height:1px; background:var(--line); margin:14px 0 12px; }
+  .modalqctx .modalanslabel { font-size:.68rem; font-weight:700; text-transform:uppercase; letter-spacing:.1em;
+    color:var(--muted); margin-bottom:3px; }
+  .modalqctx .modalansval { font-size:1rem; font-weight:800; color:#3ddc84; line-height:1.4; }
   .reasons { display:flex; flex-direction:column; gap:8px; margin-bottom:14px; }
   .reasonrow { display:flex; align-items:center; gap:10px; padding:11px 13px; border-radius:12px;
-    border:1px solid var(--line); background:rgba(127,127,127,.06); cursor:pointer; font-size:.95rem; }
+    border:1px solid var(--line); background:rgba(127,127,127,.06); cursor:pointer; font-size:.95rem;
+    transition:border-color .12s, background-color .12s; }
+  .reasonrow:has(input:checked) { border-color:var(--blue); background:rgba(20,109,232,.10); }
   .reasonrow input { margin:0; }
   #flagDetail { width:100%; padding:13px 14px; font-size:.95rem; border-radius:12px;
     border:1px solid var(--line); background:rgba(127,127,127,.08); color:inherit; resize:vertical;
@@ -1178,7 +1183,7 @@ function openFlagModal() {
   const qctx = '<div class="modalqctx">' +
     '<div class="modalcat">' + esc(state.category || '') + '</div>' +
     (state.question ? '<div class="modalq">' + esc(state.question) + '</div>' : '') +
-    (revealed && state.correct_answer ? '<div class="modalans">Answer: ' + esc(state.correct_answer) + '</div>' : '') +
+    (revealed && state.correct_answer ? '<div class="modalansdivider"></div><div class="modalanslabel">Answer</div><div class="modalansval">' + esc(state.correct_answer) + '</div>' : '') +
   '</div>';
   const backdrop = document.createElement('div');
   backdrop.id = 'flagBackdrop';
