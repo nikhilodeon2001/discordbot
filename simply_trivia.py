@@ -738,7 +738,8 @@ async def start_simply_trivia(bot, db, channel_id, fuzzy_match_func):
                     users_to_react = [first_answerer] + additional_answerers
                     reacted_users = set()
 
-                    async for msg in channel.history(limit=50, oldest_first=True):
+                    recent_messages = [msg async for msg in channel.history(limit=50)]
+                    for msg in reversed(recent_messages):
                         if msg.author.id in [user.id for user in users_to_react] and msg.author.id not in reacted_users:
                             # Check if this message contains a correct answer
                             for correct_answer in answers:
