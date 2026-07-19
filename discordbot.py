@@ -411,9 +411,9 @@ async def send_question_queen_submit_ad():
 # okra_lab_announcement_text to the new body text. Set
 # okra_lab_announcement_show_new_badge = False to omit the "✨ NEW ✨" header,
 # e.g. for announcements (like a rebrand) that aren't a new feature pitch.
-okra_lab_announcement_enabled = False
-okra_lab_announcement_text = ""
-okra_lab_announcement_show_new_badge = False
+okra_lab_announcement_enabled = True
+okra_lab_announcement_text = "🚩 **Flagging just got simpler!**\nClick the links to report.\n"
+okra_lab_announcement_show_new_badge = True
 
 
 async def sync_okra_lab_announcement(content):
