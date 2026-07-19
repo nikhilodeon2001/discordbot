@@ -33,9 +33,8 @@ from aiohttp import web
 # Module state (set by start_companion_web)
 # ---------------------------------------------------------------------------
 
-# Companion app (logged-in live play) hasn't launched yet -- only the flagging surface
-# (the /flag links already embedded in live questions) should be reachable while it's off.
-COMPANION_APP_ENABLED = False
+# Companion app (logged-in live play) is live at play.triviasphere.com.
+COMPANION_APP_ENABLED = True
 
 _GAMES = ("main", "simply")
 _subscribers = {g: set() for g in _GAMES}   # game -> set[asyncio.Queue], one queue per open SSE connection
