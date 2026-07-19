@@ -19617,6 +19617,11 @@ async def ask_question(trivia_category, trivia_question, trivia_url, trivia_answ
     )
 
     message_body = ""
+    # Testing the URL-based flag method here instead of the 🚩 button -- one token per question,
+    # never carrying the answer (checked live by get_flag_reveal_context instead), reused below to
+    # wrap every branch's category title in a link.
+    flag_token = companion_web.make_flag_token(trivia_db, trivia_id, trivia_category, trivia_question)
+    flag_url = f"{companion_web.get_base_url()}/flag?t={flag_token}"
     if single_answer:
         is_numeric_answer = (
             is_number(trivia_answer) or
@@ -19625,129 +19630,129 @@ async def ask_question(trivia_category, trivia_question, trivia_url, trivia_answ
         footer_text = "\ud83d\udea8 One guess: Answer is a number" if is_numeric_answer else "\ud83d\udea8 One guess"
         
     if is_valid_url(trivia_url): 
-        message_body += f"\u200b\n\u200b\n{number_block}📷 **{get_category_title(trivia_category, trivia_url)}**\n\n{trivia_question}\n"
+        message_body += f"\u200b\n\u200b\n{number_block}📷 [**{get_category_title(trivia_category, trivia_url)}**]({flag_url})\n\n{trivia_question}\n"
         image_url = trivia_url
         send_image_flag = True
 
     elif trivia_url == "algebra":
         image_buffer, new_question, new_solution, text_problem = generate_and_render_linear_problem()
         if image_questions == True:
-            message_body += f"\u200b\n\u200b\n{number_block} **{get_category_title(trivia_category, trivia_url)}**\n\n{new_question}\n" 
+            message_body += f"\u200b\n\u200b\n{number_block} [**{get_category_title(trivia_category, trivia_url)}**]({flag_url})\n\n{new_question}\n" 
             send_image_flag = True
         else:
-            message_body += f"\u200b\n\u200b\n{number_block} **{get_category_title(trivia_category, trivia_url)}**\n\n{new_question}\n{text_problem}\n"
+            message_body += f"\u200b\n\u200b\n{number_block} [**{get_category_title(trivia_category, trivia_url)}**]({flag_url})\n\n{new_question}\n{text_problem}\n"
     
     elif trivia_url == "trig":
         image_url, new_question, new_solution, img_description = generate_trig_question()
         if image_questions == True:
-            message_body += f"\u200b\n\u200b\n{number_block} **{get_category_title(trivia_category, trivia_url)}**\n\n{new_question}\n" 
+            message_body += f"\u200b\n\u200b\n{number_block} [**{get_category_title(trivia_category, trivia_url)}**]({flag_url})\n\n{new_question}\n" 
             send_image_flag = True
         else:
-            message_body += f"\u200b\n\u200b\n{number_block} **{get_category_title(trivia_category, trivia_url)}**\n\n{new_question}\n{img_description}\n"
+            message_body += f"\u200b\n\u200b\n{number_block} [**{get_category_title(trivia_category, trivia_url)}**]({flag_url})\n\n{new_question}\n{img_description}\n"
 
     elif trivia_url == "base":
         image_buffer, new_question, new_solution, base_string = generate_base_question()
         if image_questions == True:
-            message_body += f"\u200b\n\u200b\n{number_block} **{get_category_title(trivia_category, trivia_url)}**\n\n{new_question}\n" 
+            message_body += f"\u200b\n\u200b\n{number_block} [**{get_category_title(trivia_category, trivia_url)}**]({flag_url})\n\n{new_question}\n" 
             send_image_flag = True
         else:
-            message_body += f"\u200b\n\u200b\n{number_block} **{get_category_title(trivia_category, trivia_url)}**\n\n{new_question}\n{base_string}\n"
+            message_body += f"\u200b\n\u200b\n{number_block} [**{get_category_title(trivia_category, trivia_url)}**]({flag_url})\n\n{new_question}\n{base_string}\n"
     
     elif trivia_url == "zeroes sum":
         image_buffer, new_solution, polynomial = generate_and_render_polynomial(trivia_url)
         if image_questions == True:
-            message_body += f"\u200b\n\u200b\n{number_block} **{get_category_title(trivia_category, trivia_url)}**\n\n{trivia_question}\n" 
+            message_body += f"\u200b\n\u200b\n{number_block} [**{get_category_title(trivia_category, trivia_url)}**]({flag_url})\n\n{trivia_question}\n" 
             send_image_flag = True
         else:
-            message_body += f"\u200b\n\u200b\n{number_block} **{get_category_title(trivia_category, trivia_url)}**\n\n{trivia_question}\n{polynomial}\n"
+            message_body += f"\u200b\n\u200b\n{number_block} [**{get_category_title(trivia_category, trivia_url)}**]({flag_url})\n\n{trivia_question}\n{polynomial}\n"
 
     elif trivia_url == "characters":
-        message_body += f"\u200b\n\u200b\n{number_block} **{get_category_title(trivia_category, trivia_url)}**\n\nName the movie, book, or show:\n\n{trivia_question}\n"
+        message_body += f"\u200b\n\u200b\n{number_block} [**{get_category_title(trivia_category, trivia_url)}**]({flag_url})\n\nName the movie, book, or show:\n\n{trivia_question}\n"
 
     elif trivia_url == "zeroes product":
         image_buffer, new_solution, polynomial = generate_and_render_polynomial(trivia_url)
         if image_questions == True:
-            message_body += f"\u200b\n\u200b\n{number_block} **{get_category_title(trivia_category, trivia_url)}**\n\n{trivia_question}\n" 
+            message_body += f"\u200b\n\u200b\n{number_block} [**{get_category_title(trivia_category, trivia_url)}**]({flag_url})\n\n{trivia_question}\n" 
             send_image_flag = True
         else:
-            message_body += f"\u200b\n\u200b\n{number_block} **{get_category_title(trivia_category, trivia_url)}**\n\n{trivia_question}\n{polynomial}\n"
+            message_body += f"\u200b\n\u200b\n{number_block} [**{get_category_title(trivia_category, trivia_url)}**]({flag_url})\n\n{trivia_question}\n{polynomial}\n"
 
     elif trivia_url == "zeroes":
         image_buffer, new_solution, polynomial = generate_and_render_polynomial(trivia_url)
         if image_questions == True:
-            message_body += f"\u200b\n\u200b\n{number_block} **{get_category_title(trivia_category, trivia_url)}**\n\n{trivia_question}\n" 
+            message_body += f"\u200b\n\u200b\n{number_block} [**{get_category_title(trivia_category, trivia_url)}**]({flag_url})\n\n{trivia_question}\n" 
             send_image_flag = True
         else:
-            message_body += f"\u200b\n\u200b\n{number_block} **{get_category_title(trivia_category, trivia_url)}**\n\n{trivia_question}\n{polynomial}\n"
+            message_body += f"\u200b\n\u200b\n{number_block} [**{get_category_title(trivia_category, trivia_url)}**]({flag_url})\n\n{trivia_question}\n{polynomial}\n"
 
     elif trivia_url == "factors":
         image_buffer, new_solution, polynomial = generate_and_render_polynomial(trivia_url)
         if image_questions == True:
-            message_body += f"\u200b\n\u200b\n{number_block} **{get_category_title(trivia_category, trivia_url)}**\n\n{trivia_question}\n" 
+            message_body += f"\u200b\n\u200b\n{number_block} [**{get_category_title(trivia_category, trivia_url)}**]({flag_url})\n\n{trivia_question}\n" 
             send_image_flag = True
         else:
-            message_body += f"\u200b\n\u200b\n{number_block} **{get_category_title(trivia_category, trivia_url)}**\n\n{trivia_question}\n{polynomial}\n"
+            message_body += f"\u200b\n\u200b\n{number_block} [**{get_category_title(trivia_category, trivia_url)}**]({flag_url})\n\n{trivia_question}\n{polynomial}\n"
             
     elif trivia_url == "derivative":
         image_buffer, new_solution, polynomial = generate_and_render_derivative_image()
         if image_questions == True:
-            message_body += f"\u200b\n\u200b\n{number_block} **{get_category_title(trivia_category, trivia_url)}**\n\n{trivia_question}\n" 
+            message_body += f"\u200b\n\u200b\n{number_block} [**{get_category_title(trivia_category, trivia_url)}**]({flag_url})\n\n{trivia_question}\n" 
             send_image_flag = True
         else:
-            message_body += f"\u200b\n\u200b\n{number_block} **{get_category_title(trivia_category, trivia_url)}**\n\n{trivia_question}\n{polynomial}\n"
+            message_body += f"\u200b\n\u200b\n{number_block} [**{get_category_title(trivia_category, trivia_url)}**]({flag_url})\n\n{trivia_question}\n{polynomial}\n"
         
     elif trivia_url == "scramble":
         image_buffer, scramble = generate_scrambled_image(scramble_text(trivia_answer_list[0]))
         if image_questions:
-            message_body += f"\u200b\n\u200b\n{number_block}🧩 **{get_category_title(trivia_category, trivia_url)}**\n\n{trivia_question}\n"
+            message_body += f"\u200b\n\u200b\n{number_block}🧩 [**{get_category_title(trivia_category, trivia_url)}**]({flag_url})\n\n{trivia_question}\n"
             send_image_flag = True
         else:
-            message_body += f"\u200b\n\u200b\n{number_block}🧩 **{get_category_title(trivia_category, trivia_url)}**\n\n{trivia_question}\n{scramble}\n"
+            message_body += f"\u200b\n\u200b\n{number_block}🧩 [**{get_category_title(trivia_category, trivia_url)}**]({flag_url})\n\n{trivia_question}\n{scramble}\n"
             _companion_set_puzzle_text(scramble)
 
     elif trivia_url == "median":
         image_buffer, new_solution, num_set = generate_median_question()
         if image_questions == True:
-            message_body += f"\u200b\n\u200b\n{number_block}📊 **{get_category_title(trivia_category, trivia_url)}**\n\n{trivia_question}\n"
+            message_body += f"\u200b\n\u200b\n{number_block}📊 [**{get_category_title(trivia_category, trivia_url)}**]({flag_url})\n\n{trivia_question}\n"
             send_image_flag = True
         else:
-            message_body += f"\u200b\n\u200b\n{number_block} **{get_category_title(trivia_category, trivia_url)}**\n\n{trivia_question}\n{num_set}\n"
+            message_body += f"\u200b\n\u200b\n{number_block} [**{get_category_title(trivia_category, trivia_url)}**]({flag_url})\n\n{trivia_question}\n{num_set}\n"
 
     elif trivia_url == "mean":
         image_buffer, new_solution, num_set = generate_mean_question()
         if image_questions == True:
-            message_body += f"\u200b\n\u200b\n{number_block}📊 **{get_category_title(trivia_category, trivia_url)}**\n\n{trivia_question}\n"
+            message_body += f"\u200b\n\u200b\n{number_block}📊 [**{get_category_title(trivia_category, trivia_url)}**]({flag_url})\n\n{trivia_question}\n"
             send_image_flag = True
         else:
-            message_body += f"\u200b\n\u200b\n{number_block} **{get_category_title(trivia_category, trivia_url)}**\n\n{trivia_question}\n{num_set}\n"
+            message_body += f"\u200b\n\u200b\n{number_block} [**{get_category_title(trivia_category, trivia_url)}**]({flag_url})\n\n{trivia_question}\n{num_set}\n"
 
     elif trivia_url.startswith("jeopardy"):
         if image_questions == True: 
             image_buffer = generate_jeopardy_image(trivia_question, get_category_title(trivia_category, trivia_url, include_emoji=False, include_prefix=False))
-            message_body += f"\u200b\n\u200b\n{number_block} **{get_category_title(trivia_category, trivia_url)}**\n\nAnd the answer is: \n"
+            message_body += f"\u200b\n\u200b\n{number_block} [**{get_category_title(trivia_category, trivia_url)}**]({flag_url})\n\nAnd the answer is: \n"
             send_image_flag = True
         else:
-            message_body += f"\u200b\n\u200b\n{number_block} **{get_category_title(trivia_category, trivia_url)}**\n\n{trivia_question}\n"
+            message_body += f"\u200b\n\u200b\n{number_block} [**{get_category_title(trivia_category, trivia_url)}**]({flag_url})\n\n{trivia_question}\n"
             
     elif trivia_category == "Crossword":
         image_buffer, string_representation = generate_crossword_image(trivia_answer_list[0])
         footer_text = "🚨 Full word required"
         if image_questions == True:
-            message_body += f"\u200b\n\u200b\n{number_block} **{get_category_title(trivia_category, trivia_url)}**\n\n[{len(trivia_answer_list[0])} Letters] {trivia_question}\n"
+            message_body += f"\u200b\n\u200b\n{number_block} [**{get_category_title(trivia_category, trivia_url)}**]({flag_url})\n\n[{len(trivia_answer_list[0])} Letters] {trivia_question}\n"
             send_image_flag = True
         else:
             # Escape the blank underscores -- Discord reads `_..._` as italics, which eats the
             # blanks and italicizes the letters between them.
             safe_representation = string_representation.replace("_", "\\_")
-            message_body += f"\u200b\n\u200b\n{number_block} **{get_category_title(trivia_category, trivia_url)}**\n\n[{len(trivia_answer_list[0])} Letters] {trivia_question}\n\n{safe_representation}\n"
+            message_body += f"\u200b\n\u200b\n{number_block} [**{get_category_title(trivia_category, trivia_url)}**]({flag_url})\n\n[{len(trivia_answer_list[0])} Letters] {trivia_question}\n\n{safe_representation}\n"
             _companion_set_puzzle_text(string_representation)  # raw tiles for the phone (HTML shows _ literally)
         
     elif "multiple choice" in trivia_url:
         if trivia_answer_list[0] in {"True", "False"}:
-            message_body += f"\u200b\n\u200b\n{number_block} **{get_category_title(trivia_category, trivia_url)}**\n\n{trivia_question}\n\n"
+            message_body += f"\u200b\n\u200b\n{number_block} [**{get_category_title(trivia_category, trivia_url)}**]({flag_url})\n\n{trivia_question}\n\n"
             footer_text = "🚨 One guess: True/T/False/F (or click)"
         else:
-            message_body += f"\u200b\n\u200b\n{number_block} **{get_category_title(trivia_category, trivia_url)}**\n\n{trivia_question}\n"
+            message_body += f"\u200b\n\u200b\n{number_block} [**{get_category_title(trivia_category, trivia_url)}**]({flag_url})\n\n{trivia_question}\n"
             footer_text = "🚨 One guess"
             #await safe_send(channel, message_body)
             message_body += "\n"
@@ -19758,7 +19763,7 @@ async def ask_question(trivia_category, trivia_question, trivia_url, trivia_answ
         trivia_answer_list = trivia_answer_list[:1]
 
     else:
-         message_body += f"\u200b\n\u200b\n{number_block} **{get_category_title(trivia_category, trivia_url)}**\n\n{trivia_question}\n"
+         message_body += f"\u200b\n\u200b\n{number_block} [**{get_category_title(trivia_category, trivia_url)}**]({flag_url})\n\n{trivia_question}\n"
 
     # Attribution for user-submitted questions
     try:
@@ -19778,19 +19783,13 @@ async def ask_question(trivia_category, trivia_question, trivia_url, trivia_answ
         "trivia_db": trivia_db,
         "trivia_id": trivia_id,
     }
+    # Testing the URL-based flag method here instead of the \ud83d\udea9 button (see ask_question's category
+    # link below) -- /flag still works unchanged, and current_report_view still exists to carry
+    # the countdown button, just without its \ud83d\udea9 child.
     current_report_view = ReportQuestionView(_question_dict)
+    current_report_view.remove_item(current_report_view.report_btn)
 
     if answer_view is not None:
-        report_btn = discord.ui.Button(label="\ud83d\udea9", style=discord.ButtonStyle.secondary, row=1)
-        async def _report_cb(interaction, _q=_question_dict):
-            modal = FlagReasonModal(
-                _q, "current", interaction.user.display_name, interaction.message, None,
-                include_answer=not _main_trivia_question_currently_open(_q.get("trivia_id")),
-            )
-            await interaction.response.send_modal(modal)
-        report_btn.callback = _report_cb
-        answer_view.add_item(report_btn)
-
         countdown_btn = discord.ui.Button(label=f"\u23f3 {question_time}s", style=discord.ButtonStyle.secondary, disabled=True, row=1)
         answer_view.add_item(countdown_btn)
         current_countdown_button = countdown_btn
@@ -20406,10 +20405,15 @@ async def check_correct_responses_delete(question_ask_time, trivia_answer_list, 
     # Construct the answer-reveal header -- this becomes the embed description
     message = ""
     if blind_mode == False:
+        # Testing the URL-based flag method here instead of the 🚩 button -- only the word
+        # "Answer" is the link, not the (N) responder count. Independent token from the
+        # question-side one (same trivia_id) since this is a separate function call.
+        flag_token = companion_web.make_flag_token(trivia_db, trivia_id, trivia_category, (current_question or {}).get("trivia_question", ""))
+        flag_url = f"{companion_web.get_base_url()}/flag?t={flag_token}"
         if golf_mode:
-            message = f"\u200b\n⛳ **Answer** ({len(question_responders)}) ⛳\n{trivia_answer}"
+            message = f"\u200b\n⛳ [**Answer**]({flag_url}) ({len(question_responders)}) ⛳\n{trivia_answer}"
         else:
-            message = f"\u200b\n✅ **Answer** ({len(question_responders)}) ✅\n{trivia_answer}"
+            message = f"\u200b\n✅ [**Answer**]({flag_url}) ({len(question_responders)}) ✅\n{trivia_answer}"
             if closest_answer_delta is not None:
                 delta_display = int(fastest_delta) if fastest_delta == int(fastest_delta) else fastest_delta
                 message += f"\n​\n🎯 {fastest_correct_user} was closest (off by {delta_display})!"
@@ -20466,10 +20470,9 @@ async def check_correct_responses_delete(question_ask_time, trivia_answer_list, 
             answer_embed.add_field(name=build_standings_header(), value=standings_table, inline=False)
         if author_name:
             answer_embed.set_author(name=author_name, icon_url=author_icon_url)
-        # Same flag button as the question message -- tags the same current_question, since this
-        # embed is revealing the answer to that same question. Its 🚩 button now checks reveal
-        # state live (see ReportQuestionView.report_btn), so no revealed= flag is needed here.
-        await safe_send(channel, embed=answer_embed, file=scoreboard_file, view=ReportQuestionView(current_question))
+        # Testing the URL-based flag method here instead of the 🚩 button (see the "Answer" link
+        # built above) -- /flag still works unchanged.
+        await safe_send(channel, embed=answer_embed, file=scoreboard_file)
     elif show_standings_after:
         # No answer-reveal content this question (e.g. blind mode, no correct responses) --
         # still show the scoreboard on its own rather than silently dropping it.
