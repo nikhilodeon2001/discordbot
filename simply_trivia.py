@@ -21,6 +21,7 @@ active_question = None
 first_answer_time = None
 first_answerer = None
 additional_answerers = []
+correct_answer_messages = {}  # user_id -> discord.Message, for users who answered correctly via a real Discord message
 any_guess_received = False
 question_message = None  # the Discord message the current question was sent as (see companion helpers below)
 
@@ -537,11 +538,13 @@ class _CompanionUser:
         return f"<@{self.id}>"
 
 
-def _record_guess(user, text, fuzzy_match_func):
+def _record_guess(user, text, fuzzy_match_func, message=None):
     """Check `text` against active_question's answers; track first/additional correct answerers
     (shared by the Discord on_message path and the companion web-answer path) and every raw guess
-    (so the companion can show "my answers" and correct/incorrect on reveal). Returns True if the
-    guess matched."""
+    (so the companion can show "my answers" and correct/incorrect on reveal). `message` is the
+    real discord.Message for a Discord-typed guess (None for companion/web answers, which have no
+    Discord message to react to) and is stashed in correct_answer_messages so reveal-time reactions
+    don't need to re-scan channel history. Returns True if the guess matched."""
     global first_answerer, first_answer_time, additional_answerers, any_guess_received
 
     any_guess_received = True
@@ -562,6 +565,8 @@ def _record_guess(user, text, fuzzy_match_func):
             if first_answerer is None:
                 first_answerer = user
                 first_answer_time = current_time
+                if message is not None:
+                    correct_answer_messages[user.id] = message
                 # Don't react yet - wait until 3s window closes
 
             # Additional correct answers within 3 seconds
@@ -572,6 +577,8 @@ def _record_guess(user, text, fuzzy_match_func):
                     # discord.Member, which discord.py reuses for the same user.
                     if not any(u.id == user.id for u in additional_answerers):
                         additional_answerers.append(user)
+                        if message is not None:
+                            correct_answer_messages[user.id] = message
                         # Don't react yet - wait until 3s window closes
 
             break  # Found a match, stop checking other answers
@@ -597,7 +604,7 @@ async def handle_answer(message, bot, db, fuzzy_match_func):
     if not active_question or message.author.bot:
         return
 
-    _record_guess(message.author, message.content, fuzzy_match_func)
+    _record_guess(message.author, message.content, fuzzy_match_func, message=message)
 
 
 async def start_simply_trivia(bot, db, channel_id, fuzzy_match_func):
@@ -656,6 +663,7 @@ async def start_simply_trivia(bot, db, channel_id, fuzzy_match_func):
             first_answerer = None
             first_answer_time = None
             additional_answerers = []
+            correct_answer_messages.clear()
             any_guess_received = False
             await discordbot.record_question_asked(question.get("db"), question.get("_id"))
 
@@ -731,30 +739,18 @@ async def start_simply_trivia(bot, db, channel_id, fuzzy_match_func):
             main_answer = answers[0] if answers else "Unknown"
 
             if first_answerer:
-                # React to everyone who got it right (first + additional)
-                # Find their messages and react to them
-                try:
-                    # Get recent messages to find correct answerers
-                    users_to_react = [first_answerer] + additional_answerers
-                    reacted_users = set()
-
-                    recent_messages = [msg async for msg in channel.history(limit=50)]
-                    for msg in reversed(recent_messages):
-                        if msg.author.id in [user.id for user in users_to_react] and msg.author.id not in reacted_users:
-                            # Check if this message contains a correct answer
-                            for correct_answer in answers:
-                                if fuzzy_match_func(msg.content, correct_answer,
-                                                   question.get("category", ""), question.get("url", ""),
-                                                   ignore_exact_mode=True):
-                                    await msg.add_reaction("✅")
-                                    reacted_users.add(msg.author.id)
-                                    break
-
-                            # Stop if we've reacted to everyone
-                            if len(reacted_users) == len(users_to_react):
-                                break
-                except Exception as e:
-                    print(f"❌ Failed to react to answerers: {e}")
+                # React to everyone who got it right (first + additional), in the order they
+                # answered. Their messages were captured directly at guess-time, so this is a
+                # plain lookup -- no re-scanning channel history or re-running fuzzy match.
+                users_to_react = [first_answerer] + additional_answerers
+                for user in users_to_react:
+                    msg = correct_answer_messages.get(user.id)
+                    if msg is None:
+                        continue
+                    try:
+                        await msg.add_reaction("✅")
+                    except Exception as e:
+                        print(f"❌ Failed to react to {user.id}'s answer: {e}")
 
                 # Someone got it - update first answerer's streak
                 # Get current streak document (single document with _id="current")
