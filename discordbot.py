@@ -5438,19 +5438,20 @@ class CheckUpdateConfirmView(discord.ui.View):
 
 
 class ReportQuestionView(discord.ui.View):
-    def __init__(self, question, revealed=False):
+    def __init__(self, question):
         super().__init__(timeout=None)
         self.question = question
-        self.revealed = revealed  # True once this question's answer is already public (see call sites)
 
     @discord.ui.button(label="🚩", style=discord.ButtonStyle.secondary, row=0)
     async def report_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        # Checked live at click time, not frozen at message-send time -- this same button still
+        # works correctly no matter how long ago its message was posted.
         modal = FlagReasonModal(
             self.question, "current",
             interaction.user.display_name,
             interaction.message,
             None,
-            include_answer=self.revealed,
+            include_answer=not _main_trivia_question_currently_open(self.question.get("trivia_id")),
         )
         await interaction.response.send_modal(modal)
 
@@ -19782,7 +19783,10 @@ async def ask_question(trivia_category, trivia_question, trivia_url, trivia_answ
     if answer_view is not None:
         report_btn = discord.ui.Button(label="\ud83d\udea9", style=discord.ButtonStyle.secondary, row=1)
         async def _report_cb(interaction, _q=_question_dict):
-            modal = FlagReasonModal(_q, "current", interaction.user.display_name, interaction.message, None)
+            modal = FlagReasonModal(
+                _q, "current", interaction.user.display_name, interaction.message, None,
+                include_answer=not _main_trivia_question_currently_open(_q.get("trivia_id")),
+            )
             await interaction.response.send_modal(modal)
         report_btn.callback = _report_cb
         answer_view.add_item(report_btn)
@@ -20462,10 +20466,10 @@ async def check_correct_responses_delete(question_ask_time, trivia_answer_list, 
             answer_embed.add_field(name=build_standings_header(), value=standings_table, inline=False)
         if author_name:
             answer_embed.set_author(name=author_name, icon_url=author_icon_url)
-        # Same flag button as the question message -- tags the same current_question,
-        # since this embed is revealing the answer to that same question. revealed=True: this
-        # embed's own text already shows the answer to everyone, so the flag modal can too.
-        await safe_send(channel, embed=answer_embed, file=scoreboard_file, view=ReportQuestionView(current_question, revealed=True))
+        # Same flag button as the question message -- tags the same current_question, since this
+        # embed is revealing the answer to that same question. Its 🚩 button now checks reveal
+        # state live (see ReportQuestionView.report_btn), so no revealed= flag is needed here.
+        await safe_send(channel, embed=answer_embed, file=scoreboard_file, view=ReportQuestionView(current_question))
     elif show_standings_after:
         # No answer-reveal content this question (e.g. blind mode, no correct responses) --
         # still show the scoreboard on its own rather than silently dropping it.
@@ -23486,6 +23490,38 @@ async def companion_submit_flag(user_id, display_name, reasons, detail):
     return {"ok": True}
 
 
+def _main_trivia_question_currently_open(trivia_id):
+    """True only if trivia_id is main trivia's exact live question AND its answer window hasn't
+    closed yet -- the one state where the answer must stay hidden. Anything else (an older
+    question, or this same one after its window closed) is already public: there's no other
+    state a past question can be in, so callers treat "not open" as "safe to show the answer"."""
+    if current_question is None or str(current_question.get("trivia_id")) != str(trivia_id):
+        return False
+    now = time.time()
+    return (
+        question_asked_start is not None
+        and question_asked_end is not None
+        and question_asked_start <= now <= question_asked_end
+    )
+
+
+async def get_flag_reveal_context(trivia_db, trivia_id):
+    """Live check for companion_web.py's /flag page and /api/flag_anon: is this question's answer
+    already public right now, and if so what is it (fetched fresh from Mongo -- never trusted from
+    the link/token itself, which no longer carries the answer at all). Checks both games since a
+    trivia_id is only ever live in one of them at a time."""
+    trivia_id_obj = _to_object_id(trivia_id)
+    if _main_trivia_question_currently_open(trivia_id_obj) or not simply_trivia.is_question_revealed(trivia_id_obj):
+        return {"revealed": False, "answers": []}
+    doc = None
+    try:
+        doc = await db[trivia_db].find_one(_id_filter(trivia_id_obj))
+    except Exception as e:
+        sentry_sdk.capture_exception(e)
+    answers = (doc or {}).get("answers", [])
+    return {"revealed": True, "answers": answers if isinstance(answers, list) else [answers]}
+
+
 async def anonymous_submit_flag(trivia_db, trivia_id, category_hint, question_hint, answer_hint, reasons, detail, ip_hash, user_id=None, display_name=None):
     """Flag a specific (possibly historical) question identified by a signed token from a Simply
     Trivia embed link (see companion_web.make_flag_token / simply_trivia.py). No login is required
@@ -26208,17 +26244,7 @@ async def flag_command(interaction: discord.Interaction):
         # Main trivia channel - use current_question/previous_question
         current_q = current_question
         prev_q = previous_question
-        # Same "is it still open" check the companion state builder uses (build_companion_state)
-        # -- once the round's window has closed, the answer is already public everywhere else,
-        # so it's safe to show here too.
-        now = time.time()
-        current_still_open = (
-            current_q is not None
-            and question_asked_start is not None
-            and question_asked_end is not None
-            and question_asked_start <= now <= question_asked_end
-        )
-        current_revealed = current_q is not None and not current_still_open
+        current_revealed = current_q is not None and not _main_trivia_question_currently_open(current_q.get("trivia_id"))
     elif interaction.channel_id == SIMPLY_TRIVIA_CHANNEL_ID:
         # Simply Trivia channel - import from simply_trivia module
         try:
@@ -27052,6 +27078,7 @@ if __name__ == "__main__":
                 reveal_extra=_companion_route_reveal_extra,
                 submit_flag=_companion_route_submit_flag,
                 submit_anon_flag=anonymous_submit_flag,
+                get_flag_reveal_context=get_flag_reveal_context,
             )
         except Exception as e:
             print(f"⚠️  Companion web app failed to start: {e}")

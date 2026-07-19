@@ -31,6 +31,7 @@ simply_previous_question = None
 
 # --- Companion web app state (see companion_web.py + discordbot.py's companion hooks) ---
 _companion_question_key = None      # time.time() float set at question-open; a change-detection key
+_companion_current_revealed = True  # False while simply_current_question is open and unrevealed
 _companion_answers = []             # [{"user_id","text","correct"}] -- every raw guess this question, Discord + web
 _companion_correct_user_ids = set() # who got this question right (Discord + web)
 _companion_web_user_ids = set()     # who answered via the companion app this question, for the 🌐 icon
@@ -77,6 +78,16 @@ def get_previous_question_for_flag():
         "trivia_id": simply_previous_question.get("_id"),
         "trivia_message_link": simply_previous_question.get("trivia_message_link"),
     }
+
+
+def is_question_revealed(trivia_id):
+    """True if trivia_id isn't Simply Trivia's current still-open question -- i.e. either it's
+    an older (already-revealed) question, or the current one but already past reveal. Checked
+    live by discordbot.py's get_flag_reveal_context() on every /flag page load, not baked into
+    the link at question-post time."""
+    if simply_current_question is None or str(simply_current_question.get("_id")) != str(trivia_id):
+        return True
+    return _companion_current_revealed
 
 
 # Leaderboard tracking
@@ -651,7 +662,7 @@ async def start_simply_trivia(bot, db, channel_id, fuzzy_match_func):
             # Move current question to previous before setting new question
             global active_question, first_answerer, first_answer_time, additional_answerers, any_guess_received
             global simply_current_question, simply_previous_question, question_message
-            global _companion_question_key, _companion_last_streak
+            global _companion_question_key, _companion_last_streak, _companion_current_revealed
 
             if simply_current_question is not None:
                 simply_previous_question = simply_current_question.copy()
@@ -676,13 +687,14 @@ async def start_simply_trivia(bot, db, channel_id, fuzzy_match_func):
             answers = question.get("answers", [])
             main_answer = answers[0] if answers else "Unknown"
 
-            # No answer embedded in this token -- it's linked from the still-open question, so the
-            # answer must stay unrecoverable (not just hidden client-side) until it's revealed.
-            flag_token_q = companion_web.make_flag_token(question.get("db", "trivia_questions"), question.get("_id"), category, question_text)
-            flag_url_q = f"{companion_web.get_base_url()}/flag?t={flag_token_q}"
+            # The token never carries the answer -- whether it's safe to show is checked live
+            # (discordbot.py's get_flag_reveal_context / simply_trivia.is_question_revealed) every
+            # time the /flag page loads, not decided once here at question-post time.
+            flag_token = companion_web.make_flag_token(question.get("db", "trivia_questions"), question.get("_id"), category, question_text)
+            flag_url = f"{companion_web.get_base_url()}/flag?t={flag_token}"
 
             embed = discord.Embed(
-                description=f"[**{category}**]({flag_url_q})\n\n{question_text}",
+                description=f"[**{category}**]({flag_url})\n\n{question_text}",
                 color=discord.Color(0x146DE8)
             )
 
@@ -703,6 +715,7 @@ async def start_simply_trivia(bot, db, channel_id, fuzzy_match_func):
             simply_current_question["trivia_message_link"] = question_message.jump_url
 
             _companion_question_key = time.time()
+            _companion_current_revealed = False
             _companion_answers.clear()
             _companion_correct_user_ids.clear()
             _companion_web_user_ids.clear()
@@ -742,9 +755,7 @@ async def start_simply_trivia(bot, db, channel_id, fuzzy_match_func):
             # Reveal answer
             answers = question.get("answers", [])
             main_answer = answers[0] if answers else "Unknown"
-
-            flag_token_a = companion_web.make_flag_token(question.get("db", "trivia_questions"), question.get("_id"), category, question_text, answer=main_answer, revealed=True)
-            flag_url_a = f"{companion_web.get_base_url()}/flag?t={flag_token_a}"
+            _companion_current_revealed = True
 
             if first_answerer:
                 # React to everyone who got it right (first + additional), in the order they
@@ -807,7 +818,7 @@ async def start_simply_trivia(bot, db, channel_id, fuzzy_match_func):
                     tag = " 🌐" if user.id in _companion_web_user_ids else ""
                     return f"{user.mention}{tag}"
 
-                answer_text = f"[**Answer:**]({flag_url_a}) {main_answer}\n\n"
+                answer_text = f"[**Answer:**]({flag_url}) {main_answer}\n\n"
                 if streak > 1:
                     answer_text += f"🏆 {_mention_with_indicator(first_answerer)} got it first! 🔥 Streak: {streak}"
                 else:
@@ -852,7 +863,7 @@ async def start_simply_trivia(bot, db, channel_id, fuzzy_match_func):
 
                 await discordbot.record_question_outcome(question.get("db"), question.get("_id"), False, any_guess_received)
 
-                answer_text = f"[**Answer:**]({flag_url_a}) {main_answer}"
+                answer_text = f"[**Answer:**]({flag_url}) {main_answer}"
                 embed = discord.Embed(description=answer_text, color=discord.Color.red())
 
             await channel.send(embed=embed)
