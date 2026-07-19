@@ -23474,7 +23474,7 @@ async def companion_submit_flag(user_id, display_name, reasons, detail):
     return {"ok": True}
 
 
-async def anonymous_submit_flag(trivia_db, trivia_id, category_hint, answer_hint, reasons, detail, ip_hash):
+async def anonymous_submit_flag(trivia_db, trivia_id, category_hint, question_hint, answer_hint, reasons, detail, ip_hash):
     """Flag a specific (possibly historical) question identified by a signed token from a Simply
     Trivia embed link (see companion_web.make_flag_token / simply_trivia.py). Unlike
     companion_submit_flag, there's no Discord identity behind this -- the whole point is a
@@ -23514,7 +23514,7 @@ async def anonymous_submit_flag(trivia_db, trivia_id, category_hint, answer_hint
         "trivia_db": trivia_db,
         "trivia_id": trivia_id_obj,
         "trivia_category": (doc or {}).get("category", category_hint or "N/A"),
-        "trivia_question": (doc or {}).get("question", ""),
+        "trivia_question": (doc or {}).get("question", question_hint or ""),
         "trivia_answer_list": (doc or {}).get("answers", [answer_hint] if answer_hint else []),
     }
     reasons_text = ", ".join(FlagReasonModal.REASON_LABELS.get(r, r) for r in reasons)
