@@ -13359,10 +13359,10 @@ async def send_flag_notification(question, flag_reason, display_name, flag_messa
                     "$set": {
                         "message_id": msg.id,
                         "resolved": False,
-                        "posted_at": datetime.datetime.utcnow(),
                         "question_snapshot": {"question": question_text, "answers": answers},
                         "question_message_link": question_message_link,
                     },
+                    "$setOnInsert": {"posted_at": datetime.datetime.utcnow()},
                     "$push": {"flaggers": {"user_id": user_id, "display_name": display_name, "message_content": flag_reason, "timestamp": datetime.datetime.utcnow()}},
                 },
                 upsert=True,
@@ -25328,8 +25328,14 @@ def _build_flagged_resolution_embed(flag_record, doc_for_audit, *, title, color,
     original_timestamp = (flag_record or {}).get("posted_at") or datetime.datetime.now(timezone.utc)
     question_message_link = (flag_record or {}).get("question_message_link")
 
-    embed = discord.Embed(title=title, color=color, timestamp=original_timestamp)
+    if isinstance(original_timestamp, (int, float)):
+        flagged_ts = int(original_timestamp)
+    else:
+        flagged_ts = int(original_timestamp.timestamp())
+
+    embed = discord.Embed(title=title, color=color, timestamp=datetime.datetime.now(timezone.utc))
     embed.add_field(name="👤 Flagged By", value=flagged_by, inline=True)
+    embed.add_field(name="🕒 First Flagged", value=f"<t:{flagged_ts}:f>", inline=True)
     if question_message_link:
         embed.add_field(name="🔗 Jump to Question", value=f"[View in chat]({question_message_link})", inline=False)
     if action_field:
