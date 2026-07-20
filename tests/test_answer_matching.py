@@ -60,11 +60,19 @@ CASES = [
     ("Franklin Roosevelt", "Franklin Delano Roosevelt", "", "", "BALANCED", True,
      "2 of 3 name tokens -> majority coverage"),
     ("States", "United States", "", "", "BALANCED", False, "bare fragment"),
-    ("States", "United States", "", "", "GENEROUS", True, "distinctive last word in GENEROUS"),
-    ("Everest", "Mount Everest", "", "", "GENEROUS", True, "surname-style last word"),
+    ("Everest", "Mount Everest", "", "", "GENEROUS", True, "distinctive last word"),
+    ("Roosevelt", "Franklin Roosevelt", "", "", "GENEROUS", True, "surname"),
+    ("Ford", "Henry Ford", "", "", "GENEROUS", True, "short but distinctive surname"),
     ("Mount", "Mount Everest", "", "", "GENEROUS", False, "generic modifier is not enough"),
     ("The", "The Himalayas", "", "", "GENEROUS", False, "article-only never matches"),
     ("Himalayas", "The Himalayas", "", "", "GENEROUS", True, "key word (article is filler)"),
+
+    # --- GENEROUS last-word rule rejects generic "type" nouns ---
+    ("River", "Nile River", "", "", "GENEROUS", False, "generic head noun"),
+    ("Ocean", "Pacific Ocean", "", "", "GENEROUS", False, "generic head noun"),
+    ("City", "Mexico City", "", "", "GENEROUS", False, "generic head noun"),
+    ("Island", "Long Island", "", "", "GENEROUS", False, "generic head noun"),
+    ("States", "United States", "", "", "GENEROUS", False, "generic head noun (rely on alias/full)"),
 
     # --- GENEROUS must NOT loosen short-word typo tolerance ---
     ("cot", "cat", "", "", "GENEROUS", False, "one-letter-off short word stays wrong"),
