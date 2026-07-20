@@ -19877,11 +19877,24 @@ def remove_filler_words(input_str):
     return ' '.join(filtered_words)
 
 
+# string.punctuation is ASCII-only, so smart quotes/dashes/degree signs from
+# copy-pasted trivia content pass through normalize_text() unchanged unless
+# mapped to their ASCII equivalents here first.
+SMART_PUNCTUATION_MAP = {
+    '‘': "'", '’': "'",  # ' ' curly single quotes
+    '“': '"', '”': '"',  # " " curly double quotes
+    '–': '-', '—': '-',  # - -- dashes
+    '−': '-',                 # - unicode minus sign
+    '°': '',                  # degree sign
+}
+
+
 def normalize_text(input):
     text = input.strip()
-    text = text.lower()    
+    text = text.lower()
     text = normalize_superscripts(text)
     text = remove_diacritics(text)
+    text = text.translate(str.maketrans(SMART_PUNCTUATION_MAP))
     text = text.translate(str.maketrans('', '', string.punctuation))
     return text
 
