@@ -21,7 +21,9 @@ import random
 import logging
 import html as _html
 import re as _re
+import string
 import time
+import unicodedata
 from datetime import datetime, timezone
 from typing import Dict, List, Optional, Tuple, Any, Callable, Set
 from itertools import combinations
@@ -48,6 +50,26 @@ _TITLE_CASE_SKIP = {"a", "an", "the", "of", "in", "on", "at", "to", "for", "and"
 def _jeopardy_title_case(text):
     words = text.lower().split()
     return " ".join(w if (i > 0 and w in _TITLE_CASE_SKIP) else w.capitalize() for i, w in enumerate(words))
+
+
+# Mirrors discordbot.py's SMART_PUNCTUATION_MAP/normalize_text. Duplicated (not imported)
+# to avoid a circular import, since discordbot.py itself instantiates TournamentManager.
+_FALLBACK_SMART_PUNCTUATION = {
+    '‘': "'", '’': "'",  # curly single quotes
+    '“': '"', '”': '"',  # curly double quotes
+    '–': '-', '—': '-',  # dashes
+    '−': '-',                 # unicode minus sign
+    '°': '',                  # degree sign
+}
+
+
+def _normalize_fallback_text(text):
+    """Used only by evaluate_answer's strict fallback (fuzzy_match_func unset/errored)."""
+    text = text.strip().lower()
+    nfkd = unicodedata.normalize('NFKD', text)
+    text = ''.join(c for c in nfkd if not unicodedata.combining(c))
+    text = text.translate(str.maketrans(_FALLBACK_SMART_PUNCTUATION))
+    return text.translate(str.maketrans('', '', string.punctuation))
 
 
 # Tournament Configuration Constants
@@ -2500,9 +2522,9 @@ class TournamentManager:
                 # Fall back to simple matching
         
         # Simple fallback matching
-        user_answer = user_answer.strip().lower()
+        normalized_user_answer = _normalize_fallback_text(user_answer)
         for correct_answer in answers:
-            if user_answer == correct_answer.strip().lower():
+            if normalized_user_answer == _normalize_fallback_text(correct_answer):
                 return True
         return False
 
