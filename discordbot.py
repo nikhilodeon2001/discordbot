@@ -69,6 +69,7 @@ import cairosvg
 import asyncio
 import difflib
 from metaphone import doublemetaphone
+import answer_matching
 import discord
 from discord.ext import commands
 from discord import app_commands
@@ -19991,165 +19992,14 @@ def trig_checker(response, answer):
 
 
 def fuzzy_match(user_answer, correct_answer, category, url, _skip_alias_check=False, ignore_exact_mode=False):
-    threshold = 0.90
-
-    if not isinstance(user_answer, str) or not isinstance(correct_answer, str):
-        return False
-    if not user_answer.strip() or not correct_answer.strip():
-        return False
-    if not user_answer or not correct_answer:
-        return False
-
-
-    if user_answer == correct_answer:
-        return True
-
-    # Define alias groups for common answers with multiple valid forms
-    # Only check aliases if not already in a recursive alias check
-    if not _skip_alias_check:
-        alias_groups = {
-            # Countries
-            "usa": ["united states", "united states of america", "us", "usa", "america"],
-            "uk": ["united kingdom", "great britain", "uk", "britain", "england"],
-            "netherlands": ["netherlands", "holland", "the netherlands"],
-            "uae": ["united arab emirates", "uae", "emirates"],
-            "south_korea": ["south korea", "republic of korea", "rok"],
-            "north_korea": ["north korea", "democratic people's republic of korea", "dprk"],
-
-            # Cities
-            "nyc": ["new york city", "nyc"],
-            "la": ["los angeles", "la"],
-            "sf": ["san francisco", "sf"]
-        }
-
-        # Check if correct_answer is in any alias group
-        normalized_correct = normalize_text(correct_answer)
-        for variants in alias_groups.values():
-            # Normalize all variants once
-            normalized_variants = [normalize_text(v) for v in variants]
-
-            # If correct_answer matches any variant in this group
-            if normalized_correct in normalized_variants:
-                # Check if user_answer fuzzy-matches ANY variant in the same group
-                for variant in variants:
-                    # For short aliases (≤3 chars), require exact match to prevent false positives
-                    # e.g., "la" shouldn't match "las vegas"
-                    normalized_variant = normalize_text(variant)
-                    normalized_user = normalize_text(user_answer)
-
-                    if len(normalized_variant) <= 3:
-                        # Short alias: exact match only
-                        if normalized_user == normalized_variant:
-                            return True
-                    else:
-                        # Long alias: use normal fuzzy matching
-                        if fuzzy_match(user_answer, variant, category, url, _skip_alias_check=True):
-                            return True
-                break  # Don't check other alias groups
-
-    no_spaces_user = user_answer.replace(" ", "")      
-    no_spaces_correct = correct_answer.replace(" ", "") 
-
-    if category == "Crossword":
-        return no_spaces_user.lower() == no_spaces_correct.lower()
-
-    if url == "zeroes":
-        user_numbers = [int(num) for num in re.findall(r'-?\d+', user_answer)]
-        correct_numbers = [int(num) for num in re.findall(r'-?\d+', correct_answer)]
-        
-        # Check if the two sets of numbers match (order does not matter)
-        if set(user_numbers) == set(correct_numbers):
-            return True
-        else:
-            return False
-
-    if url == "derivative":
-        return derivative_checker(user_answer, correct_answer)
-
-    if url == "factors":
-        return factors_checker(user_answer, correct_answer)
-
-    if url == "trig":
-        return trig_checker(user_answer, correct_answer)
-    
-        
-    if is_number(correct_answer):
-        leading_number = extract_leading_number(user_answer)
-        return leading_number is not None and leading_number == correct_answer  # Match on the leading numeral, not the full raw string
-    
-    user_answer = normalize_text(str(user_answer))
-    correct_answer = normalize_text(str(correct_answer))
-
-    if "multiple choice" in (url or ""):
-        if user_answer and correct_answer:
-            return user_answer[0].lower() == correct_answer[0].lower()
-        else:
-            return False
-    
-    if is_number(correct_answer):
-        leading_number = extract_leading_number(user_answer)
-        return leading_number is not None and leading_number == correct_answer  # Match on the leading numeral, not the full raw string
-
-    no_spaces_user = user_answer.replace(" ", "")      
-    no_spaces_correct = correct_answer.replace(" ", "") 
-
-    no_filler_user = remove_filler_words(user_answer)
-    no_filler_correct = remove_filler_words(correct_answer)
-
-    no_filler_spaces_user = no_filler_user.replace(" ", "")
-    no_filler_spaces_correct = no_filler_correct.replace(" ", "")
-
-    if no_spaces_user == no_spaces_correct or no_filler_user == no_filler_correct or no_filler_spaces_user == no_filler_spaces_correct:     
-        return True
-
-    if len(user_answer) < 4:
-        return user_answer == correct_answer  # Only accept an exact match for short answers
-    
-    if user_answer == correct_answer:
-        return True
-
-    if exact_mode and not ignore_exact_mode:
-        return False
-
-    # New Step: First 5 characters match
-    if user_answer[:5] == correct_answer[:5] or no_spaces_user[:5] == no_spaces_correct[:5] or no_filler_user[:5] == no_filler_correct[:5] or no_filler_spaces_user[:5] == no_filler_spaces_correct[:5]:
-        return True
-    
-    # Remove filler words and split correct answer
-    correct_answer_words = correct_answer.split()
-    no_filler_answer_words = no_filler_correct.split()
-    
-    # Ensure correct_answer_words is not empty
-    if correct_answer_words and len(correct_answer_words[0]) >= 3:
-        if user_answer == correct_answer_words[0] or no_filler_user == correct_answer_words[0]:
-            return True
-
-    if no_filler_answer_words and len(no_filler_answer_words[0]) >= 3:
-        if user_answer == no_filler_answer_words[0] or no_filler_user == no_filler_answer_words[0]:
-            return True
-
-    #Check if user's answer is a substring of the correct answer after normalization
-    if user_answer in correct_answer:
-        return True
-    
-    # Step 1: Exact match or Partial match
-    if correct_answer in user_answer:
-        return True
-    
-    # Step 2: Levenshtein similarity
-    if levenshtein_similarity(user_answer, correct_answer) >= threshold or levenshtein_similarity(no_spaces_user, no_spaces_correct) >= threshold or levenshtein_similarity(no_filler_user, no_filler_correct) >= threshold or levenshtein_similarity(no_filler_spaces_user, no_filler_spaces_correct) >= threshold:
-        return True
-
-    
-    # Step 3: Jaccard similarity (Character level)
-    if jaccard_similarity(user_answer, correct_answer) >= threshold and url != "scramble":
-        return True
-
-    # Step 4: Token-based matching
-    if token_based_matching(user_answer, correct_answer) >= threshold:
-        return True
-
-    return False  # No match found
+    # Matching logic lives in answer_matching.py (testable in isolation). This
+    # wrapper preserves the historic signature and wires Poindexter/exact_mode
+    # to the STRICT end of the leniency dial.
+    config = answer_matching.STRICT if (exact_mode and not ignore_exact_mode) else answer_matching.ACTIVE_CONFIG
+    return answer_matching.match_answer(
+        user_answer, correct_answer, category=category, url=url,
+        config=config, skip_alias=_skip_alias_check,
+    )
 
 
 async def check_correct_responses_delete(question_ask_time, trivia_answer_list, question_number, collected_responses, trivia_category, trivia_url, trivia_db=None, trivia_id=None, show_standings_after=False):
