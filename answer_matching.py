@@ -62,6 +62,34 @@ FILLER_WORDS = {
     "it", "its",
 }
 
+# Generic "type" nouns that commonly trail a proper name ("Nile River", "Red
+# Sea", "Mexico City"). The surname/last-word rule refuses to accept one of
+# these on its own, so "River" never counts for "Nile River" while a distinctive
+# proper noun like "Einstein" still counts for "Albert Einstein". Edit freely.
+GENERIC_HEAD_WORDS = {
+    # water / landforms
+    "sea", "seas", "ocean", "oceans", "river", "rivers", "lake", "lakes",
+    "mountain", "mountains", "mount", "hill", "hills", "gulf", "bay", "desert",
+    "island", "islands", "isle", "isles", "sound", "strait", "straits",
+    "peninsula", "valley", "valleys", "falls", "waterfall", "canyon", "forest",
+    "jungle", "plateau", "glacier", "volcano", "channel", "coast", "cape",
+    "reef", "delta", "basin", "plain", "plains", "lagoon", "fjord",
+    # places / polities
+    "city", "cities", "town", "village", "county", "state", "states", "country",
+    "nation", "province", "region", "territory", "district", "kingdom",
+    "republic", "empire", "federation", "colony", "borough",
+    # events / eras
+    "war", "wars", "battle", "siege", "revolution", "rebellion", "treaty",
+    "era", "age", "period", "dynasty", "movement", "crisis",
+    # structures / orgs
+    "street", "avenue", "road", "bridge", "tower", "building", "palace",
+    "castle", "cathedral", "church", "chapel", "temple", "mosque", "museum",
+    "gallery", "university", "college", "school", "hospital", "stadium",
+    "arena", "park", "garden", "gardens", "station", "airport", "harbor",
+    "harbour", "port", "canal", "dam", "wall", "gate", "company",
+    "corporation", "party", "club", "league", "association", "society",
+}
+
 # Prefixes that negate/oppose the root word. Used both to fold equivalent
 # negations ("non-reactive" == "unreactive") and, more importantly, to BLOCK
 # antonyms whose only difference is the presence of such a prefix
@@ -462,8 +490,8 @@ def _free_text_match(user_answer, correct_answer, url, config):
         return True
     if config.allow_surname_match and len(correct_sig) >= 2:
         last = correct_sig[-1]
-        if len(last) >= config.min_key_word_len and len(user_sig) == 1 \
-                and _word_match(user_sig[0], last, config):
+        if len(last) >= config.min_key_word_len and last not in GENERIC_HEAD_WORDS \
+                and len(user_sig) == 1 and _word_match(user_sig[0], last, config):
             return True
     if config.allow_any_key_word and len(user_sig) == 1:
         uw = user_sig[0]
