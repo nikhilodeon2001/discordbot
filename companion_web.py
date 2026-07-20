@@ -49,6 +49,7 @@ _session_secret = b""
 _oauth_client_id = ""
 _oauth_client_secret = ""
 _base_url = ""
+_flag_relay_secret = ""       # shared secret for handle_flag_relay (server-to-server flag relay from other apps)
 
 _SESSION_COOKIE = "okra_companion"
 _STATE_COOKIE = "okra_oauth_state"
@@ -676,6 +677,48 @@ async def handle_flag_anon(request):
 
     result = (
         await _submit_anon_flag(trivia_db, trivia_id, payload.get("cat"), payload.get("q"), answer_hint, reasons, detail, ip_hash, user_id, display_name)
+        if _submit_anon_flag else {"ok": False, "reason": "unavailable"}
+    )
+    status = 200 if result.get("ok") else 409
+    return web.json_response(result, status=status)
+
+
+async def handle_flag_relay(request):
+    """Server-to-server counterpart of handle_flag_anon for other apps (e.g. trivia-saas) that
+    share this Mongo cluster's question collections but run as a separate Discord bot
+    application -- they can't post into OKRAN_GUILD_ID's flagged-questions channel themselves, so
+    they relay the flag here and let this bot (already a member of that guild) post it, with the
+    same FlaggedReviewView buttons as a native flag. Auth is a shared secret, not a login/token --
+    this endpoint is never linked from a browser."""
+    if not _flag_relay_secret or not hmac.compare_digest(
+        request.headers.get("X-Flag-Relay-Secret", ""), _flag_relay_secret
+    ):
+        return web.json_response({"ok": False, "reason": "unauthorized"}, status=401)
+
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"ok": False, "reason": "bad_request"}, status=400)
+
+    trivia_db = body.get("source_collection")
+    trivia_id = body.get("question_id")
+    if not trivia_db or not trivia_id:
+        return web.json_response({"ok": False, "reason": "bad_request"}, status=400)
+
+    reasons = [r for r in (body.get("reasons") or []) if r in _FLAG_REASONS]
+    if not reasons:
+        return web.json_response({"ok": False, "reason": "empty"}, status=400)
+    detail = str(body.get("detail") or "").strip()[:500]
+    answers = body.get("answers") or []
+    answer_hint = answers[0] if answers else None
+
+    result = (
+        await _submit_anon_flag(
+            trivia_db, trivia_id, body.get("category"), body.get("question_text"), answer_hint,
+            reasons, detail, str(body.get("ip_hash") or ""),
+            body.get("discord_user_id"), body.get("display_name"),
+            guild_id=body.get("guild_id"), app_source=str(body.get("app_source") or "external"),
+        )
         if _submit_anon_flag else {"ok": False, "reason": "unavailable"}
     )
     status = 200 if result.get("ok") else 409
@@ -1363,7 +1406,7 @@ async def start_companion_web(*, resolve_member, get_state, submit_answer, revea
     before the long-running gather so Heroku sees the port bound promptly (avoids R10)."""
     global _resolve_member, _get_state, _submit_answer, _reveal_extra, _submit_flag, _submit_anon_flag
     global _get_flag_reveal_context
-    global _session_secret, _oauth_client_id, _oauth_client_secret, _base_url
+    global _session_secret, _oauth_client_id, _oauth_client_secret, _base_url, _flag_relay_secret
 
     _resolve_member = resolve_member
     _get_state = get_state
@@ -1382,6 +1425,9 @@ async def start_companion_web(*, resolve_member, get_state, submit_answer, revea
     _oauth_client_id = os.getenv("DISCORD_OAUTH_CLIENT_ID", "")
     _oauth_client_secret = os.getenv("DISCORD_OAUTH_CLIENT_SECRET", "")
     _base_url = os.getenv("COMPANION_BASE_URL", "")
+    _flag_relay_secret = os.getenv("FLAG_RELAY_SECRET", "")
+    if not _flag_relay_secret:
+        print("⚠️  FLAG_RELAY_SECRET not set — /internal/flag_relay will reject all requests.")
 
     app = web.Application(middlewares=[_https_enforcement_middleware])
     routes = [
@@ -1394,6 +1440,7 @@ async def start_companion_web(*, resolve_member, get_state, submit_answer, revea
         web.get("/auth/callback", handle_callback),
         web.get("/flag", handle_flag_page),
         web.post("/api/flag_anon", handle_flag_anon),
+        web.post("/internal/flag_relay", handle_flag_relay),
     ]
     if COMPANION_APP_ENABLED:
         routes.extend([

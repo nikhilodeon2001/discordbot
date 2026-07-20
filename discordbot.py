@@ -13300,6 +13300,17 @@ async def send_flag_notification(question, flag_reason, display_name, flag_messa
             inline=True
         )
 
+        # Origin app/guild, when the flag came from a source other than discordbot.py itself
+        # (e.g. trivia-saas's flag relay) -- see anonymous_submit_flag's guild_id/app_source.
+        origin_guild_id = question.get("guild_id")
+        origin_app = question.get("app_source")
+        if origin_guild_id or origin_app:
+            embed.add_field(
+                name="📍 Source",
+                value=f"{origin_app or 'discordbot'}" + (f" · guild `{origin_guild_id}`" if origin_guild_id else ""),
+                inline=True
+            )
+
         # Question details
         category = question.get("trivia_category", "N/A")
         question_text = question.get("trivia_question", "N/A")
@@ -23540,14 +23551,16 @@ async def get_flag_reveal_context(trivia_db, trivia_id):
     return {"revealed": True, "answers": answers if isinstance(answers, list) else [answers]}
 
 
-async def anonymous_submit_flag(trivia_db, trivia_id, category_hint, question_hint, answer_hint, reasons, detail, ip_hash, user_id=None, display_name=None):
+async def anonymous_submit_flag(trivia_db, trivia_id, category_hint, question_hint, answer_hint, reasons, detail, ip_hash, user_id=None, display_name=None, guild_id=None, app_source=None):
     """Flag a specific (possibly historical) question identified by a signed token from a Simply
     Trivia embed link (see companion_web.make_flag_token / simply_trivia.py). No login is required
     to reach this at all, so abuse control is always IP-hash based regardless of identity, and the
     flagged question comes from the token rather than `current_question`. `user_id`/`display_name`
     are populated only when the flagger has an existing companion session (companion_web.py's
     handle_flag_anon reads it) -- companion_web.py's /flag page always states this explicitly to
-    the visitor rather than attributing silently."""
+    the visitor rather than attributing silently. `guild_id`/`app_source` are populated by
+    external callers (e.g. trivia-saas's flag relay) so flags can later be filtered/aggregated by
+    origin guild or app without parsing free text; native discordbot.py flags leave both unset."""
     trivia_id_obj = _to_object_id(trivia_id)
     trivia_id_str = str(trivia_id_obj)
 
@@ -23569,6 +23582,10 @@ async def anonymous_submit_flag(trivia_db, trivia_id, category_hint, question_hi
         }
         if user_id is not None:
             flag_doc["user_id"] = user_id
+        if guild_id is not None:
+            flag_doc["guild_id"] = guild_id
+        if app_source is not None:
+            flag_doc["app_source"] = app_source
         await db.companion_flags.insert_one(flag_doc)
     except Exception as e:
         sentry_sdk.capture_exception(e)
@@ -23587,11 +23604,15 @@ async def anonymous_submit_flag(trivia_db, trivia_id, category_hint, question_hi
         "trivia_category": (doc or {}).get("category", category_hint or "N/A"),
         "trivia_question": (doc or {}).get("question", question_hint or ""),
         "trivia_answer_list": (doc or {}).get("answers", [answer_hint] if answer_hint else []),
+        "guild_id": guild_id,
+        "app_source": app_source,
     }
     reasons_text = ", ".join(FlagReasonModal.REASON_LABELS.get(r, r) for r in reasons)
     reason_text = f"({reasons_text}) {detail}".strip()
     reporter_name = display_name or "Anonymous"
     source = "Web" if user_id is not None else "Web (Anon)"
+    if app_source:
+        source = f"{source} · {app_source}"
     await update_audit_question(question, reason_text, reporter_name, user_id=user_id, source=source)
     return {"ok": True}
 
