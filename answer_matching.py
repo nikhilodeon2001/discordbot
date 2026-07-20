@@ -289,18 +289,27 @@ BALANCED = MatchConfig(
 
 GENEROUS = MatchConfig(
     name="GENEROUS",
-    edit_ratio_threshold=0.80,
-    typo_caps=(1, 2, 3),
+    # Typo strictness stays at BALANCED levels on purpose: "generous" here means
+    # accept partial answers (a surname / distinctive last word, or most of a
+    # multi-word answer), NOT accept looser misspellings. Loosening typo caps
+    # for short answers makes distinct answers collide ("cot" == "cat").
+    edit_ratio_threshold=0.85,
+    typo_caps=(0, 1, 2),
     enable_phonetic=True,
     enable_negation_fold=True,
-    subset_coverage=0.5,
+    # Same coverage as BALANCED: a single non-final word (e.g. "Mount" of
+    # "Mount Everest") stays below the bar. The distinctive LAST word is
+    # accepted by the position-aware surname rule below instead.
+    subset_coverage=0.6,
     allow_surname_match=True,
-    allow_any_key_word=True,
+    # "any key word" (accepting generic modifiers like "Mount" for "Mount
+    # Everest", or a first name alone) is left off; flip it on to go looser.
+    allow_any_key_word=False,
 )
 
 # The adjustable default for normal (non-Poindexter) play. Point this at a
 # different preset, or tweak a preset's numbers, to move the dial.
-ACTIVE_CONFIG = BALANCED
+ACTIVE_CONFIG = GENEROUS
 
 
 # ---------------------------------------------------------------------------

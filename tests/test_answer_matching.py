@@ -60,7 +60,15 @@ CASES = [
     ("Franklin Roosevelt", "Franklin Delano Roosevelt", "", "", "BALANCED", True,
      "2 of 3 name tokens -> majority coverage"),
     ("States", "United States", "", "", "BALANCED", False, "bare fragment"),
-    ("States", "United States", "", "", "GENEROUS", True, "key word allowed in GENEROUS"),
+    ("States", "United States", "", "", "GENEROUS", True, "distinctive last word in GENEROUS"),
+    ("Everest", "Mount Everest", "", "", "GENEROUS", True, "surname-style last word"),
+    ("Mount", "Mount Everest", "", "", "GENEROUS", False, "generic modifier is not enough"),
+    ("The", "The Himalayas", "", "", "GENEROUS", False, "article-only never matches"),
+    ("Himalayas", "The Himalayas", "", "", "GENEROUS", True, "key word (article is filler)"),
+
+    # --- GENEROUS must NOT loosen short-word typo tolerance ---
+    ("cot", "cat", "", "", "GENEROUS", False, "one-letter-off short word stays wrong"),
+    ("mark", "Mars", "", "", "GENEROUS", False, "short typo stays wrong"),
 
     # --- wrong answers stay wrong ---
     ("Paris", "London", "", "", "GENEROUS", False, "unrelated"),
