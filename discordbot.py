@@ -415,7 +415,7 @@ async def send_question_queen_submit_ad():
 # {base_url} is substituted with companion_web.get_base_url() at post time, so
 # the same text is correct whether this deploy is staging or prod.
 okra_lab_announcement_enabled = True
-okra_lab_announcement_text = "🎯 **Smarter answer grading has arrived.**\nTypos, word order, nicknames, and near-misses still count — but if your whole strategy was typing the first 4 letters and hoping nobody noticed... that trick's officially retired. 😏\n\n*Full answers get full credit. Fragments get side-eye.*\n"
+okra_lab_announcement_text = "🎯 **Smarter answer grading has arrived.**\nTypos, word order, and nicknames still count — but the classic move of tossing out the first 4 letters and calling it a day? Retired. 😏\n\n*Full answers get full credit. Fragments get side-eye.*\n"
 okra_lab_announcement_show_new_badge = True
 
 
