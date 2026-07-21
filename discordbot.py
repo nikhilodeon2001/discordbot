@@ -15236,12 +15236,16 @@ async def write_leaderboard_to_s3():
             "longest_round_win_streaks": await _query_leaderboard_streaks("longest_round_streaks_discord"),
         }
 
+        # Staging writes to its own key prefix so test rounds never clobber the live
+        # website's data -- prod's keys are unchanged, matching what the site already fetches.
+        key_prefix = "static/staging/" if prod_or_stage == "stage" else "static/"
+
         session = aioboto3.Session()
         async with session.client("s3") as s3:
             for key, data in [
-                ("static/leaderboard.json", leaderboard),
-                ("static/alltime.json", alltime),
-                ("static/sovereigns.json", sovereigns),
+                (f"{key_prefix}leaderboard.json", leaderboard),
+                (f"{key_prefix}alltime.json", alltime),
+                (f"{key_prefix}sovereigns.json", sovereigns),
             ]:
                 await s3.put_object(
                     Bucket="triviabotwebsite",
@@ -15258,12 +15262,14 @@ async def write_leaderboard_to_s3():
         traceback.print_exc()
 
 
-async def build_classic_leaderboard_image():
-    """Build the combined classic-trivia leaderboard image -- mirrors triviasphere.com's
-    /leaderboard (24h/7d + streaks) and /alltime pages, plus the Hall of Sovereigns, as one
-    image in the same style as the Simply Trivia leaderboard. Runs its own independent Mongo
-    reads rather than sharing write_leaderboard_to_s3's, so a failure in one posting path
-    (S3/website vs Discord) can't take down the other."""
+async def build_classic_leaderboard_images():
+    """Build the classic-trivia leaderboard images -- mirrors triviasphere.com's /leaderboard
+    (24h/7d + streaks) and /alltime pages, plus the Hall of Sovereigns, in the same style as the
+    Simply Trivia leaderboard. Split into 3 separate images (Answers, Streaks, Sovereigns)
+    rather than one tall stack -- each renders small in Discord's inline preview otherwise.
+    Runs its own independent Mongo reads rather than sharing write_leaderboard_to_s3's, so a
+    failure in one posting path (S3/website vs Discord) can't take down the other. Returns a
+    list of (image_bytes, filename) for post_leaderboard_images()."""
     now = time.time()
     last_24h = now - 86400
     last_7d = now - 604800
@@ -15338,17 +15344,20 @@ async def build_classic_leaderboard_image():
         value_reserve_width=130,  # dates ("July 21, 2026") are much wider than the default's small-int assumption
     )
 
-    combined = stack_images_vertically([fastest_row, wins_row, ans_streaks_row, rnd_streaks_row, sovereigns_row])
-    return combined.getvalue()
+    return [
+        (stack_images_vertically([fastest_row, wins_row]).getvalue(), "classic_answers_leaderboard.png"),
+        (stack_images_vertically([ans_streaks_row, rnd_streaks_row]).getvalue(), "classic_streaks_leaderboard.png"),
+        (sovereigns_row.getvalue(), "classic_sovereigns_leaderboard.png"),
+    ]
 
 
 async def post_classic_leaderboard_to_discord():
     """Fire-and-forget companion to write_leaderboard_to_s3(): posts the same classic-trivia
-    stats as a Discord image into the Simply Streaks channel (unused since Simply Trivia's own
+    stats as Discord images into the Simply Streaks channel (unused since Simply Trivia's own
     leaderboards were consolidated into a single image elsewhere), refreshed every round."""
     try:
-        image_bytes = await build_classic_leaderboard_image()
-        await post_leaderboard_image(bot, SIMPLY_STREAKS_CHANNEL_ID, image_bytes, "classic_trivia_leaderboards.png")
+        images = await build_classic_leaderboard_images()
+        await post_leaderboard_images(bot, SIMPLY_STREAKS_CHANNEL_ID, images)
     except Exception as e:
         print(f"❌ Error posting classic leaderboard to Discord: {e}")
         import traceback
@@ -18325,43 +18334,54 @@ def generate_leaderboard_row(panels, title_icon_emoji, title_text, accent_color,
     return image_buffer
 
 
-async def post_leaderboard_image(bot, channel_id, image_bytes, filename):
-    """Post/refresh a leaderboard image in a channel: reuse (edit) our own most recent message
-    there, and delete any other stray bot messages (e.g. leftovers from a prior leaderboard
-    format) instead of letting them pile up. image_bytes is raw PNG bytes, not a BytesIO --
-    each edit/send needs its own fresh stream since a stream is consumed after one upload."""
+async def post_leaderboard_images(bot, channel_id, images):
+    """Post/refresh one or more named leaderboard images in a channel, each its own message.
+    Reuses (edits) an existing bot message whose current attachment filename matches, so several
+    independent image "slots" can coexist in the same channel without one slot's update deleting
+    the others. Any bot message that doesn't match a current filename (e.g. a leftover from a
+    prior format or slot) gets cleaned up. images: list of (image_bytes, filename); image_bytes
+    is raw PNG bytes, not a BytesIO -- each edit/send needs its own fresh stream since a stream
+    is consumed after one upload."""
     channel = bot.get_channel(channel_id)
     if not channel:
         print(f"⚠️ Leaderboard channel {channel_id} not found")
         return
 
     try:
-        leaderboard_message = None
-        stale_messages = []
+        bot_messages = []
         async for msg in channel.history(limit=20):
-            if msg.author != bot.user:
-                continue
-            if leaderboard_message is None:
-                leaderboard_message = msg
+            if msg.author == bot.user:
+                bot_messages.append(msg)
+
+        used_message_ids = set()
+        for image_bytes, filename in images:
+            match = next(
+                (m for m in bot_messages
+                 if m.id not in used_message_ids and any(a.filename == filename for a in m.attachments)),
+                None,
+            )
+            files = [discord.File(io.BytesIO(image_bytes), filename=filename)]
+            if match:
+                # embed=None strips any leftover embed content (from an older embed-based
+                # format) off the message we're reusing, not just its attachments.
+                await match.edit(embed=None, attachments=files)
+                used_message_ids.add(match.id)
             else:
-                stale_messages.append(msg)
+                await channel.send(files=files)
 
-        files = [discord.File(io.BytesIO(image_bytes), filename=filename)]
-
-        if leaderboard_message:
-            # embed=None strips any leftover embed content (from an older embed-based format)
-            # off the message we're reusing, not just its attachments.
-            await leaderboard_message.edit(embed=None, attachments=files)
-        else:
-            await channel.send(files=files)
-
-        for msg in stale_messages:
-            try:
-                await msg.delete()
-            except Exception as e:
-                print(f"❌ Failed to delete stale leaderboard message: {e}")
+        for msg in bot_messages:
+            if msg.id not in used_message_ids:
+                try:
+                    await msg.delete()
+                except Exception as e:
+                    print(f"❌ Failed to delete stale leaderboard message: {e}")
     except Exception as e:
-        print(f"❌ Failed to post leaderboard image in channel {channel_id}: {e}")
+        print(f"❌ Failed to post leaderboard images in channel {channel_id}: {e}")
+
+
+async def post_leaderboard_image(bot, channel_id, image_bytes, filename):
+    """Single-image convenience wrapper around post_leaderboard_images."""
+    await post_leaderboard_images(bot, channel_id, [(image_bytes, filename)])
 
 
 def generate_crossword_image(answer, prefill=0.5):
