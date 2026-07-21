@@ -20002,7 +20002,7 @@ def fuzzy_match(user_answer, correct_answer, category, url, _skip_alias_check=Fa
     )
 
 
-async def check_correct_responses_delete(question_ask_time, trivia_answer_list, question_number, collected_responses, trivia_category, trivia_url, trivia_db=None, trivia_id=None, show_standings_after=False):
+async def check_correct_responses_delete(question_ask_time, trivia_answer_list, question_number, collected_responses, trivia_category, trivia_url, trivia_db=None, trivia_id=None, show_standings_after=False, mc_choice_tokens=None):
     """Check and respond to users who answered the trivia question correctly."""
     global max_retries, delay_between_retries, current_longest_answer_streak
     global question_responders, round_responders, discount_percentage
@@ -20076,19 +20076,30 @@ async def check_correct_responses_delete(question_ask_time, trivia_answer_list, 
             if sender_id in user_first_response:
                 continue  # Skip if we've already recorded a numeric response for this user
         
-            if (
-                not message_content.startswith("#") and (
-                    is_number(message_content) or  # Rule 1: message_content is a number
-                    message_content[0].isdigit() or  # Rule 2: first character is a number
-                    message_content.lower() in {"a", "b", "c", "d", "t", "f", "true", "false"} or  # Rule 3: exact match
-                    message_content[0].lower() in {"-", "x", "y", "z", "("} or # Rule 4: first character match
-                    len(message_content) == 1 or
-                    sniper_mode == True
+            if message_content.startswith("#"):
+                accepted = False
+            elif sniper_mode:
+                accepted = True
+            elif mc_choice_tokens is not None:
+                # Multiple choice / True-False: accept only this question's actual
+                # choices (letters or full choice text), not a fixed a/b/c/d/true/false
+                # whitelist that would also swallow "true"/"b" on a math question.
+                accepted = answer_matching.normalize_text(message_content) in mc_choice_tokens
+            elif trivia_url in _MATH_URLS:
+                # Math single-answer question: shape depends on the specific type
+                # (e.g. "y/z" for trig, "3 -2" for zeroes, "2x+3" for derivative).
+                accepted = _math_guess_ok(trivia_url, message_content)
+            else:
+                # Generic single-answer question (number or single character).
+                accepted = (
+                    is_number(message_content) or
+                    message_content[0].isdigit() or
+                    len(message_content) == 1
                 )
-            ):
+            if accepted:
                 user_first_response[sender_id] = message_content
             else:
-                continue  # Skip non-numeric responses for single numeric questions
+                continue  # Skip responses that don't fit this question's answer shape
         
         # Log user submission (MongoDB operation)
         #log_user_submission(display_name)
@@ -22168,6 +22179,7 @@ async def start_trivia():
                     question_ask_time, solution_list, question_number, collected_responses,
                     trivia_category, trivia_url, trivia_db=trivia_db, trivia_id=trivia_id,
                     show_standings_after=show_standings_after,
+                    mc_choice_tokens=_mc_guess_tokens(trivia_answer_list, trivia_url),
                 )
                 try:
                     companion_web.publish_state(build_companion_reveal_state(solution_list), game="main")
@@ -23085,6 +23097,57 @@ IMPORTANT:
 
 def _is_multiple_choice_url(url):
     return "multiple choice" in (url or "")
+
+
+# First character(s) a valid typed answer can start with, per math question url.
+# Used by the one-guess gate in check_correct_responses_delete so a math question
+# only accepts guesses shaped like its own answer type (e.g. "true"/"b" no longer
+# gets treated as a valid answer to a numeric question). Each set is derived from
+# that type's actual generator/checker so no real answer form gets dropped.
+_MATH_FIRST_CHARS = {
+    "mean":           "0123456789-.",   # a number
+    "median":         "0123456789-.",   # a number (may be a .5 average)
+    "base":           "0123456789",     # decimal equivalent of a base-2/3/4 number
+    "algebra":        "0123456789-./",  # a number or fraction (solve-for-x)
+    "zeroes":         "0123456789-",    # "3 -2" (space-separated ints)
+    "zeroes sum":     "0123456789-.",   # a number
+    "zeroes product": "0123456789-.",   # a number
+    "derivative":     "0123456789xX-+", # "2x+3", "x^2", "-4x", "5"
+    "factors":        "0123456789xX(-", # "(x+1)(x-2)", "2(x+3)(x-1)"
+}
+_MATH_URLS = set(_MATH_FIRST_CHARS) | {"trig"}
+
+
+def _math_guess_ok(url, content):
+    """Does `content` look like a valid answer shape for this math question type?"""
+    c = content.strip()
+    if not c:
+        return False
+    if url == "trig":
+        return c[0].lower() in "xyz" or "/" in c  # side ratios: "y/z", "x/z", ...
+    allowed = _MATH_FIRST_CHARS.get(url)
+    return bool(allowed) and c[0] in allowed
+
+
+def _mc_guess_tokens(answer_list, url):
+    """Normalized set of every acceptable typed guess for a multiple-choice /
+    True-False question (each choice's letter and full text), for the one-guess
+    gate. Returns None for non-MC questions."""
+    if not _is_multiple_choice_url(url) or not answer_list:
+        return None
+    if answer_list[0].strip().lower() in {"true", "false"}:
+        return {"true", "false", "t", "f"}
+    tokens = set()
+    for choice in answer_list:  # correct answer + distractors
+        match = re.match(r'^\s*([A-Za-z])[.\)]\s*(.*)$', choice)
+        letter, body = (match.group(1), match.group(2)) if match else ("", choice)
+        if letter:
+            tokens.add(letter.lower())
+        text = answer_matching.normalize_text(body)
+        if text:
+            tokens.add(text)
+            tokens.add(text.replace(" ", ""))
+    return tokens
 
 
 # ---------------------------------------------------------------------------

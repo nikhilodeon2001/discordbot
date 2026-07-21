@@ -265,6 +265,15 @@ def _zeroes_checker(user_answer, correct_answer):
     return set(user_numbers) == set(correct_numbers)
 
 
+def _choice_text(normalized_choice):
+    """Strip a leading single-letter label from a normalized MC choice:
+    "a false" -> "false", "b mercury" -> "mercury", "false" -> "false"."""
+    parts = normalized_choice.split(None, 1)
+    if len(parts) == 2 and len(parts[0]) == 1:
+        return parts[1]
+    return normalized_choice
+
+
 # ---------------------------------------------------------------------------
 # Leniency dial
 # ---------------------------------------------------------------------------
@@ -553,7 +562,16 @@ def match_answer(user_answer, correct_answer, category="", url="",
         return leading is not None and leading == target
     if "multiple choice" in (url or ""):
         nu, nc = normalize_text(user_answer), normalize_text(correct_answer)
-        return bool(nu) and bool(nc) and nu[0] == nc[0]
+        if not nu or not nc:
+            return False
+        if nu[0] == nc[0]:
+            return True
+        # Accept the choice's TEXT too ("false" for "A. False", "mercury" for
+        # "B. Mercury"), not just the letter. Exact match only -- no fuzzy or
+        # partial credit, since sentence-length choices overlap heavily and a
+        # partial guess could match the wrong option.
+        text = _choice_text(nc)
+        return nu == text or nu.replace(" ", "") == text.replace(" ", "")
 
     # --- free text ---
     return _free_text_match(user_answer, correct_answer, url, config)

@@ -98,10 +98,20 @@ CASES = [
     ("Non-reactive", "It's unreactive", "", "", "STRICT", False, "strict rejects paraphrase"),
     ("Einstein", "Albert Einstein", "", "", "STRICT", False, "strict rejects partial"),
 
-    # --- structured: multiple choice (compare first letter of the choice) ---
+    # --- structured: multiple choice (letter OR exact choice text) ---
     ("B", "B. Mercury", "", "multiple choice", "BALANCED", True, "MC letter"),
     ("b", "B. Mercury", "", "multiple choice opentdb", "BALANCED", True, "MC letter lower"),
     ("A", "B. Mercury", "", "multiple choice", "BALANCED", False, "MC wrong letter"),
+    ("Mercury", "B. Mercury", "", "multiple choice", "BALANCED", True, "MC choice text"),
+    ("mercury", "B. Mercury", "", "multiple choice", "BALANCED", True, "MC choice text lower"),
+    ("Venus", "B. Mercury", "", "multiple choice", "BALANCED", False, "MC wrong choice text"),
+    ("false", "A. False", "", "multiple choice", "BALANCED", True, "MC text for lettered True/False"),
+    ("true", "A. False", "", "multiple choice", "BALANCED", False, "MC wrong text for lettered True/False"),
+    ("False", "False", "", "multiple choice", "BALANCED", True, "MC text for bare True/False answer"),
+    ("A", "A. The earth orbits the sun.", "", "multiple choice", "BALANCED", True,
+     "MC letter still works when choice is a full sentence"),
+    ("earth sun", "A. The earth orbits the sun.", "", "multiple choice", "BALANCED", False,
+     "MC sentence choice: fragment must NOT match (exact-only guard)"),
 
     # --- structured: numeric ---
     ("42", "42", "", "", "BALANCED", True, "number exact"),
