@@ -15250,6 +15250,103 @@ async def write_leaderboard_to_s3():
         traceback.print_exc()
 
 
+async def build_classic_leaderboard_image():
+    """Build the combined classic-trivia leaderboard image -- mirrors triviasphere.com's
+    /leaderboard (24h/7d + streaks) and /alltime pages, plus the Hall of Sovereigns, as one
+    image in the same style as the Simply Trivia leaderboard. Runs its own independent Mongo
+    reads rather than sharing write_leaderboard_to_s3's, so a failure in one posting path
+    (S3/website vs Discord) can't take down the other."""
+    now = time.time()
+    last_24h = now - 86400
+    last_7d = now - 604800
+
+    def to_count_entries(rows):
+        return [(r["user"], r["count"]) for r in rows]
+
+    def to_streak_entries(rows):
+        return [(r["user"], r["streak"]) for r in rows]
+
+    fastest_row = generate_leaderboard_row(
+        panels=[
+            {"label": "24 HOURS", "entries": to_count_entries(await _query_leaderboard_counts("fastest_answers_discord", last_24h))},
+            {"label": "7 DAYS", "entries": to_count_entries(await _query_leaderboard_counts("fastest_answers_discord", last_7d))},
+            {"label": "ALL TIME", "entries": to_count_entries(await _query_leaderboard_counts("fastest_answers_discord"))},
+        ],
+        title_icon_emoji="🏃",
+        title_text="Fastest Answers",
+        accent_color=(20, 109, 232),
+    )
+
+    wins_row = generate_leaderboard_row(
+        panels=[
+            {"label": "24 HOURS", "entries": to_count_entries(await _query_leaderboard_counts("round_wins_discord", last_24h))},
+            {"label": "7 DAYS", "entries": to_count_entries(await _query_leaderboard_counts("round_wins_discord", last_7d))},
+            {"label": "ALL TIME", "entries": to_count_entries(await _query_leaderboard_counts("round_wins_discord"))},
+        ],
+        title_icon_emoji="🏅",
+        title_text="Rounds Won",
+        accent_color=(20, 109, 232),
+    )
+
+    ans_streaks_row = generate_leaderboard_row(
+        panels=[
+            {"label": "7 DAYS", "entries": to_streak_entries(await _query_leaderboard_streaks("longest_answer_streaks_discord", last_7d))},
+            {"label": "ALL TIME", "entries": to_streak_entries(await _query_leaderboard_streaks("longest_answer_streaks_discord"))},
+        ],
+        title_icon_emoji="🔥",
+        title_text="Fastest Answer Streaks",
+        accent_color=(241, 196, 15),
+    )
+
+    rnd_streaks_row = generate_leaderboard_row(
+        panels=[
+            {"label": "7 DAYS", "entries": to_streak_entries(await _query_leaderboard_streaks("longest_round_streaks_discord", last_7d))},
+            {"label": "ALL TIME", "entries": to_streak_entries(await _query_leaderboard_streaks("longest_round_streaks_discord"))},
+        ],
+        title_icon_emoji="🎯",
+        title_text="Round Win Streaks",
+        accent_color=(241, 196, 15),
+    )
+
+    # Read-only -- deliberately not check_sovereignty(), which has induction side effects and
+    # is already invoked via write_leaderboard_to_s3()'s call path; a second concurrent call
+    # here would risk racing on duplicate induction.
+    sovereign_docs = await db["hall_of_sovereigns_discord"].find(
+        {}, {"_id": 0, "user": 1, "inducted_at": 1}
+    ).sort("inducted_at", 1).to_list(length=None)
+    sovereign_entries = [
+        (
+            s["user"],
+            s["inducted_at"].strftime('%B %d, %Y') if hasattr(s.get("inducted_at"), "strftime") else str(s.get("inducted_at", "")),
+        )
+        for s in sovereign_docs
+    ]
+    sovereigns_row = generate_leaderboard_row(
+        panels=[{"label": "INDUCTED (LEADS ALL 6)", "entries": sovereign_entries}],
+        title_icon_emoji="👑",
+        title_text="Hall of Sovereigns",
+        accent_color=(155, 89, 232),
+        rows_limit=25,
+        value_reserve_width=130,  # dates ("July 21, 2026") are much wider than the default's small-int assumption
+    )
+
+    combined = stack_images_vertically([fastest_row, wins_row, ans_streaks_row, rnd_streaks_row, sovereigns_row])
+    return combined.getvalue()
+
+
+async def post_classic_leaderboard_to_discord():
+    """Fire-and-forget companion to write_leaderboard_to_s3(): posts the same classic-trivia
+    stats as a Discord image into the Simply Streaks channel (unused since Simply Trivia's own
+    leaderboards were consolidated into a single image elsewhere), refreshed every round."""
+    try:
+        image_bytes = await build_classic_leaderboard_image()
+        await post_leaderboard_image(bot, SIMPLY_STREAKS_CHANNEL_ID, image_bytes, "classic_trivia_leaderboards.png")
+    except Exception as e:
+        print(f"❌ Error posting classic leaderboard to Discord: {e}")
+        import traceback
+        traceback.print_exc()
+
+
 async def upload_okraverse_to_s3(buffer):
     try:
         bucket_name = 'triviabotwebsite'
@@ -18102,15 +18199,18 @@ def generate_scoreboard_image(rows, title_outer_emoji="🏔️", title_inner_emo
     return image_buffer
 
 
-def generate_leaderboard_triptych(panels, title_icon_emoji, title_text, accent_color, rows_limit=10):
-    """Render three ranked leaderboard panels (e.g. All-Time / Past 24h / Past 7d) side by side
-    as one PNG, for Simply Trivia's combined leaderboard posts. Reuses the same font/emoji/
-    name-atom machinery as generate_scoreboard_image so medals and Unicode nicknames render the
-    same way across both image types.
+def generate_leaderboard_row(panels, title_icon_emoji, title_text, accent_color, rows_limit=10, value_reserve_width=60):
+    """Render one or more ranked leaderboard panels (e.g. All-Time / Past 24h / Past 7d) side by
+    side as one PNG row, for combined leaderboard posts (Simply Trivia, classic-trivia stats).
+    Reuses the same font/emoji/name-atom machinery as generate_scoreboard_image so medals and
+    Unicode nicknames render the same way across both image types.
 
-    panels: list of exactly 3 dicts {"label": str, "entries": [(name, value_str), ...]}.
+    panels: list of 1+ dicts {"label": str, "entries": [(name, value_str), ...]}.
     accent_color: (r, g, b) used for the panel sub-header labels.
     rows_limit: max rows drawn per panel (extra entries are ignored).
+    value_reserve_width: horizontal space reserved for the right-aligned value column -- the
+    default fits small integer counts; wider values (e.g. dates) need a bigger reserve so they
+    don't run into the name column.
     """
     background_color = (32, 34, 37)  # Discord dark-theme neutral
     text_color = (255, 255, 255)
@@ -18125,7 +18225,6 @@ def generate_leaderboard_triptych(panels, title_icon_emoji, title_text, accent_c
     rank_icon_size = 18
     label_height = 28
     title_height = 40
-    value_reserve_width = 60  # leader values are small integers, a fixed reserve avoids per-row measuring
 
     font = get_font("DejaVuSans.ttf", font_size)
     label_font = get_font("DejaVuSans-Bold.ttf", 15)
@@ -18152,7 +18251,7 @@ def generate_leaderboard_triptych(panels, title_icon_emoji, title_text, accent_c
     trimmed_panels = [{"label": p["label"], "entries": p["entries"][:rows_limit]} for p in panels]
     max_rows = max((len(p["entries"]) for p in trimmed_panels), default=0)
     panel_body_height = max(max_rows, 1) * row_height + top_padding
-    img_width = side_margin * 2 + panel_width * 3 + panel_gap * 2
+    img_width = side_margin * 2 + panel_width * len(trimmed_panels) + panel_gap * (len(trimmed_panels) - 1)
     img_height = title_height + label_height + panel_body_height + top_padding
 
     img = Image.new("RGB", (img_width, img_height), color=background_color)
@@ -18216,6 +18315,45 @@ def generate_leaderboard_triptych(panels, title_icon_emoji, title_text, accent_c
     img.save(image_buffer, format="PNG")
     image_buffer.seek(0)
     return image_buffer
+
+
+async def post_leaderboard_image(bot, channel_id, image_bytes, filename):
+    """Post/refresh a leaderboard image in a channel: reuse (edit) our own most recent message
+    there, and delete any other stray bot messages (e.g. leftovers from a prior leaderboard
+    format) instead of letting them pile up. image_bytes is raw PNG bytes, not a BytesIO --
+    each edit/send needs its own fresh stream since a stream is consumed after one upload."""
+    channel = bot.get_channel(channel_id)
+    if not channel:
+        print(f"⚠️ Leaderboard channel {channel_id} not found")
+        return
+
+    try:
+        leaderboard_message = None
+        stale_messages = []
+        async for msg in channel.history(limit=20):
+            if msg.author != bot.user:
+                continue
+            if leaderboard_message is None:
+                leaderboard_message = msg
+            else:
+                stale_messages.append(msg)
+
+        files = [discord.File(io.BytesIO(image_bytes), filename=filename)]
+
+        if leaderboard_message:
+            # embed=None strips any leftover embed content (from an older embed-based format)
+            # off the message we're reusing, not just its attachments.
+            await leaderboard_message.edit(embed=None, attachments=files)
+        else:
+            await channel.send(files=files)
+
+        for msg in stale_messages:
+            try:
+                await msg.delete()
+            except Exception as e:
+                print(f"❌ Failed to delete stale leaderboard message: {e}")
+    except Exception as e:
+        print(f"❌ Failed to post leaderboard image in channel {channel_id}: {e}")
 
 
 def generate_crossword_image(answer, prefill=0.5):
@@ -22384,6 +22522,7 @@ async def start_trivia():
             await clear_round_options()
             winner_coffees, mini_game_result = await update_round_streaks(round_winner, round_winner_id, roast_task)
             asyncio.create_task(write_leaderboard_to_s3())
+            asyncio.create_task(post_classic_leaderboard_to_discord())
 
             round_count += 1
 
