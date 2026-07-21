@@ -11637,6 +11637,26 @@ async def combine_images_horizontally(image_urls, max_height=400):
         print(f"Error combining images horizontally: {e}")
         return None
 
+
+def stack_images_vertically(image_buffers, gap=20, background_color=(32, 34, 37)):
+    """Stack PNG image buffers top to bottom into a single image. Used to merge multiple
+    generated panels (e.g. two leaderboard triptychs) into one Discord attachment -- sending
+    more than one attachment on a message makes Discord auto-tile them into a cropped gallery
+    grid instead of showing each at full width, which mangles wide multi-column images."""
+    images = [Image.open(buf).convert("RGB") for buf in image_buffers]
+    width = max(img.width for img in images)
+    height = sum(img.height for img in images) + gap * (len(images) - 1)
+    canvas = Image.new("RGB", (width, height), color=background_color)
+    y = 0
+    for img in images:
+        canvas.paste(img, ((width - img.width) // 2, y))
+        y += img.height + gap
+    image_buffer = io.BytesIO()
+    canvas.save(image_buffer, format="PNG")
+    image_buffer.seek(0)
+    return image_buffer
+
+
 async def generate_estimation_puzzle_unique(target_count, target_shape, target_color, available_combinations):
     """
     Generate an image with unique shape/color combinations for Discord
