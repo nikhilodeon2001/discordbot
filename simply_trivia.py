@@ -1319,17 +1319,33 @@ async def update_leaderboards(bot, db):
         channel = bot.get_channel(SIMPLY_ANSWERS_CHANNEL_ID)
         if channel:
             try:
-                # Get last message in channel
-                last_message = None
-                async for msg in channel.history(limit=1):
-                    last_message = msg
+                # Find our own most recent leaderboard message, and flag any other bot
+                # messages in the channel (e.g. leftover embeds from the old per-time-window
+                # format) as stale so they get cleaned up instead of sitting there forever.
+                leaderboard_message = None
+                stale_messages = []
+                async for msg in channel.history(limit=20):
+                    if msg.author != bot.user:
+                        continue
+                    if leaderboard_message is None:
+                        leaderboard_message = msg
+                    else:
+                        stale_messages.append(msg)
 
                 files = [discord.File(combined_image, filename="simply_trivia_leaderboards.png")]
 
-                if last_message and last_message.author == bot.user:
-                    await last_message.edit(attachments=files)
+                if leaderboard_message:
+                    # embed=None strips any leftover embed content (from the old embed-based
+                    # format) off the message we're reusing, not just its attachments.
+                    await leaderboard_message.edit(embed=None, attachments=files)
                 else:
                     await channel.send(files=files)
+
+                for msg in stale_messages:
+                    try:
+                        await msg.delete()
+                    except Exception as e:
+                        print(f"❌ Failed to delete stale leaderboard message: {e}")
             except Exception as e:
                 print(f"❌ Failed to update leaderboard: {e}")
         else:
