@@ -1314,7 +1314,7 @@ async def update_leaderboards(bot, db):
 
         # Stack both triptychs into one image -- a message with 2+ attachments gets
         # auto-tiled into a cropped gallery grid by Discord, which mangles wide images.
-        combined_image = stack_images_vertically([streaks_image, answers_image])
+        combined_image = stack_images_vertically([answers_image, streaks_image])
 
         channel = bot.get_channel(SIMPLY_ANSWERS_CHANNEL_ID)
         if channel:
