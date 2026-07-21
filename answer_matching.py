@@ -330,9 +330,11 @@ GENEROUS = MatchConfig(
     # accepted by the position-aware surname rule below instead.
     subset_coverage=0.6,
     allow_surname_match=True,
-    # "any key word" (accepting generic modifiers like "Mount" for "Mount
-    # Everest", or a first name alone) is left off; flip it on to go looser.
-    allow_any_key_word=False,
+    # Accept any distinctive single name token, first or last ("Strom" or
+    # "Thurmond" for "Strom Thurmond", "Albert" or "Einstein" for "Albert
+    # Einstein"). Generic type nouns (GENERIC_HEAD_WORDS: River, Mount, City...)
+    # are still excluded, so "Mount" never counts for "Mount Everest".
+    allow_any_key_word=True,
 )
 
 # The adjustable default for normal (non-Poindexter) play. Point this at a
@@ -495,7 +497,8 @@ def _free_text_match(user_answer, correct_answer, url, config):
             return True
     if config.allow_any_key_word and len(user_sig) == 1:
         uw = user_sig[0]
-        if any(len(cw) >= config.min_key_word_len and _word_match(uw, cw, config)
+        if any(len(cw) >= config.min_key_word_len and cw not in GENERIC_HEAD_WORDS
+               and _word_match(uw, cw, config)
                for cw in correct_sig):
             return True
 
