@@ -15128,6 +15128,10 @@ async def _query_leaderboard_counts(collection, start_time=None, limit=10):
     pipeline = []
     if start_time is not None:
         pipeline.append({"$match": {"timestamp": {"$gte": start_time}}})
+    # Excludes a handful of pre-schema docs (from initial bot testing) that used an old "data"
+    # field instead of user/user_id -- without this they all group together under _id: null
+    # and surface as one bogus nameless leaderboard entry.
+    pipeline.append({"$match": {"user_id": {"$exists": True, "$ne": None}}})
     pipeline += [
         {"$group": {"_id": "$user_id", "count": {"$sum": 1}, "user": {"$first": "$user"}}},
         {"$sort": {"count": -1}},
@@ -15141,7 +15145,11 @@ async def _query_leaderboard_counts(collection, start_time=None, limit=10):
 async def _query_leaderboard_streaks(collection, start_time=None, limit=10):
     """Fetch top streaks from a Discord streak collection."""
     pacific = pytz.timezone('America/Los_Angeles')
-    query = {"timestamp": {"$gte": start_time}} if start_time is not None else {}
+    # "user": exists/not-null excludes the same pre-schema docs _query_leaderboard_counts guards
+    # against, in case one ever shows up in a streaks collection too.
+    query = {"user": {"$exists": True, "$ne": None}}
+    if start_time is not None:
+        query["timestamp"] = {"$gte": start_time}
     cursor = db[collection].find(
         query, {"_id": 0, "user": 1, "streak": 1, "timestamp": 1}
     ).sort("streak", -1).limit(limit)
@@ -15261,10 +15269,10 @@ async def build_classic_leaderboard_image():
     last_7d = now - 604800
 
     def to_count_entries(rows):
-        return [(r["user"], r["count"]) for r in rows]
+        return [(r.get("user") or "Unknown", r["count"]) for r in rows]
 
     def to_streak_entries(rows):
-        return [(r["user"], r["streak"]) for r in rows]
+        return [(r.get("user") or "Unknown", r["streak"]) for r in rows]
 
     fastest_row = generate_leaderboard_row(
         panels=[
@@ -15316,7 +15324,7 @@ async def build_classic_leaderboard_image():
     ).sort("inducted_at", 1).to_list(length=None)
     sovereign_entries = [
         (
-            s["user"],
+            s.get("user") or "Unknown",
             s["inducted_at"].strftime('%B %d, %Y') if hasattr(s.get("inducted_at"), "strftime") else str(s.get("inducted_at", "")),
         )
         for s in sovereign_docs
