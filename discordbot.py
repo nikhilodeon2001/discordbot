@@ -22197,8 +22197,8 @@ async def start_trivia():
                         if is_letter_mc and choices:
                             clicks = {}
                             for r in collected_responses:
-                                ltr = r.get("message_content", "").strip().upper()
-                                if len(ltr) == 1 and ltr.isalpha():
+                                ltr = _mc_letter_for_guess(trivia_answer_list, r.get("message_content", ""))
+                                if ltr:
                                     clicks.setdefault(ltr, []).append(r.get("display_name", "?"))
                             if current_answer_message.embeds:
                                 embed = current_answer_message.embeds[0]
@@ -23129,6 +23129,16 @@ def _math_guess_ok(url, content):
     return bool(allowed) and c[0] in allowed
 
 
+def _iter_mc_choices(answer_list):
+    """Yield (letter, normalized_text) for each MC choice string like "B. Mercury"
+    (correct answer + distractors). letter is "" if the choice has no leading
+    single-letter label."""
+    for choice in answer_list:
+        match = re.match(r'^\s*([A-Za-z])[.\)]\s*(.*)$', choice)
+        letter, body = (match.group(1), match.group(2)) if match else ("", choice)
+        yield letter.lower(), answer_matching.normalize_text(body)
+
+
 def _mc_guess_tokens(answer_list, url):
     """Normalized set of every acceptable typed guess for a multiple-choice /
     True-False question (each choice's letter and full text), for the one-guess
@@ -23138,16 +23148,30 @@ def _mc_guess_tokens(answer_list, url):
     if answer_list[0].strip().lower() in {"true", "false"}:
         return {"true", "false", "t", "f"}
     tokens = set()
-    for choice in answer_list:  # correct answer + distractors
-        match = re.match(r'^\s*([A-Za-z])[.\)]\s*(.*)$', choice)
-        letter, body = (match.group(1), match.group(2)) if match else ("", choice)
+    for letter, text in _iter_mc_choices(answer_list):
         if letter:
-            tokens.add(letter.lower())
-        text = answer_matching.normalize_text(body)
+            tokens.add(letter)
         if text:
             tokens.add(text)
             tokens.add(text.replace(" ", ""))
     return tokens
+
+
+def _mc_letter_for_guess(answer_list, message_content):
+    """Which choice letter (uppercase) a typed/clicked guess corresponds to, for
+    the post-reveal "who picked what" display tagging. None if it doesn't match
+    any choice (e.g. off-topic chatter) -- exact match only, same as grading, so
+    a partial guess is never tagged to a choice it wasn't credited for."""
+    content = message_content.strip()
+    if len(content) == 1 and content.isalpha():
+        return content.upper()
+    normalized = answer_matching.normalize_text(content)
+    if not normalized:
+        return None
+    for letter, text in _iter_mc_choices(answer_list):
+        if letter and text and normalized in (text, text.replace(" ", "")):
+            return letter.upper()
+    return None
 
 
 # ---------------------------------------------------------------------------
