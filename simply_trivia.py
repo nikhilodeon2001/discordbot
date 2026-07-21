@@ -14,6 +14,7 @@ from discordbot import update_audit_question, generate_scrambled_image, scramble
 
 # Configuration
 LEADERBOARD_UPDATE_FREQUENCY = 5  # Update leaderboards every N questions
+LEADERBOARD_IMAGE_ROWS = 10  # Rows shown per panel in the composite leaderboard images
 QUESTION_DELAY_SECONDS = 5  # Delay between questions in seconds
 
 # Storage for active game state
@@ -1264,14 +1265,14 @@ def create_answers_7d_embed(past_7d):
 
 async def update_leaderboards(bot, db):
     """
-    Update both leaderboards (streaks and answers) in their respective channels
-    Posts 3 separate messages per channel (ALL TIME, PAST 24H, PAST 7D)
+    Update the combined leaderboard post (streaks image + answers image, as two attachments
+    on a single message) in the answers channel.
 
     Args:
         bot: Discord bot instance
         db: MongoDB database instance
     """
-    from discordbot import SIMPLY_STREAKS_CHANNEL_ID, SIMPLY_ANSWERS_CHANNEL_ID
+    from discordbot import SIMPLY_ANSWERS_CHANNEL_ID, generate_leaderboard_triptych
 
     try:
         # Fetch all data for streaks
@@ -1284,67 +1285,52 @@ async def update_leaderboards(bot, db):
         answers_24h = await get_top_users_24h(db, limit=25)
         answers_7d = await get_top_users_7d(db, limit=25)
 
-        # Create embeds for streaks
-        streaks_embeds = [
-            create_streaks_alltime_embed(streaks_all_time),
-            create_streaks_24h_embed(streaks_24h),
-            create_streaks_7d_embed(streaks_7d)
-        ]
+        def to_entries(rows, value_key):
+            return [(row.get("user_name", "Unknown"), row.get(value_key, 0)) for row in rows]
 
-        # Create embeds for answers
-        answers_embeds = [
-            create_answers_alltime_embed(answers_all_time),
-            create_answers_24h_embed(answers_24h),
-            create_answers_7d_embed(answers_7d)
-        ]
+        streaks_image = generate_leaderboard_triptych(
+            panels=[
+                {"label": "ALL TIME", "entries": to_entries(streaks_all_time, "streak_count")},
+                {"label": "PAST 24 HOURS", "entries": to_entries(streaks_24h, "streak_count")},
+                {"label": "PAST 7 DAYS", "entries": to_entries(streaks_7d, "streak_count")},
+            ],
+            title_icon_emoji="🏆",
+            title_text="Longest Streaks",
+            accent_color=(241, 196, 15),  # matches discord.Color.gold() used by the old embeds
+            rows_limit=LEADERBOARD_IMAGE_ROWS,
+        )
 
-        # Update streaks channel
-        streaks_channel = bot.get_channel(SIMPLY_STREAKS_CHANNEL_ID)
-        if streaks_channel:
+        answers_image = generate_leaderboard_triptych(
+            panels=[
+                {"label": "ALL TIME", "entries": to_entries(answers_all_time, "total_correct")},
+                {"label": "PAST 24 HOURS", "entries": to_entries(answers_24h, "total_correct")},
+                {"label": "PAST 7 DAYS", "entries": to_entries(answers_7d, "total_correct")},
+            ],
+            title_icon_emoji="🎯",
+            title_text="Most Correct Answers",
+            accent_color=(20, 109, 232),  # matches the old embeds' 0x146DE8 blue
+            rows_limit=LEADERBOARD_IMAGE_ROWS,
+        )
+
+        channel = bot.get_channel(SIMPLY_ANSWERS_CHANNEL_ID)
+        if channel:
             try:
-                # Get last 3 messages in channel
-                messages = []
-                async for msg in streaks_channel.history(limit=3):
-                    messages.insert(0, msg)  # Insert at beginning to reverse order
+                # Get last message in channel
+                last_message = None
+                async for msg in channel.history(limit=1):
+                    last_message = msg
 
-                # Check if all 3 messages are from bot
-                if len(messages) == 3 and all(m.author == bot.user for m in messages):
-                    # Edit existing messages in order
-                    await messages[0].edit(embed=streaks_embeds[0])
-                    await messages[1].edit(embed=streaks_embeds[1])
-                    await messages[2].edit(embed=streaks_embeds[2])
+                files = [
+                    discord.File(streaks_image, filename="streaks_leaderboard.png"),
+                    discord.File(answers_image, filename="answers_leaderboard.png"),
+                ]
+
+                if last_message and last_message.author == bot.user:
+                    await last_message.edit(attachments=files)
                 else:
-                    # Post 3 new messages in order
-                    await streaks_channel.send(embed=streaks_embeds[0])
-                    await streaks_channel.send(embed=streaks_embeds[1])
-                    await streaks_channel.send(embed=streaks_embeds[2])
+                    await channel.send(files=files)
             except Exception as e:
-                print(f"❌ Failed to update streaks leaderboard: {e}")
-        else:
-            print(f"⚠️ Streaks channel {SIMPLY_STREAKS_CHANNEL_ID} not found")
-
-        # Update answers channel
-        answers_channel = bot.get_channel(SIMPLY_ANSWERS_CHANNEL_ID)
-        if answers_channel:
-            try:
-                # Get last 3 messages in channel
-                messages = []
-                async for msg in answers_channel.history(limit=3):
-                    messages.insert(0, msg)  # Insert at beginning to reverse order
-
-                # Check if all 3 messages are from bot
-                if len(messages) == 3 and all(m.author == bot.user for m in messages):
-                    # Edit existing messages in order
-                    await messages[0].edit(embed=answers_embeds[0])
-                    await messages[1].edit(embed=answers_embeds[1])
-                    await messages[2].edit(embed=answers_embeds[2])
-                else:
-                    # Post 3 new messages in order
-                    await answers_channel.send(embed=answers_embeds[0])
-                    await answers_channel.send(embed=answers_embeds[1])
-                    await answers_channel.send(embed=answers_embeds[2])
-            except Exception as e:
-                print(f"❌ Failed to update answers leaderboard: {e}")
+                print(f"❌ Failed to update leaderboard: {e}")
         else:
             print(f"⚠️ Answers channel {SIMPLY_ANSWERS_CHANNEL_ID} not found")
 

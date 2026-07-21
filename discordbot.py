@@ -18082,6 +18082,122 @@ def generate_scoreboard_image(rows, title_outer_emoji="🏔️", title_inner_emo
     return image_buffer
 
 
+def generate_leaderboard_triptych(panels, title_icon_emoji, title_text, accent_color, rows_limit=10):
+    """Render three ranked leaderboard panels (e.g. All-Time / Past 24h / Past 7d) side by side
+    as one PNG, for Simply Trivia's combined leaderboard posts. Reuses the same font/emoji/
+    name-atom machinery as generate_scoreboard_image so medals and Unicode nicknames render the
+    same way across both image types.
+
+    panels: list of exactly 3 dicts {"label": str, "entries": [(name, value_str), ...]}.
+    accent_color: (r, g, b) used for the panel sub-header labels.
+    rows_limit: max rows drawn per panel (extra entries are ignored).
+    """
+    background_color = (32, 34, 37)  # Discord dark-theme neutral
+    text_color = (255, 255, 255)
+    muted_color = (170, 175, 180)
+    panel_width = 260
+    panel_gap = 20
+    side_margin = 16
+    row_height = 30
+    top_padding = 8
+    font_size = 15
+    name_min_font_size = 10
+    rank_icon_size = 18
+    label_height = 28
+    title_height = 40
+    value_reserve_width = 60  # leader values are small integers, a fixed reserve avoids per-row measuring
+
+    font = get_font("DejaVuSans.ttf", font_size)
+    label_font = get_font("DejaVuSans-Bold.ttf", 15)
+    title_font = get_font("DejaVuSans-Bold.ttf", 20)
+    title_icon_size = 22
+
+    rank_x_offset = 10
+    name_x_offset = 42  # wide enough for a 2-digit rank ("10.") without crowding the name
+    name_max_width = panel_width - name_x_offset - value_reserve_width
+
+    medals = ["🥇", "🥈", "🥉"]
+
+    def fit_name(name):
+        """Shrink the name's font a point at a time until it fits name_max_width -- no wrapping,
+        since leaderboard rows are a single fixed height and names here are short usernames."""
+        atoms = name_to_render_atoms(name)
+        size = font_size
+        width = atoms_line_width(atoms, size)
+        while width > name_max_width and size > name_min_font_size:
+            size -= 1
+            width = atoms_line_width(atoms, size)
+        return size, atoms
+
+    trimmed_panels = [{"label": p["label"], "entries": p["entries"][:rows_limit]} for p in panels]
+    max_rows = max((len(p["entries"]) for p in trimmed_panels), default=0)
+    panel_body_height = max(max_rows, 1) * row_height + top_padding
+    img_width = side_margin * 2 + panel_width * 3 + panel_gap * 2
+    img_height = title_height + label_height + panel_body_height + top_padding
+
+    img = Image.new("RGB", (img_width, img_height), color=background_color)
+    draw = ImageDraw.Draw(img)
+
+    # Title bar: icon + bold text, centered.
+    title_icon = render_emoji_icon(title_icon_emoji, title_icon_size)
+    title_text_bbox = draw.textbbox((0, 0), title_text, font=title_font)
+    title_text_width = title_text_bbox[2] - title_text_bbox[0]
+    title_gap = 10
+    total_title_width = title_icon_size + title_gap + title_text_width
+    tx = (img_width - total_title_width) // 2
+    ty_icon = (title_height - title_icon_size) // 2
+    ty_text = (title_height - (title_text_bbox[3] - title_text_bbox[1])) // 2 - title_text_bbox[1]
+    img.paste(title_icon, (tx, ty_icon), title_icon)
+    draw.text((tx + title_icon_size + title_gap, ty_text), title_text, fill=text_color, font=title_font)
+
+    for i, panel in enumerate(trimmed_panels):
+        panel_x = side_margin + i * (panel_width + panel_gap)
+
+        # Sub-header label, centered within the panel.
+        label_bbox = draw.textbbox((0, 0), panel["label"], font=label_font)
+        label_width = label_bbox[2] - label_bbox[0]
+        label_x = panel_x + (panel_width - label_width) // 2
+        label_y = title_height + (label_height - (label_bbox[3] - label_bbox[1])) // 2 - label_bbox[1]
+        draw.text((label_x, label_y), panel["label"], fill=accent_color, font=label_font)
+
+        rows_top = title_height + label_height + top_padding
+        if not panel["entries"]:
+            placeholder = "No data yet"
+            ph_bbox = draw.textbbox((0, 0), placeholder, font=font)
+            ph_width = ph_bbox[2] - ph_bbox[0]
+            ph_x = panel_x + (panel_width - ph_width) // 2
+            ph_y = rows_top + (panel_body_height - top_padding) // 2 - (ph_bbox[3] - ph_bbox[1]) // 2
+            draw.text((ph_x, ph_y), placeholder, fill=muted_color, font=font)
+            continue
+
+        y = rows_top
+        for rank, (name, value) in enumerate(panel["entries"], 1):
+            row_center_y = y + row_height // 2 - font_size // 2
+            icon_center_y = y + row_height // 2
+
+            if rank <= 3:
+                icon = render_emoji_icon(medals[rank - 1], rank_icon_size)
+                img.paste(icon, (panel_x + rank_x_offset, icon_center_y - rank_icon_size // 2), icon)
+            else:
+                draw.text((panel_x + rank_x_offset, row_center_y), f"{rank}.", fill=text_color, font=font)
+
+            name_size, name_atoms = fit_name(name)
+            ascent, descent = line_font_metrics(name_atoms, name_size)
+            baseline_y = y + row_height // 2 + (ascent - descent) // 2
+            draw_name_atoms(draw, img, name_atoms, panel_x + name_x_offset, baseline_y, name_size, text_color, ascent, descent)
+
+            value_width = font.getlength(str(value))
+            value_x = panel_x + panel_width - value_width
+            draw.text((value_x, row_center_y), str(value), fill=text_color, font=font)
+
+            y += row_height
+
+    image_buffer = io.BytesIO()
+    img.save(image_buffer, format="PNG")
+    image_buffer.seek(0)
+    return image_buffer
+
+
 def generate_crossword_image(answer, prefill=0.5):
     answer_length = len(answer)
     
