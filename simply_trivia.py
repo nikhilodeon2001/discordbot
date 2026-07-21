@@ -1272,7 +1272,7 @@ async def update_leaderboards(bot, db):
         bot: Discord bot instance
         db: MongoDB database instance
     """
-    from discordbot import SIMPLY_ANSWERS_CHANNEL_ID, generate_leaderboard_triptych
+    from discordbot import SIMPLY_ANSWERS_CHANNEL_ID, generate_leaderboard_triptych, stack_images_vertically
 
     try:
         # Fetch all data for streaks
@@ -1312,6 +1312,10 @@ async def update_leaderboards(bot, db):
             rows_limit=LEADERBOARD_IMAGE_ROWS,
         )
 
+        # Stack both triptychs into one image -- a message with 2+ attachments gets
+        # auto-tiled into a cropped gallery grid by Discord, which mangles wide images.
+        combined_image = stack_images_vertically([streaks_image, answers_image])
+
         channel = bot.get_channel(SIMPLY_ANSWERS_CHANNEL_ID)
         if channel:
             try:
@@ -1320,10 +1324,7 @@ async def update_leaderboards(bot, db):
                 async for msg in channel.history(limit=1):
                     last_message = msg
 
-                files = [
-                    discord.File(streaks_image, filename="streaks_leaderboard.png"),
-                    discord.File(answers_image, filename="answers_leaderboard.png"),
-                ]
+                files = [discord.File(combined_image, filename="simply_trivia_leaderboards.png")]
 
                 if last_message and last_message.author == bot.user:
                     await last_message.edit(attachments=files)
