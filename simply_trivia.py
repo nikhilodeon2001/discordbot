@@ -1272,7 +1272,7 @@ async def update_leaderboards(bot, db):
         bot: Discord bot instance
         db: MongoDB database instance
     """
-    from discordbot import SIMPLY_ANSWERS_CHANNEL_ID, generate_leaderboard_triptych, stack_images_vertically
+    from discordbot import SIMPLY_ANSWERS_CHANNEL_ID, generate_leaderboard_row, stack_images_vertically, post_leaderboard_image
 
     try:
         # Fetch all data for streaks
@@ -1288,7 +1288,7 @@ async def update_leaderboards(bot, db):
         def to_entries(rows, value_key):
             return [(row.get("user_name", "Unknown"), row.get(value_key, 0)) for row in rows]
 
-        streaks_image = generate_leaderboard_triptych(
+        streaks_image = generate_leaderboard_row(
             panels=[
                 {"label": "ALL TIME", "entries": to_entries(streaks_all_time, "streak_count")},
                 {"label": "PAST 24 HOURS", "entries": to_entries(streaks_24h, "streak_count")},
@@ -1300,7 +1300,7 @@ async def update_leaderboards(bot, db):
             rows_limit=LEADERBOARD_IMAGE_ROWS,
         )
 
-        answers_image = generate_leaderboard_triptych(
+        answers_image = generate_leaderboard_row(
             panels=[
                 {"label": "ALL TIME", "entries": to_entries(answers_all_time, "total_correct")},
                 {"label": "PAST 24 HOURS", "entries": to_entries(answers_24h, "total_correct")},
@@ -1316,40 +1316,7 @@ async def update_leaderboards(bot, db):
         # auto-tiled into a cropped gallery grid by Discord, which mangles wide images.
         combined_image = stack_images_vertically([answers_image, streaks_image])
 
-        channel = bot.get_channel(SIMPLY_ANSWERS_CHANNEL_ID)
-        if channel:
-            try:
-                # Find our own most recent leaderboard message, and flag any other bot
-                # messages in the channel (e.g. leftover embeds from the old per-time-window
-                # format) as stale so they get cleaned up instead of sitting there forever.
-                leaderboard_message = None
-                stale_messages = []
-                async for msg in channel.history(limit=20):
-                    if msg.author != bot.user:
-                        continue
-                    if leaderboard_message is None:
-                        leaderboard_message = msg
-                    else:
-                        stale_messages.append(msg)
-
-                files = [discord.File(combined_image, filename="simply_trivia_leaderboards.png")]
-
-                if leaderboard_message:
-                    # embed=None strips any leftover embed content (from the old embed-based
-                    # format) off the message we're reusing, not just its attachments.
-                    await leaderboard_message.edit(embed=None, attachments=files)
-                else:
-                    await channel.send(files=files)
-
-                for msg in stale_messages:
-                    try:
-                        await msg.delete()
-                    except Exception as e:
-                        print(f"❌ Failed to delete stale leaderboard message: {e}")
-            except Exception as e:
-                print(f"❌ Failed to update leaderboard: {e}")
-        else:
-            print(f"⚠️ Answers channel {SIMPLY_ANSWERS_CHANNEL_ID} not found")
+        await post_leaderboard_image(bot, SIMPLY_ANSWERS_CHANNEL_ID, combined_image.getvalue(), "simply_trivia_leaderboards.png")
 
     except Exception as e:
         print(f"❌ Error updating leaderboards: {e}")
