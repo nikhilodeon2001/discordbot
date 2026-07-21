@@ -15273,6 +15273,9 @@ async def build_classic_leaderboard_images():
     now = time.time()
     last_24h = now - 86400
     last_7d = now - 604800
+    # All 3 posted images render as separate Discord messages, which can't be aligned to each
+    # other -- widening the narrower rows to match the 3-panel rows' width keeps them consistent.
+    reference_width = _leaderboard_row_width(3)
 
     def to_count_entries(rows):
         return [(r.get("user") or "Unknown", r["count"]) for r in rows]
@@ -15310,6 +15313,7 @@ async def build_classic_leaderboard_images():
         title_icon_emoji="🔥",
         title_text="Fastest Answer Streaks",
         accent_color=(241, 196, 15),
+        min_width=reference_width,
     )
 
     rnd_streaks_row = generate_leaderboard_row(
@@ -15320,6 +15324,7 @@ async def build_classic_leaderboard_images():
         title_icon_emoji="🎯",
         title_text="Round Win Streaks",
         accent_color=(241, 196, 15),
+        min_width=reference_width,
     )
 
     # Read-only -- deliberately not check_sovereignty(), which has induction side effects and
@@ -15342,6 +15347,7 @@ async def build_classic_leaderboard_images():
         accent_color=(155, 89, 232),
         rows_limit=25,
         value_reserve_width=130,  # dates ("July 21, 2026") are much wider than the default's small-int assumption
+        min_width=reference_width,
     )
 
     return [
@@ -18216,7 +18222,15 @@ def generate_scoreboard_image(rows, title_outer_emoji="🏔️", title_inner_emo
     return image_buffer
 
 
-def generate_leaderboard_row(panels, title_icon_emoji, title_text, accent_color, rows_limit=10, value_reserve_width=60):
+def _leaderboard_row_width(num_panels, panel_width=260, panel_gap=20, side_margin=16):
+    """Natural pixel width of a generate_leaderboard_row image with num_panels panels -- exposed
+    so callers posting several rows with different panel counts as separate Discord messages
+    (which Discord can't align to each other) can compute a shared reference width up front and
+    pass it as min_width, instead of the images coming out staggered/mismatched widths."""
+    return side_margin * 2 + panel_width * num_panels + panel_gap * (num_panels - 1)
+
+
+def generate_leaderboard_row(panels, title_icon_emoji, title_text, accent_color, rows_limit=10, value_reserve_width=60, min_width=None):
     """Render one or more ranked leaderboard panels (e.g. All-Time / Past 24h / Past 7d) side by
     side as one PNG row, for combined leaderboard posts (Simply Trivia, classic-trivia stats).
     Reuses the same font/emoji/name-atom machinery as generate_scoreboard_image so medals and
@@ -18228,6 +18242,8 @@ def generate_leaderboard_row(panels, title_icon_emoji, title_text, accent_color,
     value_reserve_width: horizontal space reserved for the right-aligned value column -- the
     default fits small integer counts; wider values (e.g. dates) need a bigger reserve so they
     don't run into the name column.
+    min_width: if given and larger than this row's natural width, the canvas is widened to it
+    and the panels centered within the extra space (see _leaderboard_row_width).
     """
     background_color = (32, 34, 37)  # Discord dark-theme neutral
     text_color = (255, 255, 255)
@@ -18268,7 +18284,9 @@ def generate_leaderboard_row(panels, title_icon_emoji, title_text, accent_color,
     trimmed_panels = [{"label": p["label"], "entries": p["entries"][:rows_limit]} for p in panels]
     max_rows = max((len(p["entries"]) for p in trimmed_panels), default=0)
     panel_body_height = max(max_rows, 1) * row_height + top_padding
-    img_width = side_margin * 2 + panel_width * len(trimmed_panels) + panel_gap * (len(trimmed_panels) - 1)
+    natural_width = _leaderboard_row_width(len(trimmed_panels), panel_width, panel_gap, side_margin)
+    img_width = max(natural_width, min_width or 0)
+    panel_start_x = side_margin + (img_width - natural_width) // 2  # centers the panel group when min_width widens the canvas
     img_height = title_height + label_height + panel_body_height + top_padding
 
     img = Image.new("RGB", (img_width, img_height), color=background_color)
@@ -18287,7 +18305,7 @@ def generate_leaderboard_row(panels, title_icon_emoji, title_text, accent_color,
     draw.text((tx + title_icon_size + title_gap, ty_text), title_text, fill=text_color, font=title_font)
 
     for i, panel in enumerate(trimmed_panels):
-        panel_x = side_margin + i * (panel_width + panel_gap)
+        panel_x = panel_start_x + i * (panel_width + panel_gap)
 
         # Sub-header label, centered within the panel.
         label_bbox = draw.textbbox((0, 0), panel["label"], font=label_font)
