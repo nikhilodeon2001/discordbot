@@ -14533,13 +14533,13 @@ async def upload_image_to_s3(buffer, winner, description, winner_id=None):
                         await posted_message.edit(view=share_view)
                     except Exception as e:
                         print(f"⚠️ Could not attach Facebook share button to museum post: {e}")
-            return jump_url, social_post
+            return jump_url, social_post, posted_message
 
-        return None, None
+        return None, None, None
 
     except (BotoCoreError, ClientError) as boto_err:
         print(f"Error uploading to S3: {boto_err}")
-        return None, None
+        return None, None, None
 
 
 async def _update_museum_manifest(s3_client):
@@ -15922,7 +15922,7 @@ async def generate_round_summary_image(round_data, winner, winner_id, winner_cof
                 return buffer
 
             buffer = await loop.run_in_executor(None, process_image)
-            jump_url, social_post = await upload_image_to_s3(buffer, winner, image_description, winner_id)
+            jump_url, social_post, museum_posted_message = await upload_image_to_s3(buffer, winner, image_description, winner_id)
             museum_link = jump_url or "https://triviasphere.com/okra-museum"
 
             message = f"🔥💖 **<@{winner_id}>**, you've done well. I drew this **for you**.\n"
@@ -15932,6 +15932,16 @@ async def generate_round_summary_image(round_data, winner, winner_id, winner_cof
             museum_message = await safe_send(
                 channel, content=message, file=discord.File(io.BytesIO(image_data), filename="winner.png")
             )
+
+            if museum_posted_message and museum_message:
+                try:
+                    if museum_posted_message.embeds:
+                        back_embed = museum_posted_message.embeds[0].copy()
+                        back_embed.description = (back_embed.description or "") + \
+                            f"\n\n💬 [See the original post & reactions]({museum_message.jump_url})"
+                        await museum_posted_message.edit(embed=back_embed)
+                except Exception as e:
+                    print(f"⚠️ Could not add trivia channel link to museum post: {e}")
 
             share_view = build_museum_share_view(social_post)
             if museum_message and share_view:
@@ -15967,7 +15977,7 @@ async def generate_round_summary_image(round_data, winner, winner_id, winner_cof
                         return buffer
 
                     buffer = await loop.run_in_executor(None, process_fallback_image)
-                    jump_url, social_post = await upload_image_to_s3(buffer, winner, image_description, winner_id)
+                    jump_url, social_post, museum_posted_message = await upload_image_to_s3(buffer, winner, image_description, winner_id)
                     museum_link = jump_url or "https://triviasphere.com/okra-museum"
 
                     message = f"😈😉 <@{winner_id}> Naughty naughty, I'll have to pick another.\n\n"
@@ -15977,6 +15987,16 @@ async def generate_round_summary_image(round_data, winner, winner_id, winner_cof
                     museum_message = await safe_send(
                         channel, content=message, file=discord.File(io.BytesIO(image_data), filename="winner.png")
                     )
+
+                    if museum_posted_message and museum_message:
+                        try:
+                            if museum_posted_message.embeds:
+                                back_embed = museum_posted_message.embeds[0].copy()
+                                back_embed.description = (back_embed.description or "") + \
+                                    f"\n\n💬 [See the original post & reactions]({museum_message.jump_url})"
+                                await museum_posted_message.edit(embed=back_embed)
+                        except Exception as e:
+                            print(f"⚠️ Could not add trivia channel link to museum post: {e}")
 
                     share_view = build_museum_share_view(social_post)
                     if museum_message and share_view:
