@@ -18430,7 +18430,11 @@ def generate_crossword_image(answer, prefill=0.5):
     font = get_font("DejaVuSans.ttf", 30)
 
     # Determine prefilled letter count and positions
-    if answer_length > 2:
+    if prefill >= 1.0:
+        # Full reveal -- always show every letter, even for the 1-2 letter answers the
+        # partial-reveal branch below deliberately leaves blank.
+        prefill_positions = list(range(answer_length))
+    elif answer_length > 2:
         #prefill_count = int(answer_length * .5) + 1  # At least 1 letter should be filled in
         prefill_count = math.ceil(answer_length * prefill)
         prefill_positions = random.sample(range(answer_length), prefill_count)
@@ -20837,10 +20841,10 @@ async def check_correct_responses_delete(question_ask_time, trivia_answer_list, 
                 else:
                     author_name = f"{fastest_correct_user} ⚡"
 
-        # Responses and the scoreboard are merged into one ranked list with a (+X) delta
-        # for whoever scored this question; the fastest closest-answer guess (if any) gets
-        # its "was closest (off by N)!" called out in the description above instead of a
-        # per-row note.
+        # Answer (who got it first + the answer text) and the Scoreboard now render as two
+        # stacked embeds instead of one, so each stands out on its own; the fastest
+        # closest-answer guess (if any) gets its "was closest (off by N)!" called out in
+        # the description above instead of a per-row note.
         answer_embed = discord.Embed()
         if message:
             # The leading blank line exists to leave room below the author line's avatar --
@@ -20849,6 +20853,19 @@ async def check_correct_responses_delete(question_ask_time, trivia_answer_list, 
             if not author_name:
                 message = message.removeprefix("​\n")
             answer_embed.description = message
+        if author_name:
+            answer_embed.set_author(name=author_name, icon_url=author_icon_url)
+
+        # Crossword's tile-image reveal: only in image mode (blank/text mode keeps the
+        # plain-text answer above as-is) -- reuses the same tile art as the question itself,
+        # just fully filled in instead of partially blanked out.
+        crossword_reveal_file = None
+        if trivia_category == "Crossword" and image_questions:
+            crossword_image, _ = generate_crossword_image(trivia_answer, prefill=1.0)
+            crossword_reveal_file = discord.File(crossword_image, filename="crossword_reveal.png")
+            answer_embed.set_image(url="attachment://crossword_reveal.png")
+
+        scoreboard_embed = discord.Embed()
         scoreboard_file = None
         if scoreboard_image_enabled:
             if standings_rows:
@@ -20859,13 +20876,30 @@ async def check_correct_responses_delete(question_ask_time, trivia_answer_list, 
                     standings_rows, title_text=f"Scoreboard ({len(round_responders)})", **title_kwargs
                 )
                 scoreboard_file = discord.File(scoreboard_image, filename="scoreboard.png")
+                scoreboard_embed.set_image(url="attachment://scoreboard.png")
         elif standings_table:
-            answer_embed.add_field(name=build_standings_header(), value=standings_table, inline=False)
-        if author_name:
-            answer_embed.set_author(name=author_name, icon_url=author_icon_url)
+            scoreboard_embed.add_field(name=build_standings_header(), value=standings_table, inline=False)
+
+        # use_embed=False bypasses safe_send's single-embed auto-wrapping (color, empty-embed
+        # fallback, auto file->image_url) since we're sending a list of embeds instead --
+        # so color and any empty/unused embeds have to be handled here.
+        embeds_to_send = []
+        if answer_embed.description or answer_embed.author or answer_embed.image:
+            answer_embed.color = embed_color
+            embeds_to_send.append(answer_embed)
+        if scoreboard_embed.fields or scoreboard_embed.image:
+            scoreboard_embed.color = embed_color
+            embeds_to_send.append(scoreboard_embed)
+        if not embeds_to_send:
+            # Both embeds ended up empty (e.g. blind mode with no resolvable avatar) --
+            # mirrors safe_send's own empty-embed fallback, which use_embed=False bypasses.
+            answer_embed.description = "​"
+            answer_embed.color = embed_color
+            embeds_to_send.append(answer_embed)
+        attachments = [f for f in (crossword_reveal_file, scoreboard_file) if f]
         # Testing the URL-based flag method here instead of the 🚩 button (see the "Answer" link
         # built above) -- /flag still works unchanged.
-        await safe_send(channel, embed=answer_embed, file=scoreboard_file)
+        await safe_send(channel, embeds=embeds_to_send, use_embed=False, files=attachments)
     elif show_standings_after:
         # No answer-reveal content this question (e.g. blind mode, no correct responses) --
         # still show the scoreboard on its own rather than silently dropping it.
@@ -22717,7 +22751,7 @@ async def start_trivia():
                                             ltr = m.group(1).upper()
                                             voters = clicks.get(ltr, [])
                                             check = " ✅" if ltr == correct_letter else " ❌"
-                                            line = line + check + (f" → {', '.join(voters)}" if voters else "")
+                                            line = line + check + (f" → {', '.join(f'**{v}**' for v in voters)}" if voters else "")
                                         new_lines.append(line)
                                     embed.description = '\n'.join(new_lines)
                                     edit_kwargs["embed"] = embed
