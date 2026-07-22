@@ -1272,7 +1272,7 @@ async def update_leaderboards(bot, db):
         bot: Discord bot instance
         db: MongoDB database instance
     """
-    from discordbot import SIMPLY_ANSWERS_CHANNEL_ID, generate_leaderboard_row, stack_images_vertically, post_leaderboard_image
+    from discordbot import SIMPLY_ANSWERS_CHANNEL_ID, generate_leaderboard_row, stack_images_vertically, post_leaderboard_image, write_json_to_s3
 
     try:
         # Fetch all data for streaks
@@ -1317,6 +1317,33 @@ async def update_leaderboards(bot, db):
         combined_image = stack_images_vertically([answers_image, streaks_image])
 
         await post_leaderboard_image(bot, SIMPLY_ANSWERS_CHANNEL_ID, combined_image.getvalue(), "simply_trivia_leaderboards.png")
+
+        # Mirror the same data to the website (triviasphere.com/leaderboard's Simply Trivia
+        # tab), shaped to match the classic-trivia leaderboard.json's conventions so the site's
+        # existing renderCountList/renderStreakList work unmodified.
+        def to_json_count_entries(rows):
+            return [{"user": row.get("user_name") or "Unknown", "count": row.get("total_correct", 0)} for row in rows]
+
+        def to_json_streak_entries(rows):
+            entries = []
+            for row in rows:
+                ended_at = row.get("ended_at")
+                entries.append({
+                    "user": row.get("user_name") or "Unknown",
+                    "streak": row.get("streak_count", 0),
+                    "date": ended_at.strftime('%B %d, %Y') if hasattr(ended_at, "strftime") else str(ended_at or ""),
+                })
+            return entries
+
+        simply_leaderboard = {
+            "streaks_alltime": to_json_streak_entries(streaks_all_time),
+            "streaks_24h": to_json_streak_entries(streaks_24h),
+            "streaks_7d": to_json_streak_entries(streaks_7d),
+            "answers_alltime": to_json_count_entries(answers_all_time),
+            "answers_24h": to_json_count_entries(answers_24h),
+            "answers_7d": to_json_count_entries(answers_7d),
+        }
+        await write_json_to_s3("simply_trivia_leaderboard.json", simply_leaderboard)
 
     except Exception as e:
         print(f"❌ Error updating leaderboards: {e}")

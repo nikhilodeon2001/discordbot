@@ -15191,6 +15191,22 @@ async def check_sovereignty(top_users):
         return []
 
 
+async def write_json_to_s3(key_suffix, data):
+    """Upload a JSON blob to the shared triviabotwebsite S3 bucket, under an environment-scoped
+    key prefix (static/staging/ for staging, static/ for prod) so staging writes never clobber
+    prod's live website data."""
+    key_prefix = "static/staging/" if prod_or_stage == "stage" else "static/"
+    session = aioboto3.Session()
+    async with session.client("s3") as s3:
+        await s3.put_object(
+            Bucket="triviabotwebsite",
+            Key=f"{key_prefix}{key_suffix}",
+            Body=json.dumps(data),
+            ContentType="application/json",
+            ACL="public-read"
+        )
+
+
 async def write_leaderboard_to_s3():
     """After each round, write fresh Discord leaderboard JSON to S3 for the website."""
     try:
@@ -15236,24 +15252,12 @@ async def write_leaderboard_to_s3():
             "longest_round_win_streaks": await _query_leaderboard_streaks("longest_round_streaks_discord"),
         }
 
-        # Staging writes to its own key prefix so test rounds never clobber the live
-        # website's data -- prod's keys are unchanged, matching what the site already fetches.
-        key_prefix = "static/staging/" if prod_or_stage == "stage" else "static/"
-
-        session = aioboto3.Session()
-        async with session.client("s3") as s3:
-            for key, data in [
-                (f"{key_prefix}leaderboard.json", leaderboard),
-                (f"{key_prefix}alltime.json", alltime),
-                (f"{key_prefix}sovereigns.json", sovereigns),
-            ]:
-                await s3.put_object(
-                    Bucket="triviabotwebsite",
-                    Key=key,
-                    Body=json.dumps(data),
-                    ContentType="application/json",
-                    ACL="public-read"
-                )
+        for key_suffix, data in [
+            ("leaderboard.json", leaderboard),
+            ("alltime.json", alltime),
+            ("sovereigns.json", sovereigns),
+        ]:
+            await write_json_to_s3(key_suffix, data)
 
         print("✅ Leaderboard JSON written to S3")
     except Exception as e:
