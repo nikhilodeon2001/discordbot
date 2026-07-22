@@ -909,6 +909,7 @@ _INDEX_HTML = """<!doctype html>
   .sbscore { flex:none; font-variant-numeric:tabular-nums; font-weight:700; }
   .sbdelta { flex:none; color:#3ddc84; font-weight:600; font-size:.85em; margin-left:4px; }
   .sbapp { flex:none; font-size:.9rem; margin-left:2px; }
+  .sbnote { font-size:.78rem; color:var(--muted); margin-top:8px; text-align:center; }
   .legend { display:flex; flex-wrap:wrap; gap:6px; margin-top:16px; }
   .lchip { font-size:.72rem; font-weight:600; padding:4px 9px; border-radius:999px;
     background:rgba(127,127,127,.10); border:1px solid var(--line); color:var(--muted); }
@@ -990,6 +991,9 @@ function legendHtml(state) {
 function scoreboardHtml(state) {
   var sb = state.scoreboard;
   if (!sb || !sb.length) return '';
+  var note = state.scoreboard_note
+    ? '<div class="sbnote">' + esc(state.scoreboard_note) + '</div>'
+    : '';
   return '<div class="sbtitle">Scoreboard</div><div class="sb">' + sb.map(function (r) {
     return '<div class="sbrow">' +
       '<span class="sbrank">' + esc(r.rank || '') + '</span>' +
@@ -999,7 +1003,7 @@ function scoreboardHtml(state) {
       (r.delta ? '<span class="sbdelta">' + esc(r.delta) + '</span>' : '') +
       (r.via_companion ? '<span class="sbapp" title="Answered via the app">🌐</span>' : '') +
     '</div>';
-  }).join('') + '</div>';
+  }).join('') + note + '</div>';
 }
 
 function puzzleHtml(state) {

@@ -20880,6 +20880,11 @@ async def check_correct_responses_delete(question_ask_time, trivia_answer_list, 
         elif standings_table:
             scoreboard_embed.add_field(name=build_standings_header(), value=standings_table, inline=False)
 
+        if not show_standings_after and (scoreboard_embed.image or scoreboard_embed.fields):
+            # Yolo mode's in-between questions: the roster above is alphabetical, not ranked --
+            # spell that out since the checkmarks alone don't make the sort order obvious.
+            scoreboard_embed.set_footer(text="Sorted alphabetically, not by rank — scores hidden until round end")
+
         # use_embed=False bypasses safe_send's single-embed auto-wrapping (color, empty-embed
         # fallback, auto file->image_url) since we're sending a list of embeds instead --
         # so color and any empty/unused embeds have to be handled here.
@@ -21241,8 +21246,8 @@ def build_standings_table(points_gained_this_question=None, name_max_len=13, sco
 
     sort_alphabetically + mask_score are for yolo mode's in-between questions: yolo mode
     shows who got each question right without revealing the running standings, so names sort
-    A-Z instead of by score, and the cumulative total renders as a fixed "####" for everyone.
-    This question's real point gain still shows for whoever scored, same as normal.
+    A-Z instead of by score, and the score/delta columns collapse to a single ✅ for whoever
+    scored this question -- no numbers of any kind, unlike the normal table.
 
     Returns None if there's nothing to show."""
     board = scoreboard_override if scoreboard_override is not None else scoreboard
@@ -21264,14 +21269,6 @@ def build_standings_table(points_gained_this_question=None, name_max_len=13, sco
 
         gained = points_gained_this_question.get(user_id)
 
-        note = row_notes.get(user_id)
-        delta_parts = []
-        if gained is not None:
-            delta_parts.append(f"+{gained}")
-        if note:
-            delta_parts.append(note)
-        delta_suffix = f" ({', '.join(delta_parts)})" if delta_parts else ""
-
         # Fastest-answer count -- hidden in masked mode along with the rest of the
         # competitive standing info (score, rank).
         fastest_count = fastest_answers_count.get(user_id, 0) if not mask_score else 0
@@ -21282,7 +21279,20 @@ def build_standings_table(points_gained_this_question=None, name_max_len=13, sco
         else:
             lightning_suffix = ""
 
-        score_display = "####" if mask_score else f"{score:,}"
+        if mask_score:
+            # No numbers at all under mask -- a checkmark is all that's revealed, and only
+            # for whoever actually scored this question.
+            score_display = "✅" if gained is not None else ""
+            delta_suffix = ""
+        else:
+            note = row_notes.get(user_id)
+            delta_parts = []
+            if gained is not None:
+                delta_parts.append(f"+{gained}")
+            if note:
+                delta_parts.append(note)
+            delta_suffix = f" ({', '.join(delta_parts)})" if delta_parts else ""
+            score_display = f"{score:,}"
         idx_str = f"{idx}."
         name_col = _pad_to_display_width(truncated_name, name_max_len + 1)
         rows.append(f"{idx_str:<3}{name_col}{score_display:>6}{delta_suffix}{lightning_suffix}")
@@ -21348,19 +21358,24 @@ def _compute_standings_rows(points_gained_this_question=None, row_notes=None,
         else:
             rank_icon, rank_text = None, f"{idx}."
 
-        note = row_notes.get(user_id)
-        delta_parts = []
-        if gained is not None:
-            delta_parts.append(f"+{gained}")
-        if note:
-            delta_parts.append(note)
-        delta_text = f"({', '.join(delta_parts)})" if delta_parts else ""
-
         # Fastest-answer count -- hidden in masked mode along with the rest of the
         # competitive standing info (score, medals, rank).
         fastest_count = fastest_counts.get(user_id, 0) if not mask_score else 0
 
-        score_display = "####" if mask_score else f"{score:,}"
+        if mask_score:
+            # No numbers at all under mask -- a checkmark is all that's revealed, and only
+            # for whoever actually scored this question.
+            score_display = "✅" if gained is not None else ""
+            delta_text = ""
+        else:
+            note = row_notes.get(user_id)
+            delta_parts = []
+            if gained is not None:
+                delta_parts.append(f"+{gained}")
+            if note:
+                delta_parts.append(note)
+            delta_text = f"({', '.join(delta_parts)})" if delta_parts else ""
+            score_display = f"{score:,}"
         rows.append({
             "rank_icon": rank_icon,
             "rank_text": rank_text,
@@ -23891,7 +23906,8 @@ def companion_reveal_extra(user_id):
 
 def _companion_scoreboard():
     """Sanitized standings for the companion reveal screen, mirroring what Discord shows at
-    this transition (same rows, same yolo-mode masking)."""
+    this transition (same rows, same yolo-mode masking -- score/delta collapse to a ✅ for
+    whoever scored when masked, no numbers at all)."""
     if _companion_show_standings:
         rows = _compute_standings_rows(_companion_last_points_gained)
     else:
@@ -23927,6 +23943,7 @@ def build_companion_reveal_state(solution_list):
         "correct_answer": reveal_answer,
         "blind": bool(blind_mode),
         "scoreboard": _companion_scoreboard(),
+        "scoreboard_note": None if _companion_show_standings else "Sorted alphabetically, not by rank — scores hidden until round end",
         "modes": _companion_active_modes(),
         "round_overview": _companion_round_overview,
         "question_number": _companion_question_number,
