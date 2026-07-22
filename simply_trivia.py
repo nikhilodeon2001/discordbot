@@ -16,6 +16,8 @@ from discordbot import update_audit_question, generate_scrambled_image, scramble
 LEADERBOARD_UPDATE_FREQUENCY = 5  # Update leaderboards every N questions
 LEADERBOARD_IMAGE_ROWS = 10  # Rows shown per panel in the composite leaderboard images
 QUESTION_DELAY_SECONDS = 5  # Delay between questions in seconds
+SIMPLY_TRIVIA_DISCORD_POST_ENABLED = False  # Kill switch for the Discord leaderboard image post only --
+# the website S3 export in update_leaderboards() keeps running either way.
 
 # Storage for active game state
 active_question = None
@@ -1288,35 +1290,36 @@ async def update_leaderboards(bot, db):
         def to_entries(rows, value_key):
             return [(row.get("user_name", "Unknown"), row.get(value_key, 0)) for row in rows]
 
-        streaks_image = generate_leaderboard_row(
-            panels=[
-                {"label": "ALL TIME", "entries": to_entries(streaks_all_time, "streak_count")},
-                {"label": "PAST 24 HOURS", "entries": to_entries(streaks_24h, "streak_count")},
-                {"label": "PAST 7 DAYS", "entries": to_entries(streaks_7d, "streak_count")},
-            ],
-            title_icon_emoji="🏆",
-            title_text="Longest Streaks",
-            accent_color=(241, 196, 15),  # matches discord.Color.gold() used by the old embeds
-            rows_limit=LEADERBOARD_IMAGE_ROWS,
-        )
+        if SIMPLY_TRIVIA_DISCORD_POST_ENABLED:
+            streaks_image = generate_leaderboard_row(
+                panels=[
+                    {"label": "ALL TIME", "entries": to_entries(streaks_all_time, "streak_count")},
+                    {"label": "PAST 24 HOURS", "entries": to_entries(streaks_24h, "streak_count")},
+                    {"label": "PAST 7 DAYS", "entries": to_entries(streaks_7d, "streak_count")},
+                ],
+                title_icon_emoji="🏆",
+                title_text="Longest Streaks",
+                accent_color=(241, 196, 15),  # matches discord.Color.gold() used by the old embeds
+                rows_limit=LEADERBOARD_IMAGE_ROWS,
+            )
 
-        answers_image = generate_leaderboard_row(
-            panels=[
-                {"label": "ALL TIME", "entries": to_entries(answers_all_time, "total_correct")},
-                {"label": "PAST 24 HOURS", "entries": to_entries(answers_24h, "total_correct")},
-                {"label": "PAST 7 DAYS", "entries": to_entries(answers_7d, "total_correct")},
-            ],
-            title_icon_emoji="🎯",
-            title_text="Most Correct Answers",
-            accent_color=(20, 109, 232),  # matches the old embeds' 0x146DE8 blue
-            rows_limit=LEADERBOARD_IMAGE_ROWS,
-        )
+            answers_image = generate_leaderboard_row(
+                panels=[
+                    {"label": "ALL TIME", "entries": to_entries(answers_all_time, "total_correct")},
+                    {"label": "PAST 24 HOURS", "entries": to_entries(answers_24h, "total_correct")},
+                    {"label": "PAST 7 DAYS", "entries": to_entries(answers_7d, "total_correct")},
+                ],
+                title_icon_emoji="🎯",
+                title_text="Most Correct Answers",
+                accent_color=(20, 109, 232),  # matches the old embeds' 0x146DE8 blue
+                rows_limit=LEADERBOARD_IMAGE_ROWS,
+            )
 
-        # Stack both triptychs into one image -- a message with 2+ attachments gets
-        # auto-tiled into a cropped gallery grid by Discord, which mangles wide images.
-        combined_image = stack_images_vertically([answers_image, streaks_image])
+            # Stack both triptychs into one image -- a message with 2+ attachments gets
+            # auto-tiled into a cropped gallery grid by Discord, which mangles wide images.
+            combined_image = stack_images_vertically([answers_image, streaks_image])
 
-        await post_leaderboard_image(bot, SIMPLY_ANSWERS_CHANNEL_ID, combined_image.getvalue(), "simply_trivia_leaderboards.png")
+            await post_leaderboard_image(bot, SIMPLY_ANSWERS_CHANNEL_ID, combined_image.getvalue(), "simply_trivia_leaderboards.png")
 
         # Mirror the same data to the website (triviasphere.com/leaderboard's Simply Trivia
         # tab), shaped to match the classic-trivia leaderboard.json's conventions so the site's
