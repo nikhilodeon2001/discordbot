@@ -414,7 +414,7 @@ async def send_question_queen_submit_ad():
 # e.g. for announcements (like a rebrand) that aren't a new feature pitch.
 # {base_url} is substituted with companion_web.get_base_url() at post time, so
 # the same text is correct whether this deploy is staging or prod.
-okra_lab_announcement_enabled = True
+okra_lab_announcement_enabled = False
 okra_lab_announcement_text = "📜 **Hear ye, hear ye — a new system of grading hath been handed down.**\n\n**THE COMMANDMENTS OF ANSWERING** 📜\n\nI. Thou shalt not submit four letters and call it a day.\nII. Thy typos shall be forgiven.\nIII. Thy nicknames shall be honored.\nIV. Thy scrambled word order shall not condemn thee.\nV. Thy partial answers shall be found wanting.\n\n*Answer in full, and thy score shall be blessed.*\n"
 okra_lab_announcement_show_new_badge = True
 
@@ -15361,6 +15361,11 @@ async def build_classic_leaderboard_images():
     ]
 
 
+# Kill switch for the Discord leaderboard image posts only -- write_leaderboard_to_s3()
+# (the website export) keeps running either way, gated separately at its own call site.
+CLASSIC_LEADERBOARD_DISCORD_POST_ENABLED = False
+
+
 async def post_classic_leaderboard_to_discord():
     """Fire-and-forget companion to write_leaderboard_to_s3(): posts the same classic-trivia
     stats as Discord images into the Simply Streaks channel (unused since Simply Trivia's own
@@ -20318,7 +20323,7 @@ def trig_checker(response, answer):
 # Flip to True to revert answer grading to the pre-answer_matching.py heuristics
 # (legacy_fuzzy_match below), in case the answer_matching.py rewrite needs to be backed out.
 # Requires a code deploy to flip -- not a live/runtime toggle.
-USE_LEGACY_FUZZY_MATCH = False
+USE_LEGACY_FUZZY_MATCH = True
 
 
 def legacy_fuzzy_match(user_answer, correct_answer, category, url, _skip_alias_check=False, ignore_exact_mode=False):
@@ -22749,7 +22754,8 @@ async def start_trivia():
             await clear_round_options()
             winner_coffees, mini_game_result = await update_round_streaks(round_winner, round_winner_id, roast_task)
             asyncio.create_task(write_leaderboard_to_s3())
-            asyncio.create_task(post_classic_leaderboard_to_discord())
+            if CLASSIC_LEADERBOARD_DISCORD_POST_ENABLED:
+                asyncio.create_task(post_classic_leaderboard_to_discord())
 
             round_count += 1
 
