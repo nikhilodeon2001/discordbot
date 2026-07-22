@@ -18082,6 +18082,7 @@ def generate_scoreboard_image(rows, title_outer_emoji="🏔️", title_inner_emo
     rank_icon_size = 20
     lightning_icon_size = 15
     phone_icon_size = 16
+    checkmark_icon_size = 18
 
     font = get_font("DejaVuSans.ttf", font_size)
     title_font = get_font("DejaVuSans-Bold.ttf", 18)
@@ -18149,7 +18150,13 @@ def generate_scoreboard_image(rows, title_outer_emoji="🏔️", title_inner_emo
     # lightning/score/delta column x-positions, which must be ints for img.paste of those icons.
     max_name_render_width = math.ceil(max((w for _, _, w in name_render), default=0))
     max_lightning_width = max((lightning_reserved_width(row["lightning_count"]) for row in rows), default=0)
-    max_score_width = max((text_width(row["score_display"]) for row in rows), default=0)
+    def score_col_width(score_display):
+        # "✅" has no real glyph in DejaVuSans (falls back to the tofu/.notdef glyph), so it's
+        # pasted as a color-emoji icon (render_emoji_icon) rather than measured/drawn as text --
+        # reserve the icon's own size for it instead of a bogus tofu-glyph text_width.
+        return checkmark_icon_size if score_display == "✅" else text_width(score_display)
+
+    max_score_width = max((score_col_width(row["score_display"]) for row in rows), default=0)
     delta_widths = [text_width(row["delta_text"]) if row["delta_text"] else 0 for row in rows]
     max_delta_width = max(delta_widths, default=0)
     # 📱 column for companion-answered rows -- only reserved if at least one row has it.
@@ -18233,8 +18240,16 @@ def generate_scoreboard_image(rows, title_outer_emoji="🏔️", title_inner_emo
             if row["lightning_count"] > 1:
                 draw.text((lightning_x + lightning_icon_size + 4, row_center_y), f"{row['lightning_count']}", fill=text_color, font=font)
 
-        score_width = text_width(row["score_display"])
-        draw.text((score_x + max_score_width - score_width, row_center_y), row["score_display"], fill=text_color, font=font)
+        if row["score_display"] == "✅":
+            check_icon = render_emoji_icon("✅", checkmark_icon_size)
+            img.paste(
+                check_icon,
+                (score_x + max_score_width - checkmark_icon_size, icon_center_y - checkmark_icon_size // 2),
+                check_icon,
+            )
+        else:
+            score_width = text_width(row["score_display"])
+            draw.text((score_x + max_score_width - score_width, row_center_y), row["score_display"], fill=text_color, font=font)
 
         if row["delta_text"]:
             draw.text((delta_x, row_center_y), row["delta_text"], fill=muted_color, font=font)
