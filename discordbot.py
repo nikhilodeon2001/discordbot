@@ -23182,7 +23182,7 @@ async def on_message(message):
                     value="\n".join(a.url for a in message.attachments),
                     inline=False,
                 )
-            await relay_channel.send("📬 **DM received:**", embed=embed)
+            await relay_channel.send("📬 **DM received:**", embed=embed, view=_build_dm_reply_view(message.author.id))
         return
 
     if message.channel.id == INTRO_IMAGE_ADMIN_CHANNEL_ID and message.author.id == okrag_id:
@@ -26230,6 +26230,74 @@ class FlaggedReviewView(discord.ui.View):
         await interaction.response.send_modal(ClearFlaggedModal(col, doc_id))
 
 
+class DMReplyModal(discord.ui.Modal, title="Reply to user"):
+    reply_text = discord.ui.TextInput(
+        label="Message",
+        style=discord.TextStyle.paragraph,
+        max_length=2000,
+    )
+
+    def __init__(self, user_id):
+        super().__init__()
+        self.user_id = user_id
+
+    async def on_submit(self, interaction: discord.Interaction):
+        try:
+            user = interaction.client.get_user(self.user_id) or await interaction.client.fetch_user(self.user_id)
+        except discord.NotFound:
+            await interaction.response.send_message("⚠️ Couldn't find that user.", ephemeral=True)
+            return
+        try:
+            await user.send(self.reply_text.value)
+        except discord.Forbidden:
+            await interaction.response.send_message("⚠️ Couldn't DM this user (DMs disabled).", ephemeral=True)
+            return
+        except discord.NotFound:
+            await interaction.response.send_message("⚠️ Couldn't find that user.", ephemeral=True)
+            return
+        await interaction.response.send_message("✅ Reply sent.", ephemeral=True)
+        log_embed = discord.Embed(
+            description=self.reply_text.value,
+            color=discord.Color(0x2ECC71),
+            timestamp=datetime.datetime.utcnow(),
+        )
+        log_embed.set_author(
+            name=f"{interaction.user.display_name} ({interaction.user})",
+            icon_url=interaction.user.display_avatar.url,
+        )
+        log_embed.set_footer(text=f"User ID: {self.user_id}")
+        await interaction.channel.send("↩️ **Reply sent:**", embed=log_embed)
+
+
+class DMReplyButton(discord.ui.DynamicItem[discord.ui.Button], template=r"dm_reply:user:(?P<user_id>\d+)"):
+    def __init__(self, user_id):
+        super().__init__(
+            discord.ui.Button(
+                label="Reply",
+                style=discord.ButtonStyle.primary,
+                emoji="✉️",
+                custom_id=f"dm_reply:user:{user_id}",
+            )
+        )
+        self.user_id = user_id
+
+    @classmethod
+    async def from_custom_id(cls, interaction, item, match):
+        return cls(int(match["user_id"]))
+
+    async def callback(self, interaction: discord.Interaction):
+        if not any(r.id == SUBMISSION_MOD_ROLE_ID for r in getattr(interaction.user, "roles", [])):
+            await interaction.response.send_message("❌ Only moderators can use this.", ephemeral=True)
+            return
+        await interaction.response.send_modal(DMReplyModal(self.user_id))
+
+
+def _build_dm_reply_view(user_id):
+    view = discord.ui.View(timeout=None)
+    view.add_item(DMReplyButton(user_id))
+    return view
+
+
 async def sync_crown_roles():
     """Sync the Question Queen role for both crowns: top submitter and top editor.
     Both use the same TOP_CONTRIBUTOR_ROLE_ID and can be held simultaneously by the
@@ -26996,6 +27064,12 @@ async def on_ready():
     except Exception as _e:
         sentry_sdk.capture_exception(_e)
         print(f"⚠️ user-submission startup hook: {_e}")
+
+    try:
+        bot.add_dynamic_items(DMReplyButton)
+    except Exception as _e:
+        sentry_sdk.capture_exception(_e)
+        print(f"⚠️ DM reply button startup hook: {_e}")
 
     try:
         await ensure_flag_indexes()
