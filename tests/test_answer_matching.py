@@ -13,7 +13,9 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from answer_matching import match_answer, STRICT, BALANCED, GENEROUS  # noqa: E402
+from answer_matching import (  # noqa: E402
+    match_answer, STRICT, BALANCED, GENEROUS, extract_words, limit_words,
+)
 
 CONFIGS = {"STRICT": STRICT, "BALANCED": BALANCED, "GENEROUS": GENEROUS}
 
@@ -141,6 +143,65 @@ CASES = [
 ]
 
 
+# Word-limit enforcement for user-supplied AI prompts (museum paintings /
+# Genie wishes). (input, max_words, max_chars, expected_text, expected_truncated, note)
+WORD_LIMIT_CASES = [
+    # --- the reported bypass ---
+    ("blood-sugar-sex-magik-red-hot-chili-peppers-album-cover-1991-no-okras-please-no-okras",
+     10, 90, "blood sugar sex magik red hot chili peppers album cover", True,
+     "reported: hyphen chain counts as many words and is trimmed to 10"),
+
+    # --- normal input passes through ---
+    ("a cat surfing a giant wave at sunset", 10, 90,
+     "a cat surfing a giant wave at sunset", False, "under-limit input unchanged"),
+    ("space pirates", 3, 35, "space pirates", False, "genie: 2 words fine"),
+
+    # --- alternative separators ---
+    ("one_two_three_four", 3, 35, "one two three", True, "underscores split"),
+    ("one.two.three.four", 3, 35, "one two three", True, "dots split"),
+    ("one/two\\three|four", 3, 35, "one two three", True, "slashes/pipes split"),
+    ("one😀two😀three😀four", 3, 35, "one two three", True, "emoji split"),
+    ("one​two​three​four", 3, 35, "onetwothreefour", False,
+     "zero-width chars vanish, can't act as hidden glue"),
+
+    # --- fused words ---
+    ("OneTwoThreeFour", 3, 35, "One Two Three", True, "camelCase splits"),
+    ("no1okra2please", 1, 35, "no", True, "letter-digit boundaries split"),
+
+    # --- long-blob backstop ---
+    ("abcdefghijklmnopqrstuvwxyzabcdefghijklmnop", 1, 90,
+     "abcdefghijklmnopqrst", True, "40-char blob chunked to 20-char words"),
+
+    # --- char cap is the ultimate backstop ---
+    ("extraordinarily magnificent hippopotamus", 3, 35,
+     "extraordinarily magnificent", True, "35-char cap trims third word"),
+
+    # --- words survive punctuation, apostrophes kept ---
+    ("don't stop believin'", 3, 35, "don't stop believin", False,
+     "apostrophes don't split words"),
+    ("!!! ??? ...", 3, 35, "", False, "punctuation-only input yields empty"),
+    ("", 3, 35, "", False, "empty input"),
+]
+
+
+def run_word_limits():
+    failures = []
+    for text, max_words, max_chars, expected_text, expected_trunc, note in WORD_LIMIT_CASES:
+        actual_text, actual_trunc = limit_words(text, max_words, max_chars)
+        ok = actual_text == expected_text and actual_trunc == expected_trunc
+        if not ok:
+            failures.append((text, expected_text, expected_trunc, actual_text, actual_trunc, note))
+        status = "PASS" if ok else "FAIL"
+        print(f"[{status}] limit_words({text!r}, {max_words}, {max_chars}) "
+              f"= ({actual_text!r}, {actual_trunc})  -- {note}")
+    if failures:
+        print("\nWORD-LIMIT FAILURES:")
+        for text, exp_t, exp_f, act_t, act_f, note in failures:
+            print(f"  limit_words({text!r}) -> ({act_t!r}, {act_f}), "
+                  f"expected ({exp_t!r}, {exp_f})  ({note})")
+    return len(failures)
+
+
 def run():
     failures = []
     for user, correct, category, url, cfg_name, expected, note in CASES:
@@ -162,4 +223,4 @@ def run():
 
 
 if __name__ == "__main__":
-    sys.exit(1 if run() else 0)
+    sys.exit(1 if (run() + run_word_limits()) else 0)
