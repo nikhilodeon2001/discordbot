@@ -139,6 +139,72 @@ def normalize_text(value):
     return text
 
 
+# ---------------------------------------------------------------------------
+# Word limits for user-supplied AI prompts (museum paintings, Genie wishes)
+# ---------------------------------------------------------------------------
+
+# A run of letters/digits (underscore excluded), allowing internal apostrophes
+# so "don't" stays one word. Anything else — hyphens, underscores, dots,
+# slashes, emoji, whitespace — acts as a word separator, which is the whole
+# point: "blood-sugar-sex-magik" is four words, not one.
+_WORD_RUN_RE = re.compile(r"[^\W_]+(?:'[^\W_]+)*")
+
+# Boundaries players use to fuse words inside a single run: camelCase
+# ("NoOkrasPlease") and letter<->digit transitions ("no1okra2please").
+_INTRA_WORD_BOUNDARY_RE = re.compile(
+    r"(?<=[a-z])(?=[A-Z])|(?<=[A-Za-z])(?=\d)|(?<=\d)(?=[A-Za-z])"
+)
+
+
+def extract_words(text, max_word_len=20):
+    """The words a user's text actually contains, bypass-resistant.
+
+    NFKC-normalizes (so fullwidth/compatibility chars can't disguise text),
+    removes invisible format characters (zero-width spaces/joiners, soft
+    hyphens — category Cf) so they can't glue words together, then splits on
+    every non-alphanumeric character AND on camelCase / letter-digit
+    boundaries. Runs longer than max_word_len are chopped into
+    max_word_len-sized chunks, each counting as its own word, as a backstop
+    against smuggling text in one giant alphanumeric blob.
+    """
+    text = unicodedata.normalize("NFKC", str(text))
+    text = text.translate(_SMART_PUNCT_TABLE)  # curly apostrophes -> ASCII
+    text = "".join(ch for ch in text if unicodedata.category(ch) != "Cf")
+
+    words = []
+    for run in _WORD_RUN_RE.findall(text):
+        for piece in _INTRA_WORD_BOUNDARY_RE.split(run):
+            while len(piece) > max_word_len:
+                words.append(piece[:max_word_len])
+                piece = piece[max_word_len:]
+            if piece:
+                words.append(piece)
+    return words
+
+
+def limit_words(text, max_words, max_chars):
+    """Clamp user text to max_words real words and max_chars characters.
+
+    Words are counted by extract_words, so separator tricks don't help; the
+    character cap is the ultimate backstop no counting trick gets around.
+    Returns (clamped_text, was_truncated). clamped_text is "" when the input
+    contains no words at all (e.g. only emoji/punctuation).
+    """
+    words = extract_words(text)
+    kept = words[:max_words]
+    result = " ".join(kept)
+    truncated = len(words) > max_words
+    if len(result) > max_chars:
+        clipped = result[:max_chars]
+        # Drop the word the cap landed in the middle of, rather than keeping
+        # a fragment — unless the very first word is itself over the cap.
+        if " " in clipped:
+            clipped = clipped[:clipped.rfind(" ")]
+        result = clipped.rstrip()
+        truncated = True
+    return result, truncated
+
+
 def _tokens(normalized):
     return normalized.split()
 
