@@ -78,6 +78,16 @@ _FLAG_TOKEN_TTL = 90 * 86400
 _anon_last_flag = {}
 _ANON_FLAG_MIN_INTERVAL = 5.0
 
+# crude per-user question-submission debounce: user_id -> last submit epoch. Same split as the
+# flag flow above -- the real anti-abuse (24h cap, 30-day dedupe) lives server-side in
+# discordbot.py's submit_question_for_review, shared with the Discord /submit modal.
+_last_question_submit = {}
+_QUESTION_SUBMIT_MIN_INTERVAL = 3.0
+_submit_question = None      # async callable(user_id, display_name, sub_type, category, question, correct_answer, alternates, source) -> (doc, error)
+_turnstile_site_key = ""     # Cloudflare Turnstile site key, rendered into the /submit page's widget
+_turnstile_secret_key = ""   # Cloudflare Turnstile secret key, verified server-side on /api/submit_question
+_discord_invite_url = ""     # shown in the "join the server" 403 when a non-member tries to log in
+
 
 # ---------------------------------------------------------------------------
 # Signed-cookie helpers (stdlib HMAC; no extra dependency)
@@ -284,8 +294,17 @@ async def handle_callback(request):
     # the server nickname so it matches the display_name used everywhere in scoring.
     display_name = _resolve_member(user_id) if _resolve_member else None
     if not display_name:
+        # Wording depends on where the login was headed -- "to play" is wrong copy for someone
+        # who came here via /submit. Read from the state cookie (not the query string) since
+        # that's the one CSRF-protected value we can trust at this point.
+        action = "submit a question" if cookie_state.get("next") == "/submit" else "play"
+        join_html = (
+            f' <a href="{html_escape(_discord_invite_url)}">Join the server</a>, then try again.'
+            if _discord_invite_url else " Join the server, then try again."
+        )
         return web.Response(
-            text="You need to be a member of the trivia server to play. Join, then try again.",
+            text=f"You need to be a member of the TriviaSphere server to {action}.{join_html}",
+            content_type="text/html",
             status=403,
         )
 
@@ -723,6 +742,217 @@ async def handle_flag_relay(request):
     )
     status = 200 if result.get("ok") else 409
     return web.json_response(result, status=status)
+
+
+# ---------------------------------------------------------------------------
+# Question submission (triviasphere.com's web counterpart to Discord's /submit) -- login is
+# mandatory (no anonymous path, unlike /flag) since this feeds moderator review and needs a
+# reliable submitter identity for the same rate-limit/dedupe logic the Discord modal uses.
+# ---------------------------------------------------------------------------
+
+_SUBMIT_PAGE_HTML = """<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Submit a Question — TriviaSphere</title>
+<meta name="theme-color" content="#06080D" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#F8F8F8" media="(prefers-color-scheme: light)">
+<link rel="icon" type="image/webp" href="/assets/logo-mark.webp">
+<script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
+<style>
+  :root {
+    color-scheme: light dark;
+    --blue:#146DE8; --blue-600:#0A4FB5; --red:#F71A14;
+    --bg:#06080D; --bg2:#0E1219; --fg:#F8F8F8; --muted:rgba(248,248,248,.58);
+    --card:rgba(248,248,248,.05); --line:rgba(248,248,248,.10);
+  }
+  @media (prefers-color-scheme: light) {
+    :root { --bg:#F8F8F8; --bg2:#FCFCFC; --fg:#06080D; --muted:rgba(6,8,13,.55);
+            --card:#ffffff; --line:rgba(6,8,13,.10); }
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  body { margin:0; min-height:100vh; color:var(--fg);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Inter,sans-serif;
+    background:radial-gradient(1100px 560px at 50% -12%, rgba(20,109,232,.14), transparent 60%),
+               linear-gradient(180deg,var(--bg),var(--bg2)); background-attachment:fixed;
+    display:flex; flex-direction:column; align-items:center;
+    padding:26px 16px calc(26px + env(safe-area-inset-bottom)); }
+  .wrap { width:100%; max-width:480px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:20px; padding:22px;
+    box-shadow:0 12px 32px rgba(0,0,0,.20); }
+  .cardhead { display:flex; align-items:center; gap:10px; margin:0 0 4px; }
+  .cardhead .mark { width:26px; height:26px; flex:none;
+    background:url(/assets/logo-mark.webp) center/contain no-repeat; }
+  .card h3 { margin:0; font-size:1.15rem; font-weight:800; }
+  .authcard { display:flex; align-items:center; gap:11px; padding:12px 14px; border-radius:14px;
+    border:1px solid rgba(61,220,132,.30); background:rgba(61,220,132,.08); margin:14px 0 16px; }
+  .authicon { flex:none; width:20px; height:20px; display:flex; align-items:center; justify-content:center;
+    color:#3ddc84; font-weight:800; font-size:1rem; }
+  .authtext { flex:1; min-width:0; display:flex; flex-direction:column; gap:1px; font-size:.9rem; font-weight:700; }
+  .authtext span { font-size:.76rem; font-weight:500; color:var(--muted); }
+  .authswitch { flex:none; font-size:.8rem; font-weight:700; color:var(--blue); text-decoration:none; }
+  .modalsub { color:var(--muted); font-size:.85rem; margin:0 0 14px; line-height:1.4; }
+  .typerow { display:flex; gap:8px; margin-bottom:14px; }
+  .typebtn { flex:1; padding:10px; text-align:center; border-radius:12px; border:1px solid var(--line);
+    background:rgba(127,127,127,.06); cursor:pointer; font-size:.88rem; font-weight:700; }
+  .typebtn.active { border-color:var(--blue); background:rgba(20,109,232,.10); }
+  label.fieldlabel { display:block; font-size:.72rem; font-weight:700; text-transform:uppercase;
+    letter-spacing:.08em; color:var(--muted); margin:0 0 6px; }
+  .field { margin-bottom:14px; }
+  input[type=text], textarea { width:100%; padding:12px 13px; font-size:.95rem; border-radius:12px;
+    border:1px solid var(--line); background:rgba(127,127,127,.08); color:inherit; resize:vertical;
+    font-family:inherit; box-sizing:border-box; }
+  textarea { min-height:70px; }
+  .cf-turnstile { margin-bottom:14px; }
+  button.primary { width:100%; padding:15px; font-size:1.02rem; font-weight:700;
+    border:none; border-radius:14px; color:#fff; cursor:pointer;
+    background:linear-gradient(180deg,var(--blue),var(--blue-600)); box-shadow:0 6px 16px rgba(20,109,232,.30); }
+  button.primary:disabled { opacity:.5; box-shadow:none; cursor:default; }
+  .status { margin-top:12px; font-size:.9rem; min-height:1.2em; }
+  .bad { color:var(--red); }
+  .done { text-align:center; font-size:1.02rem; font-weight:650; padding:20px 0; color:#3ddc84; }
+  .foot { text-align:center; margin-top:16px; color:var(--muted); font-size:.72rem; font-weight:600; opacity:.85; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="card">
+    <div class="cardhead"><span class="mark" role="img" aria-label="TriviaSphere"></span><h3>Submit a question</h3></div>
+    <div class="authcard"><span class="authicon">✓</span>
+      <div class="authtext"><b>Submitting as __DISPLAY_NAME__</b><span>Reviewed by a moderator before it's used</span></div>
+      <a class="authswitch" href="/logout?next=/submit">Switch</a></div>
+    <div class="modalsub">Multiple-choice needs 1–3 wrong choices; free-text can include up to 3 alternate spellings.</div>
+    <div class="typerow">
+      <div class="typebtn active" id="typeFree" onclick="setType('free_text')">Free-text</div>
+      <div class="typebtn" id="typeMC" onclick="setType('multiple_choice')">Multiple Choice</div>
+    </div>
+    <div class="field"><label class="fieldlabel">Category</label><input type="text" id="fCategory" maxlength="40" placeholder="e.g. Science, History, Movies"></div>
+    <div class="field"><label class="fieldlabel">Question</label><textarea id="fQuestion" maxlength="300" placeholder="15–300 characters"></textarea></div>
+    <div class="field"><label class="fieldlabel" id="lblAnswer">Primary Answer</label><input type="text" id="fAnswer" maxlength="100"></div>
+    <div class="field"><label class="fieldlabel" id="lblAlts">Alternate Spellings (optional, up to 3)</label><textarea id="fAlts" maxlength="300" placeholder="One per line or comma-separated"></textarea></div>
+    <div class="cf-turnstile" data-sitekey="__TURNSTILE_SITE_KEY__"></div>
+    <button type="button" class="primary" id="submitBtn" onclick="submitQuestion()">Submit</button>
+    <div class="status" id="submitStatus"></div>
+  </div>
+  <div class="foot">TriviaSphere</div>
+</div>
+<script>
+var subType = 'free_text';
+function setType(t) {
+  subType = t;
+  document.getElementById('typeFree').classList.toggle('active', t === 'free_text');
+  document.getElementById('typeMC').classList.toggle('active', t === 'multiple_choice');
+  document.getElementById('lblAnswer').textContent = t === 'multiple_choice' ? 'Correct Answer' : 'Primary Answer';
+  document.getElementById('lblAlts').textContent = t === 'multiple_choice' ? 'Wrong Choices (1–3, comma or new lines)' : 'Alternate Spellings (optional, up to 3)';
+}
+async function submitQuestion() {
+  var statusEl = document.getElementById('submitStatus');
+  var turnstileInput = document.querySelector('.cf-turnstile input[name="cf-turnstile-response"]');
+  var turnstileToken = turnstileInput ? turnstileInput.value : '';
+  if (!turnstileToken) { statusEl.textContent = 'Please complete the verification challenge.'; statusEl.className = 'status bad'; return; }
+  var btn = document.getElementById('submitBtn');
+  btn.disabled = true;
+  try {
+    var r = await fetch('/api/submit_question', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        sub_type: subType,
+        category: document.getElementById('fCategory').value,
+        question: document.getElementById('fQuestion').value,
+        correct_answer: document.getElementById('fAnswer').value,
+        // Sent as the same raw comma/newline-delimited string the Discord modal collects --
+        // server-side parsing (_parse_alternates) is shared, so don't pre-split here.
+        alternates: document.getElementById('fAlts').value,
+        turnstile_token: turnstileToken,
+      }),
+    });
+    var data = await r.json();
+    if (data.ok) {
+      document.querySelector('.card').innerHTML = '<div class="done">✅ Submitted — a moderator will review it shortly.</div>';
+    } else if (data.reason === 'captcha_failed') {
+      statusEl.textContent = 'Verification failed — try again.'; statusEl.className = 'status bad';
+      if (window.turnstile) { window.turnstile.reset(); }
+    } else if (data.reason === 'rate_limited') {
+      statusEl.textContent = "You're submitting too fast — try again in a moment."; statusEl.className = 'status bad';
+    } else if (data.reason === 'unauthenticated') {
+      statusEl.textContent = 'Your session expired — refresh and log in again.'; statusEl.className = 'status bad';
+    } else {
+      statusEl.textContent = data.reason || 'Could not submit.'; statusEl.className = 'status bad';
+    }
+  } catch (e) {
+    statusEl.textContent = 'Network error — try again.'; statusEl.className = 'status bad';
+  } finally {
+    btn.disabled = false;
+  }
+}
+</script>
+</body>
+</html>
+"""
+
+
+async def _verify_turnstile(token, remote_ip):
+    """POST to Cloudflare's siteverify endpoint; True only on an explicit 'success'. Any failure
+    to verify (network error, malformed response, missing secret) is treated as a rejection --
+    there's no safe default that lets a submission through when verification itself failed."""
+    if not _turnstile_secret_key or not token:
+        return False
+    try:
+        async with aiohttp.ClientSession() as http:
+            async with http.post(
+                "https://challenges.cloudflare.com/turnstile/v0/siteverify",
+                data={"secret": _turnstile_secret_key, "response": token, "remoteip": remote_ip},
+            ) as resp:
+                data = await resp.json()
+                return bool(data.get("success"))
+    except Exception:
+        return False
+
+
+async def handle_submit_page(request):
+    session = _session_from_request(request)
+    if not session:
+        return web.HTTPFound("/login?next=/submit")
+    html = (_SUBMIT_PAGE_HTML
+            .replace("__DISPLAY_NAME__", html_escape(session["display_name"]))
+            .replace("__TURNSTILE_SITE_KEY__", html_escape(_turnstile_site_key)))
+    return web.Response(text=html, content_type="text/html")
+
+
+async def handle_submit_question(request):
+    session = _session_from_request(request)
+    if not session:
+        return web.json_response({"ok": False, "reason": "unauthenticated"}, status=401)
+
+    user_id = session["user_id"]
+    now = time.time()
+    last = _last_question_submit.get(user_id, 0)
+    if now - last < _QUESTION_SUBMIT_MIN_INTERVAL:
+        return web.json_response({"ok": False, "reason": "rate_limited"}, status=429)
+    _last_question_submit[user_id] = now
+
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"ok": False, "reason": "bad_request"}, status=400)
+
+    fwd = request.headers.get("X-Forwarded-For", "")
+    remote_ip = fwd.split(",")[0].strip() if fwd else (request.remote or "")
+    if not await _verify_turnstile(str(body.get("turnstile_token") or ""), remote_ip):
+        return web.json_response({"ok": False, "reason": "captcha_failed"}, status=400)
+
+    sub_type = body.get("sub_type") if body.get("sub_type") in ("free_text", "multiple_choice") else "free_text"
+    if not _submit_question:
+        return web.json_response({"ok": False, "reason": "unavailable"}, status=503)
+    doc, err = await _submit_question(
+        user_id, session["display_name"], sub_type,
+        body.get("category"), body.get("question"), body.get("correct_answer"), body.get("alternates"),
+        source="web",
+    )
+    if err:
+        return web.json_response({"ok": False, "reason": err}, status=400)
+    return web.json_response({"ok": True})
 
 
 # ---------------------------------------------------------------------------
@@ -1405,12 +1635,13 @@ async def handle_logo_mark(request):
 # Startup
 # ---------------------------------------------------------------------------
 
-async def start_companion_web(*, resolve_member, get_state, submit_answer, reveal_extra=None, submit_flag=None, submit_anon_flag=None, get_flag_reveal_context=None):
+async def start_companion_web(*, resolve_member, get_state, submit_answer, reveal_extra=None, submit_flag=None, submit_anon_flag=None, get_flag_reveal_context=None, submit_question=None):
     """Bind the aiohttp server to $PORT and start serving. Called from the bot's main()
     before the long-running gather so Heroku sees the port bound promptly (avoids R10)."""
     global _resolve_member, _get_state, _submit_answer, _reveal_extra, _submit_flag, _submit_anon_flag
-    global _get_flag_reveal_context
+    global _get_flag_reveal_context, _submit_question
     global _session_secret, _oauth_client_id, _oauth_client_secret, _base_url, _flag_relay_secret
+    global _turnstile_site_key, _turnstile_secret_key, _discord_invite_url
 
     _resolve_member = resolve_member
     _get_state = get_state
@@ -1419,6 +1650,7 @@ async def start_companion_web(*, resolve_member, get_state, submit_answer, revea
     _submit_flag = submit_flag
     _submit_anon_flag = submit_anon_flag
     _get_flag_reveal_context = get_flag_reveal_context
+    _submit_question = submit_question
 
     secret = os.getenv("COMPANION_SESSION_SECRET")
     if not secret:
@@ -1432,6 +1664,11 @@ async def start_companion_web(*, resolve_member, get_state, submit_answer, revea
     _flag_relay_secret = os.getenv("FLAG_RELAY_SECRET", "")
     if not _flag_relay_secret:
         print("⚠️  FLAG_RELAY_SECRET not set — /internal/flag_relay will reject all requests.")
+    _turnstile_site_key = os.getenv("TURNSTILE_SITE_KEY", "")
+    _turnstile_secret_key = os.getenv("TURNSTILE_SECRET_KEY", "")
+    if not _turnstile_secret_key:
+        print("⚠️  TURNSTILE_SECRET_KEY not set — /api/submit_question will reject all requests.")
+    _discord_invite_url = os.getenv("DISCORD_INVITE_URL", "")
 
     app = web.Application(middlewares=[_https_enforcement_middleware])
     routes = [
@@ -1445,6 +1682,8 @@ async def start_companion_web(*, resolve_member, get_state, submit_answer, revea
         web.get("/flag", handle_flag_page),
         web.post("/api/flag_anon", handle_flag_anon),
         web.post("/internal/flag_relay", handle_flag_relay),
+        web.get("/submit", handle_submit_page),
+        web.post("/api/submit_question", handle_submit_question),
     ]
     if COMPANION_APP_ENABLED:
         routes.extend([

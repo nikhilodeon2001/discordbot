@@ -24755,6 +24755,39 @@ def _build_submission_embed(sub):
     return embed
 
 
+async def submit_question_for_review(submitter_id, submitter_name, sub_type, category, question, correct_answer, alternates, source="discord"):
+    """Validate, rate-limit, dedupe, store, and post for mod review. Returns (doc, None) on
+    success or (None, error_message) on failure. Shared by the Discord /submit modal and the
+    triviasphere.com web submission form so both surfaces are held to the same anti-abuse bar."""
+    cleaned, err = _validate_submission(category, question, correct_answer, alternates, sub_type)
+    if err:
+        return None, err
+    lock = _get_submission_lock(submitter_id)
+    async with lock:
+        count_24h = await _count_submissions_last_24h(submitter_id)
+        if count_24h >= MAX_SUBMISSIONS_PER_24H:
+            return None, f"You've hit the {MAX_SUBMISSIONS_PER_24H}/24h submission limit. Try again later."
+        if await _is_self_duplicate(submitter_id, cleaned["question"]):
+            return None, "You already submitted this exact question in the last 30 days."
+        doc = {
+            "submitter_id": submitter_id,
+            "submitter_name": submitter_name,
+            "submitted_at": datetime.datetime.utcnow(),
+            "type": sub_type,
+            "category": cleaned["category"],
+            "question": cleaned["question"],
+            "correct_answer": cleaned["correct_answer"],
+            "alternates": cleaned["alternates"],
+            "status": "awaiting_mod",
+            "ai_completed_at": None,
+            "source": source,
+        }
+        result = await db.question_submissions.insert_one(doc)
+        doc["_id"] = result.inserted_id
+    await post_submission_to_mod_channel(doc["_id"])
+    return doc, None
+
+
 class SubmitQuestionModal(discord.ui.Modal):
     def __init__(self, submitter_id, submitter_name, sub_type):
         super().__init__(title=("Submit a Multiple-Choice Question" if sub_type == "multiple_choice" else "Submit a Trivia Question"))
@@ -24790,47 +24823,19 @@ class SubmitQuestionModal(discord.ui.Modal):
 
     async def on_submit(self, interaction: discord.Interaction):
         try:
-            cleaned, err = _validate_submission(
+            doc, err = await submit_question_for_review(
+                self.submitter_id, self.submitter_name, self.sub_type,
                 self.category_input.value, self.question_input.value,
-                self.correct_input.value, self.alts_input.value, self.sub_type,
+                self.correct_input.value, self.alts_input.value,
+                source="discord",
             )
             if err:
                 await interaction.response.send_message(f"❌ {err}", ephemeral=True)
                 return
-            lock = _get_submission_lock(self.submitter_id)
-            async with lock:
-                count_24h = await _count_submissions_last_24h(self.submitter_id)
-                if count_24h >= MAX_SUBMISSIONS_PER_24H:
-                    await interaction.response.send_message(
-                        f"❌ You've hit the {MAX_SUBMISSIONS_PER_24H}/24h submission limit. Try again later.",
-                        ephemeral=True,
-                    )
-                    return
-                if await _is_self_duplicate(self.submitter_id, cleaned["question"]):
-                    await interaction.response.send_message(
-                        "❌ You already submitted this exact question in the last 30 days.",
-                        ephemeral=True,
-                    )
-                    return
-                doc = {
-                    "submitter_id": self.submitter_id,
-                    "submitter_name": self.submitter_name,
-                    "submitted_at": datetime.datetime.utcnow(),
-                    "type": self.sub_type,
-                    "category": cleaned["category"],
-                    "question": cleaned["question"],
-                    "correct_answer": cleaned["correct_answer"],
-                    "alternates": cleaned["alternates"],
-                    "status": "awaiting_mod",
-                    "ai_completed_at": None,
-                }
-                result = await db.question_submissions.insert_one(doc)
-                doc["_id"] = result.inserted_id
             await interaction.response.send_message(
                 "✅ Submitted! A moderator will review it shortly.",
                 ephemeral=True,
             )
-            await post_submission_to_mod_channel(doc["_id"])
         except Exception as e:
             sentry_sdk.capture_exception(e)
             print(f"❌ SubmitQuestionModal.on_submit: {e}")
@@ -27856,6 +27861,7 @@ if __name__ == "__main__":
                 submit_flag=_companion_route_submit_flag,
                 submit_anon_flag=anonymous_submit_flag,
                 get_flag_reveal_context=get_flag_reveal_context,
+                submit_question=submit_question_for_review,
             )
         except Exception as e:
             print(f"⚠️  Companion web app failed to start: {e}")
