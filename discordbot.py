@@ -26593,6 +26593,78 @@ async def submit_command(interaction: discord.Interaction):
             pass
 
 
+async def submit_bulk_questions_for_review(submitter_id, submitter_name, raw_text, source="discord"):
+    """Parse pipe-delimited lines (Category | Question | free/mc | Answer | Alternates),
+    validate/rate-limit/dedupe/insert each, then post accepted ones for mod review. Returns
+    (accepted_docs, skipped_messages). Shared by the Discord BulkSubmitModal and the
+    triviasphere.com web submission form's bulk tab.
+
+    The 4000-char cap mirrors BulkSubmitModal's questions_input TextInput (max_length=4000),
+    which bounds Discord submissions for free; the web JSON endpoint has no such client-side
+    constraint, so it's enforced here too."""
+    if len(raw_text or "") > 4000:
+        return [], ["Input too long (max 4000 characters)."]
+
+    lines = [l.strip() for l in (raw_text or "").splitlines() if l.strip()]
+    if not lines:
+        return [], ["No questions found."]
+
+    now = datetime.datetime.utcnow()
+    accepted = []
+    skipped = []
+
+    lock = _get_submission_lock(submitter_id)
+    async with lock:
+        for i, line in enumerate(lines, 1):
+            parts = [p.strip() for p in line.split("|")]
+            if len(parts) < 4:
+                skipped.append(f"Line {i}: need at least 4 fields (Category | Question | free/mc | Answer)")
+                continue
+            category, question, qtype_raw = parts[0], parts[1], parts[2].lower()
+            if qtype_raw not in ("free", "mc"):
+                skipped.append(f"Line {i}: type must be 'free' or 'mc', got '{parts[2]}'")
+                continue
+            sub_type = "free_text" if qtype_raw == "free" else "multiple_choice"
+            correct_answer = parts[3] if len(parts) > 3 else ""
+            alternates_raw = parts[4] if len(parts) > 4 else ""
+
+            cleaned, err = _validate_submission(category, question, correct_answer, alternates_raw, sub_type)
+            if err:
+                skipped.append(f"Line {i}: {err}")
+                continue
+
+            count_24h = await _count_submissions_last_24h(submitter_id)
+            if count_24h >= MAX_SUBMISSIONS_PER_24H:
+                skipped.append(f"Line {i}+: hit the {MAX_SUBMISSIONS_PER_24H}/24h limit")
+                break
+
+            if await _is_self_duplicate(submitter_id, cleaned["question"]):
+                skipped.append(f"Line {i}: duplicate of a recent submission")
+                continue
+
+            doc = {
+                "submitter_id": submitter_id,
+                "submitter_name": submitter_name,
+                "submitted_at": now,
+                "type": sub_type,
+                "category": cleaned["category"],
+                "question": cleaned["question"],
+                "correct_answer": cleaned["correct_answer"],
+                "alternates": cleaned["alternates"],
+                "status": "awaiting_mod",
+                "ai_completed_at": None,
+                "source": source,
+            }
+            result = await db.question_submissions.insert_one(doc)
+            doc["_id"] = result.inserted_id
+            accepted.append(doc)
+
+    for doc in accepted:
+        await post_submission_to_mod_channel(doc["_id"])
+
+    return accepted, skipped
+
+
 class BulkSubmitModal(discord.ui.Modal, title="Bulk Submit Questions"):
     questions_input = discord.ui.TextInput(
         label="One question per line (pipe-delimited)",
@@ -26610,63 +26682,9 @@ class BulkSubmitModal(discord.ui.Modal, title="Bulk Submit Questions"):
     async def on_submit(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
         try:
-            lines = [l.strip() for l in self.questions_input.value.splitlines() if l.strip()]
-            if not lines:
-                await interaction.followup.send("❌ No questions found.", ephemeral=True)
-                return
-
-            now = datetime.datetime.utcnow()
-            accepted = []
-            skipped = []
-
-            lock = _get_submission_lock(self.submitter_id)
-            async with lock:
-                for i, line in enumerate(lines, 1):
-                    parts = [p.strip() for p in line.split("|")]
-                    if len(parts) < 4:
-                        skipped.append(f"Line {i}: need at least 4 fields (Category | Question | free/mc | Answer)")
-                        continue
-                    category, question, qtype_raw = parts[0], parts[1], parts[2].lower()
-                    if qtype_raw not in ("free", "mc"):
-                        skipped.append(f"Line {i}: type must be 'free' or 'mc', got '{parts[2]}'")
-                        continue
-                    sub_type = "free_text" if qtype_raw == "free" else "multiple_choice"
-                    correct_answer = parts[3] if len(parts) > 3 else ""
-                    alternates_raw = parts[4] if len(parts) > 4 else ""
-
-                    cleaned, err = _validate_submission(category, question, correct_answer, alternates_raw, sub_type)
-                    if err:
-                        skipped.append(f"Line {i}: {err}")
-                        continue
-
-                    count_24h = await _count_submissions_last_24h(self.submitter_id)
-                    if count_24h >= MAX_SUBMISSIONS_PER_24H:
-                        skipped.append(f"Line {i}+: hit the {MAX_SUBMISSIONS_PER_24H}/24h limit")
-                        break
-
-                    if await _is_self_duplicate(self.submitter_id, cleaned["question"]):
-                        skipped.append(f"Line {i}: duplicate of a recent submission")
-                        continue
-
-                    doc = {
-                        "submitter_id": self.submitter_id,
-                        "submitter_name": self.submitter_name,
-                        "submitted_at": now,
-                        "type": sub_type,
-                        "category": cleaned["category"],
-                        "question": cleaned["question"],
-                        "correct_answer": cleaned["correct_answer"],
-                        "alternates": cleaned["alternates"],
-                        "status": "awaiting_mod",
-                        "ai_completed_at": None,
-                    }
-                    result = await db.question_submissions.insert_one(doc)
-                    doc["_id"] = result.inserted_id
-                    accepted.append(doc)
-
-            for doc in accepted:
-                await post_submission_to_mod_channel(doc["_id"])
-
+            accepted, skipped = await submit_bulk_questions_for_review(
+                self.submitter_id, self.submitter_name, self.questions_input.value, source="discord",
+            )
             lines_out = [f"✅ {len(accepted)} question(s) submitted for review."]
             if skipped:
                 lines_out.append(f"⚠️ {len(skipped)} skipped:")
@@ -27862,6 +27880,7 @@ if __name__ == "__main__":
                 submit_anon_flag=anonymous_submit_flag,
                 get_flag_reveal_context=get_flag_reveal_context,
                 submit_question=submit_question_for_review,
+                submit_bulk_questions=submit_bulk_questions_for_review,
             )
         except Exception as e:
             print(f"⚠️  Companion web app failed to start: {e}")

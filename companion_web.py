@@ -84,6 +84,7 @@ _ANON_FLAG_MIN_INTERVAL = 5.0
 _last_question_submit = {}
 _QUESTION_SUBMIT_MIN_INTERVAL = 3.0
 _submit_question = None      # async callable(user_id, display_name, sub_type, category, question, correct_answer, alternates, source) -> (doc, error)
+_submit_bulk_questions = None  # async callable(user_id, display_name, raw_text, source) -> (accepted_docs, skipped_messages)
 _turnstile_site_key = ""     # Cloudflare Turnstile site key, rendered into the /submit page's widget
 _turnstile_secret_key = ""   # Cloudflare Turnstile secret key, verified server-side on /api/submit_question
 _discord_invite_url = ""     # shown in the "join the server" 403 when a non-member tries to log in
@@ -804,6 +805,14 @@ _SUBMIT_PAGE_HTML = """<!doctype html>
     border:1px solid var(--line); background:rgba(127,127,127,.08); color:inherit; resize:vertical;
     font-family:inherit; box-sizing:border-box; }
   textarea { min-height:70px; }
+  #fBulk { min-height:140px; }
+  .guidetoggle { font-size:.8rem; font-weight:700; color:var(--blue); cursor:pointer; margin:0 0 12px; display:inline-block; }
+  .guidebox { display:none; font-size:.82rem; line-height:1.55; color:var(--muted); background:rgba(127,127,127,.06);
+    border:1px solid var(--line); border-radius:12px; padding:12px 14px; margin:0 0 14px; }
+  .guidebox.open { display:block; }
+  .guidebox code { background:rgba(127,127,127,.15); padding:1px 5px; border-radius:4px; font-size:.8rem; }
+  .skiplist { text-align:left; margin:8px 0 0; padding-left:18px; font-size:.85rem; font-weight:500; }
+  .skiplist li { margin-bottom:4px; }
   .cf-turnstile { margin-bottom:14px; }
   button.primary { width:100%; padding:15px; font-size:1.02rem; font-weight:700;
     border:none; border-radius:14px; color:#fff; cursor:pointer;
@@ -822,15 +831,32 @@ _SUBMIT_PAGE_HTML = """<!doctype html>
     <div class="authcard"><span class="authicon">✓</span>
       <div class="authtext"><b>Submitting as __DISPLAY_NAME__</b><span>Reviewed by a moderator before it's used</span></div>
       <a class="authswitch" href="/logout?next=/submit">Switch</a></div>
-    <div class="modalsub">Multiple-choice needs 1–3 wrong choices; free-text can include up to 3 alternate spellings.</div>
+    <div class="modalsub" id="modalSub">Multiple-choice needs 1–3 wrong choices; free-text can include up to 3 alternate spellings.</div>
     <div class="typerow">
       <div class="typebtn active" id="typeFree" onclick="setType('free_text')">Free-text</div>
       <div class="typebtn" id="typeMC" onclick="setType('multiple_choice')">Multiple Choice</div>
+      <div class="typebtn" id="typeBulk" onclick="setType('bulk')">Bulk</div>
     </div>
-    <div class="field"><label class="fieldlabel">Category</label><input type="text" id="fCategory" maxlength="40" placeholder="e.g. Science, History, Movies"></div>
-    <div class="field"><label class="fieldlabel">Question</label><textarea id="fQuestion" maxlength="300" placeholder="15–300 characters"></textarea></div>
-    <div class="field"><label class="fieldlabel" id="lblAnswer">Primary Answer</label><input type="text" id="fAnswer" maxlength="100"></div>
-    <div class="field"><label class="fieldlabel" id="lblAlts">Alternate Spellings (optional, up to 3)</label><textarea id="fAlts" maxlength="300" placeholder="One per line or comma-separated"></textarea></div>
+    <div id="singleFields">
+      <div class="field"><label class="fieldlabel">Category</label><input type="text" id="fCategory" maxlength="40" placeholder="e.g. Science, History, Movies"></div>
+      <div class="field"><label class="fieldlabel">Question</label><textarea id="fQuestion" maxlength="300" placeholder="15–300 characters"></textarea></div>
+      <div class="field"><label class="fieldlabel" id="lblAnswer">Primary Answer</label><input type="text" id="fAnswer" maxlength="100"></div>
+      <div class="field"><label class="fieldlabel" id="lblAlts">Alternate Spellings (optional, up to 3)</label><textarea id="fAlts" maxlength="300" placeholder="One per line or comma-separated"></textarea></div>
+    </div>
+    <div id="bulkFields" style="display:none">
+      <span class="guidetoggle" onclick="toggleGuide()">📋 Format Guide</span>
+      <div class="guidebox" id="guideBox">
+        One question per line, fields separated by <code>|</code>.<br><br>
+        <b>Free-text:</b><br><code>Category | Question | free | Answer</code><br>
+        <code>Category | Question | free | Answer | Alt1, Alt2</code><br><br>
+        <b>Multiple choice:</b><br><code>Category | Question | mc | CorrectAnswer | Wrong1, Wrong2, Wrong3</code><br><br>
+        Type field must be <code>free</code> or <code>mc</code>. MC needs 1–3 wrong choices; free-text alternates are optional. Questions must be 15–300 characters. Blank lines are ignored.<br><br>
+        <b>Example:</b><br>
+        <code>History | Who was the first US president? | free | George Washington | Washington</code><br>
+        <code>Sports | How many players on a basketball team? | mc | 5 | 4, 6, 7</code>
+      </div>
+      <div class="field"><label class="fieldlabel">Questions (one per line)</label><textarea id="fBulk" maxlength="4000" placeholder="Category | Question | free/mc | Answer | Alternates"></textarea></div>
+    </div>
     <div class="cf-turnstile" data-sitekey="__TURNSTILE_SITE_KEY__"></div>
     <button type="button" class="primary" id="submitBtn" onclick="submitQuestion()">Submit</button>
     <div class="status" id="submitStatus"></div>
@@ -843,8 +869,18 @@ function setType(t) {
   subType = t;
   document.getElementById('typeFree').classList.toggle('active', t === 'free_text');
   document.getElementById('typeMC').classList.toggle('active', t === 'multiple_choice');
+  document.getElementById('typeBulk').classList.toggle('active', t === 'bulk');
+  document.getElementById('singleFields').style.display = t === 'bulk' ? 'none' : 'block';
+  document.getElementById('bulkFields').style.display = t === 'bulk' ? 'block' : 'none';
+  document.getElementById('modalSub').style.display = t === 'bulk' ? 'none' : 'block';
   document.getElementById('lblAnswer').textContent = t === 'multiple_choice' ? 'Correct Answer' : 'Primary Answer';
   document.getElementById('lblAlts').textContent = t === 'multiple_choice' ? 'Wrong Choices (1–3, comma or new lines)' : 'Alternate Spellings (optional, up to 3)';
+}
+function toggleGuide() {
+  document.getElementById('guideBox').classList.toggle('open');
+}
+function escapeHtml(s) {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 async function submitQuestion() {
   var statusEl = document.getElementById('submitStatus');
@@ -854,21 +890,34 @@ async function submitQuestion() {
   var btn = document.getElementById('submitBtn');
   btn.disabled = true;
   try {
-    var r = await fetch('/api/submit_question', {
+    var isBulk = subType === 'bulk';
+    var url = isBulk ? '/api/submit_questions_bulk' : '/api/submit_question';
+    var payload = isBulk
+      ? { lines: document.getElementById('fBulk').value, turnstile_token: turnstileToken }
+      : {
+          sub_type: subType,
+          category: document.getElementById('fCategory').value,
+          question: document.getElementById('fQuestion').value,
+          correct_answer: document.getElementById('fAnswer').value,
+          // Sent as the same raw comma/newline-delimited string the Discord modal collects --
+          // server-side parsing (_parse_alternates) is shared, so don't pre-split here.
+          alternates: document.getElementById('fAlts').value,
+          turnstile_token: turnstileToken,
+        };
+    var r = await fetch(url, {
       method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({
-        sub_type: subType,
-        category: document.getElementById('fCategory').value,
-        question: document.getElementById('fQuestion').value,
-        correct_answer: document.getElementById('fAnswer').value,
-        // Sent as the same raw comma/newline-delimited string the Discord modal collects --
-        // server-side parsing (_parse_alternates) is shared, so don't pre-split here.
-        alternates: document.getElementById('fAlts').value,
-        turnstile_token: turnstileToken,
-      }),
+      body: JSON.stringify(payload),
     });
     var data = await r.json();
-    if (data.ok) {
+    if (data.ok && isBulk) {
+      var summary = '✅ ' + data.accepted + ' question(s) submitted for review.';
+      if (data.skipped && data.skipped.length) {
+        summary += '<ul class="skiplist">' + data.skipped.map(function (s) {
+          return '<li>' + escapeHtml(s) + '</li>';
+        }).join('') + '</ul>';
+      }
+      document.querySelector('.card').innerHTML = '<div class="done">' + summary + '</div>';
+    } else if (data.ok) {
       document.querySelector('.card').innerHTML = '<div class="done">✅ Submitted — a moderator will review it shortly.</div>';
     } else if (data.reason === 'captcha_failed') {
       statusEl.textContent = 'Verification failed — try again.'; statusEl.className = 'status bad';
@@ -953,6 +1002,39 @@ async def handle_submit_question(request):
     if err:
         return web.json_response({"ok": False, "reason": err}, status=400)
     return web.json_response({"ok": True})
+
+
+async def handle_submit_questions_bulk(request):
+    session = _session_from_request(request)
+    if not session:
+        return web.json_response({"ok": False, "reason": "unauthenticated"}, status=401)
+
+    user_id = session["user_id"]
+    now = time.time()
+    # Shares the single-submit cooldown clock -- a bulk paste and a single submit are the same
+    # kind of action for rate-limiting purposes, and the real per-line anti-abuse (24h cap,
+    # 30-day dedupe) lives in submit_bulk_questions_for_review regardless of which endpoint hit it.
+    last = _last_question_submit.get(user_id, 0)
+    if now - last < _QUESTION_SUBMIT_MIN_INTERVAL:
+        return web.json_response({"ok": False, "reason": "rate_limited"}, status=429)
+    _last_question_submit[user_id] = now
+
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"ok": False, "reason": "bad_request"}, status=400)
+
+    fwd = request.headers.get("X-Forwarded-For", "")
+    remote_ip = fwd.split(",")[0].strip() if fwd else (request.remote or "")
+    if not await _verify_turnstile(str(body.get("turnstile_token") or ""), remote_ip):
+        return web.json_response({"ok": False, "reason": "captcha_failed"}, status=400)
+
+    if not _submit_bulk_questions:
+        return web.json_response({"ok": False, "reason": "unavailable"}, status=503)
+    accepted, skipped = await _submit_bulk_questions(
+        user_id, session["display_name"], str(body.get("lines") or ""), source="web",
+    )
+    return web.json_response({"ok": True, "accepted": len(accepted), "skipped": skipped})
 
 
 # ---------------------------------------------------------------------------
@@ -1635,11 +1717,11 @@ async def handle_logo_mark(request):
 # Startup
 # ---------------------------------------------------------------------------
 
-async def start_companion_web(*, resolve_member, get_state, submit_answer, reveal_extra=None, submit_flag=None, submit_anon_flag=None, get_flag_reveal_context=None, submit_question=None):
+async def start_companion_web(*, resolve_member, get_state, submit_answer, reveal_extra=None, submit_flag=None, submit_anon_flag=None, get_flag_reveal_context=None, submit_question=None, submit_bulk_questions=None):
     """Bind the aiohttp server to $PORT and start serving. Called from the bot's main()
     before the long-running gather so Heroku sees the port bound promptly (avoids R10)."""
     global _resolve_member, _get_state, _submit_answer, _reveal_extra, _submit_flag, _submit_anon_flag
-    global _get_flag_reveal_context, _submit_question
+    global _get_flag_reveal_context, _submit_question, _submit_bulk_questions
     global _session_secret, _oauth_client_id, _oauth_client_secret, _base_url, _flag_relay_secret
     global _turnstile_site_key, _turnstile_secret_key, _discord_invite_url
 
@@ -1651,6 +1733,7 @@ async def start_companion_web(*, resolve_member, get_state, submit_answer, revea
     _submit_anon_flag = submit_anon_flag
     _get_flag_reveal_context = get_flag_reveal_context
     _submit_question = submit_question
+    _submit_bulk_questions = submit_bulk_questions
 
     secret = os.getenv("COMPANION_SESSION_SECRET")
     if not secret:
@@ -1684,6 +1767,7 @@ async def start_companion_web(*, resolve_member, get_state, submit_answer, revea
         web.post("/internal/flag_relay", handle_flag_relay),
         web.get("/submit", handle_submit_page),
         web.post("/api/submit_question", handle_submit_question),
+        web.post("/api/submit_questions_bulk", handle_submit_questions_bulk),
     ]
     if COMPANION_APP_ENABLED:
         routes.extend([
