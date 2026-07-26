@@ -20122,129 +20122,129 @@ async def ask_question(trivia_category, trivia_question, trivia_url, trivia_answ
         footer_text = "\ud83d\udea8 One guess: Answer is a number" if is_numeric_answer else "\ud83d\udea8 One guess"
         
     if is_valid_url(trivia_url): 
-        message_body += f"\u200b\n\u200b\n{number_block}📷 [**{get_category_title(trivia_category, trivia_url)}**]({flag_url})\n\n{trivia_question}\n"
+        message_body += f"\u200b\n\u200b\n{number_block}📷 [**{get_category_title(trivia_category, trivia_url, include_emoji=False)}**]({flag_url}) {get_category_emoji(trivia_category)}\n\n{trivia_question}\n"
         image_url = trivia_url
         send_image_flag = True
 
     elif trivia_url == "algebra":
         image_buffer, new_question, new_solution, text_problem = generate_and_render_linear_problem()
         if image_questions == True:
-            message_body += f"\u200b\n\u200b\n{number_block} [**{get_category_title(trivia_category, trivia_url)}**]({flag_url})\n\n{new_question}\n" 
+            message_body += f"\u200b\n\u200b\n{number_block} [**{get_category_title(trivia_category, trivia_url, include_emoji=False)}**]({flag_url}) {get_category_emoji(trivia_category)}\n\n{new_question}\n" 
             send_image_flag = True
         else:
-            message_body += f"\u200b\n\u200b\n{number_block} [**{get_category_title(trivia_category, trivia_url)}**]({flag_url})\n\n{new_question}\n{text_problem}\n"
+            message_body += f"\u200b\n\u200b\n{number_block} [**{get_category_title(trivia_category, trivia_url, include_emoji=False)}**]({flag_url}) {get_category_emoji(trivia_category)}\n\n{new_question}\n{text_problem}\n"
     
     elif trivia_url == "trig":
         image_url, new_question, new_solution, img_description = generate_trig_question()
         if image_questions == True:
-            message_body += f"\u200b\n\u200b\n{number_block} [**{get_category_title(trivia_category, trivia_url)}**]({flag_url})\n\n{new_question}\n" 
+            message_body += f"\u200b\n\u200b\n{number_block} [**{get_category_title(trivia_category, trivia_url, include_emoji=False)}**]({flag_url}) {get_category_emoji(trivia_category)}\n\n{new_question}\n" 
             send_image_flag = True
         else:
-            message_body += f"\u200b\n\u200b\n{number_block} [**{get_category_title(trivia_category, trivia_url)}**]({flag_url})\n\n{new_question}\n{img_description}\n"
+            message_body += f"\u200b\n\u200b\n{number_block} [**{get_category_title(trivia_category, trivia_url, include_emoji=False)}**]({flag_url}) {get_category_emoji(trivia_category)}\n\n{new_question}\n{img_description}\n"
 
     elif trivia_url == "base":
         image_buffer, new_question, new_solution, base_string = generate_base_question()
         if image_questions == True:
-            message_body += f"\u200b\n\u200b\n{number_block} [**{get_category_title(trivia_category, trivia_url)}**]({flag_url})\n\n{new_question}\n" 
+            message_body += f"\u200b\n\u200b\n{number_block} [**{get_category_title(trivia_category, trivia_url, include_emoji=False)}**]({flag_url}) {get_category_emoji(trivia_category)}\n\n{new_question}\n" 
             send_image_flag = True
         else:
-            message_body += f"\u200b\n\u200b\n{number_block} [**{get_category_title(trivia_category, trivia_url)}**]({flag_url})\n\n{new_question}\n{base_string}\n"
+            message_body += f"\u200b\n\u200b\n{number_block} [**{get_category_title(trivia_category, trivia_url, include_emoji=False)}**]({flag_url}) {get_category_emoji(trivia_category)}\n\n{new_question}\n{base_string}\n"
     
     elif trivia_url == "zeroes sum":
         image_buffer, new_solution, polynomial = generate_and_render_polynomial(trivia_url)
         if image_questions == True:
-            message_body += f"\u200b\n\u200b\n{number_block} [**{get_category_title(trivia_category, trivia_url)}**]({flag_url})\n\n{trivia_question}\n" 
+            message_body += f"\u200b\n\u200b\n{number_block} [**{get_category_title(trivia_category, trivia_url, include_emoji=False)}**]({flag_url}) {get_category_emoji(trivia_category)}\n\n{trivia_question}\n" 
             send_image_flag = True
         else:
-            message_body += f"\u200b\n\u200b\n{number_block} [**{get_category_title(trivia_category, trivia_url)}**]({flag_url})\n\n{trivia_question}\n{polynomial}\n"
+            message_body += f"\u200b\n\u200b\n{number_block} [**{get_category_title(trivia_category, trivia_url, include_emoji=False)}**]({flag_url}) {get_category_emoji(trivia_category)}\n\n{trivia_question}\n{polynomial}\n"
 
     elif trivia_url == "characters":
-        message_body += f"\u200b\n\u200b\n{number_block} [**{get_category_title(trivia_category, trivia_url)}**]({flag_url})\n\nName the movie, book, or show:\n\n{trivia_question}\n"
+        message_body += f"\u200b\n\u200b\n{number_block} [**{get_category_title(trivia_category, trivia_url, include_emoji=False)}**]({flag_url}) {get_category_emoji(trivia_category)}\n\nName the movie, book, or show:\n\n{trivia_question}\n"
 
     elif trivia_url == "zeroes product":
         image_buffer, new_solution, polynomial = generate_and_render_polynomial(trivia_url)
         if image_questions == True:
-            message_body += f"\u200b\n\u200b\n{number_block} [**{get_category_title(trivia_category, trivia_url)}**]({flag_url})\n\n{trivia_question}\n" 
+            message_body += f"\u200b\n\u200b\n{number_block} [**{get_category_title(trivia_category, trivia_url, include_emoji=False)}**]({flag_url}) {get_category_emoji(trivia_category)}\n\n{trivia_question}\n" 
             send_image_flag = True
         else:
-            message_body += f"\u200b\n\u200b\n{number_block} [**{get_category_title(trivia_category, trivia_url)}**]({flag_url})\n\n{trivia_question}\n{polynomial}\n"
+            message_body += f"\u200b\n\u200b\n{number_block} [**{get_category_title(trivia_category, trivia_url, include_emoji=False)}**]({flag_url}) {get_category_emoji(trivia_category)}\n\n{trivia_question}\n{polynomial}\n"
 
     elif trivia_url == "zeroes":
         image_buffer, new_solution, polynomial = generate_and_render_polynomial(trivia_url)
         if image_questions == True:
-            message_body += f"\u200b\n\u200b\n{number_block} [**{get_category_title(trivia_category, trivia_url)}**]({flag_url})\n\n{trivia_question}\n" 
+            message_body += f"\u200b\n\u200b\n{number_block} [**{get_category_title(trivia_category, trivia_url, include_emoji=False)}**]({flag_url}) {get_category_emoji(trivia_category)}\n\n{trivia_question}\n" 
             send_image_flag = True
         else:
-            message_body += f"\u200b\n\u200b\n{number_block} [**{get_category_title(trivia_category, trivia_url)}**]({flag_url})\n\n{trivia_question}\n{polynomial}\n"
+            message_body += f"\u200b\n\u200b\n{number_block} [**{get_category_title(trivia_category, trivia_url, include_emoji=False)}**]({flag_url}) {get_category_emoji(trivia_category)}\n\n{trivia_question}\n{polynomial}\n"
 
     elif trivia_url == "factors":
         image_buffer, new_solution, polynomial = generate_and_render_polynomial(trivia_url)
         if image_questions == True:
-            message_body += f"\u200b\n\u200b\n{number_block} [**{get_category_title(trivia_category, trivia_url)}**]({flag_url})\n\n{trivia_question}\n" 
+            message_body += f"\u200b\n\u200b\n{number_block} [**{get_category_title(trivia_category, trivia_url, include_emoji=False)}**]({flag_url}) {get_category_emoji(trivia_category)}\n\n{trivia_question}\n" 
             send_image_flag = True
         else:
-            message_body += f"\u200b\n\u200b\n{number_block} [**{get_category_title(trivia_category, trivia_url)}**]({flag_url})\n\n{trivia_question}\n{polynomial}\n"
+            message_body += f"\u200b\n\u200b\n{number_block} [**{get_category_title(trivia_category, trivia_url, include_emoji=False)}**]({flag_url}) {get_category_emoji(trivia_category)}\n\n{trivia_question}\n{polynomial}\n"
             
     elif trivia_url == "derivative":
         image_buffer, new_solution, polynomial = generate_and_render_derivative_image()
         if image_questions == True:
-            message_body += f"\u200b\n\u200b\n{number_block} [**{get_category_title(trivia_category, trivia_url)}**]({flag_url})\n\n{trivia_question}\n" 
+            message_body += f"\u200b\n\u200b\n{number_block} [**{get_category_title(trivia_category, trivia_url, include_emoji=False)}**]({flag_url}) {get_category_emoji(trivia_category)}\n\n{trivia_question}\n" 
             send_image_flag = True
         else:
-            message_body += f"\u200b\n\u200b\n{number_block} [**{get_category_title(trivia_category, trivia_url)}**]({flag_url})\n\n{trivia_question}\n{polynomial}\n"
+            message_body += f"\u200b\n\u200b\n{number_block} [**{get_category_title(trivia_category, trivia_url, include_emoji=False)}**]({flag_url}) {get_category_emoji(trivia_category)}\n\n{trivia_question}\n{polynomial}\n"
         
     elif trivia_url == "scramble":
         image_buffer, scramble = generate_scrambled_image(scramble_text(trivia_answer_list[0]))
         if image_questions:
-            message_body += f"\u200b\n\u200b\n{number_block}🧩 [**{get_category_title(trivia_category, trivia_url)}**]({flag_url})\n\n{trivia_question}\n"
+            message_body += f"\u200b\n\u200b\n{number_block}🧩 [**{get_category_title(trivia_category, trivia_url, include_emoji=False)}**]({flag_url}) {get_category_emoji(trivia_category)}\n\n{trivia_question}\n"
             send_image_flag = True
         else:
-            message_body += f"\u200b\n\u200b\n{number_block}🧩 [**{get_category_title(trivia_category, trivia_url)}**]({flag_url})\n\n{trivia_question}\n{scramble}\n"
+            message_body += f"\u200b\n\u200b\n{number_block}🧩 [**{get_category_title(trivia_category, trivia_url, include_emoji=False)}**]({flag_url}) {get_category_emoji(trivia_category)}\n\n{trivia_question}\n{scramble}\n"
             _companion_set_puzzle_text(scramble)
 
     elif trivia_url == "median":
         image_buffer, new_solution, num_set = generate_median_question()
         if image_questions == True:
-            message_body += f"\u200b\n\u200b\n{number_block}📊 [**{get_category_title(trivia_category, trivia_url)}**]({flag_url})\n\n{trivia_question}\n"
+            message_body += f"\u200b\n\u200b\n{number_block}📊 [**{get_category_title(trivia_category, trivia_url, include_emoji=False)}**]({flag_url}) {get_category_emoji(trivia_category)}\n\n{trivia_question}\n"
             send_image_flag = True
         else:
-            message_body += f"\u200b\n\u200b\n{number_block} [**{get_category_title(trivia_category, trivia_url)}**]({flag_url})\n\n{trivia_question}\n{num_set}\n"
+            message_body += f"\u200b\n\u200b\n{number_block} [**{get_category_title(trivia_category, trivia_url, include_emoji=False)}**]({flag_url}) {get_category_emoji(trivia_category)}\n\n{trivia_question}\n{num_set}\n"
 
     elif trivia_url == "mean":
         image_buffer, new_solution, num_set = generate_mean_question()
         if image_questions == True:
-            message_body += f"\u200b\n\u200b\n{number_block}📊 [**{get_category_title(trivia_category, trivia_url)}**]({flag_url})\n\n{trivia_question}\n"
+            message_body += f"\u200b\n\u200b\n{number_block}📊 [**{get_category_title(trivia_category, trivia_url, include_emoji=False)}**]({flag_url}) {get_category_emoji(trivia_category)}\n\n{trivia_question}\n"
             send_image_flag = True
         else:
-            message_body += f"\u200b\n\u200b\n{number_block} [**{get_category_title(trivia_category, trivia_url)}**]({flag_url})\n\n{trivia_question}\n{num_set}\n"
+            message_body += f"\u200b\n\u200b\n{number_block} [**{get_category_title(trivia_category, trivia_url, include_emoji=False)}**]({flag_url}) {get_category_emoji(trivia_category)}\n\n{trivia_question}\n{num_set}\n"
 
     elif trivia_url.startswith("jeopardy"):
         if image_questions == True: 
             image_buffer = generate_jeopardy_image(trivia_question, get_category_title(trivia_category, trivia_url, include_emoji=False, include_prefix=False))
-            message_body += f"\u200b\n\u200b\n{number_block} [**{get_category_title(trivia_category, trivia_url)}**]({flag_url})\n\nAnd the answer is: \n"
+            message_body += f"\u200b\n\u200b\n{number_block} [**{get_category_title(trivia_category, trivia_url, include_emoji=False)}**]({flag_url}) {get_category_emoji(trivia_category)}\n\nAnd the answer is: \n"
             send_image_flag = True
         else:
-            message_body += f"\u200b\n\u200b\n{number_block} [**{get_category_title(trivia_category, trivia_url)}**]({flag_url})\n\n{trivia_question}\n"
+            message_body += f"\u200b\n\u200b\n{number_block} [**{get_category_title(trivia_category, trivia_url, include_emoji=False)}**]({flag_url}) {get_category_emoji(trivia_category)}\n\n{trivia_question}\n"
             
     elif trivia_category == "Crossword":
         image_buffer, string_representation = generate_crossword_image(trivia_answer_list[0])
         footer_text = "🚨 Full word required"
         if image_questions == True:
-            message_body += f"\u200b\n\u200b\n{number_block} [**{get_category_title(trivia_category, trivia_url)}**]({flag_url})\n\n[{len(trivia_answer_list[0])} Letters] {trivia_question}\n"
+            message_body += f"\u200b\n\u200b\n{number_block} [**{get_category_title(trivia_category, trivia_url, include_emoji=False)}**]({flag_url}) {get_category_emoji(trivia_category)}\n\n[{len(trivia_answer_list[0])} Letters] {trivia_question}\n"
             send_image_flag = True
         else:
             # Escape the blank underscores -- Discord reads `_..._` as italics, which eats the
             # blanks and italicizes the letters between them.
             safe_representation = string_representation.replace("_", "\\_")
-            message_body += f"\u200b\n\u200b\n{number_block} [**{get_category_title(trivia_category, trivia_url)}**]({flag_url})\n\n[{len(trivia_answer_list[0])} Letters] {trivia_question}\n\n{safe_representation}\n"
+            message_body += f"\u200b\n\u200b\n{number_block} [**{get_category_title(trivia_category, trivia_url, include_emoji=False)}**]({flag_url}) {get_category_emoji(trivia_category)}\n\n[{len(trivia_answer_list[0])} Letters] {trivia_question}\n\n{safe_representation}\n"
             _companion_set_puzzle_text(string_representation)  # raw tiles for the phone (HTML shows _ literally)
         
     elif "multiple choice" in trivia_url:
         if trivia_answer_list[0] in {"True", "False"}:
-            message_body += f"\u200b\n\u200b\n{number_block} [**{get_category_title(trivia_category, trivia_url)}**]({flag_url})\n\n{trivia_question}\n\n"
+            message_body += f"\u200b\n\u200b\n{number_block} [**{get_category_title(trivia_category, trivia_url, include_emoji=False)}**]({flag_url}) {get_category_emoji(trivia_category)}\n\n{trivia_question}\n\n"
             footer_text = "🚨 One guess: True/T/False/F (or click)"
         else:
-            message_body += f"\u200b\n\u200b\n{number_block} [**{get_category_title(trivia_category, trivia_url)}**]({flag_url})\n\n{trivia_question}\n"
+            message_body += f"\u200b\n\u200b\n{number_block} [**{get_category_title(trivia_category, trivia_url, include_emoji=False)}**]({flag_url}) {get_category_emoji(trivia_category)}\n\n{trivia_question}\n"
             footer_text = "🚨 One guess"
             #await safe_send(channel, message_body)
             message_body += "\n"
@@ -20255,7 +20255,7 @@ async def ask_question(trivia_category, trivia_question, trivia_url, trivia_answ
         trivia_answer_list = trivia_answer_list[:1]
 
     else:
-         message_body += f"\u200b\n\u200b\n{number_block} [**{get_category_title(trivia_category, trivia_url)}**]({flag_url})\n\n{trivia_question}\n"
+         message_body += f"\u200b\n\u200b\n{number_block} [**{get_category_title(trivia_category, trivia_url, include_emoji=False)}**]({flag_url}) {get_category_emoji(trivia_category)}\n\n{trivia_question}\n"
 
     # Attribution for user-submitted questions
     try:
@@ -22382,11 +22382,16 @@ def _jeopardy_title_case(text):
     words = text.lower().split()
     return " ".join(w if (i > 0 and w in _TITLE_CASE_SKIP) else w.capitalize() for i, w in enumerate(words))
 
-def get_category_title(trivia_category, trivia_url, max_len=40, include_emoji=True, include_prefix=True):
+def get_category_emoji(trivia_category):
     emojis = category_emoji_cache.get(trivia_category)
     if emojis is None:
         prefix = trivia_category.split(":")[0].strip()
         emojis = category_emoji_cache.get(prefix, "❓❔")
+    return emojis
+
+
+def get_category_title(trivia_category, trivia_url, max_len=40, include_emoji=True, include_prefix=True):
+    emojis = get_category_emoji(trivia_category)
 
     if trivia_url.lower().startswith("jeopardy"):
         label_prefix = "Jeopardy: " if include_prefix else ""
