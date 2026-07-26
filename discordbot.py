@@ -5596,6 +5596,81 @@ class ValedictorianView(discord.ui.View):
         await self.handle_letter_click(interaction, "D")
 
 
+class LeaderboardView(discord.ui.View):
+    """Ephemeral /leaderboard viewer: a game-mode toggle (Trivia & Games vs Simply Trivia) plus
+    a category dropdown whose options depend on the currently selected mode. Both selects edit
+    the same message in place rather than posting new ones."""
+
+    def __init__(self, mode, category_key, user_id):
+        super().__init__(timeout=180)
+        self.mode = mode
+        self.category_key = category_key
+        self.user_id = user_id
+        self.message = None
+        self._refresh_category_options()
+
+    def _refresh_category_options(self):
+        categories = LEADERBOARD_MODE_CATEGORIES[self.mode]
+        self.category_select.options = [
+            discord.SelectOption(
+                label=cat["label"],
+                value=key,
+                emoji=cat["emoji"],
+                default=(key == self.category_key),
+            )
+            for key, cat in categories.items()
+        ]
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.user_id:
+            await interaction.response.send_message(
+                "❌ Only the user who ran /leaderboard can use these controls.",
+                ephemeral=True,
+            )
+            return False
+        return True
+
+    async def on_timeout(self):
+        for item in self.children:
+            item.disabled = True
+        if self.message:
+            try:
+                await self.message.edit(view=self)
+            except Exception:
+                pass
+
+    @discord.ui.select(
+        placeholder="Game Mode",
+        row=0,
+        options=[
+            discord.SelectOption(label="Trivia & Games", value="classic", emoji="🎮", default=True),
+            discord.SelectOption(label="Simply Trivia", value="simply_trivia", emoji="⚡"),
+        ],
+    )
+    async def mode_select(self, interaction: discord.Interaction, select: discord.ui.Select):
+        new_mode = select.values[0]
+        for option in select.options:
+            option.default = option.value == new_mode
+
+        new_view = LeaderboardView(mode=new_mode, category_key="answers", user_id=self.user_id)
+        new_view.message = self.message
+        for option in new_view.mode_select.options:
+            option.default = option.value == new_mode
+
+        embed = await _build_leaderboard_embed(new_mode, "answers")
+        await interaction.response.edit_message(embed=embed, view=new_view)
+
+    @discord.ui.select(placeholder="Category", row=1, options=[discord.SelectOption(label="Loading...", value="_placeholder")])
+    async def category_select(self, interaction: discord.Interaction, select: discord.ui.Select):
+        new_category = select.values[0]
+        self.category_key = new_category
+        for option in select.options:
+            option.default = option.value == new_category
+
+        embed = await _build_leaderboard_embed(self.mode, new_category)
+        await interaction.response.edit_message(embed=embed, view=self)
+
+
 class AnswerButtonView(discord.ui.View):
     """Click-to-answer buttons for a main-trivia-loop multiple-choice question.
 
@@ -15408,6 +15483,105 @@ async def build_classic_leaderboard_images():
         (stack_images_vertically([ans_streaks_row, rnd_streaks_row]).getvalue(), "classic_streaks_leaderboard.png"),
         (sovereigns_row.getvalue(), "classic_sovereigns_leaderboard.png"),
     ]
+
+
+# /leaderboard slash command -- on-demand embed leaderboards (distinct from the scheduled
+# PNG posts above). Classic mode reuses _query_leaderboard_counts/_query_leaderboard_streaks;
+# Simply Trivia mode reuses simply_trivia.py's get_top_users_*/get_longest_streaks_* functions.
+CLASSIC_LEADERBOARD_CATEGORIES = {
+    "answers": {"label": "Fastest Answers", "emoji": "🏃", "collection": "fastest_answers_discord", "kind": "count"},
+    "rounds": {"label": "Round Wins", "emoji": "🏅", "collection": "round_wins_discord", "kind": "count"},
+    "qstreaks": {"label": "Question Streaks", "emoji": "🔥", "collection": "longest_answer_streaks_discord", "kind": "streak"},
+    "rstreaks": {"label": "Round Streaks", "emoji": "🔥", "collection": "longest_round_streaks_discord", "kind": "streak"},
+}
+
+SIMPLY_TRIVIA_LEADERBOARD_CATEGORIES = {
+    "answers": {"label": "Most Correct Answers", "emoji": "✅"},
+    "streaks": {"label": "Longest Streaks", "emoji": "🔥"},
+}
+
+LEADERBOARD_MODE_CATEGORIES = {
+    "classic": CLASSIC_LEADERBOARD_CATEGORIES,
+    "simply_trivia": SIMPLY_TRIVIA_LEADERBOARD_CATEGORIES,
+}
+
+
+def _format_leaderboard_rows(rows, name_key, value_key):
+    """Format leaderboard rows into a medal-prefixed embed field value."""
+    if not rows:
+        return "*No data yet*"
+    medals = ["🥇", "🥈", "🥉"]
+    lines = []
+    for i, row in enumerate(rows[:8], 1):
+        medal = medals[i - 1] if i <= 3 else f"{i}."
+        name = row.get(name_key) or "Unknown"
+        value = row.get(value_key, 0)
+        lines.append(f"{medal} **{name}** - {value}")
+    return "\n".join(lines)
+
+
+async def build_classic_leaderboard_embed(category_key):
+    """Build the on-demand /leaderboard embed for the main trivia channel."""
+    cat = CLASSIC_LEADERBOARD_CATEGORIES[category_key]
+    now = time.time()
+    windows = [("All-Time", None), ("Past 7 Days", now - 604800), ("Past 24 Hours", now - 86400)]
+    query = _query_leaderboard_counts if cat["kind"] == "count" else _query_leaderboard_streaks
+    value_key = "count" if cat["kind"] == "count" else "streak"
+
+    embed = discord.Embed(
+        title=f"{cat['emoji']} {cat['label']}",
+        color=discord.Color.gold(),
+        timestamp=datetime.datetime.now(timezone.utc),
+    )
+    for label, start_time in windows:
+        rows = await query(cat["collection"], start_time, limit=8)
+        embed.add_field(name=label, value=_format_leaderboard_rows(rows, "user", value_key), inline=True)
+    embed.set_footer(text="Trivia & Games Leaderboard")
+    return embed
+
+
+async def build_simply_trivia_leaderboard_embed(category_key):
+    """Build the on-demand /leaderboard embed for the Simply Trivia channel."""
+    try:
+        from simply_trivia import (
+            get_top_users_alltime, get_top_users_24h, get_top_users_7d,
+            get_longest_streaks, get_longest_streaks_24h, get_longest_streaks_7d,
+        )
+    except ImportError:
+        return discord.Embed(
+            title="❌ Simply Trivia is not available.",
+            color=discord.Color.red(),
+        )
+
+    cat = SIMPLY_TRIVIA_LEADERBOARD_CATEGORIES[category_key]
+
+    if category_key == "answers":
+        alltime, past_7d, past_24h = await asyncio.gather(
+            get_top_users_alltime(db, limit=8), get_top_users_7d(db, limit=8), get_top_users_24h(db, limit=8)
+        )
+        value_key = "total_correct"
+    else:
+        alltime, past_7d, past_24h = await asyncio.gather(
+            get_longest_streaks(db, limit=8), get_longest_streaks_7d(db, limit=8), get_longest_streaks_24h(db, limit=8)
+        )
+        value_key = "streak_count"
+
+    embed = discord.Embed(
+        title=f"{cat['emoji']} {cat['label']}",
+        color=discord.Color(0x146DE8),
+        timestamp=datetime.datetime.now(timezone.utc),
+    )
+    embed.add_field(name="All-Time", value=_format_leaderboard_rows(alltime, "user_name", value_key), inline=True)
+    embed.add_field(name="Past 7 Days", value=_format_leaderboard_rows(past_7d, "user_name", value_key), inline=True)
+    embed.add_field(name="Past 24 Hours", value=_format_leaderboard_rows(past_24h, "user_name", value_key), inline=True)
+    embed.set_footer(text="Simply Trivia Leaderboard")
+    return embed
+
+
+async def _build_leaderboard_embed(mode, category_key):
+    if mode == "classic":
+        return await build_classic_leaderboard_embed(category_key)
+    return await build_simply_trivia_leaderboard_embed(category_key)
 
 
 # Kill switch for the Discord leaderboard image posts only -- write_leaderboard_to_s3()
@@ -27059,6 +27233,24 @@ async def perks_command(interaction: discord.Interaction):
         url="https://discord.com/channels/1367682586079395902/role-subscriptions",
     )
     await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
+@bot.tree.command(name="leaderboard", description="View the trivia leaderboard", guild=discord.Object(id=OKRAN_GUILD_ID))
+async def leaderboard_command(interaction: discord.Interaction):
+    """Unified slash command - works in both main trivia and Simply Trivia channels"""
+
+    if interaction.channel_id == channel_id:
+        mode = "classic"
+    elif interaction.channel_id == SIMPLY_TRIVIA_CHANNEL_ID:
+        mode = "simply_trivia"
+    else:
+        await interaction.response.send_message("❌ This command only works in trivia channels.", ephemeral=True)
+        return
+
+    embed = await _build_leaderboard_embed(mode, "answers")
+    view = LeaderboardView(mode=mode, category_key="answers", user_id=interaction.user.id)
+    await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+    view.message = await interaction.original_response()
 
 
 @bot.tree.command(name="flag", description="Flag the current or previous trivia question", guild=discord.Object(id=OKRAN_GUILD_ID))
