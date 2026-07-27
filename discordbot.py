@@ -415,7 +415,7 @@ async def send_question_queen_submit_ad():
 # {base_url} is substituted with companion_web.get_base_url() at post time, so
 # the same text is correct whether this deploy is staging or prod.
 okra_lab_announcement_enabled = True
-okra_lab_announcement_text = "🐝🔤 **Buzz Words** has launched — a real spelling bee.\n\nWords are pulled straight from the Scripps National Spelling Bee's official study list (One Bee, Two Bee, Three Bee, plus a brutal Championship tier of real historic finals words), with real Merriam-Webster pronunciation audio and definitions read aloud. Hear it, then race to type the spelling — no peeking, nothing's ever shown in chat.\n"
+okra_lab_announcement_text = "🐝🔤 **Buzz Words** has launched — a real spelling bee.\n\nWords span easy to championship-level brutal, pulled from an official competitive word list, with real dictionary-quality pronunciation audio and definitions read aloud. Hear it, then race to type the spelling — no peeking, nothing's ever shown in chat.\n"
 okra_lab_announcement_show_new_badge = True
 
 
@@ -9221,7 +9221,7 @@ async def ask_buzz_words_challenge(winner, winner_id, num=5):
         "one_bee": "One Bee 🐝 (easiest)",
         "two_bee": "Two Bee 🐝🐝 (medium)",
         "three_bee": "Three Bee 🐝🐝🐝 (hard)",
-        "championship": "Championship 🏆 (real Scripps finals words, brutal)",
+        "championship": "Championship 🏆 (real competition finals words, brutal)",
     }
     MIN_TIER_WORDS = 20
 
