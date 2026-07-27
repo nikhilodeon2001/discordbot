@@ -15506,18 +15506,25 @@ LEADERBOARD_MODE_CATEGORIES = {
 }
 
 
+_LEADERBOARD_NAME_WIDTH = 18
+_LEADERBOARD_VALUE_WIDTH = 6
+
+
 def _format_leaderboard_rows(rows, name_key, value_key):
-    """Format leaderboard rows into a medal-prefixed embed field value."""
+    """Format leaderboard rows as a monospace, right-aligned table. Regular embed text uses a
+    proportional font, so padding with spaces there never lines up -- a code block is the only
+    way to get real column alignment, which costs the medal emoji/bold styling (both break
+    monospace alignment across clients) in exchange for numbers that actually line up."""
     if not rows:
         return "*No data yet*"
-    medals = ["🥇", "🥈", "🥉"]
     lines = []
     for i, row in enumerate(rows[:8], 1):
-        medal = medals[i - 1] if i <= 3 else f"{i}."
-        name = row.get(name_key) or "Unknown"
-        value = row.get(value_key, 0)
-        lines.append(f"{medal} **{name}** - {value}")
-    return "\n".join(lines)
+        name = str(row.get(name_key) or "Unknown")
+        if len(name) > _LEADERBOARD_NAME_WIDTH:
+            name = name[:_LEADERBOARD_NAME_WIDTH - 1] + "…"
+        value = str(row.get(value_key, 0))
+        lines.append(f"{i:>2}. {name:<{_LEADERBOARD_NAME_WIDTH}} {value:>{_LEADERBOARD_VALUE_WIDTH}}")
+    return "```\n" + "\n".join(lines) + "\n```"
 
 
 async def build_classic_leaderboard_embed(category_key):
