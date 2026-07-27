@@ -414,8 +414,8 @@ async def send_question_queen_submit_ad():
 # e.g. for announcements (like a rebrand) that aren't a new feature pitch.
 # {base_url} is substituted with companion_web.get_base_url() at post time, so
 # the same text is correct whether this deploy is staging or prod.
-okra_lab_announcement_enabled = False
-okra_lab_announcement_text = "📜 **Hear ye, hear ye — a new system of grading hath been handed down.**\n\n**THE COMMANDMENTS OF ANSWERING** 📜\n\nI. Thou shalt not submit four letters and call it a day.\nII. Thy typos shall be forgiven.\nIII. Thy nicknames shall be honored.\nIV. Thy scrambled word order shall not condemn thee.\nV. Thy partial answers shall be found wanting.\n\n*Answer in full, and thy score shall be blessed.*\n"
+okra_lab_announcement_enabled = True
+okra_lab_announcement_text = "🐝🔤 **Buzz Words** just landed in the Mini-Game Arena — a real spelling bee.\n\nWords are pulled straight from the Scripps National Spelling Bee's official study list (One Bee, Two Bee, Three Bee, plus a brutal Championship tier of real historic finals words), with real Merriam-Webster pronunciation audio and definitions read aloud. Hear it, then race to type the spelling — no peeking, nothing's ever shown in chat.\n\nPlay it with **/arena buzz words**!\n"
 okra_lab_announcement_show_new_badge = True
 
 
@@ -843,7 +843,7 @@ _flag_locks = {}  # user_id -> asyncio.Lock (rate-limit TOCTOU guard for compani
 _submitter_attribution_cache = OrderedDict()  # (db_name, _id) -> attribution string; bounded LRU
 _SUBMITTER_CACHE_MAX = 256
 
-id_limits = {"general": 2000, "mysterybox": 2000, "crossword": 5000, "jeopardy": 5000, "wof": 1500, "list": 20, "feud": 1000, "posters": 2000, "movie_scenes": 5000, "missing_link": 2500, "people": 2500, "ranker_list": 4000, "animal": 2000, "riddle": 2500, "dictionary": 5000, "flags": 150, "update_blurb": 150, "lyric": 500, "polyglottery": 80, "book": 80, "element": 100, "jigsaw": 5000, "border": 100, "faceoff": 5000, "president": 80, "wordle": 1400, "myopic": 5000, "fusion": 5000, "microscopic": 5000, "chess": 5000, "stock": 800, "currency": 100, "search": 10, "billboard": 40, "soundfx": 500, "audio_music":100, "audio_question": 2000, "sports_logos": 20, "fun_fact": 75, "sat": 10000, "sat_math": 2000, "sat_verbal": 5000, "sat_science": 2000, "sat_grammar": 3000, "sat_english": 1000}
+id_limits = {"general": 2000, "mysterybox": 2000, "crossword": 5000, "jeopardy": 5000, "wof": 1500, "list": 20, "feud": 1000, "posters": 2000, "movie_scenes": 5000, "missing_link": 2500, "people": 2500, "ranker_list": 4000, "animal": 2000, "riddle": 2500, "dictionary": 5000, "flags": 150, "update_blurb": 150, "lyric": 500, "polyglottery": 80, "book": 80, "element": 100, "jigsaw": 5000, "border": 100, "faceoff": 5000, "president": 80, "wordle": 1400, "myopic": 5000, "fusion": 5000, "microscopic": 5000, "chess": 5000, "stock": 800, "currency": 100, "search": 10, "billboard": 40, "soundfx": 500, "audio_music":100, "audio_question": 2000, "sports_logos": 20, "fun_fact": 75, "sat": 10000, "sat_math": 2000, "sat_verbal": 5000, "sat_science": 2000, "sat_grammar": 3000, "sat_english": 1000, "spellingbee_one_bee": 700, "spellingbee_two_bee": 1800, "spellingbee_three_bee": 700, "spellingbee_championship": 40}
 max_retries = 3
 delay_between_retries = 3
 first_place_bonus = 0
@@ -1426,7 +1426,7 @@ async def shuffle_image_pieces(image_url, num_pieces=9, tint_mode="none", tint_c
     return image_buffer
 
 
-async def ask_jigsaw_challenge(winner, winner_id, num=7):
+async def ask_jigsaw_challenge(winner, winner_id, num=5):
     global wf_winner
     wf_winner = True
 
@@ -1631,7 +1631,7 @@ async def ask_jigsaw_challenge(winner, winner_id, num=7):
 
 
 
-async def ask_faceoff_challenge(winner, winner_id, num=7):
+async def ask_faceoff_challenge(winner, winner_id, num=5):
     global wf_winner
     wf_winner = True
 
@@ -3167,7 +3167,7 @@ def highlight_element(x, y, width, height, hex_color, blank=True, symbol="", hig
     return image_buffer
 
 
-async def ask_element_challenge(winner, winner_id, num=7):
+async def ask_element_challenge(winner, winner_id, num=5):
     global wf_winner
     wf_winner = True
 
@@ -3501,7 +3501,7 @@ async def translate_text(collected_words: str, lang_code: str, google_api_key: s
                 return collected_words 
 
 
-async def ask_polyglottery_challenge(winner, winner_id, num=7):
+async def ask_polyglottery_challenge(winner, winner_id, num=5):
     global wf_winner
     wf_winner = True
 
@@ -3692,7 +3692,7 @@ async def ask_polyglottery_challenge(winner, winner_id, num=7):
 
 
 
-async def ask_dictionary_challenge(winner, winner_id, num=7):
+async def ask_dictionary_challenge(winner, winner_id, num=5):
     global wf_winner
     wf_winner = True
 
@@ -4165,7 +4165,7 @@ def generate_math_puzzle(n):
             }
 
 
-async def ask_math_challenge(winner, winner_id, num=7):
+async def ask_math_challenge(winner, winner_id, num=5):
     global wf_winner
     wf_winner = True
 
@@ -4332,7 +4332,7 @@ async def ask_math_challenge(winner, winner_id, num=7):
     return math_winner_id
 
 
-async def ask_music_challenge(winner, winner_id, num=7):
+async def ask_music_challenge(winner, winner_id, num=5):
     global wf_winner
     wf_winner = True
 
@@ -4582,7 +4582,7 @@ def generate_music_image(note_string):
 
 
 
-async def ask_lyric_challenge(winner, winner_id, num=7):
+async def ask_lyric_challenge(winner, winner_id, num=5):
     global wf_winner
     wf_winner = True
 
@@ -5830,7 +5830,7 @@ async def get_random_epub_snippets(book_epub_url, snippet_length=300, count=2):
         return []
 
 
-async def ask_book_challenge(winner, winner_id, num=7):
+async def ask_book_challenge(winner, winner_id, num=5):
     global wf_winner
     wf_winner = True
 
@@ -5996,7 +5996,7 @@ async def ask_book_challenge(winner, winner_id, num=7):
     return book_winner_id
 
 
-async def ask_riddle_challenge(winner, winner_id, num=7):
+async def ask_riddle_challenge(winner, winner_id, num=5):
     global wf_winner
     wf_winner = True
 
@@ -6795,7 +6795,7 @@ async def collect_rapidfire_answers(all_questions, user_data, answered_questions
             continue
 
 
-async def ask_stock_challenge(winner, winner_id, num=7):
+async def ask_stock_challenge(winner, winner_id, num=5):
     global wf_winner
     wf_winner = True
 
@@ -6984,7 +6984,7 @@ def norm_name(s: str) -> str:
 
 
 
-async def ask_border_challenge(winner, winner_id, num=7):
+async def ask_border_challenge(winner, winner_id, num=5):
     global wf_winner
     wf_winner = True
 
@@ -7164,7 +7164,7 @@ async def ask_border_challenge(winner, winner_id, num=7):
 
 
 
-async def ask_animal_challenge(winner, winner_id, num=7):
+async def ask_animal_challenge(winner, winner_id, num=5):
     global wf_winner
     wf_winner = True
 
@@ -7330,7 +7330,7 @@ async def ask_animal_challenge(winner, winner_id, num=7):
     return animal_winner_id
 
 
-async def ask_ranker_people_challenge(winner, winner_id, num=7):
+async def ask_ranker_people_challenge(winner, winner_id, num=5):
     global wf_winner
 
     gifs = [
@@ -7548,7 +7548,7 @@ async def add_white_background_to_flag(image_url):
         return None
 
 
-async def ask_flags_challenge(winner, winner_id, num=7):
+async def ask_flags_challenge(winner, winner_id, num=5):
     global wf_winner
     wf_winner = True
 
@@ -7794,7 +7794,9 @@ async def ask_chaos_challenge(winner, winner_id, num_of_games):
         ask_okrace_challenge,
         ask_sports_logos_challenge,
         ask_rapidfire_challenge,
-        ask_valedictorian_challenge  # full elimination game, not a single quick round like its CHAOS siblings
+        ask_valedictorian_challenge,  # full elimination game, not a single quick round like its CHAOS siblings
+        ask_okra_says_challenge,
+        ask_buzz_words_challenge
     ]
 
 
@@ -7860,7 +7862,7 @@ async def ask_chaos_challenge(winner, winner_id, num_of_games):
 
 
 
-async def ask_soundfx_challenge(winner, winner_id, num=7):
+async def ask_soundfx_challenge(winner, winner_id, num=5):
     global wf_winner
     wf_winner = True
 
@@ -8198,7 +8200,7 @@ async def ask_soundfx_challenge(winner, winner_id, num=7):
 
 
 
-async def ask_audio_music_challenge(winner, winner_id, num=7):
+async def ask_audio_music_challenge(winner, winner_id, num=5):
     global wf_winner
     wf_winner = True
 
@@ -8726,7 +8728,7 @@ async def ask_audio_music_challenge(winner, winner_id, num=7):
     return audio_music_winner_id
 
 
-async def ask_audio_question_challenge(winner, winner_id, num=7):
+async def ask_audio_question_challenge(winner, winner_id, num=5):
     global wf_winner
     wf_winner = True
 
@@ -9188,9 +9190,378 @@ async def ask_audio_question_challenge(winner, winner_id, num=7):
     return audio_question_winner_id
 
 
+BUZZ_WORDS_TIER_POINTS = {"one_bee": 1, "two_bee": 2, "three_bee": 3, "championship": 5}
+BUZZ_WORDS_ANSWER_WINDOW = 28
+BUZZ_WORDS_REPLAY_INTERVAL = 6
 
 
-async def ask_president_challenge(winner, winner_id, num=7):
+async def ask_buzz_words_challenge(winner, winner_id, num=5):
+    global wf_winner
+    wf_winner = True
+
+    user_data = {}
+    voice_client = None
+    voice_channel = None
+    sorted_users = []
+
+    gifs = [
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/buzzwords1.gif",
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/buzzwords2.gif",
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/buzzwords3.gif"
+    ]
+    gif_url = random.choice(gifs)
+
+    await safe_send(channel, content="\u200b\n🐝🔤 **Buzz Words**: Hear It, Spell It.\n\u200b", embed=discord.Embed().set_image(url=gif_url))
+    await asyncio.sleep(3)
+
+    # Tier selection -- built from what's actually seeded right now, since MW enrichment
+    # ingests tiers gradually (1000 API calls/day cap). Only offer tiers with enough
+    # words to actually run a game; this naturally expands as more tiers get seeded.
+    BUZZ_WORDS_TIER_LABELS = {
+        "one_bee": "One Bee 🐝 (easiest)",
+        "two_bee": "Two Bee 🐝🐝 (medium)",
+        "three_bee": "Three Bee 🐝🐝🐝 (hard)",
+        "championship": "Championship 🏆 (real Scripps finals words, brutal)",
+    }
+    MIN_TIER_WORDS = 20
+
+    tier_counts = {}
+    try:
+        collection = db["spellingbee_questions"]
+        async for doc in collection.aggregate([
+            {"$match": {"enabled": True}},
+            {"$group": {"_id": "$tier", "count": {"$sum": 1}}}
+        ]):
+            tier_counts[doc["_id"]] = doc["count"]
+    except Exception as e:
+        sentry_sdk.capture_exception(e)
+        print(f"Error counting spelling bee tiers:\n{traceback.format_exc()}")
+
+    available_tiers = [t for t in BUZZ_WORDS_TIER_LABELS if tier_counts.get(t, 0) >= MIN_TIER_WORDS]
+
+    if not available_tiers:
+        await safe_send(channel, "\u200b\n⚠️ No spelling bee words are seeded yet. Try again once the word list is loaded.\n\u200b")
+        return None
+
+    selected_tier = None
+
+    if len(available_tiers) == 1:
+        selected_tier = available_tiers[0]
+        await safe_send(channel, f"\u200b\n🐝 Only **{BUZZ_WORDS_TIER_LABELS[selected_tier]}** is ready so far — let's go!\n\u200b")
+    else:
+        tier_options = {i: tier for i, tier in enumerate(available_tiers, start=1)}
+
+        tier_msg = f"\u200b\n🔤🎚️ **<@{winner_id}>**, choose a difficulty tier:\n\n"
+        for i, tier in tier_options.items():
+            tier_msg += f"**{i}.** {BUZZ_WORDS_TIER_LABELS[tier]}\n"
+        await safe_send(channel, tier_msg)
+
+        start_time = asyncio.get_event_loop().time()
+
+        def check_tier(m):
+            return m.author.id == winner_id and m.channel == (_active_game_channel or channel) and m.author != get_bot().user
+
+        while asyncio.get_event_loop().time() - start_time < magic_time + 5:
+            try:
+                timeout = magic_time + 5 - (asyncio.get_event_loop().time() - start_time)
+                msg = await get_bot().wait_for("message", timeout=timeout, check=check_tier)
+                numbers = re.findall(r'\d+', msg.content.strip())
+                if numbers:
+                    choice = int(numbers[0])
+                    if choice in tier_options:
+                        selected_tier = tier_options[choice]
+                        await msg.add_reaction("🐝")
+                        break
+            except asyncio.TimeoutError:
+                break
+
+        if selected_tier:
+            await safe_send(channel, f"\u200b\n🎯✅ Let's do **{BUZZ_WORDS_TIER_LABELS[selected_tier]}**!\n\u200b")
+        else:
+            selected_tier = available_tiers[0]
+            await safe_send(channel, f"\u200b\n😬⏱️ Time's up! Defaulting to **{BUZZ_WORDS_TIER_LABELS[selected_tier]}**!\n\u200b")
+
+    await asyncio.sleep(2)
+
+    if num > 1:
+        await safe_send(channel, f"\u200b\n5️⃣🥇 Let's do a best of **{num}**...\n\u200b")
+        await asyncio.sleep(3)
+
+    # Voice channel connect (same pattern as ask_audio_question_challenge)
+    voice_channel_id = game_voice_channel_id.get()
+    if voice_channel_id:
+        voice_channel = get_voice_bot().get_channel(voice_channel_id)
+    else:
+        voice_channel = get_voice_bot().get_channel(TRIVIA_VOICE_CHANNEL_ID)
+
+    if voice_channel:
+        try:
+            voice_bot = get_voice_bot()
+            voice_client = discord.utils.get(voice_bot.voice_clients, guild=voice_channel.guild)
+
+            if voice_client and voice_client.channel != voice_channel:
+                await voice_client.move_to(voice_channel)
+            elif voice_client is None:
+                voice_client = await asyncio.wait_for(voice_channel.connect(), timeout=30.0)
+        except asyncio.TimeoutError:
+            print("Voice connection timed out after 30 seconds")
+            await safe_send(channel, "⚠️ Could not connect to voice channel. Continuing with text-only mode.")
+            voice_client = None
+        except Exception as e:
+            print(f"Voice connection error: {e}")
+            await safe_send(channel, "⚠️ Voice connection failed. Continuing with text-only mode.")
+            voice_client = None
+
+        if voice_client:
+            try:
+                everyone_role = voice_channel.guild.get_role(EVERYONE_ROLE_ID)
+                if everyone_role:
+                    existing_perms = voice_channel.overwrites_for(everyone_role)
+                    existing_perms.view_channel = True
+                    existing_perms.connect = True
+                    await voice_channel.set_permissions(everyone_role, overwrite=existing_perms)
+            except Exception as e:
+                print(f"Error making voice channel visible: {e}")
+
+            voice_embed = discord.Embed(
+                title="🐝 Buzz Words - Join Voice Channel!",
+                description=f"**{voice_channel.mention}**",
+                color=discord.Color.gold()
+            )
+            await safe_send(channel, embed=voice_embed)
+
+    await asyncio.sleep(5)
+
+    round_num = 1
+    while round_num <= num:
+        try:
+            recent_ids = await get_recent_question_ids_from_mongo(f"spellingbee_{selected_tier}")
+            collection = db["spellingbee_questions"]
+            pipeline = [
+                {"$match": {"_id": {"$nin": list(recent_ids)}, "tier": selected_tier, "enabled": True}},
+                {"$sample": {"size": 1}}
+            ]
+            questions = [doc async for doc in collection.aggregate(pipeline)]
+            if not questions:
+                await safe_send(channel, "\u200b\n⚠️ Ran out of unused words in this tier. Ending early.\n\u200b")
+                break
+            q = questions[0]
+
+            word = q["word"]
+            definition = q.get("definition") or ""
+            part_of_speech = q.get("part_of_speech") or ""
+            example_sentence = q.get("example_sentence") or ""
+            etymology = q.get("etymology") or ""
+            pronunciation_url = q.get("pronunciation_url")
+            qid = q["_id"]
+
+            if qid:
+                await store_question_ids_in_mongo([qid], f"spellingbee_{selected_tier}")
+
+            print(f"Buzz Words {round_num}: {word} ({selected_tier})")
+
+        except Exception as e:
+            sentry_sdk.capture_exception(e)
+            print(f"Error selecting spelling bee question:\n{traceback.format_exc()}")
+            return
+
+        await safe_send(channel, f"\u200b\n🐝❓ **Word {round_num}**/{num} — {selected_tier.replace('_', ' ').title()}\n\n🎧 Listen closely...\n\u200b")
+
+        # Resolve word pronunciation: real Merriam-Webster audio first, Deepgram TTS fallback.
+        # Everything about the word (definition, sentence, origin, etc.) is narrated aloud
+        # below via Deepgram, never printed in chat, to keep the spelling a real listening test.
+        word_local_tts_path = None
+        audio_source = pronunciation_url
+        if not audio_source:
+            loop = asyncio.get_running_loop()
+            tts_filename = f"audio_{uuid.uuid4().hex}.mp3"
+            word_local_tts_path, _ = await loop.run_in_executor(
+                None,
+                lambda w=word, f=tts_filename: text_to_speech(w, filename=f, model="aura-2-thalia-en"),
+            )
+            audio_source = word_local_tts_path
+
+        if not audio_source:
+            await safe_send(channel, "\u200b\n❌ Error generating audio for this word. Skipping.\n\u200b")
+            round_num += 1
+            continue
+
+        def play_word(src=audio_source):
+            if voice_client:
+                try:
+                    if voice_client.is_playing():
+                        voice_client.stop()
+                    voice_client.play(discord.FFmpegPCMAudio(src))
+                except Exception as e:
+                    print(f"Error playing audio: {e}")
+
+        async def wait_until_done_playing(max_wait=20):
+            waited = 0.0
+            while voice_client and voice_client.is_playing() and waited < max_wait:
+                await asyncio.sleep(0.3)
+                waited += 0.3
+
+        play_word()
+        await asyncio.sleep(0.3)  # let playback start before polling is_playing()
+        await wait_until_done_playing()
+
+        # Narrate part of speech / definition / sentence / origin aloud -- spoken only, never printed
+        narration_parts = []
+        if part_of_speech:
+            narration_parts.append(f"This word is a {part_of_speech}.")
+        if definition:
+            narration_parts.append(f"Definition: {definition}.")
+        if example_sentence:
+            narration_parts.append(f"Used in a sentence: {example_sentence}.")
+        if etymology:
+            narration_parts.append(f"Origin: {etymology}.")
+
+        narration_local_path = None
+        if narration_parts and voice_client:
+            loop = asyncio.get_running_loop()
+            narration_filename = f"audio_{uuid.uuid4().hex}.mp3"
+            narration_text = " ".join(narration_parts)
+            narration_local_path, _ = await loop.run_in_executor(
+                None,
+                lambda t=narration_text, f=narration_filename: text_to_speech(t, filename=f, model="aura-2-thalia-en"),
+            )
+            if narration_local_path:
+                try:
+                    voice_client.play(discord.FFmpegPCMAudio(narration_local_path))
+                    await asyncio.sleep(0.3)
+                    await wait_until_done_playing()
+                except Exception as e:
+                    print(f"Error playing narration audio: {e}")
+
+        await safe_send(channel, "\u200b\n🟢💨 **GO!**\n\u200b")
+
+        start_time = asyncio.get_event_loop().time()
+        next_replay_at = start_time + BUZZ_WORDS_REPLAY_INTERVAL
+        answered = False
+
+        def check(m):
+            target_channel = _active_game_channel or channel
+            return m.channel == target_channel and m.author != get_bot().user
+
+        while asyncio.get_event_loop().time() - start_time < BUZZ_WORDS_ANSWER_WINDOW and not answered:
+            now = asyncio.get_event_loop().time()
+            if now >= next_replay_at and voice_client and not voice_client.is_playing():
+                play_word()
+                next_replay_at = now + BUZZ_WORDS_REPLAY_INTERVAL
+
+            remaining = BUZZ_WORDS_ANSWER_WINDOW - (now - start_time)
+            if remaining <= 0:
+                break
+
+            try:
+                msg = await get_bot().wait_for("message", timeout=min(1.0, remaining), check=check)
+                guess = msg.content.strip()
+                uid = msg.author.id
+                display = msg.author.display_name
+
+                if guess.lower() == word.lower():
+                    answered = True
+                    if voice_client and voice_client.is_playing():
+                        voice_client.stop()
+                    points = BUZZ_WORDS_TIER_POINTS.get(selected_tier, 1)
+                    await msg.add_reaction("✅")
+                    prev_name, prev_score = user_data.get(uid, (display, 0))
+                    user_data[uid] = (display, prev_score + points)
+                    mw_link = f"https://www.merriam-webster.com/dictionary/{word}"
+                    await safe_send(channel, f"\u200b\n✅🎉 **{display}** spelled it! **{word.upper()}** (+{points})\n🔗 {mw_link}\n\u200b")
+                    break
+
+            except asyncio.TimeoutError:
+                continue
+
+        if voice_client and voice_client.is_playing():
+            voice_client.stop()
+
+        for cleanup_path in (word_local_tts_path, narration_local_path):
+            if cleanup_path and os.path.exists(cleanup_path):
+                try:
+                    os.remove(cleanup_path)
+                except OSError:
+                    pass
+
+        if not answered:
+            mw_link = f"https://www.merriam-webster.com/dictionary/{word}"
+            await safe_send(channel, f"\u200b\n❌😢 No one got it.\n\n📝🧠 Answer: **{word.upper()}**\n🔗 {mw_link}\n\u200b")
+
+        await asyncio.sleep(3)
+
+        round_num += 1
+
+        sorted_users = sorted(user_data.items(), key=lambda x: x[1][1], reverse=True)
+        message = ""
+        if sorted_users:
+            if round_num > num:
+                message += "\u200b\n🏁🏆 Final Standings\n\u200b"
+            else:
+                message += "\u200b\n📊🏆 Current Standings\n\u200b"
+            for counter, (uid, (name, score)) in enumerate(sorted_users, start=1):
+                message += f"{counter}. **{name}**: {score}\n\u200b"
+
+        if message:
+            await safe_send(channel, message)
+        await asyncio.sleep(2)
+
+    await asyncio.sleep(2)
+
+    buzz_words_winner_id = None
+    if sorted_users:
+        top_score = sorted_users[0][1][1]
+        top_winners = [(uid, name) for uid, (name, score) in sorted_users if score == top_score]
+
+        if len(top_winners) == 1:
+            buzz_words_winner_id, display_name = top_winners[0]
+            await safe_send(channel, f"\u200b\n🎉🥇 The winner is **{display_name}**!\n\u200b")
+        else:
+            message = f"\u200b\n🤝 It's a tie! **Winners:**\n\u200b"
+            for uid, name in top_winners:
+                message += f"• **{name}** ({top_score} pts)\n"
+            message += "\u200b"
+            await safe_send(channel, message)
+    else:
+        await safe_send(channel, f"\u200b\n👎😢 **No right answers**. Tough tier, huh?\n\u200b")
+
+    wf_winner = True
+    await asyncio.sleep(3)
+
+    # Disconnect from voice channel
+    try:
+        if voice_client and voice_client.is_connected():
+            await voice_client.disconnect()
+            print(f"✅ Disconnected from voice channel")
+    except Exception as e:
+        print(f"Error disconnecting from voice: {e}")
+
+    # Kick all members from voice channel before hiding it
+    try:
+        if voice_channel:
+            for member in voice_channel.members:
+                await member.move_to(None)
+            print(f"✅ Kicked all members from voice channel")
+    except Exception as e:
+        print(f"Error kicking members from voice channel: {e}")
+
+    # Hide voice channel from everyone
+    try:
+        if voice_channel:
+            everyone_role = voice_channel.guild.get_role(EVERYONE_ROLE_ID)
+            if everyone_role:
+                existing_perms = voice_channel.overwrites_for(everyone_role)
+                existing_perms.view_channel = False
+                existing_perms.connect = False
+                await voice_channel.set_permissions(everyone_role, overwrite=existing_perms)
+                print(f"✅ Hidden voice channel and removed connect permission from @everyone")
+    except Exception as e:
+        print(f"Error hiding voice channel: {e}")
+
+    return buzz_words_winner_id
+
+
+async def ask_president_challenge(winner, winner_id, num=5):
     global wf_winner
     wf_winner = True
 
@@ -9388,7 +9759,7 @@ async def ask_president_challenge(winner, winner_id, num=7):
 
 
 
-async def ask_sports_logos_challenge(winner, winner_id, num=7):
+async def ask_sports_logos_challenge(winner, winner_id, num=5):
     global wf_winner
     wf_winner = True
 
@@ -10015,7 +10386,7 @@ async def ask_sports_logos_challenge(winner, winner_id, num=7):
 
 
 
-async def ask_poster_challenge(winner, winner_id, num=7):
+async def ask_poster_challenge(winner, winner_id, num=5):
     global wf_winner
 
     gifs = [
@@ -12105,7 +12476,7 @@ async def ask_tally_challenge(winner, winner_id, num=3):
 
     return tally_winner_id
 
-async def ask_currency_challenge(winner, winner_id, num=7):
+async def ask_currency_challenge(winner, winner_id, num=5):
     global wf_winner
     wf_winner = True
     currency_gifs = [
@@ -12686,7 +13057,7 @@ async def zoom_image(image_url, zoom_level=2.0):
     return image_buffer
 
 
-async def ask_missing_link(winner, winner_id, num=7):
+async def ask_missing_link(winner, winner_id, num=5):
     global wf_winner
 
     gifs = [
@@ -12857,7 +13228,7 @@ async def ask_missing_link(winner, winner_id, num=7):
     return link_winner_id
 
 
-async def ask_movie_scenes_challenge(winner, winner_id, num=7):
+async def ask_movie_scenes_challenge(winner, winner_id, num=5):
     global wf_winner
 
     gifs = [
@@ -13644,7 +14015,7 @@ async def load_previous_question():
                 }
 
 
-async def ask_ranker_list_number(winner, winner_id, num=7):
+async def ask_ranker_list_number(winner, winner_id, num=5):
     def check(m):
         target_channel = _active_game_channel or channel
         return m.channel == target_channel and m.author != get_bot().user and m.author.id == winner_id and m.content.strip() in {"1", "2", "3", "4", "5"}
@@ -13660,7 +14031,7 @@ async def ask_ranker_list_number(winner, winner_id, num=7):
         return int(selected_question)
 
 
-async def ask_ranker_list_question(winner, winner_id, num=7):
+async def ask_ranker_list_question(winner, winner_id, num=5):
     global wf_winner
     wf_winner = True
     gifs = [
@@ -13790,7 +14161,7 @@ async def ask_ranker_list_question(winner, winner_id, num=7):
         return None
 
 
-async def ask_list_question(winner, winner_id, num=7):
+async def ask_list_question(winner, winner_id, num=5):
     global wf_winner
     wf_winner = True
     gifs = [
@@ -27877,7 +28248,7 @@ async def arena_game_autocomplete(
 @discord.app_commands.autocomplete(game_name=arena_game_autocomplete)
 @discord.app_commands.describe(
     game_name="Game name (e.g., 'flags', 'random', 'chaos', 'cancel')",
-    num="Number of questions/rounds (default 1, max 7)"
+    num="Number of questions/rounds (default 1, max 5)"
 )
 async def arena(interaction: discord.Interaction, game_name: str = None, num: int = 1):
     """
@@ -27940,9 +28311,9 @@ async def arena(interaction: discord.Interaction, game_name: str = None, num: in
         await interaction.response.send_message("❌ Mini-games system not available", ephemeral=True)
         return
 
-    # Cap num at 7 for regular users (okrag_id has no limit) - applies to both specific games and chaos mode
-    if interaction.user.id != okrag_id and num > 7:
-        num = 7
+    # Cap num at 5 for regular users (okrag_id has no limit) - applies to both specific games and chaos mode
+    if interaction.user.id != okrag_id and num > 5:
+        num = 5
 
     # Check if a game is already running
     if arena_game_lock.locked():
