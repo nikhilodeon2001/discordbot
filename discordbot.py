@@ -5607,7 +5607,12 @@ class LeaderboardView(discord.ui.View):
         self.category_key = category_key
         self.user_id = user_id
         self.message = None
+        self._refresh_mode_options()
         self._refresh_category_options()
+
+    def _refresh_mode_options(self):
+        for option in self.mode_select.options:
+            option.default = option.value == self.mode
 
     def _refresh_category_options(self):
         categories = LEADERBOARD_MODE_CATEGORIES[self.mode]
@@ -5649,13 +5654,9 @@ class LeaderboardView(discord.ui.View):
     )
     async def mode_select(self, interaction: discord.Interaction, select: discord.ui.Select):
         new_mode = select.values[0]
-        for option in select.options:
-            option.default = option.value == new_mode
 
         new_view = LeaderboardView(mode=new_mode, category_key="answers", user_id=self.user_id)
         new_view.message = self.message
-        for option in new_view.mode_select.options:
-            option.default = option.value == new_mode
 
         embed = await _build_leaderboard_embed(new_mode, "answers")
         await interaction.response.edit_message(embed=embed, view=new_view)
