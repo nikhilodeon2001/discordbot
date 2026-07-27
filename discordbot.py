@@ -18625,11 +18625,13 @@ def render_safe_name(name):
 
 # Fallback fonts (tried after the primary DejaVuSans) that actually carry the decorative letter
 # styles players use in nicknames: NotoSansSymbols has the circled/squared/negative styles
-# (Enclosed Alphanumerics + Supplement -- Ⓢⓚⓨ, 🅢🅚🅨, 🄼🄾🄼) and NotoSansMath has the
-# mathematical bold/script/fraktur/double-struck styles (𝕊𝕜𝕪, 𝓢𝓴𝔂, 𝕳𝖔𝖙𝖊𝖑). Rendering a name
-# glyph-by-glyph from these lets the scoreboard show the fancy styles as-is instead of folding
-# them to plain letters. Both live in S3 and are fetched lazily by get_font on first use.
-_NAME_FALLBACK_FONTS = ("NotoSansSymbols-Regular.ttf", "NotoSansMath-Regular.ttf")
+# (Enclosed Alphanumerics + Supplement -- Ⓢⓚⓨ, 🅢🅚🅨, 🄼🄾🄼), NotoSansMath has the
+# mathematical bold/script/fraktur/double-struck styles (𝕊𝕜𝕪, 𝓢𝓴𝔂, 𝕳𝖔𝖙𝖊𝖑), and NotoSansCherokee
+# has Cherokee syllabics some "fancy text" generators use as Latin lookalikes (ᎷᎬͲᎻϴᎠ for METHOD).
+# Rendering a name glyph-by-glyph from these lets the scoreboard show the fancy styles as-is
+# instead of folding them to plain letters. All three live in S3 and are fetched lazily by
+# get_font on first use.
+_NAME_FALLBACK_FONTS = ("NotoSansSymbols-Regular.ttf", "NotoSansMath-Regular.ttf", "NotoSansCherokee-Regular.ttf")
 
 # A permanent Unicode noncharacter -- no font maps it, so it always rasterizes as the font's
 # .notdef ("tofu" box) glyph. Comparing a character's rendered bitmap to this tells us whether a
