@@ -415,7 +415,7 @@ async def send_question_queen_submit_ad():
 # {base_url} is substituted with companion_web.get_base_url() at post time, so
 # the same text is correct whether this deploy is staging or prod.
 okra_lab_announcement_enabled = True
-okra_lab_announcement_text = "🐝🔤 **Buzz Words** just landed in the Mini-Game Arena — a real spelling bee.\n\nWords are pulled straight from the Scripps National Spelling Bee's official study list (One Bee, Two Bee, Three Bee, plus a brutal Championship tier of real historic finals words), with real Merriam-Webster pronunciation audio and definitions read aloud. Hear it, then race to type the spelling — no peeking, nothing's ever shown in chat.\n\nPlay it with **/arena buzz words**!\n"
+okra_lab_announcement_text = "🐝🔤 **Buzz Words** has launched — a real spelling bee.\n\nWords are pulled straight from the Scripps National Spelling Bee's official study list (One Bee, Two Bee, Three Bee, plus a brutal Championship tier of real historic finals words), with real Merriam-Webster pronunciation audio and definitions read aloud. Hear it, then race to type the spelling — no peeking, nothing's ever shown in chat.\n"
 okra_lab_announcement_show_new_badge = True
 
 
