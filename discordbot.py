@@ -9195,6 +9195,31 @@ BUZZ_WORDS_ANSWER_WINDOW = 28
 BUZZ_WORDS_REPLAY_INTERVAL = 6
 
 
+async def cache_buzz_words_audio(local_path, s3_key, qid, mongo_field):
+    """Upload a locally-generated Deepgram clip to S3 and persist its URL on the word's
+    Mongo doc, so this same word never needs to hit Deepgram again -- word pronunciation
+    fallbacks and narration are both deterministic per word, so both are safe to cache
+    forever once generated."""
+    loop = asyncio.get_running_loop()
+
+    def _upload():
+        with open(local_path, "rb") as f:
+            s3_client.put_object(
+                Bucket=S3_BUCKET_NAME,
+                Key=s3_key,
+                Body=f.read(),
+                ContentType="audio/mpeg",
+            )
+        return f"https://{S3_BUCKET_NAME}.s3.{AWS_REGION}.amazonaws.com/{s3_key}"
+
+    try:
+        url = await loop.run_in_executor(None, _upload)
+        await db["spellingbee_questions"].update_one({"_id": qid}, {"$set": {mongo_field: url}})
+    except Exception as e:
+        sentry_sdk.capture_exception(e)
+        print(f"Error caching Buzz Words audio to S3 ({mongo_field}): {e}")
+
+
 async def ask_buzz_words_challenge(winner, winner_id, num=5):
     global wf_winner
     wf_winner = True
@@ -9355,6 +9380,7 @@ async def ask_buzz_words_challenge(winner, winner_id, num=5):
             example_sentence = q.get("example_sentence") or ""
             etymology = q.get("etymology") or ""
             pronunciation_url = q.get("pronunciation_url")
+            narration_url = q.get("narration_url")
             qid = q["_id"]
 
             if qid:
@@ -9382,6 +9408,12 @@ async def ask_buzz_words_challenge(winner, winner_id, num=5):
                 lambda w=word, f=tts_filename: text_to_speech(w, filename=f, model="aura-2-thalia-en"),
             )
             audio_source = word_local_tts_path
+            if word_local_tts_path:
+                # Cache this Deepgram clip in S3 and persist it on the word's doc, so this
+                # word's pronunciation never needs to hit Deepgram again.
+                await cache_buzz_words_audio(
+                    word_local_tts_path, f"spellingbee_audio/{word.lower()}.mp3", qid, "pronunciation_url"
+                )
 
         if not audio_source:
             await safe_send(channel, "\u200b\n❌ Error generating audio for this word. Skipping.\n\u200b")
@@ -9407,33 +9439,61 @@ async def ask_buzz_words_challenge(winner, winner_id, num=5):
         await asyncio.sleep(0.3)  # let playback start before polling is_playing()
         await wait_until_done_playing()
 
-        # Narrate part of speech / definition / sentence / origin aloud -- spoken only, never printed
-        narration_parts = []
-        if part_of_speech:
-            narration_parts.append(f"This word is a {part_of_speech}.")
-        if definition:
-            narration_parts.append(f"Definition: {definition}.")
-        if example_sentence:
-            narration_parts.append(f"Used in a sentence: {example_sentence}.")
-        if etymology:
-            narration_parts.append(f"Origin: {etymology}.")
+        # Kick off word-info narration (part of speech / definition / sentence / origin) as a
+        # background task that runs concurrently with the answer window below, so a speller who
+        # already knows the word from hearing it doesn't have to wait through the whole spoken
+        # definition before their answer counts -- only the word pronunciation itself gates when
+        # listening starts.
+        async def narrate():
+            if narration_url:
+                # Already cached in S3 from a previous time this word came up -- stream it
+                # directly, no Deepgram call, no local file to clean up afterward.
+                try:
+                    if voice_client:
+                        if voice_client.is_playing():
+                            voice_client.stop()
+                        voice_client.play(discord.FFmpegPCMAudio(narration_url))
+                        await asyncio.sleep(0.3)
+                        await wait_until_done_playing()
+                except Exception as e:
+                    print(f"Error playing cached narration audio: {e}")
+                return None
 
-        narration_local_path = None
-        if narration_parts and voice_client:
+            narration_parts = []
+            if part_of_speech:
+                narration_parts.append(f"This word is a {part_of_speech}.")
+            if definition:
+                narration_parts.append(f"Definition: {definition}.")
+            if example_sentence:
+                narration_parts.append(f"Used in a sentence: {example_sentence}.")
+            if etymology:
+                narration_parts.append(f"Origin: {etymology}.")
+
+            if not narration_parts or not voice_client:
+                return None
+
             loop = asyncio.get_running_loop()
             narration_filename = f"audio_{uuid.uuid4().hex}.mp3"
             narration_text = " ".join(narration_parts)
-            narration_local_path, _ = await loop.run_in_executor(
+            path, _ = await loop.run_in_executor(
                 None,
                 lambda t=narration_text, f=narration_filename: text_to_speech(t, filename=f, model="aura-2-thalia-en"),
             )
-            if narration_local_path:
+            if path:
                 try:
-                    voice_client.play(discord.FFmpegPCMAudio(narration_local_path))
+                    if voice_client.is_playing():
+                        voice_client.stop()
+                    voice_client.play(discord.FFmpegPCMAudio(path))
                     await asyncio.sleep(0.3)
                     await wait_until_done_playing()
                 except Exception as e:
                     print(f"Error playing narration audio: {e}")
+                await cache_buzz_words_audio(
+                    path, f"spellingbee_audio/{word.lower()}_narration.mp3", qid, "narration_url"
+                )
+            return path
+
+        narration_task = asyncio.create_task(narrate())
 
         await safe_send(channel, "\u200b\n🟢💨 **GO!**\n\u200b")
 
@@ -9447,7 +9507,9 @@ async def ask_buzz_words_challenge(winner, winner_id, num=5):
 
         while asyncio.get_event_loop().time() - start_time < BUZZ_WORDS_ANSWER_WINDOW and not answered:
             now = asyncio.get_event_loop().time()
-            if now >= next_replay_at and voice_client and not voice_client.is_playing():
+            # Skip the periodic word-replay while narration is still playing -- the voice
+            # client can only play one source at a time, so don't fight the narration task.
+            if now >= next_replay_at and voice_client and not voice_client.is_playing() and narration_task.done():
                 play_word()
                 next_replay_at = now + BUZZ_WORDS_REPLAY_INTERVAL
 
@@ -9475,6 +9537,8 @@ async def ask_buzz_words_challenge(winner, winner_id, num=5):
 
             except asyncio.TimeoutError:
                 continue
+
+        narration_local_path = await narration_task
 
         if voice_client and voice_client.is_playing():
             voice_client.stop()
