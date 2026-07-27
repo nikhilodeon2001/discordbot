@@ -15542,7 +15542,7 @@ async def build_classic_leaderboard_embed(category_key):
     )
     for label, start_time in windows:
         rows = await query(cat["collection"], start_time, limit=8)
-        embed.add_field(name=label, value=_format_leaderboard_rows(rows, "user", value_key), inline=True)
+        embed.add_field(name=label, value=_format_leaderboard_rows(rows, "user", value_key), inline=False)
     embed.set_footer(text="Trivia & Games Leaderboard")
     return embed
 
@@ -15578,9 +15578,9 @@ async def build_simply_trivia_leaderboard_embed(category_key):
         color=discord.Color(0x146DE8),
         timestamp=datetime.datetime.now(timezone.utc),
     )
-    embed.add_field(name="All-Time", value=_format_leaderboard_rows(alltime, "user_name", value_key), inline=True)
-    embed.add_field(name="Past 7 Days", value=_format_leaderboard_rows(past_7d, "user_name", value_key), inline=True)
-    embed.add_field(name="Past 24 Hours", value=_format_leaderboard_rows(past_24h, "user_name", value_key), inline=True)
+    embed.add_field(name="All-Time", value=_format_leaderboard_rows(alltime, "user_name", value_key), inline=False)
+    embed.add_field(name="Past 7 Days", value=_format_leaderboard_rows(past_7d, "user_name", value_key), inline=False)
+    embed.add_field(name="Past 24 Hours", value=_format_leaderboard_rows(past_24h, "user_name", value_key), inline=False)
     embed.set_footer(text="Simply Trivia Leaderboard")
     return embed
 
@@ -27133,7 +27133,7 @@ async def submissions_command(interaction: discord.Interaction, action: str):
 @bot.tree.command(name="contributors", description="Top question contributors", guild=discord.Object(id=OKRAN_GUILD_ID))
 async def contributors_command(interaction: discord.Interaction):
     try:
-        await interaction.response.defer()
+        await interaction.response.defer(ephemeral=True)
 
         all_time_rows = await db.question_submission_stats.find({"approved": {"$gt": 0}, "_id": {"$ne": okrag_id}}).sort("approved", -1).limit(15).to_list(length=15)
 
@@ -27147,7 +27147,7 @@ async def contributors_command(interaction: discord.Interaction):
         weekly_rows = await db.question_submissions.aggregate(weekly_pipeline).to_list(length=15)
 
         if not all_time_rows and not weekly_rows:
-            await interaction.followup.send("No approved submissions yet.")
+            await interaction.followup.send("No approved submissions yet.", ephemeral=True)
             return
 
         embed = discord.Embed(title="🏆 Top Question Contributors", color=discord.Color.gold())
@@ -27170,7 +27170,7 @@ async def contributors_command(interaction: discord.Interaction):
                 lines.append(f"**{i}.** {name} — {ap}")
             embed.add_field(name="All-Time", value="\n".join(lines), inline=False)
 
-        await interaction.followup.send(embed=embed)
+        await interaction.followup.send(embed=embed, ephemeral=True)
     except Exception as e:
         sentry_sdk.capture_exception(e)
         try:
@@ -27187,7 +27187,7 @@ async def contributors_command(interaction: discord.Interaction):
 @bot.tree.command(name="editors", description="Top question editors", guild=discord.Object(id=OKRAN_GUILD_ID))
 async def editors_command(interaction: discord.Interaction):
     try:
-        await interaction.response.defer()
+        await interaction.response.defer(ephemeral=True)
 
         all_time_rows = await db.edit_credit_stats.find({"edits": {"$gt": 0}, "_id": {"$ne": okrag_id}}).sort("edits", -1).limit(15).to_list(length=15)
 
@@ -27201,7 +27201,7 @@ async def editors_command(interaction: discord.Interaction):
         weekly_rows = await db.edit_credits.aggregate(weekly_pipeline).to_list(length=15)
 
         if not all_time_rows and not weekly_rows:
-            await interaction.followup.send("No edit credits yet.")
+            await interaction.followup.send("No edit credits yet.", ephemeral=True)
             return
 
         embed = discord.Embed(title="✏️ Top Editors", color=discord.Color.gold())
@@ -27224,7 +27224,7 @@ async def editors_command(interaction: discord.Interaction):
                 lines.append(f"**{i}.** {name} — {ed}")
             embed.add_field(name="All-Time", value="\n".join(lines), inline=False)
 
-        await interaction.followup.send(embed=embed)
+        await interaction.followup.send(embed=embed, ephemeral=True)
     except Exception as e:
         sentry_sdk.capture_exception(e)
         try:
