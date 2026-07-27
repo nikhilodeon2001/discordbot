@@ -27245,15 +27245,10 @@ async def perks_command(interaction: discord.Interaction):
 
 @bot.tree.command(name="leaderboard", description="View the trivia leaderboard", guild=discord.Object(id=OKRAN_GUILD_ID))
 async def leaderboard_command(interaction: discord.Interaction):
-    """Unified slash command - works in both main trivia and Simply Trivia channels"""
+    """Works from any channel; defaults to the Simply Trivia leaderboard only when run from
+    that channel, and to Trivia & Games everywhere else."""
 
-    if interaction.channel_id == channel_id:
-        mode = "classic"
-    elif interaction.channel_id == SIMPLY_TRIVIA_CHANNEL_ID:
-        mode = "simply_trivia"
-    else:
-        await interaction.response.send_message("❌ This command only works in trivia channels.", ephemeral=True)
-        return
+    mode = "simply_trivia" if interaction.channel_id == SIMPLY_TRIVIA_CHANNEL_ID else "classic"
 
     embed = await _build_leaderboard_embed(mode, "answers")
     view = LeaderboardView(mode=mode, category_key="answers", user_id=interaction.user.id)
