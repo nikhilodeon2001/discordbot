@@ -9207,7 +9207,9 @@ async def ask_buzz_words_challenge(winner, winner_id, num=5):
     gifs = [
         "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/buzzwords1.gif",
         "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/buzzwords2.gif",
-        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/buzzwords3.gif"
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/buzzwords3.gif",
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/buzzwords4.gif",
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/buzzwords5.gif"
     ]
     gif_url = random.choice(gifs)
 
@@ -17366,6 +17368,8 @@ async def select_wof_questions(winner, winner_id, winner_coffees=None):
         message += f"{counter}.\u200b 🧞‍♂️🪔 The Genie\n"
         counter = counter + 1
         message += f"{counter}.\u200b 🎓📚 Valedictorian\n"
+        counter = counter + 1
+        message += f"{counter}.\u200b 🐝🔤 Buzz Words\n"
         message += f"99.\u200b 🌀🤯 CHAOS\n"
         
         message += f"\n⚙️ **Other Options**\n"
@@ -17592,6 +17596,11 @@ async def select_wof_questions(winner, winner_id, winner_coffees=None):
 
         elif selected_wof_category == "49":
             await ask_valedictorian_challenge(winner, winner_id, 1)
+            await asyncio.sleep(3)
+            return None
+
+        elif selected_wof_category == "50":
+            await ask_buzz_words_challenge(winner, winner_id, 5)
             await asyncio.sleep(3)
             return None
 
@@ -17869,10 +17878,11 @@ async def ask_wof_number(winner, winner_id, cached_coffees=None):
         "47": "Okra Says",
         "48": "The Genie",
         "49": "Valedictorian",
+        "50": "Buzz Words",
         "99": "CHAOS"
     }
     multiplayer_required = {k for k in unlocks if k not in {"5", "6", "7", "8", "9"}}
-    all_options = {str(i) for i in range(50)} | {"00", "x", "99"}
+    all_options = {str(i) for i in range(51)} | {"00", "x", "99"}
 
     start = asyncio.get_event_loop().time()
     selected_question = None
@@ -17894,7 +17904,7 @@ async def ask_wof_number(winner, winner_id, cached_coffees=None):
             if content == "00":
                 await message.add_reaction("👍")
                 set_a = [str(i) for i in range(5)]
-                set_b = [str(i) for i in range(5, 49)] if len(round_responders) >= num_list_players else [str(i) for i in range(5, 10)]
+                set_b = [str(i) for i in range(5, 51)] if len(round_responders) >= num_list_players else [str(i) for i in range(5, 10)]
                 selected_question = random.choice(set_a if random.random() < 0.5 else set_b)
 
                 # Store frequency data for random selection
@@ -24111,6 +24121,7 @@ def get_minigame_name(number):
         "47": "Okra Says",
         "48": "The Genie",
         "49": "Valedictorian",
+        "50": "Buzz Words",
         "99": "CHAOS",
         "x": "Skip Mini Game"
     }
