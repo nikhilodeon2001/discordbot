@@ -368,9 +368,22 @@ async def handle_stream(request):
         while True:
             try:
                 data = await asyncio.wait_for(queue.get(), timeout=_HEARTBEAT_SECONDS)
+                if isinstance(data, dict) and data.get("__refresh__"):
+                    # A prompt (post-round menu / mini-game) appeared or cleared -- these carry
+                    # no shared payload since e.g. you_can_act differs per viewer from the very
+                    # first moment (unlike open/reveal below, where a fresh question means
+                    # everyone starts equally unanswered). Re-derive this connection's own state
+                    # fresh rather than relying on anything broadcast.
+                    if _get_state:
+                        try:
+                            data = _get_state(session["user_id"], game)
+                        except Exception:
+                            continue
+                    else:
+                        continue
                 # The reveal is broadcast; personalize it per connection with this user's own
                 # submissions + result (copy so we never mutate the shared dict).
-                if _reveal_extra and isinstance(data, dict) and data.get("phase") == "revealed":
+                elif _reveal_extra and isinstance(data, dict) and data.get("phase") == "revealed":
                     try:
                         data = {**data, **_reveal_extra(session["user_id"], game)}
                     except Exception:

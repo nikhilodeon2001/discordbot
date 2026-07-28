@@ -254,6 +254,22 @@ async def submit_companion_input(user_id, display_name, text, scope):
     return {"ok": True}
 
 
+def _notify_prompt_change(scope):
+    """Wake up any companion (web) session already connected via SSE so it re-fetches state --
+    otherwise a prompt appearing/disappearing is invisible to a phone that isn't actively
+    polling (companion_web.py's publish_state is otherwise only called from the main-trivia/
+    Simply-Trivia question-open/reveal transitions, never for prompts). `scope` ("main"/"arena")
+    already matches companion_web's `game` values 1:1. The pushed payload is a content-free
+    sentinel, not the actual state, because `you_can_act` differs per viewer (only the allowed
+    user(s) see True) -- handle_stream re-derives the real, personalized state per connection
+    when it sees this sentinel rather than broadcasting one shared dict."""
+    import companion_web
+    try:
+        companion_web.publish_state({"__refresh__": True}, game=scope)
+    except Exception:
+        pass
+
+
 async def wait_for_message_or_companion(check, timeout, channel, allowed_user_ids, kind, prompt_text=None, reveal_answer=True):
     """Drop-in replacement for `get_bot().wait_for("message", timeout=timeout, check=check)`
     that also accepts a matching companion (web) submission. Returns a real discord.Message
@@ -263,6 +279,7 @@ async def wait_for_message_or_companion(check, timeout, channel, allowed_user_id
     it for mini-games where multiple players can independently get credit in the same window."""
     import discordbot
     prompt = register_prompt(channel, allowed_user_ids, kind, prompt_text, reveal_answer=reveal_answer)
+    _notify_prompt_change(prompt.scope)
     msg_task = asyncio.ensure_future(discordbot.get_bot().wait_for("message", check=check))
     comp_task = asyncio.ensure_future(prompt.future)
     try:
@@ -274,3 +291,4 @@ async def wait_for_message_or_companion(check, timeout, channel, allowed_user_id
         return done.pop().result()
     finally:
         clear_prompt(prompt.id)
+        _notify_prompt_change(prompt.scope)
