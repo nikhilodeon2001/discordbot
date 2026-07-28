@@ -23957,7 +23957,12 @@ async def start_trivia():
             #    await ask_survey_question()
 
             update_pending = False
-            if len(active_tournaments) == 0 and _active_game_bot is None and _active_game_channel is None:
+            # arena_game_task (not _active_game_bot/_active_game_channel) -- those two are only
+            # ever set via mini_games.py's `import discordbot`, which always binds to the inert
+            # duplicate copy of this module (see companion_bridge.py's module docstring), never
+            # to this real, running copy, so they'd never actually gate anything here.
+            # arena_game_task is set directly by the /arena command itself, same namespace.
+            if len(active_tournaments) == 0 and arena_game_task is None:
                 update_pending = await end_of_round(sent_round_end_message)
 
             if not update_pending:
@@ -28373,7 +28378,16 @@ async def on_ready():
                     bot=bot,
                     db=db,
                     channel_id=SIMPLY_TRIVIA_CHANNEL_ID,
-                    fuzzy_match_func=fuzzy_match
+                    fuzzy_match_func=fuzzy_match,
+                    # Real (__main__-bound) references -- simply_trivia.py's own `import discordbot`
+                    # resolves to the inert duplicate copy (see companion_bridge.py's module
+                    # docstring), so it can't reach these correctly on its own.
+                    count_flags_last_24h=_count_flags_last_24h,
+                    get_flag_lock=_get_flag_lock,
+                    update_audit_question_func=update_audit_question,
+                    record_question_asked_func=record_question_asked,
+                    record_question_outcome_func=record_question_outcome,
+                    get_shutdown_initiated=lambda: shutdown_initiated,
                 ))
                 print("✅ Simply Trivia system started!")
             except Exception as st_error:

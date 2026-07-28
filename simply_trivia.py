@@ -10,7 +10,7 @@ import discord
 from datetime import datetime, timezone
 import discordbot
 import companion_web
-from discordbot import update_audit_question, generate_scrambled_image, scramble_text
+from discordbot import generate_scrambled_image, scramble_text
 
 # Configuration
 LEADERBOARD_UPDATE_FREQUENCY = 5  # Update leaderboards every N questions
@@ -41,6 +41,29 @@ _companion_web_user_ids = set()     # who answered via the companion app this qu
 _companion_flagged_user_ids = set() # one-flag-per-question guard, reset each question
 _companion_last_streak = 0          # streak value at the last reveal, read by _companion_scoreboard()
 _fuzzy_match_func = None            # captured once so companion callbacks (invoked outside the loop) can reach it
+
+# discordbot.py is actually executed twice under two different sys.modules names (see
+# companion_bridge.py's module docstring): once as __main__ (the real, connected bot -- the
+# only copy on_ready/main() ever run in), and once as `discordbot` (an inert duplicate created
+# as a side effect of THIS file's own top-level `import discordbot` above -- Python re-executes
+# discordbot.py's entire file from scratch under that name, since it isn't already in
+# sys.modules at that point). Every `discordbot.<name>` / bare `from discordbot import <name>`
+# reference in this file resolves to that inert duplicate, never to __main__. That's harmless
+# for pure functions/constants, but `db`, `_flag_locks`, and anything reading them
+# (_count_flags_last_24h, _get_flag_lock, update_audit_question, record_question_asked,
+# record_question_outcome) are only ever correctly populated in __main__'s copy (db is set
+# inside on_ready, which never fires for the duplicate's own never-logged-in bot) -- so calling
+# them via the `discordbot`/bare-import route throws NameError (db) or uses a separate,
+# never-shared lock dict (_flag_locks). start_simply_trivia() receives real references to all
+# of these directly from on_ready (which only runs in __main__) and captures them here, exactly
+# like companion_bridge.init(get_bot) does for the bot reference.
+_real_db = None
+_real_count_flags_last_24h = None
+_real_get_flag_lock = None
+_real_update_audit_question = None
+_real_record_question_asked = None
+_real_record_question_outcome = None
+_real_get_shutdown_initiated = None
 
 
 def get_current_question_for_flag():
@@ -262,8 +285,6 @@ class SimplyTriviaFlagReasonModal(discord.ui.Modal, title="Flag Question"):
         self.embed_message = embed_message  # The embed message to delete after submission
 
     async def on_submit(self, interaction: discord.Interaction):
-        from discordbot import update_audit_question
-
         try:
             reason_text = self.reason.value
 
@@ -278,7 +299,7 @@ class SimplyTriviaFlagReasonModal(discord.ui.Modal, title="Flag Question"):
             }
 
             # Call update_audit_question with the selected question, reason, and message context
-            await update_audit_question(
+            await _real_update_audit_question(
                 question_for_audit,
                 f"[SIMPLY_TRIVIA - {self.question_type.upper()}] {reason_text}",
                 self.display_name,
@@ -505,15 +526,15 @@ async def companion_submit_flag(user_id, display_name, reasons, detail):
         return {"ok": False, "reason": "no_question"}
     if user_id in _companion_flagged_user_ids:
         return {"ok": False, "reason": "already_flagged"}
-    async with discordbot._get_flag_lock(user_id):
-        if await discordbot._count_flags_last_24h(user_id) >= discordbot.MAX_FLAGS_PER_24H:
+    async with _real_get_flag_lock(user_id):
+        if await _real_count_flags_last_24h(user_id) >= discordbot.MAX_FLAGS_PER_24H:
             return {"ok": False, "reason": "rate_limited"}
-        await discordbot.db.companion_flags.insert_one({"user_id": user_id, "timestamp": datetime.now(timezone.utc)})
+        await _real_db.companion_flags.insert_one({"user_id": user_id, "timestamp": datetime.now(timezone.utc)})
     _companion_flagged_user_ids.add(user_id)
     reasons_text = ", ".join(discordbot.FlagReasonModal.REASON_LABELS.get(r, r) for r in reasons)
     reason_text = f"[SIMPLY_TRIVIA - CURRENT] ({reasons_text}) {detail}".strip()
     question_for_audit = get_current_question_for_flag()
-    await update_audit_question(question_for_audit, reason_text, display_name, None, user_id=user_id, source="Web")
+    await _real_update_audit_question(question_for_audit, reason_text, display_name, None, user_id=user_id, source="Web")
     return {"ok": True}
 
 
@@ -602,7 +623,10 @@ async def handle_answer(message, bot, db, fuzzy_match_func):
     _record_guess(message.author, message.content, fuzzy_match_func, message=message)
 
 
-async def start_simply_trivia(bot, db, channel_id, fuzzy_match_func):
+async def start_simply_trivia(bot, db, channel_id, fuzzy_match_func, count_flags_last_24h=None,
+                               get_flag_lock=None, update_audit_question_func=None,
+                               record_question_asked_func=None, record_question_outcome_func=None,
+                               get_shutdown_initiated=None):
     """
     Main loop for Simply Trivia mode
     Continuously asks trivia questions and tracks first-to-answer streaks
@@ -612,6 +636,10 @@ async def start_simply_trivia(bot, db, channel_id, fuzzy_match_func):
         db: MongoDB database instance
         channel_id: SIMPLY_TRIVIA_CHANNEL_ID
         fuzzy_match_func: Reference to fuzzy_match function from discordbot
+        count_flags_last_24h, get_flag_lock, update_audit_question_func,
+        record_question_asked_func, record_question_outcome_func, get_shutdown_initiated:
+        real (__main__-bound) references handed in from on_ready -- see the module-level
+        _real_* comment above for why these can't just be reached via `import discordbot`.
     """
     from discordbot import store_question_ids_in_mongo
 
@@ -623,8 +651,17 @@ async def start_simply_trivia(bot, db, channel_id, fuzzy_match_func):
 
     print(f"🎯 Simply Trivia started in channel: {channel.name}")
 
-    global _fuzzy_match_func
+    global _fuzzy_match_func, _real_db, _real_count_flags_last_24h, _real_get_flag_lock
+    global _real_update_audit_question, _real_record_question_asked, _real_record_question_outcome
+    global _real_get_shutdown_initiated
     _fuzzy_match_func = fuzzy_match_func
+    _real_db = db
+    _real_count_flags_last_24h = count_flags_last_24h
+    _real_get_flag_lock = get_flag_lock
+    _real_update_audit_question = update_audit_question_func
+    _real_record_question_asked = record_question_asked_func
+    _real_record_question_outcome = record_question_outcome_func
+    _real_get_shutdown_initiated = get_shutdown_initiated
 
     # Load previous question from MongoDB on startup
     await load_simply_previous_question(db)
@@ -632,7 +669,7 @@ async def start_simply_trivia(bot, db, channel_id, fuzzy_match_func):
     while True:
         try:
             # Check if bot is shutting down for update
-            if discordbot.shutdown_initiated:
+            if _real_get_shutdown_initiated() if _real_get_shutdown_initiated else discordbot.shutdown_initiated:
                 print("🔄 Simply Trivia stopping - update detected")
                 break
 
@@ -660,7 +697,7 @@ async def start_simply_trivia(bot, db, channel_id, fuzzy_match_func):
             additional_answerers = []
             correct_answer_messages.clear()
             any_guess_received = False
-            await discordbot.record_question_asked(question.get("db"), question.get("_id"))
+            await _real_record_question_asked(question.get("db"), question.get("_id"))
 
             # Build question embed
             category = question.get("category", "Trivia")
@@ -719,7 +756,7 @@ async def start_simply_trivia(bot, db, channel_id, fuzzy_match_func):
 
             while not answer_revealed:
                 # Check for shutdown during answer wait
-                if discordbot.shutdown_initiated:
+                if _real_get_shutdown_initiated() if _real_get_shutdown_initiated else discordbot.shutdown_initiated:
                     print("🔄 Simply Trivia stopping - update detected during answer wait")
                     return  # Exit the entire function/loop
 
@@ -796,7 +833,7 @@ async def start_simply_trivia(bot, db, channel_id, fuzzy_match_func):
                     question.get("_id")
                 )
 
-                await discordbot.record_question_outcome(question.get("db"), question.get("_id"), True, any_guess_received)
+                await _real_record_question_outcome(question.get("db"), question.get("_id"), True, any_guess_received)
 
                 def _mention_with_indicator(user):
                     tag = " 🌐" if user.id in _companion_web_user_ids else ""
@@ -845,7 +882,7 @@ async def start_simply_trivia(bot, db, channel_id, fuzzy_match_func):
 
                 _companion_last_streak = 0
 
-                await discordbot.record_question_outcome(question.get("db"), question.get("_id"), False, any_guess_received)
+                await _real_record_question_outcome(question.get("db"), question.get("_id"), False, any_guess_received)
 
                 answer_text = f"[**Answer:**]({flag_url}) {main_answer}"
                 embed = discord.Embed(description=answer_text, color=discord.Color.red())
