@@ -23,7 +23,17 @@ Prompts are scoped to "main" (the fixed main trivia channel) or "arena"
 submission on one toggle can only ever resolve a prompt registered in that same scope.
 
 Imports discordbot lazily inside functions to avoid circular imports (same pattern as
-mini_games.py).
+mini_games.py). CRITICAL caveat learned the hard way: discordbot.py is actually executed
+*twice* under two different sys.modules names -- once as `__main__` (the real, connected
+bot; this is the only copy `main()` ever runs in), and once as `discordbot` (an inert,
+never-logged-in duplicate, created as a side effect of discordbot.py's own circular import
+with simply_trivia.py -- see `_IS_REIMPORT` in discordbot.py for a pre-existing workaround
+for a different instance of the same issue). `import discordbot` from any *other* file
+always binds to that inert `discordbot`-named copy, never to `__main__`. Plain constants
+(`MINI_GAME_ARENA_CHANNEL_ID`, `OKRAN_GUILD_ID`) are identical either way and safe to read
+via `import discordbot`, but a live *object reference* (the actual connected bot) is not --
+hence `init()`/`_get_bot` below, injected explicitly from `main()` (which only exists in the
+real `__main__` copy) instead of re-derived via `import discordbot`.
 """
 
 import asyncio
@@ -36,9 +46,17 @@ _prompts = {}  # prompt_id -> Prompt
 _prompts_by_user = {}  # user_id -> set[prompt_id]
 _prompt_id_counter = itertools.count(1)
 _webhook_cache = {}  # channel_id -> discord.Webhook
+_get_bot = None  # injected by init() -- see module docstring for why this can't just be `import discordbot; discordbot.get_bot()`
 
 _RELAY_WEBHOOK_NAME = "Okra Companion Relay"
 _COMPANION_INDICATOR = " 🌐"  # matches the existing companion-app scoreboard icon (see build_companion_scoreboard/render_emoji_icon)
+
+
+def init(get_bot_func):
+    """Called once from discordbot.py's main() (the real `__main__` copy) to hand this
+    module a reliable reference to the live, connected bot's get_bot() function."""
+    global _get_bot
+    _get_bot = get_bot_func
 
 
 class CompanionAuthor:
@@ -176,7 +194,7 @@ def describe_prompt(prompt, user_id=None):
 
 async def _get_avatar_url(user_id):
     import discordbot
-    guild = discordbot.bot.get_guild(discordbot.OKRAN_GUILD_ID)
+    guild = _get_bot().get_guild(discordbot.OKRAN_GUILD_ID)
     if guild is None:
         return None
     member = guild.get_member(int(user_id))
@@ -277,10 +295,9 @@ async def wait_for_message_or_companion(check, timeout, channel, allowed_user_id
     asyncio.TimeoutError exactly like the plain wait_for did, on the same timeout budget.
     `reveal_answer=False` masks the webhook echo's content (see Prompt.reveal_answer) -- pass
     it for mini-games where multiple players can independently get credit in the same window."""
-    import discordbot
     prompt = register_prompt(channel, allowed_user_ids, kind, prompt_text, reveal_answer=reveal_answer)
     _notify_prompt_change(prompt.scope)
-    msg_task = asyncio.ensure_future(discordbot.get_bot().wait_for("message", check=check))
+    msg_task = asyncio.ensure_future(_get_bot().wait_for("message", check=check))
     comp_task = asyncio.ensure_future(prompt.future)
     try:
         done, pending = await asyncio.wait({msg_task, comp_task}, timeout=timeout, return_when=asyncio.FIRST_COMPLETED)

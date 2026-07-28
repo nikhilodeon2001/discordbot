@@ -24977,8 +24977,14 @@ def build_companion_arena_state(user_id=None):
     """State for the companion's "Mini-Game Arena" toggle -- entirely separate from
     build_companion_state's main-channel state, since an arena game (started via /arena) runs
     independently of the main round loop and can be active at the same time as a live main-trivia
-    question (see companion_bridge.py's module docstring)."""
-    if _active_game_channel is None:
+    question (see companion_bridge.py's module docstring).
+
+    Deliberately gates on arena_game_task rather than _active_game_channel: the latter is set
+    by mini_games.py via `import discordbot`, which -- per companion_bridge.py's module
+    docstring -- always resolves to the inert duplicate copy of this module, never to this
+    real __main__ copy, so it would never appear set here. arena_game_task is set directly by
+    the /arena command itself (this same file, same `global`), so it's reliable."""
+    if arena_game_task is None:
         return {"phase": "idle", "prompt": None}
     prompt = _companion_prompt_payload("arena", user_id)
     if prompt is not None:
@@ -28899,6 +28905,13 @@ if __name__ == "__main__":
         if mini_game_audio_bot and discord_mini_game_audio_bot_token:
             print("🎵 Starting mini-game audio bot...")
             tasks.append(mini_game_audio_bot.start(discord_mini_game_audio_bot_token))
+
+        # discordbot.py is actually executed twice under two different sys.modules names (see
+        # companion_bridge.py's module docstring) -- `import discordbot` from any other file
+        # always resolves to the inert duplicate, never to this, the real __main__ copy. Hand
+        # companion_bridge a direct reference to this copy's real get_bot() so it doesn't have
+        # to (and can't correctly) re-derive it via import.
+        companion_bridge.init(get_bot)
 
         # Start the companion web app first so Heroku sees $PORT bound promptly (avoids R10
         # boot timeout); it then serves alongside the bot on the same event loop.
