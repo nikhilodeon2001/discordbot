@@ -419,7 +419,10 @@ async def handle_answer(request):
         return web.json_response({"ok": False, "reason": "empty"}, status=400)
     game = _game_from_body(body)
 
-    result = _submit_answer(user_id, session["display_name"], answer, game) if _submit_answer else {"ok": False, "reason": "unavailable"}
+    try:
+        result = _submit_answer(user_id, session["display_name"], answer, game) if _submit_answer else {"ok": False, "reason": "unavailable"}
+    except Exception:
+        return web.json_response({"ok": False, "reason": "server_error"}, status=500)
     status = 200 if result.get("ok") else 409
     return web.json_response(result, status=status)
 
@@ -450,7 +453,12 @@ async def handle_action(request):
 
     if not _submit_action:
         return web.json_response({"ok": False, "reason": "unavailable"}, status=503)
-    result = await _submit_action(user_id, session["display_name"], text, game)
+    try:
+        result = await _submit_action(user_id, session["display_name"], text, game)
+    except Exception:
+        # Never let an unexpected exception surface as a raw non-JSON 500 -- the frontend's
+        # r.json() would fail parsing it and misreport this as a generic "Network error".
+        return web.json_response({"ok": False, "reason": "server_error"}, status=500)
     status = 200 if result.get("ok") else 409
     return web.json_response(result, status=status)
 

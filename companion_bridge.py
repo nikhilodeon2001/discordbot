@@ -78,35 +78,52 @@ class CompanionMessage:
     """Duck-typed stand-in for a discord.Message, returned by
     wait_for_message_or_companion() when a companion (web) submission wins the race
     against the real Discord wait_for(). `.add_reaction`/`.remove_reaction`/`.delete`
-    proxy to the cosmetic webhook echo when one was successfully posted (`echo`);
-    otherwise they no-op, since there's no real message for a companion answer to act on."""
+    proxy to the cosmetic webhook echo when one gets successfully posted; otherwise they
+    no-op, since there's no real message for a companion answer to act on.
 
-    def __init__(self, content, author, channel, echo=None):
+    `echo_task`, if given, is the in-flight `_send_relay_echo(...)` task -- the prompt is
+    resolved (submit_companion_input) *before* that echo finishes sending, not after, so a
+    slow/rate-limited webhook call can never delay the answer actually counting. Reaction/
+    delete calls just await the same task, so they still land correctly once it completes;
+    they only silently no-op if the echo failed outright (no permission, etc.)."""
+
+    def __init__(self, content, author, channel, echo_task=None):
         self.content = content
         self.author = author
         self.channel = channel
         self.created_at = datetime.datetime.now(datetime.timezone.utc)
-        self.id = echo.id if echo is not None else None
-        self._echo = echo
+        self.id = None
+        self._echo_task = echo_task
+
+    async def _resolve_echo(self):
+        if self._echo_task is None:
+            return None
+        try:
+            return await self._echo_task
+        except Exception:
+            return None
 
     async def add_reaction(self, emoji):
-        if self._echo is not None:
+        echo = await self._resolve_echo()
+        if echo is not None:
             try:
-                await self._echo.add_reaction(emoji)
+                await echo.add_reaction(emoji)
             except (discord.HTTPException, discord.Forbidden, discord.NotFound):
                 pass
 
     async def remove_reaction(self, emoji, member):
-        if self._echo is not None:
+        echo = await self._resolve_echo()
+        if echo is not None:
             try:
-                await self._echo.remove_reaction(emoji, member)
+                await echo.remove_reaction(emoji, member)
             except (discord.HTTPException, discord.Forbidden, discord.NotFound):
                 pass
 
     async def delete(self):
-        if self._echo is not None:
+        echo = await self._resolve_echo()
+        if echo is not None:
             try:
-                await self._echo.delete()
+                await echo.delete()
             except (discord.HTTPException, discord.Forbidden, discord.NotFound):
                 pass
 
@@ -240,7 +257,7 @@ async def _send_relay_echo(channel, display_name, user_id, text):
         base_name = (display_name or "Companion").strip() or "Companion"
         username = f"{base_name[:80 - len(_COMPANION_INDICATOR)]}{_COMPANION_INDICATOR}"
         avatar_url = await _get_avatar_url(user_id)
-        sent = await webhook.send(
+        return await webhook.send(
             content=text[:2000] or "​",
             username=username,
             avatar_url=avatar_url,
@@ -248,27 +265,33 @@ async def _send_relay_echo(channel, display_name, user_id, text):
         )
     except (discord.HTTPException, discord.Forbidden):
         return None
-    try:
-        await sent.add_reaction("🌐")
-    except (discord.HTTPException, discord.Forbidden, discord.NotFound):
-        pass
-    return sent
 
 
 async def submit_companion_input(user_id, display_name, text, scope):
     """Resolve the active prompt for `scope` on behalf of a companion (web) user. Never
     reaches across scopes -- an "arena" toggle submission can only ever resolve an
     arena-scoped prompt, and vice versa, so there's no ambiguity when a main-channel
-    question and an arena mini-game are open at the same time."""
+    question and an arena mini-game are open at the same time.
+
+    Resolves the prompt's future *before* the cosmetic webhook echo is even sent (fired
+    concurrently instead of awaited first) -- both because a slow/rate-limited Discord
+    webhook call must never delay the answer actually counting, and because awaiting it
+    first left a real race: a Discord-typed message could win the same prompt (cancelling
+    this same future) while this coroutine was suspended on the echo, so the eventual
+    set_result() below would raise asyncio.InvalidStateError. Guarded defensively anyway
+    in case some other future timing hole surfaces."""
     prompt = get_active_prompt(scope)
     if prompt is None or prompt.future.done():
         return {"ok": False, "reason": "no_active_prompt"}
     if not prompt.open_floor and user_id not in prompt.allowed_user_ids:
         return {"ok": False, "reason": "not_allowed"}
     echo_text = text if prompt.reveal_answer else _MASKED_ANSWER_ECHO
-    echo = await _send_relay_echo(prompt.channel, display_name, user_id, echo_text)
-    message = CompanionMessage(text, CompanionAuthor(user_id, display_name), prompt.channel, echo=echo)
-    prompt.future.set_result(message)
+    echo_task = asyncio.ensure_future(_send_relay_echo(prompt.channel, display_name, user_id, echo_text))
+    message = CompanionMessage(text, CompanionAuthor(user_id, display_name), prompt.channel, echo_task=echo_task)
+    try:
+        prompt.future.set_result(message)
+    except asyncio.InvalidStateError:
+        return {"ok": False, "reason": "no_active_prompt"}
     return {"ok": True}
 
 
