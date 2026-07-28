@@ -36,11 +36,12 @@ from aiohttp import web
 # Companion app (logged-in live play) is live at play.triviasphere.com.
 COMPANION_APP_ENABLED = True
 
-_GAMES = ("main", "simply")
+_GAMES = ("main", "simply", "arena")
 _subscribers = {g: set() for g in _GAMES}   # game -> set[asyncio.Queue], one queue per open SSE connection
 _resolve_member = None        # callable(user_id:int) -> display_name:str | None
 _get_state = None             # callable(user_id:int|None, game:str) -> dict (sanitized live state)
 _submit_answer = None         # callable(user_id, display_name, text, game) -> {"ok":bool,"reason":str}
+_submit_action = None         # async callable(user_id, display_name, text, game) -> {"ok":bool,"reason":str} -- post-round-menu/mini-game submissions, distinct from _submit_answer (live-question grading)
 _reveal_extra = None          # callable(user_id, game) -> {"my_answers":[...], "result":"correct"/"incorrect"/None}
 _submit_flag = None           # async callable(user_id, display_name, reasons, detail, game) -> {"ok":bool,"reason":str}
 _submit_anon_flag = None      # async callable(trivia_db, trivia_id, cat_hint, question_hint, ans_hint, reasons, detail, ip_hash, user_id, display_name) -> {"ok":bool,"reason":str}
@@ -406,6 +407,37 @@ async def handle_answer(request):
     game = _game_from_body(body)
 
     result = _submit_answer(user_id, session["display_name"], answer, game) if _submit_answer else {"ok": False, "reason": "unavailable"}
+    status = 200 if result.get("ok") else 409
+    return web.json_response(result, status=status)
+
+
+async def handle_action(request):
+    """Post-round-menu / mini-game submissions (the "main" and "arena" toggles' single answer
+    slot when no live question is open) -- distinct from handle_answer, which grades a live
+    question. See companion_bridge.py for how this resolves into the bot's game logic."""
+    session = _session_from_request(request)
+    if not session:
+        return web.json_response({"ok": False, "reason": "unauthenticated"}, status=401)
+
+    user_id = session["user_id"]
+    now = time.time()
+    last = _last_submit.get(user_id, 0)
+    if now - last < _SUBMIT_MIN_INTERVAL:
+        return web.json_response({"ok": False, "reason": "rate_limited"}, status=429)
+    _last_submit[user_id] = now
+
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"ok": False, "reason": "bad_request"}, status=400)
+    text = (body.get("text") or "").strip()
+    if not text:
+        return web.json_response({"ok": False, "reason": "empty"}, status=400)
+    game = _game_from_body(body)
+
+    if not _submit_action:
+        return web.json_response({"ok": False, "reason": "unavailable"}, status=503)
+    result = await _submit_action(user_id, session["display_name"], text, game)
     status = 200 if result.get("ok") else 409
     return web.json_response(result, status=status)
 
@@ -1130,6 +1162,12 @@ _INDEX_HTML = """<!doctype html>
   .switch input:checked ~ .track { background:var(--blue); border-color:var(--blue); }
   .switch input:checked ~ .track .thumb { transform:translateX(17px); }
   .switch input:focus-visible ~ .track { box-shadow:0 0 0 3px rgba(20,109,232,.30); }
+  .game-tabs { display:flex; gap:4px; flex:none; background:rgba(127,127,127,.10);
+    border:1px solid var(--line); border-radius:12px; padding:3px; }
+  .tab-btn { flex:none; border:none; background:transparent; color:var(--muted); cursor:pointer;
+    font-size:.7rem; font-weight:700; letter-spacing:.01em; padding:7px 10px; border-radius:9px;
+    white-space:nowrap; transition:background-color .15s, color .15s; }
+  .tab-btn.active { background:var(--blue); color:#fff; }
   .sub { color:var(--muted); font-size:.86rem; margin:13px 2px 20px; line-height:1.45; }
   .card { position:relative; background:var(--card); border:1px solid var(--line); border-radius:20px; padding:22px;
     box-shadow:0 12px 32px rgba(0,0,0,.20); }
@@ -1257,14 +1295,11 @@ _INDEX_HTML = """<!doctype html>
     <div class="brandhead">
       <div class="brandlogo" role="img" aria-label="TriviaSphere logo"></div>
     </div>
-    <label class="simple-toggle game-toggle">
-      <span class="lbl" id="gameToggleLeft">Trivia &amp; Games</span>
-      <span class="switch">
-        <input type="checkbox" id="gameToggle" onchange="onGameToggle(this.checked)">
-        <span class="track"><span class="thumb"></span></span>
-      </span>
-      <span class="lbl" id="gameToggleRight">Simply Trivia</span>
-    </label>
+    <div class="game-tabs" id="gameTabs">
+      <button type="button" class="tab-btn" data-game="main" onclick="onGameSelect('main')">Trivia &amp; Games</button>
+      <button type="button" class="tab-btn" data-game="simply" onclick="onGameSelect('simply')">Simply Trivia</button>
+      <button type="button" class="tab-btn" data-game="arena" onclick="onGameSelect('arena')">Mini-Game Arena</button>
+    </div>
   </header>
   <div id="subtext" class="sub">Answer live from your phone or computer — private, timed, and scored right alongside everyone in the channel.</div>
   <div id="app" class="card"><div class="idle">Loading…</div></div>
@@ -1274,7 +1309,8 @@ _INDEX_HTML = """<!doctype html>
 <script>
 let es = null, countdownTimer = null, endsAt = 0, currentKey = null, answeredKey = null, answeredValue = null, oneGuess = false;
 let simpleMode = true, lastState = null, flaggedKey = null, flagSubmitting = false;
-let currentGame = localStorage.getItem('okra_game') || 'main';
+const GAMES = ['main', 'simply', 'arena'];
+let currentGame = GAMES.includes(localStorage.getItem('okra_game')) ? localStorage.getItem('okra_game') : 'main';
 var FLAG_REASONS = [
   ['category', 'Category'], ['question', 'Question'], ['answer', 'Answer'],
   ['too_niche', 'Too Niche'], ['other', 'Other'],
@@ -1330,6 +1366,51 @@ function flagHtml(state) {
     (isFlagged ? '🚩 Flagged' : '🚩 Flag this question') + '</button>';
 }
 
+function promptHtml(state) {
+  // Post-round-menu / WoF mini-game picker (main tab only -- Simply Trivia has no such menu,
+  // and the arena tab renders prompts itself via renderArena/arenaPromptHtml instead).
+  var p = state.prompt;
+  if (!p) return '';
+  var body = p.you_can_act
+    ? '<input id="actionInput" type="text" autocomplete="off" autocapitalize="off" ' +
+      'placeholder="Type your choice…" onkeydown="if(event.key===\\'Enter\\')submitActionInput()">' +
+      '<button class="primary" onclick="submitActionInput()">Submit</button>' +
+      '<div id="actionStatus" class="status"></div>'
+    : '<div class="idle" style="padding:6px 0 0">Waiting for ' +
+      esc((p.allowed_names || []).join(' / ') || 'the round winner') + ' to choose…</div>';
+  return '<div class="modalqctx" style="margin-top:16px">' +
+    '<div class="modalcat">Mini-Game Menu</div>' +
+    '<div class="modalq" style="white-space:pre-wrap">' + esc(p.prompt_text || '') + '</div>' +
+    '</div>' + body;
+}
+
+function submitActionInput() {
+  var el = document.getElementById('actionInput');
+  var text = el ? el.value.trim() : '';
+  if (!text) return;
+  submitAction(text, 'actionStatus');
+  if (el) el.value = '';
+}
+
+function submitAction(text, statusElId) {
+  fetch('/api/action', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({text: text, game: currentGame})
+  }).then(function (r) { return r.json().then(function (j) { return {ok: r.ok, body: j}; }); })
+    .then(function (res) {
+      var el = statusElId && document.getElementById(statusElId);
+      if (!el) return;
+      if (res.body.ok) { el.textContent = 'Sent ✓'; el.className = 'status ok'; }
+      else { el.textContent = res.body.reason === 'no_active_prompt' ? 'That closed — refresh.' :
+        res.body.reason === 'not_allowed' ? 'Only the round winner can choose.' : 'Could not send, try again.';
+        el.className = 'status bad'; }
+    })
+    .catch(function () {
+      var el = statusElId && document.getElementById(statusElId);
+      if (el) { el.textContent = 'Network error'; el.className = 'status bad'; }
+    });
+}
+
 function imgHtml(state) {
   return state.image_url
     ? '<img class="qimage" src="' + esc(state.image_url) + '" alt="Question image" ' +
@@ -1349,17 +1430,19 @@ function onSimpleToggle(checked) {
   if (lastState) render(lastState);
 }
 
-function syncGameToggleLabels(isSimply) {
-  var left = document.getElementById('gameToggleLeft');
-  var right = document.getElementById('gameToggleRight');
-  if (left) left.classList.toggle('active', !isSimply);
-  if (right) right.classList.toggle('active', isSimply);
+function syncGameTabs(game) {
+  var tabs = document.getElementById('gameTabs');
+  if (!tabs) return;
+  Array.prototype.forEach.call(tabs.querySelectorAll('.tab-btn'), function (btn) {
+    btn.classList.toggle('active', btn.getAttribute('data-game') === game);
+  });
 }
 
-function onGameToggle(checked) {
-  currentGame = checked ? 'simply' : 'main';
+function onGameSelect(game) {
+  if (game === currentGame) return;
+  currentGame = game;
   localStorage.setItem('okra_game', currentGame);
-  syncGameToggleLabels(checked);
+  syncGameTabs(currentGame);
   loadGame(currentGame);
 }
 
@@ -1378,6 +1461,8 @@ function render(state) {
   if (sub) sub.style.display = 'none';
   if (state.display_name) document.getElementById('me').innerHTML = 'Playing as ' + esc(state.display_name) +
     ' · <a class="logout" href="/logout">Log out</a>';
+
+  if (currentGame === 'arena') { renderArena(state); return; }
 
   if (state.phase === 'revealed') {
     // All of this user's submissions (merged in per-connection by the SSE layer), falling back
@@ -1413,7 +1498,7 @@ function render(state) {
   if (state.phase !== 'open') {
     app.innerHTML = '<div class="idle"><div class="mascot sm"></div>' +
       '<span class="big">No live question right now</span>' +
-      'The chef is prepping the next one — hang tight. ⏳</div>';
+      'The chef is prepping the next one — hang tight. ⏳</div>' + promptHtml(state);
     if (countdownTimer) { clearInterval(countdownTimer); countdownTimer = null; }
     return;
   }
@@ -1472,6 +1557,47 @@ function render(state) {
     fmtRemaining();
     countdownTimer = setInterval(fmtRemaining, 250);
   }
+}
+
+function renderArena(state) {
+  const app = document.getElementById('app');
+  if (countdownTimer) { clearInterval(countdownTimer); countdownTimer = null; }
+
+  if (state.phase === 'idle' || !state.phase) {
+    app.innerHTML = '<div class="idle"><div class="mascot sm"></div>' +
+      '<span class="big">No mini-game running</span>' +
+      'Start one in the Mini-Game Arena channel with /arena. ⏳</div>';
+    return;
+  }
+
+  const gameName = state.game_name ? esc(state.game_name.toUpperCase()) : 'Mini-Game';
+  const p = state.prompt || {};
+
+  if (state.phase === 'spectating' || !p.you_can_act) {
+    app.innerHTML = '<div class="idle"><div class="mascot sm"></div>' +
+      '<span class="big">🎮 ' + gameName + '</span>' +
+      'Waiting for ' + esc((p.allowed_names || []).join(' / ') || 'the player') + ' to answer…</div>';
+    return;
+  }
+
+  // phase === 'prompt' and this viewer is the one who can act
+  app.innerHTML = '<div class="modalqctx">' +
+    '<div class="modalcat">🎮 ' + gameName + '</div>' +
+    '<div class="modalq" style="white-space:pre-wrap">' + esc(p.prompt_text || 'Your turn — type your answer.') + '</div>' +
+    '</div>' +
+    '<input id="arenaInput" type="text" autocomplete="off" autocapitalize="off" ' +
+    'placeholder="Type your answer…" onkeydown="if(event.key===\\'Enter\\')submitArenaInput()">' +
+    '<button class="primary" onclick="submitArenaInput()">Submit</button>' +
+    '<div id="arenaStatus" class="status"></div>';
+  const i = document.getElementById('arenaInput'); if (i) i.focus();
+}
+
+function submitArenaInput() {
+  var el = document.getElementById('arenaInput');
+  var text = el ? el.value.trim() : '';
+  if (!text) return;
+  submitAction(text, 'arenaStatus');
+  if (el) el.value = '';
 }
 
 function esc(s) { return String(s).replace(/[&<>"']/g, function (c) {
@@ -1631,8 +1757,7 @@ function loadGame(game) {
     .catch(function () { render({phase: 'idle', authenticated: true}); connect(); });
 }
 
-document.getElementById('gameToggle').checked = (currentGame === 'simply');
-syncGameToggleLabels(currentGame === 'simply');
+syncGameTabs(currentGame);
 loadGame(currentGame);
 </script>
 </body>
@@ -1717,10 +1842,10 @@ async def handle_logo_mark(request):
 # Startup
 # ---------------------------------------------------------------------------
 
-async def start_companion_web(*, resolve_member, get_state, submit_answer, reveal_extra=None, submit_flag=None, submit_anon_flag=None, get_flag_reveal_context=None, submit_question=None, submit_bulk_questions=None):
+async def start_companion_web(*, resolve_member, get_state, submit_answer, submit_action=None, reveal_extra=None, submit_flag=None, submit_anon_flag=None, get_flag_reveal_context=None, submit_question=None, submit_bulk_questions=None):
     """Bind the aiohttp server to $PORT and start serving. Called from the bot's main()
     before the long-running gather so Heroku sees the port bound promptly (avoids R10)."""
-    global _resolve_member, _get_state, _submit_answer, _reveal_extra, _submit_flag, _submit_anon_flag
+    global _resolve_member, _get_state, _submit_answer, _submit_action, _reveal_extra, _submit_flag, _submit_anon_flag
     global _get_flag_reveal_context, _submit_question, _submit_bulk_questions
     global _session_secret, _oauth_client_id, _oauth_client_secret, _base_url, _flag_relay_secret
     global _turnstile_site_key, _turnstile_secret_key, _discord_invite_url
@@ -1728,6 +1853,7 @@ async def start_companion_web(*, resolve_member, get_state, submit_answer, revea
     _resolve_member = resolve_member
     _get_state = get_state
     _submit_answer = submit_answer
+    _submit_action = submit_action
     _reveal_extra = reveal_extra
     _submit_flag = submit_flag
     _submit_anon_flag = submit_anon_flag
@@ -1774,6 +1900,7 @@ async def start_companion_web(*, resolve_member, get_state, submit_answer, revea
             web.get("/api/current", handle_current),
             web.get("/api/stream", handle_stream),
             web.post("/api/answer", handle_answer),
+            web.post("/api/action", handle_action),
             web.post("/api/flag", handle_flag),
         ])
     app.add_routes(routes)
