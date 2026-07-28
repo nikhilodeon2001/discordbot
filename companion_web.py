@@ -84,6 +84,14 @@ _ANON_FLAG_MIN_INTERVAL = 5.0
 # discordbot.py's submit_question_for_review, shared with the Discord /submit modal.
 _last_question_submit = {}
 _QUESTION_SUBMIT_MIN_INTERVAL = 3.0
+
+# Periodic cleanup for the four rate-limit dicts above. Each entry is functionally dead within
+# single-digit seconds of being written (every *_MIN_INTERVAL above is well under that), but
+# nothing else ever removes one -- left alone, each dict grows by one entry per distinct user/IP
+# for the entire life of the process. _RATE_LIMIT_ENTRY_MAX_AGE is a generous margin above the
+# largest window above, so pruning can never affect a still-meaningful check.
+_RATE_LIMIT_ENTRY_MAX_AGE = 300   # 5 minutes
+_RATE_LIMIT_PRUNE_INTERVAL = 900  # 15 minutes
 _submit_question = None      # async callable(user_id, display_name, sub_type, category, question, correct_answer, alternates, source) -> (doc, error)
 _submit_bulk_questions = None  # async callable(user_id, display_name, raw_text, source) -> (accepted_docs, skipped_messages)
 _turnstile_site_key = ""     # Cloudflare Turnstile site key, rendered into the /submit page's widget
@@ -174,6 +182,26 @@ def publish_state(state: dict, game: str = "main"):
                 pass
     except Exception:
         pass
+
+
+def _prune_stale_rate_limits():
+    """Drop rate-limit entries old enough that they can no longer affect any future check --
+    see _RATE_LIMIT_ENTRY_MAX_AGE above for why that's a safe cutoff."""
+    cutoff = time.time() - _RATE_LIMIT_ENTRY_MAX_AGE
+    for d in (_last_submit, _last_flag, _anon_last_flag, _last_question_submit):
+        for key in [k for k, ts in d.items() if ts < cutoff]:
+            del d[key]
+
+
+async def _rate_limit_pruner():
+    """Background task, started once in start_companion_web: periodically sweeps the rate-limit
+    dicts so they don't grow by one entry per distinct user/IP for the entire process lifetime."""
+    while True:
+        await asyncio.sleep(_RATE_LIMIT_PRUNE_INTERVAL)
+        try:
+            _prune_stale_rate_limits()
+        except Exception:
+            pass
 
 
 def _game_from_request(request):
@@ -1899,6 +1927,8 @@ async def start_companion_web(*, resolve_member, get_state, submit_answer, submi
     if not _turnstile_secret_key:
         print("⚠️  TURNSTILE_SECRET_KEY not set — /api/submit_question will reject all requests.")
     _discord_invite_url = os.getenv("DISCORD_INVITE_URL", "")
+
+    asyncio.create_task(_rate_limit_pruner())
 
     app = web.Application(middlewares=[_https_enforcement_middleware])
     routes = [
