@@ -5,6 +5,11 @@ load_dotenv()
 
 prod_or_stage = os.environ.get('ENVIRONMENT', 'prod')
 
+# Discord Embedded App SDK Activity panel (STAGING PROOF OF CONCEPT) -- see activity_web.py.
+# Gates release_game_voice_channel()'s "leave the trivia VC open" behavior and the voice bot's
+# startup reveal, below. Leave unset (false) on prod.
+ACTIVITY_ENABLED = os.environ.get('ACTIVITY_ENABLED', 'false').lower() == 'true'
+
 import sentry_sdk
 from sentry_sdk.integrations.logging import LoggingIntegration
 
@@ -810,6 +815,25 @@ if not _IS_REIMPORT:
         @mini_game_audio_bot.event
         async def on_ready():
             print(f"🎵✅ Mini-game audio bot is ready! Logged in as {mini_game_audio_bot.user}")
+            if ACTIVITY_ENABLED:
+                # The trivia VC is now a permanent home for the Activity panel (see
+                # activity_web.py / release_game_voice_channel), but it may still be left hidden
+                # from whatever the last pre-deploy audio-game teardown did. Un-hide it on every
+                # cold boot rather than waiting for an audio game to happen to run. Done from
+                # this bot specifically -- it's the identity all the existing reveal/hide calls
+                # use (via get_voice_bot()), so it's the one confirmed to hold Manage Channels here.
+                try:
+                    vc = mini_game_audio_bot.get_channel(TRIVIA_VOICE_CHANNEL_ID)
+                    if vc:
+                        role = vc.guild.get_role(EVERYONE_ROLE_ID)
+                        if role:
+                            perms = vc.overwrites_for(role)
+                            perms.view_channel = True
+                            perms.connect = True
+                            await vc.set_permissions(role, overwrite=perms)
+                            print("🎧 Trivia voice channel revealed for Activity")
+                except Exception as e:
+                    print(f"⚠️ Could not reveal trivia voice channel: {e}")
     else:
         print("⚠️ DISCORD_MINI_GAME_AUDIO_BOT_TOKEN not set - mini-game audio will use main bot")
 
@@ -1088,6 +1112,52 @@ def get_voice_bot():
             # Fall back to main bot if audio bot isn't ready
             return get_bot()
     return get_bot()
+
+async def release_game_voice_channel(voice_client, voice_channel):
+    """Disconnect the bot's voice client after an audio mini-game (SoundFX, Music, Audio
+    Question, Buzz Words). Replaces what used to be a duplicated 3-block teardown at each of
+    their exit points: disconnect the bot / kick every member out / re-hide the channel from
+    @everyone.
+
+    The main trivia voice channel is now a permanent home for the Activity panel (see
+    activity_web.py): members stay put and @everyone's view/connect overwrites are left alone, so
+    an audio round finishing doesn't boot anyone out of the docked panel mid-round. The arena
+    voice channel keeps its old ephemeral behavior (clear members, re-hide), since nothing lives
+    there between games.
+
+    Discriminates on voice_channel.id rather than the game_voice_channel_id ContextVar so it's
+    correct regardless of how the caller resolved the channel, with no new parameter needed."""
+    try:
+        if voice_client and voice_client.is_connected():
+            await voice_client.disconnect()
+            print(f"✅ Disconnected from voice channel")
+    except Exception as e:
+        print(f"Error disconnecting from voice: {e}")
+
+    if not voice_channel:
+        return
+
+    if ACTIVITY_ENABLED and voice_channel.id == TRIVIA_VOICE_CHANNEL_ID:
+        print("🎧 Leaving trivia voice channel open (Activity home)")
+        return
+
+    try:
+        for member in list(voice_channel.members):
+            await member.move_to(None)
+        print(f"✅ Kicked all members from voice channel")
+    except Exception as e:
+        print(f"Error kicking members from voice channel: {e}")
+
+    try:
+        everyone_role = voice_channel.guild.get_role(EVERYONE_ROLE_ID)
+        if everyone_role:
+            existing_perms = voice_channel.overwrites_for(everyone_role)
+            existing_perms.view_channel = False
+            existing_perms.connect = False
+            await voice_channel.set_permissions(everyone_role, overwrite=existing_perms)
+            print(f"✅ Hidden voice channel and removed connect permission from @everyone")
+    except Exception as e:
+        print(f"Error hiding voice channel: {e}")
 
 async def safe_send(channel=None, *args, max_retries=3, delay=2, use_embed=True, image_url=None, file=None, **kwargs):
     # Use context channel if no explicit channel provided
@@ -8247,37 +8317,7 @@ async def ask_soundfx_challenge(winner, winner_id, num=5):
         sorted_users = sorted(user_data.items(), key=lambda x: x[1][1], reverse=True)
 
         if num == 1:
-            # Disconnect from voice channel
-            try:
-                if voice_client and voice_client.is_connected():
-                    await voice_client.disconnect()
-                    print(f"✅ Disconnected from voice channel")
-            except Exception as e:
-                print(f"Error disconnecting from voice: {e}")
-
-            # Kick all members from voice channel before hiding it
-            try:
-                if voice_channel:
-                    for member in voice_channel.members:
-                        await member.move_to(None)
-                    print(f"✅ Kicked all members from voice channel")
-            except Exception as e:
-                print(f"Error kicking members from voice channel: {e}")
-
-            # Hide voice channel from everyone
-            try:
-                if voice_channel:
-                    everyone_role = voice_channel.guild.get_role(EVERYONE_ROLE_ID)
-                    if everyone_role:
-                        # Get current permissions
-                        existing_perms = voice_channel.overwrites_for(everyone_role)
-                        # Set view_channel and connect to False, preserving other permissions
-                        existing_perms.view_channel = False
-                        existing_perms.connect = False
-                        await voice_channel.set_permissions(everyone_role, overwrite=existing_perms)
-                        print(f"✅ Hidden voice channel and removed connect permission from @everyone")
-            except Exception as e:
-                print(f"Error hiding voice channel: {e}")
+            await release_game_voice_channel(voice_client, voice_channel)
 
             if sorted_users:
                 top_score = sorted_users[0][1][1]
@@ -8324,37 +8364,7 @@ async def ask_soundfx_challenge(winner, winner_id, num=5):
     wf_winner = True
     await asyncio.sleep(3)
 
-    # Disconnect from voice channel
-    try:
-        if voice_client and voice_client.is_connected():
-            await voice_client.disconnect()
-            print(f"✅ Disconnected from voice channel")
-    except Exception as e:
-        print(f"Error disconnecting from voice: {e}")
-
-    # Kick all members from voice channel before hiding it
-    try:
-        if voice_channel:
-            for member in voice_channel.members:
-                await member.move_to(None)
-            print(f"✅ Kicked all members from voice channel")
-    except Exception as e:
-        print(f"Error kicking members from voice channel: {e}")
-
-    # Hide voice channel from everyone
-    try:
-        if voice_channel:
-            everyone_role = voice_channel.guild.get_role(EVERYONE_ROLE_ID)
-            if everyone_role:
-                # Get current permissions
-                existing_perms = voice_channel.overwrites_for(everyone_role)
-                # Set view_channel and connect to False, preserving other permissions
-                existing_perms.view_channel = False
-                existing_perms.connect = False
-                await voice_channel.set_permissions(everyone_role, overwrite=existing_perms)
-                print(f"✅ Hidden voice channel and removed connect permission from @everyone")
-    except Exception as e:
-        print(f"Error hiding voice channel: {e}")
+    await release_game_voice_channel(voice_client, voice_channel)
 
     return soundfx_winner_id
 
@@ -8788,37 +8798,7 @@ async def ask_audio_music_challenge(winner, winner_id, num=5):
         sorted_users = sorted(user_data.items(), key=lambda x: x[1][1], reverse=True)
 
         if num == 1:
-            # Disconnect from voice channel
-            try:
-                if voice_client and voice_client.is_connected():
-                    await voice_client.disconnect()
-                    print(f"✅ Disconnected from voice channel")
-            except Exception as e:
-                print(f"Error disconnecting from voice: {e}")
-
-            # Kick all members from voice channel before hiding it
-            try:
-                if voice_channel:
-                    for member in voice_channel.members:
-                        await member.move_to(None)
-                    print(f"✅ Kicked all members from voice channel")
-            except Exception as e:
-                print(f"Error kicking members from voice channel: {e}")
-
-            # Hide voice channel from everyone
-            try:
-                if voice_channel:
-                    everyone_role = voice_channel.guild.get_role(EVERYONE_ROLE_ID)
-                    if everyone_role:
-                        # Get current permissions
-                        existing_perms = voice_channel.overwrites_for(everyone_role)
-                        # Set view_channel and connect to False, preserving other permissions
-                        existing_perms.view_channel = False
-                        existing_perms.connect = False
-                        await voice_channel.set_permissions(everyone_role, overwrite=existing_perms)
-                        print(f"✅ Hidden voice channel and removed connect permission from @everyone")
-            except Exception as e:
-                print(f"Error hiding voice channel: {e}")
+            await release_game_voice_channel(voice_client, voice_channel)
 
             if sorted_users:
                 top_score = sorted_users[0][1][1]
@@ -8865,37 +8845,7 @@ async def ask_audio_music_challenge(winner, winner_id, num=5):
     wf_winner = True
     await asyncio.sleep(3)
 
-    # Disconnect from voice channel
-    try:
-        if voice_client and voice_client.is_connected():
-            await voice_client.disconnect()
-            print(f"✅ Disconnected from voice channel")
-    except Exception as e:
-        print(f"Error disconnecting from voice: {e}")
-
-    # Kick all members from voice channel before hiding it
-    try:
-        if voice_channel:
-            for member in voice_channel.members:
-                await member.move_to(None)
-            print(f"✅ Kicked all members from voice channel")
-    except Exception as e:
-        print(f"Error kicking members from voice channel: {e}")
-
-    # Hide voice channel from everyone
-    try:
-        if voice_channel:
-            everyone_role = voice_channel.guild.get_role(EVERYONE_ROLE_ID)
-            if everyone_role:
-                # Get current permissions
-                existing_perms = voice_channel.overwrites_for(everyone_role)
-                # Set view_channel and connect to False, preserving other permissions
-                existing_perms.view_channel = False
-                existing_perms.connect = False
-                await voice_channel.set_permissions(everyone_role, overwrite=existing_perms)
-                print(f"✅ Hidden voice channel and removed connect permission from @everyone")
-    except Exception as e:
-        print(f"Error hiding voice channel: {e}")
+    await release_game_voice_channel(voice_client, voice_channel)
 
     return audio_music_winner_id
 
@@ -9257,37 +9207,7 @@ async def ask_audio_question_challenge(winner, winner_id, num=5):
         sorted_users = sorted(user_data.items(), key=lambda x: x[1][1], reverse=True)
 
         if num == 1:
-            # Disconnect from voice channel
-            try:
-                if voice_client and voice_client.is_connected():
-                    await voice_client.disconnect()
-                    print(f"✅ Disconnected from voice channel")
-            except Exception as e:
-                print(f"Error disconnecting from voice: {e}")
-
-            # Kick all members from voice channel before hiding it
-            try:
-                if voice_channel:
-                    for member in voice_channel.members:
-                        await member.move_to(None)
-                    print(f"✅ Kicked all members from voice channel")
-            except Exception as e:
-                print(f"Error kicking members from voice channel: {e}")
-
-            # Hide voice channel from everyone
-            try:
-                if voice_channel:
-                    everyone_role = voice_channel.guild.get_role(EVERYONE_ROLE_ID)
-                    if everyone_role:
-                        # Get current permissions
-                        existing_perms = voice_channel.overwrites_for(everyone_role)
-                        # Set view_channel and connect to False, preserving other permissions
-                        existing_perms.view_channel = False
-                        existing_perms.connect = False
-                        await voice_channel.set_permissions(everyone_role, overwrite=existing_perms)
-                        print(f"✅ Hidden voice channel and removed connect permission from @everyone")
-            except Exception as e:
-                print(f"Error hiding voice channel: {e}")
+            await release_game_voice_channel(voice_client, voice_channel)
 
             if sorted_users:
                 top_score = sorted_users[0][1][1]
@@ -9334,37 +9254,7 @@ async def ask_audio_question_challenge(winner, winner_id, num=5):
     wf_winner = True
     await asyncio.sleep(3)
 
-    # Disconnect from voice channel
-    try:
-        if voice_client and voice_client.is_connected():
-            await voice_client.disconnect()
-            print(f"✅ Disconnected from voice channel")
-    except Exception as e:
-        print(f"Error disconnecting from voice: {e}")
-
-    # Kick all members from voice channel before hiding it
-    try:
-        if voice_channel:
-            for member in voice_channel.members:
-                await member.move_to(None)
-            print(f"✅ Kicked all members from voice channel")
-    except Exception as e:
-        print(f"Error kicking members from voice channel: {e}")
-
-    # Hide voice channel from everyone
-    try:
-        if voice_channel:
-            everyone_role = voice_channel.guild.get_role(EVERYONE_ROLE_ID)
-            if everyone_role:
-                # Get current permissions
-                existing_perms = voice_channel.overwrites_for(everyone_role)
-                # Set view_channel and connect to False, preserving other permissions
-                existing_perms.view_channel = False
-                existing_perms.connect = False
-                await voice_channel.set_permissions(everyone_role, overwrite=existing_perms)
-                print(f"✅ Hidden voice channel and removed connect permission from @everyone")
-    except Exception as e:
-        print(f"Error hiding voice channel: {e}")
+    await release_game_voice_channel(voice_client, voice_channel)
 
     return audio_question_winner_id
 
@@ -9784,35 +9674,7 @@ async def ask_buzz_words_challenge(winner, winner_id, num=5):
     wf_winner = True
     await asyncio.sleep(3)
 
-    # Disconnect from voice channel
-    try:
-        if voice_client and voice_client.is_connected():
-            await voice_client.disconnect()
-            print(f"✅ Disconnected from voice channel")
-    except Exception as e:
-        print(f"Error disconnecting from voice: {e}")
-
-    # Kick all members from voice channel before hiding it
-    try:
-        if voice_channel:
-            for member in voice_channel.members:
-                await member.move_to(None)
-            print(f"✅ Kicked all members from voice channel")
-    except Exception as e:
-        print(f"Error kicking members from voice channel: {e}")
-
-    # Hide voice channel from everyone
-    try:
-        if voice_channel:
-            everyone_role = voice_channel.guild.get_role(EVERYONE_ROLE_ID)
-            if everyone_role:
-                existing_perms = voice_channel.overwrites_for(everyone_role)
-                existing_perms.view_channel = False
-                existing_perms.connect = False
-                await voice_channel.set_permissions(everyone_role, overwrite=existing_perms)
-                print(f"✅ Hidden voice channel and removed connect permission from @everyone")
-    except Exception as e:
-        print(f"Error hiding voice channel: {e}")
+    await release_game_voice_channel(voice_client, voice_channel)
 
     return buzz_words_winner_id
 

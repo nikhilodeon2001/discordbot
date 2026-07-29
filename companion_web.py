@@ -29,6 +29,8 @@ import aiohttp
 import boto3
 from aiohttp import web
 
+import activity_web
+
 # ---------------------------------------------------------------------------
 # Module state (set by start_companion_web)
 # ---------------------------------------------------------------------------
@@ -36,8 +38,14 @@ from aiohttp import web
 # Companion app (logged-in live play) is live at play.triviasphere.com.
 COMPANION_APP_ENABLED = True
 
+# Discord Embedded App SDK Activity panel -- staging POC, gated separately from the companion app
+# above since it needs its own Discord dev-portal config (URL mappings) and isn't ready for prod.
+_ACTIVITY_ENABLED = os.getenv("ACTIVITY_ENABLED", "false").lower() == "true"
+
 _GAMES = ("main", "simply", "arena")
 _subscribers = {g: set() for g in _GAMES}   # game -> set[asyncio.Queue], one queue per open SSE connection
+_seq = {g: 0 for g in _GAMES}          # game -> monotonic publish counter, for the Activity poll fallback
+_last_published = {}                   # game -> last broadcast state dict, ditto
 _resolve_member = None        # callable(user_id:int) -> display_name:str | None
 _get_state = None             # callable(user_id:int|None, game:str) -> dict (sanitized live state)
 _submit_answer = None         # callable(user_id, display_name, text, game) -> {"ok":bool,"reason":str}
@@ -127,7 +135,26 @@ def _unsign(token: str):
 
 
 def _session_from_request(request):
-    return _unsign(request.cookies.get(_SESSION_COOKIE, ""))
+    """Read the session token from wherever it arrived: the cookie (companion web/phone), an
+    Authorization header (Activity fetches), or a `?s=` query param (Activity EventSource, which
+    cannot set custom headers) -- GET-only so a session token can never land in a POST query
+    string. Deliberately `?s=`, not `?t=`: that param is already the anonymous flag token
+    (handle_flag_page/handle_flag_anon), publicly embedded in Discord messages and signed with the
+    same secret, so accepting it here would let a scraped flag link be treated as a session.
+    Since three token kinds now share one secret, also assert the session's own shape (_unsign
+    only checks HMAC + exp) so a flag/oauth-state token can't slip through and crash a handler
+    that assumes `user_id`/`display_name` are present."""
+    token = request.cookies.get(_SESSION_COOKIE, "")
+    if not token:
+        auth = request.headers.get("Authorization", "")
+        if auth.startswith("Bearer "):
+            token = auth[7:]
+    if not token and request.method == "GET":
+        token = request.query.get("s", "")
+    payload = _unsign(token)
+    if not payload or not isinstance(payload.get("user_id"), int) or not payload.get("display_name"):
+        return None
+    return payload
 
 
 def get_base_url():
@@ -173,7 +200,11 @@ def _client_ip_hash(request):
 # ---------------------------------------------------------------------------
 
 def publish_state(state: dict, game: str = "main"):
-    """Fan a state dict out to SSE clients currently viewing `game`. Never raises."""
+    """Fan a state dict out to SSE clients currently viewing `game`. Never raises. Also records
+    a monotonic sequence number and the last-published state so the Activity poll fallback
+    (/api/poll) can serve the reveal state even after build_companion_state would report idle."""
+    _seq[game] = _seq.get(game, 0) + 1
+    _last_published[game] = state
     try:
         for queue in list(_subscribers.get(game, ())):
             try:
@@ -366,6 +397,8 @@ async def handle_current(request):
     game = _game_from_request(request)
     state = _get_state(session["user_id"], game) if _get_state else {"phase": "idle"}
     state = dict(state)
+    if request.query.get("activity") == "1":
+        state = activity_web.proxy_images(state)
     state["authenticated"] = True
     state["display_name"] = session["display_name"]
     return web.json_response(state)
@@ -376,6 +409,7 @@ async def handle_stream(request):
     if not session:
         return web.json_response({"authenticated": False}, status=401)
     game = _game_from_request(request)
+    as_activity = request.query.get("activity") == "1"
 
     resp = web.StreamResponse(
         headers={
@@ -386,13 +420,20 @@ async def handle_stream(request):
         }
     )
     await resp.prepare(request)
+    if as_activity:
+        # Some proxies/CDNs hold back the first chunk of a stream until a size threshold is hit;
+        # a padding comment forces immediate flush through Discord's Activity proxy.
+        await resp.write(b":" + b" " * 2048 + b"\n\n")
+
+    async def _emit(data):
+        await _write_event(resp, activity_web.proxy_images(data) if as_activity else data)
 
     queue = asyncio.Queue(maxsize=32)
     _subscribers[game].add(queue)
     try:
         # Send current state immediately so a fresh connection renders without waiting.
         if _get_state:
-            await _write_event(resp, _get_state(session["user_id"], game))
+            await _emit(_get_state(session["user_id"], game))
         while True:
             try:
                 data = await asyncio.wait_for(queue.get(), timeout=_HEARTBEAT_SECONDS)
@@ -416,7 +457,7 @@ async def handle_stream(request):
                         data = {**data, **_reveal_extra(session["user_id"], game)}
                     except Exception:
                         pass
-                await _write_event(resp, data)
+                await _emit(data)
             except asyncio.TimeoutError:
                 await resp.write(b": heartbeat\n\n")
     except (asyncio.CancelledError, ConnectionResetError, ConnectionError):
@@ -1865,6 +1906,12 @@ _COMING_SOON_HTML = """<!doctype html>
 async def handle_index(request):
     if not COMPANION_APP_ENABLED:
         return web.Response(text=_COMING_SOON_HTML, content_type="text/html")
+    # Discord's Activity URL Mappings target a bare hostname with no path, so the iframe's
+    # document always loads "/" -- `frame_id` is the query param Discord appends to that iframe's
+    # src on every platform (and the SDK itself depends on it), so it's what tells us this hit is
+    # the Activity rather than a normal companion-app page load.
+    if activity_web.ENABLED and request.query.get("frame_id"):
+        return activity_web.render_activity_page(request)
     return web.Response(text=_INDEX_HTML, content_type="text/html")
 
 
@@ -1928,6 +1975,18 @@ async def start_companion_web(*, resolve_member, get_state, submit_answer, submi
         print("⚠️  TURNSTILE_SECRET_KEY not set — /api/submit_question will reject all requests.")
     _discord_invite_url = os.getenv("DISCORD_INVITE_URL", "")
 
+    if _ACTIVITY_ENABLED:
+        activity_web.init(
+            sign=_sign, unsign=_unsign,
+            resolve_member=resolve_member, get_state=get_state, reveal_extra=reveal_extra,
+            session_from_request=_session_from_request,
+            session_ttl=_SESSION_TTL,
+            oauth_client_id=_oauth_client_id, oauth_client_secret=_oauth_client_secret,
+            discord_invite_url=_discord_invite_url,
+            get_seq=lambda game: _seq.get(game, 0),
+            get_last_published=lambda game: _last_published.get(game),
+        )
+
     asyncio.create_task(_rate_limit_pruner())
 
     app = web.Application(middlewares=[_https_enforcement_middleware])
@@ -1954,6 +2013,8 @@ async def start_companion_web(*, resolve_member, get_state, submit_answer, submi
             web.post("/api/action", handle_action),
             web.post("/api/flag", handle_flag),
         ])
+        if _ACTIVITY_ENABLED:
+            routes.extend(activity_web.activity_routes())
     app.add_routes(routes)
 
     runner = web.AppRunner(app)
