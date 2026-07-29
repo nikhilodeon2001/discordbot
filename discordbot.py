@@ -246,7 +246,8 @@ async def end_of_round(sent_message=None):
         # Check if there's a new commit first (don't notify yet)
         from self_update import check_for_new_commit, deploy_new_build_and_wait, wait_for_sigterm
 
-        if await check_for_new_commit():
+        new_commit_sha = await check_for_new_commit()
+        if new_commit_sha:
             print("New commit found! Notifying all channels...")
 
             # Set global shutdown flag to stop Simply Trivia loop
@@ -327,7 +328,7 @@ async def end_of_round(sent_message=None):
 
             # Now deploy and wait (this blocks until SIGTERM)
             print("Deploying new build...")
-            await deploy_new_build_and_wait()
+            await deploy_new_build_and_wait(new_commit_sha)
             await wait_for_sigterm()
             # Never reaches here - SIGTERM will kill the process
             return True

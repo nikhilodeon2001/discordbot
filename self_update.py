@@ -58,7 +58,9 @@ async def set_last_commit_in_db(sha):
 # ─────────────────────────────────────────────
 
 async def check_for_new_commit():
-    """Check GitHub for new commits on main branch."""
+    """Check GitHub for new commits on main branch.
+    Returns the new commit SHA if one is found, otherwise None.
+    """
     logger.info("Checking GitHub for new commits")
     repo = os.getenv("GITHUB_REPO")
     gh_token = os.getenv("GITHUB_TOKEN")
@@ -76,14 +78,18 @@ async def check_for_new_commit():
         await set_last_commit_in_db(latest)
         print(f"New commit detected: {latest[:7]} (previous: {last_sha[:7] if last_sha else 'none'})")
         logger.info(f"New commit detected: {latest[:7]} (previous: {last_sha[:7] if last_sha else 'none'})")
-        return True
+        return latest
     print("No new commit found.")
     logger.info("No new commit found - already up to date")
-    return False
+    return None
 
 
-async def deploy_new_build_and_wait():
-    """Trigger a new Heroku build from GitHub and wait until it finishes.
+async def deploy_new_build_and_wait(sha):
+    """Trigger a new Heroku build from the exact commit SHA that was checked, and wait
+    until it finishes. Building the pinned SHA (rather than re-resolving the `main` ref)
+    guarantees the deployed code matches what was recorded as the last-seen commit, so the
+    next update check on the freshly-deployed process doesn't immediately re-detect an
+    "update" if `main` moved again in the meantime.
     NOTE: Heroku will automatically deploy the new release and restart dynos when build succeeds.
     """
     app = os.getenv("HEROKU_APP_NAME")
@@ -98,12 +104,12 @@ async def deploy_new_build_and_wait():
     }
 
     # Embed GitHub token in the URL for private repo access
-    tarball_url = f"https://{gh_token}:x-oauth-basic@api.github.com/repos/{repo}/tarball/main"
+    tarball_url = f"https://{gh_token}:x-oauth-basic@api.github.com/repos/{repo}/tarball/{sha}"
 
     data = {
         "source_blob": {
             "url": tarball_url,
-            "version": "main",
+            "version": sha,
         }
     }
 
@@ -169,10 +175,11 @@ async def self_update():
     """
     logger.info("=== self_update() started ===")
     print("Checking for new commits...")
-    if await check_for_new_commit():
+    new_sha = await check_for_new_commit()
+    if new_sha:
         print("New commit found! Deploying new build...")
         logger.info("New commit detected - starting build and deployment process")
-        await deploy_new_build_and_wait()
+        await deploy_new_build_and_wait(new_sha)
         logger.info("Build polling complete - now waiting for SIGTERM from Heroku")
         await wait_for_sigterm()
         # Never reaches here - SIGTERM will kill the process
