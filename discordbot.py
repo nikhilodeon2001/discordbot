@@ -16973,7 +16973,8 @@ async def build_okra_image_prompt_grok(base_idea):
 
 async def generate_round_summary_image(round_data, winner, winner_id, winner_coffees=None,
                                          category_already_shown=False, category_result=None):
-    """Returns True if an image was successfully posted (or there was nothing to do), False on any failure."""
+    """Returns True if an image was successfully posted (or there was nothing to do), False on
+    generation failure, None if the theme picker timed out (credit stays banked, nothing posted)."""
     if skip_summary == True:
         message = "\nBe sure to drink your Okratine.\n"
         await safe_send(channel, message)
@@ -17006,6 +17007,10 @@ async def generate_round_summary_image(round_data, winner, winner_id, winner_cof
                     winner, categories, winner_coffees, winner_id, skip_message=category_already_shown
                 )
 
+            if selected_category is None:
+                # Theme picker timed out -- bank the credit instead of auto-picking a theme.
+                return None
+
             prompts_by_category = {
                 "0": [
                     f"A scary scene from a horror movie with what you think {winner} looks running from an okra."
@@ -17025,7 +17030,7 @@ async def generate_round_summary_image(round_data, winner, winner_id, winner_cof
             }
 
             # Select a prompt based on the chosen category
-            if selected_category and selected_category in prompts_by_category:
+            if selected_category in prompts_by_category:
                 prompt = random.choice(prompts_by_category[selected_category])
             else:
                 prompt = f"A horror image of what you think {winner} looks like being pursued by something okra themed."
@@ -17513,7 +17518,7 @@ async def ask_category(winner, categories, winner_coffees, winner_id, skip_messa
     def check(m):
         return m.channel == target_channel and m.author != get_bot().user and m.author.id == winner_id
 
-    end_time = asyncio.get_event_loop().time() + magic_time
+    end_time = asyncio.get_event_loop().time() + magic_time + 5
 
     while True:
         remaining_time = end_time - asyncio.get_event_loop().time()
@@ -22378,6 +22383,12 @@ async def update_round_streaks(user, user_id, roast_task=None):
             )
             if ok:
                 await consume_image_credit(user_id)
+            elif ok is None:
+                await safe_send(
+                    channel,
+                    f"⏳🎨 **<@{user_id}>**, too slow on the theme pick — no worries, it's **saved**: "
+                    f"win again and I'll ask you to pick. (Drawings owed: {banked})"
+                )
             else:
                 await safe_send(
                     channel,
