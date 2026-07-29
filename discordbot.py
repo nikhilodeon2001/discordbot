@@ -9710,6 +9710,7 @@ async def ask_buzz_words_challenge(winner, winner_id, num=5):
 
                 if guess.lower() == word.lower():
                     answered = True
+                    narration_task.cancel()
                     if voice_client and voice_client.is_playing():
                         voice_client.stop()
                     points = BUZZ_WORDS_TIER_POINTS.get(selected_tier, 1)
@@ -9723,7 +9724,10 @@ async def ask_buzz_words_challenge(winner, winner_id, num=5):
             except asyncio.TimeoutError:
                 continue
 
-        narration_local_path = await narration_task
+        try:
+            narration_local_path = await narration_task
+        except asyncio.CancelledError:
+            narration_local_path = None
 
         if voice_client and voice_client.is_playing():
             voice_client.stop()
