@@ -522,15 +522,14 @@ function puzzleHtml(state) {
 function flagHtml(state) {
   var isFlagged = flaggedKey === state.question_key;
   return '<button type="button" class="flagbar' + (isFlagged ? ' flagged' : '') + '" ' +
-    (isFlagged ? 'disabled ' : '') + 'onclick="openFlagModal()" ' +
+    (isFlagged ? 'disabled ' : '') + 'data-action="open-flag" ' +
     'aria-label="' + (isFlagged ? 'Question flagged' : 'Flag this question') + '">' +
     (isFlagged ? '🚩 Flagged' : '🚩 Flag this question') + '</button>';
 }
 
 function imgHtml(state) {
   return state.image_url
-    ? '<img class="qimage" src="' + esc(P + state.image_url) + '" alt="Question image" ' +
-      'onerror="this.style.display=\\'none\\'">'
+    ? '<img class="qimage" src="' + esc(P + state.image_url) + '" alt="Question image">'
     : '';
 }
 
@@ -619,8 +618,8 @@ function openFlagModal() {
     }).join('') + '</div>' +
     '<textarea id="flagDetail" maxlength="500" placeholder="Provide more detail (optional — recommended if you selected \\'Other\\')"></textarea>' +
     '<div class="modalbtns">' +
-      '<button type="button" class="cancel" onclick="closeFlagModal()">Cancel</button>' +
-      '<button type="button" class="submit" id="flagSubmitBtn" onclick="submitFlag()">Submit</button>' +
+      '<button type="button" class="cancel" data-action="close-flag">Cancel</button>' +
+      '<button type="button" class="submit" id="flagSubmitBtn" data-action="submit-flag">Submit</button>' +
     '</div>' +
     '<div class="modalstatus" id="flagModalStatus"></div>' +
   '</div>';
@@ -735,17 +734,17 @@ function render(state) {
       inputHtml = '<div class="choices">' + state.choices.map(function (c) {
         var sel = (answeredKey === state.question_key && answeredValue === c.letter);
         return '<button class="choice' + (sel ? ' selected' : '') + '" data-letter="' + esc(c.letter) + '" ' +
-          'onclick="choose(this,\\'' + esc(c.letter) + '\\')">' +
+          'data-action="choose">' +
           esc(c.text) + (sel ? '<span class="tick">✓</span>' : '') + '</button>';
       }).join('') + '</div>' +
         '<div class="ortype">or type your answer</div>' +
         '<input id="ans" type="text" autocomplete="off" autocapitalize="off" ' +
-        'placeholder="Type a letter or the answer…" onpaste="return false" onkeydown="if(event.key===\\'Enter\\')submitText()">' +
-        '<button class="primary" onclick="submitText()">Submit</button>';
+        'placeholder="Type a letter or the answer…">' +
+        '<button class="primary" data-action="submit-text">Submit</button>';
     } else {
       inputHtml = '<input id="ans" type="text" autocomplete="off" autocapitalize="off" ' +
-        'placeholder="Type your answer…" onpaste="return false" onkeydown="if(event.key===\\'Enter\\')submitText()">' +
-        '<button class="primary" onclick="submitText()">Submit</button>';
+        'placeholder="Type your answer…">' +
+        '<button class="primary" data-action="submit-text">Submit</button>';
     }
     if (prior) inputHtml = '<div class="status ok">✓ Submitted: ' + esc(prior) +
       ' — you can submit again</div>' + inputHtml;
@@ -862,6 +861,37 @@ async function boot() {
     document.getElementById('app').innerHTML = '<div class="idle bad">Activity failed to start. Reopen it to retry.</div>';
   }
 }
+
+// Discord's Activity CSP blocks inline onclick/onkeydown/onpaste/onerror HTML attributes (even
+// though the page's own <script> block is allowed to run), so every interactive element above is
+// marked with data-action/data-letter instead of an inline handler, and wired here once via
+// delegation -- these listeners live on `document`, outside any render function, so they survive
+// every innerHTML rebuild rather than needing to be re-attached after each render.
+document.addEventListener('click', function (e) {
+  const el = e.target.closest('[data-action]');
+  if (!el) return;
+  const action = el.getAttribute('data-action');
+  if (action === 'choose') choose(el, el.getAttribute('data-letter'));
+  else if (action === 'submit-text') submitText();
+  else if (action === 'open-flag') openFlagModal();
+  else if (action === 'close-flag') closeFlagModal();
+  else if (action === 'submit-flag') submitFlag();
+});
+
+document.addEventListener('keydown', function (e) {
+  if (e.target && e.target.id === 'ans' && e.key === 'Enter') submitText();
+});
+
+document.addEventListener('paste', function (e) {
+  if (e.target && e.target.id === 'ans') e.preventDefault();
+});
+
+// 'error' events (a broken question image) don't bubble, so this needs the capture phase.
+document.addEventListener('error', function (e) {
+  if (e.target && e.target.classList && e.target.classList.contains('qimage')) {
+    e.target.style.display = 'none';
+  }
+}, true);
 
 boot();
 </script>
