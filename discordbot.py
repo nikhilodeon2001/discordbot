@@ -28267,6 +28267,24 @@ async def on_ready():
         sentry_sdk.capture_exception(_e)
         print(f"⚠️ DM reply button startup hook: {_e}")
 
+    if ACTIVITY_ENABLED and mini_game_audio_bot is None:
+        # Same startup reveal as the audio bot's on_ready (see there for why), but for
+        # environments with no DISCORD_MINI_GAME_AUDIO_BOT_TOKEN configured -- get_voice_bot()
+        # always resolves to this bot in that case, so this bot is the one holding Manage
+        # Channels on the trivia VC. When the audio bot IS configured, it does this instead.
+        try:
+            vc = bot.get_channel(TRIVIA_VOICE_CHANNEL_ID)
+            if vc:
+                role = vc.guild.get_role(EVERYONE_ROLE_ID)
+                if role:
+                    perms = vc.overwrites_for(role)
+                    perms.view_channel = True
+                    perms.connect = True
+                    await vc.set_permissions(role, overwrite=perms)
+                    print("🎧 Trivia voice channel revealed for Activity (main bot)")
+        except Exception as e:
+            print(f"⚠️ Could not reveal trivia voice channel: {e}")
+
     try:
         await ensure_flag_indexes()
     except Exception as _e:
