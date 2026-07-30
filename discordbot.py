@@ -6,9 +6,14 @@ load_dotenv()
 prod_or_stage = os.environ.get('ENVIRONMENT', 'prod')
 
 # Discord Embedded App SDK Activity panel (STAGING PROOF OF CONCEPT) -- see activity_web.py.
-# Gates release_game_voice_channel()'s "leave the trivia VC open" behavior and the voice bot's
+# Gates release_game_voice_channel()'s "leave trivia-beta open" behavior and the voice bot's
 # startup reveal, below. Leave unset (false) on prod.
 ACTIVITY_ENABLED = os.environ.get('ACTIVITY_ENABLED', 'false').lower() == 'true'
+
+# Toggle for whether the private trivia-beta voice channel is opened up to @everyone (public
+# testing) or left visible only to whoever has been manually granted access (private testing).
+# Applied on every cold boot by the startup reveal hooks below -- flip and redeploy to switch.
+ACTIVITY_BETA_PUBLIC = os.environ.get('ACTIVITY_BETA_PUBLIC', 'false').lower() == 'true'
 
 import sentry_sdk
 from sentry_sdk.integrations.logging import LoggingIntegration
@@ -95,6 +100,7 @@ from okra_hunt import OkraHunt
 # Companion web app (phone answer submission) — see companion_web.py
 import companion_web
 import companion_bridge
+import chat_mirror
 
 # Mini-games system import
 try:
@@ -724,6 +730,7 @@ if prod_or_stage == "stage":
     HUNT_LEADERBOARD_MESSAGE_ID = 1420281932566237244
     EVERYONE_ROLE_ID = 1375328358573015050
     TRIVIA_VOICE_CHANNEL_ID = 1432952256721850469
+    TRIVIA_BETA_VOICE_CHANNEL_ID = 1532250325564657676
     MINI_GAME_ARENA_CHANNEL_ID = 1439668337817944235
     MINI_GAME_ARENA_VOICE_CHANNEL_ID = 1439699889302012165
     SIMPLY_TRIVIA_CHANNEL_ID = 1447070553646174258
@@ -775,6 +782,7 @@ elif prod_or_stage == "prod":
     HUNT_LEADERBOARD_MESSAGE_ID = 1420292321370570844
     EVERYONE_ROLE_ID = 1367682586079395902
     TRIVIA_VOICE_CHANNEL_ID = 1432951778244038756
+    TRIVIA_BETA_VOICE_CHANNEL_ID = 1532251645885284543
     MINI_GAME_ARENA_CHANNEL_ID = 1439668550422757486
     MINI_GAME_ARENA_VOICE_CHANNEL_ID = 1439699160092905604
     SIMPLY_TRIVIA_CHANNEL_ID = 1447071058443370577
@@ -797,6 +805,39 @@ elif prod_or_stage == "prod":
 AMBIENT_CHAT_CHANNEL_IDS = {channel_id, CHAT_CHANNEL_ID, PICS_CHANNEL_ID}
 
 
+async def apply_beta_channel_visibility(voice_bot_instance, label):
+    """Sync the Activity's channel permissions on every cold boot (from whichever bot identity
+    holds Manage Channels there), so flipping ACTIVITY_BETA_PUBLIC and redeploying is enough to
+    toggle trivia-beta between private testing and open-to-everyone -- no manual permission
+    editing needed. Also keeps the real trivia VC and mini-game arena VC's rocket-icon launcher
+    disabled, since trivia-beta is the Activity's one home now."""
+    try:
+        vc = voice_bot_instance.get_channel(TRIVIA_BETA_VOICE_CHANNEL_ID)
+        if vc:
+            role = vc.guild.get_role(EVERYONE_ROLE_ID)
+            if role:
+                perms = vc.overwrites_for(role)
+                perms.view_channel = ACTIVITY_BETA_PUBLIC
+                perms.connect = ACTIVITY_BETA_PUBLIC
+                perms.use_embedded_activities = True
+                await vc.set_permissions(role, overwrite=perms)
+                mode = "public" if ACTIVITY_BETA_PUBLIC else "private"
+                print(f"🧪 trivia-beta voice channel set to {mode} ({label})")
+    except Exception as e:
+        print(f"⚠️ Could not set trivia-beta voice channel visibility ({label}): {e}")
+
+    for real_channel_id in (TRIVIA_VOICE_CHANNEL_ID, MINI_GAME_ARENA_VOICE_CHANNEL_ID):
+        try:
+            vc = voice_bot_instance.get_channel(real_channel_id)
+            if vc:
+                role = vc.guild.get_role(EVERYONE_ROLE_ID)
+                if role:
+                    perms = vc.overwrites_for(role)
+                    perms.use_embedded_activities = False
+                    await vc.set_permissions(role, overwrite=perms)
+        except Exception as e:
+            print(f"⚠️ Could not deny Activity launch on {real_channel_id} ({label}): {e}")
+
 
 intents = discord.Intents.all()
 bot = commands.Bot(command_prefix="!", intents=intents, help_command=None)
@@ -816,24 +857,7 @@ if not _IS_REIMPORT:
         async def on_ready():
             print(f"🎵✅ Mini-game audio bot is ready! Logged in as {mini_game_audio_bot.user}")
             if ACTIVITY_ENABLED:
-                # The trivia VC is now a permanent home for the Activity panel (see
-                # activity_web.py / release_game_voice_channel), but it may still be left hidden
-                # from whatever the last pre-deploy audio-game teardown did. Un-hide it on every
-                # cold boot rather than waiting for an audio game to happen to run. Done from
-                # this bot specifically -- it's the identity all the existing reveal/hide calls
-                # use (via get_voice_bot()), so it's the one confirmed to hold Manage Channels here.
-                try:
-                    vc = mini_game_audio_bot.get_channel(TRIVIA_VOICE_CHANNEL_ID)
-                    if vc:
-                        role = vc.guild.get_role(EVERYONE_ROLE_ID)
-                        if role:
-                            perms = vc.overwrites_for(role)
-                            perms.view_channel = True
-                            perms.connect = True
-                            await vc.set_permissions(role, overwrite=perms)
-                            print("🎧 Trivia voice channel revealed for Activity")
-                except Exception as e:
-                    print(f"⚠️ Could not reveal trivia voice channel: {e}")
+                await apply_beta_channel_visibility(mini_game_audio_bot, "audio bot")
     else:
         print("⚠️ DISCORD_MINI_GAME_AUDIO_BOT_TOKEN not set - mini-game audio will use main bot")
 
@@ -1119,11 +1143,11 @@ async def release_game_voice_channel(voice_client, voice_channel):
     their exit points: disconnect the bot / kick every member out / re-hide the channel from
     @everyone.
 
-    The main trivia voice channel is now a permanent home for the Activity panel (see
+    The private trivia-beta voice channel is a permanent home for the Activity panel (see
     activity_web.py): members stay put and @everyone's view/connect overwrites are left alone, so
-    an audio round finishing doesn't boot anyone out of the docked panel mid-round. The arena
-    voice channel keeps its old ephemeral behavior (clear members, re-hide), since nothing lives
-    there between games.
+    an audio round finishing doesn't boot anyone out of the docked panel mid-round. The real
+    trivia voice channel and the arena voice channel keep their old ephemeral behavior (clear
+    members, re-hide), since nothing lives there between games.
 
     Discriminates on voice_channel.id rather than the game_voice_channel_id ContextVar so it's
     correct regardless of how the caller resolved the channel, with no new parameter needed."""
@@ -1137,8 +1161,8 @@ async def release_game_voice_channel(voice_client, voice_channel):
     if not voice_channel:
         return
 
-    if ACTIVITY_ENABLED and voice_channel.id == TRIVIA_VOICE_CHANNEL_ID:
-        print("🎧 Leaving trivia voice channel open (Activity home)")
+    if ACTIVITY_ENABLED and voice_channel.id == TRIVIA_BETA_VOICE_CHANNEL_ID:
+        print("🎧 Leaving trivia-beta voice channel open (Activity home)")
         return
 
     try:
@@ -24262,6 +24286,11 @@ async def on_message(message):
     if companion_bridge.is_companion_relay_webhook(message):
         return
 
+    # The chat-mirror's own echo (see chat_mirror.py) -- skip so it doesn't get mirrored right
+    # back the way it came.
+    if ACTIVITY_ENABLED and chat_mirror.is_mirror_webhook(message):
+        return
+
     if message.guild is None:
         relay_channel = bot.get_channel(DM_RELAY_CHANNEL_ID)
         if relay_channel:
@@ -24294,6 +24323,15 @@ async def on_message(message):
                 )
             await relay_channel.send("📬 **DM received:**", embed=embed, view=_build_dm_reply_view(message.author.id))
         return
+
+    # Mirror chat between the real trivia channel and trivia-beta's own chat (see chat_mirror.py)
+    # -- doesn't return, so the message still flows into everything it normally would (e.g. the
+    # AMBIENT_CHAT_CHANNEL_IDS off-question-chat capture below).
+    if ACTIVITY_ENABLED and message.channel.id in (channel_id, TRIVIA_BETA_VOICE_CHANNEL_ID):
+        dest_id = TRIVIA_BETA_VOICE_CHANNEL_ID if message.channel.id == channel_id else channel_id
+        dest_channel = message.guild.get_channel(dest_id)
+        if dest_channel:
+            chat_mirror.enqueue(message, dest_channel)
 
     if message.channel.id == INTRO_IMAGE_ADMIN_CHANNEL_ID and message.author.id == okrag_id:
         if await handle_intro_image_admin_command(message):
@@ -28063,6 +28101,27 @@ async def editors_command(interaction: discord.Interaction):
             pass
 
 
+if ACTIVITY_ENABLED:
+    @bot.tree.command(name="play", description="Launch the TriviaSphere Activity panel", guild=discord.Object(id=OKRAN_GUILD_ID))
+    async def play_command(interaction: discord.Interaction):
+        voice_state = interaction.user.voice
+        if not voice_state or not voice_state.channel or voice_state.channel.id != TRIVIA_BETA_VOICE_CHANNEL_ID:
+            await interaction.response.send_message(
+                "❌ Join the 🧪┃trivia-beta voice channel first, then try again.",
+                ephemeral=True)
+            return
+        try:
+            await interaction.response.launch_activity()
+        except Exception as e:
+            sentry_sdk.capture_exception(e)
+            try:
+                await interaction.response.send_message(
+                    "❌ Couldn't launch the activity — try the rocket icon in the voice channel instead.",
+                    ephemeral=True)
+            except Exception:
+                pass
+
+
 @bot.tree.command(name="perks", description="See how to unlock TriviaSphere perks", guild=discord.Object(id=OKRAN_GUILD_ID))
 async def perks_command(interaction: discord.Interaction):
     embed = discord.Embed(
@@ -28268,22 +28327,11 @@ async def on_ready():
         print(f"⚠️ DM reply button startup hook: {_e}")
 
     if ACTIVITY_ENABLED and mini_game_audio_bot is None:
-        # Same startup reveal as the audio bot's on_ready (see there for why), but for
-        # environments with no DISCORD_MINI_GAME_AUDIO_BOT_TOKEN configured -- get_voice_bot()
-        # always resolves to this bot in that case, so this bot is the one holding Manage
-        # Channels on the trivia VC. When the audio bot IS configured, it does this instead.
-        try:
-            vc = bot.get_channel(TRIVIA_VOICE_CHANNEL_ID)
-            if vc:
-                role = vc.guild.get_role(EVERYONE_ROLE_ID)
-                if role:
-                    perms = vc.overwrites_for(role)
-                    perms.view_channel = True
-                    perms.connect = True
-                    await vc.set_permissions(role, overwrite=perms)
-                    print("🎧 Trivia voice channel revealed for Activity (main bot)")
-        except Exception as e:
-            print(f"⚠️ Could not reveal trivia voice channel: {e}")
+        # Same startup visibility sync as the audio bot's on_ready (see apply_beta_channel_visibility),
+        # but for environments with no DISCORD_MINI_GAME_AUDIO_BOT_TOKEN configured -- get_voice_bot()
+        # always resolves to this bot in that case, so this bot is the one holding Manage Channels
+        # on trivia-beta.
+        await apply_beta_channel_visibility(bot, "main bot")
 
     try:
         await ensure_flag_indexes()
