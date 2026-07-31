@@ -148,10 +148,10 @@ _TV_HTML = """<!doctype html>
   <div class="brand">
     <div class="brandlogo" role="img" aria-label="TriviaSphere logo"></div>
     <div class="game-tabs" id="tabs">
-      <button data-game="main" class="active">Trivia &amp; Games</button>
-      <button data-game="simply">Simply Trivia</button>
-      <button data-game="arena">Mini-Game Arena</button>
-      <button class="companion-tab" data-action="back">📱 Companion View</button>
+      <button type="button" class="tab-btn active" data-game="main">Trivia &amp; Games</button>
+      <button type="button" class="tab-btn" data-game="simply">Simply Trivia</button>
+      <button type="button" class="tab-btn" data-game="arena">Mini-Game Arena</button>
+      <button type="button" class="tab-btn companion-tab" data-action="back">📱 Companion View</button>
     </div>
   </div>
   <div class="lineup" id="lineup"></div>
