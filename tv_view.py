@@ -72,91 +72,108 @@ _TV_HTML = """<!doctype html>
 <head>
 <meta charset="utf-8">
 <title>TriviaSphere TV</title>
+<link rel="icon" type="image/webp" href="/assets/logo-mark.webp">
 <style>
+  /* Header chrome below (:root, body, .wrap, .brand*, .game-tabs, .tab-btn) is a deliberate,
+  byte-for-byte copy of companion_web.py's _INDEX_HTML header CSS -- not a shared stylesheet,
+  per activity_web.py's precedent for why (a second page can't be allowed to risk the untested,
+  prod-serving companion page) -- but copied exactly rather than re-derived, so switching between
+  "/" and "/?view=tv" looks like the same page with only the content region below changing. */
   :root {
     color-scheme: dark;
-    --blue:#146DE8; --blue-600:#0A4FB5;
+    --blue:#146DE8; --blue-600:#0A4FB5; --red:#F71A14;
     --bg:#06080D; --bg2:#0E1219; --fg:#F8F8F8; --muted:rgba(248,248,248,.58);
     --card:rgba(248,248,248,.05); --line:rgba(248,248,248,.10);
     --header-logo:url(/assets/logo-header.webp);
   }
-  * { box-sizing: border-box; }
-  html, body { margin: 0; padding: 0; width: 100vw; height: 100vh; overflow: hidden; }
-  body {
-    color: var(--fg); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-    background: radial-gradient(1100px 560px at 50% -12%, rgba(20,109,232,.14), transparent 60%),
-                linear-gradient(180deg, var(--bg), var(--bg2)); background-attachment: fixed;
-    display: grid; grid-template-rows: auto auto 1fr; grid-template-columns: 1fr 340px;
-    grid-template-areas: "brand brand" "lineup lineup" "main side";
-  }
-  .brand {
-    grid-area: brand; display: flex; align-items: center; gap: 16px;
-    padding: 14px 28px 0;
-  }
-  .brandlogo { height: 56px; width: 56px; flex: none;
-    background: var(--header-logo) left center/contain no-repeat; }
-  .game-tabs { display: flex; gap: 4px; background: rgba(127,127,127,.10);
-    border: 1px solid var(--line); border-radius: 12px; padding: 3px; }
-  .tab-btn { flex: none; border: none; background: transparent; color: var(--muted); cursor: pointer;
-    font-size: 15px; font-weight: 700; letter-spacing: .01em; padding: 9px 16px; border-radius: 9px;
-    white-space: nowrap; transition: background-color .15s, color .15s; }
-  .tab-btn.active { background: var(--blue); color: #fff; }
-  .companion-tab { margin-left: 6px; padding-left: 18px; border-left: 1px solid var(--line); }
-  .lineup {
-    grid-area: lineup; display: flex; gap: 10px; align-items: center;
-    padding: 14px 28px; overflow-x: auto; white-space: nowrap;
-  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  body { margin:0; min-height:100vh; color:var(--fg);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Inter,sans-serif;
+    background:radial-gradient(1100px 560px at 50% -12%, rgba(20,109,232,.14), transparent 60%),
+               linear-gradient(180deg,var(--bg),var(--bg2)); background-attachment:fixed;
+    display:flex; flex-direction:column; align-items:center;
+    padding:26px 16px calc(26px + env(safe-area-inset-bottom)); }
+  .wrap { width:100%; max-width:520px; }
+  .brand { display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; }
+  .brandhead { display:flex; align-items:center; min-width:0; }
+  .brandlogo { height:96px; width:96px; flex:none;
+    background:var(--header-logo) left center/contain no-repeat; }
+  .game-tabs { display:flex; gap:4px; flex:none; background:rgba(127,127,127,.10);
+    border:1px solid var(--line); border-radius:12px; padding:3px; }
+  .tab-btn { flex:none; border:none; background:transparent; color:var(--muted); cursor:pointer;
+    font-size:.7rem; font-weight:700; letter-spacing:.01em; padding:7px 10px; border-radius:9px;
+    white-space:nowrap; transition:background-color .15s, color .15s; }
+  .tab-btn.active { background:var(--blue); color:#fff; }
+  .companion-tab { margin-left:2px; padding-left:12px; border-left:1px solid var(--line); }
+  .sub { color:var(--muted); font-size:.86rem; margin:13px 2px 20px; line-height:1.45; }
+
+  /* Everything below here is TV-specific: a full-width region (not capped at .wrap's 520px,
+  since this is the one part meant to look different -- optimized for a landscape screen rather
+  than a phone) sitting directly beneath the shared header/wrap above. */
+  .tvcontent { width:100%; max-width:1400px; }
+  .lineup { display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin:18px 0; }
   .lineup .chip {
-    padding: 6px 14px; border-radius: 999px; font-size: 15px; background: var(--card);
-    border: 1px solid var(--line); color: var(--muted);
+    padding:6px 14px; border-radius:999px; font-size:.8rem; background:var(--card);
+    border:1px solid var(--line); color:var(--muted);
   }
-  .lineup .chip.cur { background: var(--blue); border-color: var(--blue); color: #fff; font-weight: 600; }
-  .lineup .chip.done { opacity: 0.5; text-decoration: line-through; }
+  .lineup .chip.cur { background:var(--blue); border-color:var(--blue); color:#fff; font-weight:600; }
+  .lineup .chip.done { opacity:0.5; text-decoration:line-through; }
+  .tvbody { display:grid; grid-template-columns: 1fr 320px; gap:20px; align-items:start; }
   .main {
-    grid-area: main; display: flex; flex-direction: column; align-items: center;
-    justify-content: center; padding: 40px 60px; text-align: center; gap: 24px; min-width: 0;
+    background:var(--card); border:1px solid var(--line); border-radius:20px; padding:40px;
+    display:flex; flex-direction:column; align-items:center; justify-content:center;
+    text-align:center; gap:24px; min-height:50vh;
   }
-  .category { font-size: 26px; color: var(--muted); text-transform: uppercase; letter-spacing: 2px; }
-  .question { font-size: 48px; font-weight: 700; line-height: 1.25; max-width: 100%; }
-  .qimage { max-height: 34vh; max-width: 100%; border-radius: 12px; margin-top: 8px; }
-  .choices { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; width: 100%; max-width: 900px; }
+  .category { font-size:1.4rem; color:var(--muted); text-transform:uppercase; letter-spacing:2px; }
+  .question { font-size:2.6rem; font-weight:700; line-height:1.25; max-width:100%; }
+  .qimage { max-height:34vh; max-width:100%; border-radius:12px; margin-top:8px; }
+  .choices { display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:14px; width:100%; max-width:900px; }
   .choice {
-    background: var(--card); border: 1px solid var(--line); border-radius: 10px;
-    padding: 16px 22px; font-size: 24px; text-align: left;
+    background:rgba(127,127,127,.08); border:1px solid var(--line); border-radius:10px;
+    padding:16px 22px; font-size:1.3rem; text-align:left;
   }
-  .answer-banner { font-size: 32px; font-weight: 700; color: #38c26b; }
-  .modes { display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; }
-  .mode-pill { background: var(--card); border: 1px solid var(--line); border-radius: 999px; padding: 6px 14px; font-size: 16px; }
-  .idle { font-size: 32px; color: var(--muted); }
+  .answer-banner { font-size:1.8rem; font-weight:700; color:#38c26b; }
+  .modes { display:flex; gap:10px; flex-wrap:wrap; justify-content:center; }
+  .mode-pill { background:rgba(127,127,127,.08); border:1px solid var(--line); border-radius:999px; padding:6px 14px; font-size:.9rem; }
+  .idle { font-size:1.7rem; color:var(--muted); }
   .side {
-    grid-area: side; border-left: 1px solid var(--line);
-    padding: 24px 20px; overflow-y: auto; display: flex; flex-direction: column; gap: 18px;
+    background:var(--card); border:1px solid var(--line); border-radius:20px;
+    padding:22px 20px; display:flex; flex-direction:column; gap:18px;
   }
   .streak-badge {
-    background: linear-gradient(135deg, #ff8a3d, #ff4d6d); border-radius: 12px;
-    padding: 14px 16px; font-size: 18px; font-weight: 600; color: #fff;
+    background:linear-gradient(135deg, #ff8a3d, #ff4d6d); border-radius:12px;
+    padding:14px 16px; font-size:1rem; font-weight:600; color:#fff;
   }
-  .score-title { font-size: 15px; color: var(--muted); text-transform: uppercase; letter-spacing: 1.5px; }
-  .score-row { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--line); font-size: 18px; }
-  .score-rank { width: 28px; text-align: center; }
-  .score-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .score-val { color: var(--muted); font-variant-numeric: tabular-nums; }
-  .arena-turn { font-size: 22px; color: var(--muted); }
+  .score-title { font-size:.8rem; color:var(--muted); text-transform:uppercase; letter-spacing:1.5px; }
+  .score-row { display:flex; align-items:center; gap:10px; padding:8px 0; border-bottom:1px solid var(--line); font-size:1rem; }
+  .score-rank { width:28px; text-align:center; }
+  .score-name { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .score-val { color:var(--muted); font-variant-numeric:tabular-nums; }
+  .arena-turn { font-size:1.2rem; color:var(--muted); }
 </style>
 </head>
 <body>
-  <div class="brand">
-    <div class="brandlogo" role="img" aria-label="TriviaSphere logo"></div>
+<div class="wrap">
+  <header class="brand">
+    <div class="brandhead">
+      <div class="brandlogo" role="img" aria-label="TriviaSphere logo"></div>
+    </div>
     <div class="game-tabs" id="tabs">
       <button type="button" class="tab-btn active" data-game="main">Trivia &amp; Games</button>
       <button type="button" class="tab-btn" data-game="simply">Simply Trivia</button>
       <button type="button" class="tab-btn" data-game="arena">Mini-Game Arena</button>
       <button type="button" class="tab-btn companion-tab" data-action="back">📱 Companion View</button>
     </div>
-  </div>
+  </header>
+  <div class="sub">Read-only display for a TV or shared screen — everyone else answers from their own phone.</div>
+</div>
+<div class="tvcontent">
   <div class="lineup" id="lineup"></div>
-  <div class="main" id="main"><div class="idle">Waiting for the next question…</div></div>
-  <div class="side" id="side"></div>
+  <div class="tvbody">
+    <div class="main" id="main"><div class="idle">Waiting for the next question…</div></div>
+    <div class="side" id="side"></div>
+  </div>
+</div>
 
 <script>
 (function () {
