@@ -70,6 +70,7 @@ _TV_HTML = """<!doctype html>
   * { box-sizing: border-box; }
   html, body { margin: 0; padding: 0; width: 100vw; min-height: 100vh; overflow-x: hidden; }
   body {
+    position: relative;
     color: var(--fg); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
     background: radial-gradient(1100px 560px at 50% -12%, rgba(20,109,232,.14), transparent 60%),
                 linear-gradient(180deg, var(--bg), var(--bg2)); background-attachment: fixed;
@@ -82,13 +83,18 @@ _TV_HTML = """<!doctype html>
   }
   .brandlogo { height: 56px; width: 56px; flex: none;
     background: var(--header-logo) left center/contain no-repeat; }
-  .game-tabs { display: flex; gap: 4px; flex-wrap: wrap; max-width: 100%; background: rgba(127,127,127,.10);
+  .game-tabs { display: flex; gap: 4px; max-width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch;
+    scrollbar-width: none; background: rgba(127,127,127,.10);
     border: 1px solid var(--line); border-radius: 12px; padding: 3px; }
+  .game-tabs::-webkit-scrollbar { display: none; }
   .tab-btn { flex: none; border: none; background: transparent; color: var(--muted); cursor: pointer;
     font-size: 15px; font-weight: 700; letter-spacing: .01em; padding: 9px 16px; border-radius: 9px;
     white-space: nowrap; transition: background-color .15s, color .15s; }
   .tab-btn.active { background: var(--blue); color: #fff; }
-  .companion-tab { margin-left: 6px; padding-left: 18px; border-left: 1px solid var(--line); }
+  .icon-btn { position: absolute; top: 14px; right: 28px; width: 34px; height: 34px; flex: none;
+    display: flex; align-items: center; justify-content: center; border: 1px solid var(--line);
+    border-radius: 10px; background: rgba(127,127,127,.10); color: var(--muted); font-size: 1rem;
+    cursor: pointer; }
   .lineup {
     grid-area: lineup; display: flex; gap: 10px; align-items: center;
     padding: 14px 28px; overflow-x: auto; white-space: nowrap;
@@ -137,13 +143,13 @@ _TV_HTML = """<!doctype html>
 </style>
 </head>
 <body>
+  <button type="button" class="icon-btn" data-action="back" aria-label="Companion View" title="Companion View">📱</button>
   <div class="brand">
     <div class="brandlogo" role="img" aria-label="TriviaSphere logo"></div>
     <div class="game-tabs" id="tabs">
       <button type="button" class="tab-btn active" data-game="main">Trivia &amp; Games</button>
       <button type="button" class="tab-btn" data-game="simply">Simply Trivia</button>
       <button type="button" class="tab-btn" data-game="arena">Mini-Game Arena</button>
-      <button type="button" class="tab-btn companion-tab" data-action="back">📱 Companion View</button>
     </div>
   </div>
   <div class="lineup" id="lineup"></div>

@@ -1235,8 +1235,12 @@ _INDEX_HTML = """<!doctype html>
                linear-gradient(180deg,var(--bg),var(--bg2)); background-attachment:fixed;
     display:flex; flex-direction:column; align-items:center;
     padding:26px 16px calc(26px + env(safe-area-inset-bottom)); }
-  .wrap { width:100%; max-width:520px; }
-  .brand { display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; }
+  .wrap { width:100%; max-width:520px; position:relative; }
+  .brand { display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; padding-right:44px; }
+  .icon-btn { position:absolute; top:0; right:0; width:34px; height:34px; flex:none;
+    display:flex; align-items:center; justify-content:center; border:1px solid var(--line);
+    border-radius:10px; background:rgba(127,127,127,.10); color:var(--muted); font-size:1rem;
+    text-decoration:none; cursor:pointer; }
   .brandhead { display:flex; align-items:center; min-width:0; }
   .brandlogo { height:96px; width:96px; flex:none;
     background:var(--header-logo) left center/contain no-repeat; }
@@ -1253,13 +1257,13 @@ _INDEX_HTML = """<!doctype html>
   .switch input:checked ~ .track { background:var(--blue); border-color:var(--blue); }
   .switch input:checked ~ .track .thumb { transform:translateX(17px); }
   .switch input:focus-visible ~ .track { box-shadow:0 0 0 3px rgba(20,109,232,.30); }
-  .game-tabs { display:flex; gap:4px; flex-wrap:wrap; max-width:100%; background:rgba(127,127,127,.10);
-    border:1px solid var(--line); border-radius:12px; padding:3px; }
+  .game-tabs { display:flex; gap:4px; max-width:100%; overflow-x:auto; -webkit-overflow-scrolling:touch;
+    scrollbar-width:none; background:rgba(127,127,127,.10); border:1px solid var(--line); border-radius:12px; padding:3px; }
+  .game-tabs::-webkit-scrollbar { display:none; }
   .tab-btn { flex:none; border:none; background:transparent; color:var(--muted); cursor:pointer;
     font-size:.7rem; font-weight:700; letter-spacing:.01em; padding:7px 10px; border-radius:9px;
     white-space:nowrap; transition:background-color .15s, color .15s; }
   .tab-btn.active { background:var(--blue); color:#fff; }
-  .tv-tab { margin-left:2px; padding-left:12px; border-left:1px solid var(--line); }
   .sub { color:var(--muted); font-size:.86rem; margin:13px 2px 20px; line-height:1.45; }
   .card { position:relative; background:var(--card); border:1px solid var(--line); border-radius:20px; padding:22px;
     box-shadow:0 12px 32px rgba(0,0,0,.20); }
@@ -1383,6 +1387,7 @@ _INDEX_HTML = """<!doctype html>
 </head>
 <body>
 <div class="wrap">
+  __TV_TAB__
   <header class="brand">
     <div class="brandhead">
       <div class="brandlogo" role="img" aria-label="TriviaSphere logo"></div>
@@ -1391,7 +1396,6 @@ _INDEX_HTML = """<!doctype html>
       <button type="button" class="tab-btn" data-game="main" onclick="onGameSelect('main')">Trivia &amp; Games</button>
       <button type="button" class="tab-btn" data-game="simply" onclick="onGameSelect('simply')">Simply Trivia</button>
       <button type="button" class="tab-btn" data-game="arena" onclick="onGameSelect('arena')">Mini-Game Arena</button>
-      __TV_TAB__
     </div>
   </header>
   <div id="subtext" class="sub">Answer live from your phone or computer — private, timed, and scored right alongside everyone in the channel.</div>
@@ -1923,7 +1927,7 @@ async def handle_index(request):
     # than a separate path, so there's only ever one URL to share (see tv_view.py's docstring).
     if tv_view.ENABLED and request.query.get("view") == "tv":
         return tv_view.render_tv_page(request)
-    tv_tab = '<button type="button" class="tab-btn tv-tab" onclick="onTvView()">📺 TV View</button>' if tv_view.ENABLED else ""
+    tv_tab = '<button type="button" class="icon-btn" onclick="onTvView()" aria-label="TV View" title="TV View">📺</button>' if tv_view.ENABLED else ""
     return web.Response(text=_INDEX_HTML.replace("__TV_TAB__", tv_tab), content_type="text/html")
 
 
