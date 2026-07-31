@@ -82,7 +82,7 @@ _TV_HTML = """<!doctype html>
   }
   .brandlogo { height: 56px; width: 56px; flex: none;
     background: var(--header-logo) left center/contain no-repeat; }
-  .game-tabs { display: flex; gap: 4px; flex-wrap: wrap; background: rgba(127,127,127,.10);
+  .game-tabs { display: flex; gap: 4px; flex-wrap: wrap; max-width: 100%; background: rgba(127,127,127,.10);
     border: 1px solid var(--line); border-radius: 12px; padding: 3px; }
   .tab-btn { flex: none; border: none; background: transparent; color: var(--muted); cursor: pointer;
     font-size: 15px; font-weight: 700; letter-spacing: .01em; padding: 9px 16px; border-radius: 9px;

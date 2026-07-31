@@ -1253,7 +1253,7 @@ _INDEX_HTML = """<!doctype html>
   .switch input:checked ~ .track { background:var(--blue); border-color:var(--blue); }
   .switch input:checked ~ .track .thumb { transform:translateX(17px); }
   .switch input:focus-visible ~ .track { box-shadow:0 0 0 3px rgba(20,109,232,.30); }
-  .game-tabs { display:flex; gap:4px; flex-wrap:wrap; flex:none; background:rgba(127,127,127,.10);
+  .game-tabs { display:flex; gap:4px; flex-wrap:wrap; max-width:100%; background:rgba(127,127,127,.10);
     border:1px solid var(--line); border-radius:12px; padding:3px; }
   .tab-btn { flex:none; border:none; background:transparent; color:var(--muted); cursor:pointer;
     font-size:.7rem; font-weight:700; letter-spacing:.01em; padding:7px 10px; border-radius:9px;
