@@ -1259,6 +1259,7 @@ _INDEX_HTML = """<!doctype html>
     font-size:.7rem; font-weight:700; letter-spacing:.01em; padding:7px 10px; border-radius:9px;
     white-space:nowrap; transition:background-color .15s, color .15s; }
   .tab-btn.active { background:var(--blue); color:#fff; }
+  .tv-tab { margin-left:2px; padding-left:12px; border-left:1px solid var(--line); }
   .sub { color:var(--muted); font-size:.86rem; margin:13px 2px 20px; line-height:1.45; }
   .card { position:relative; background:var(--card); border:1px solid var(--line); border-radius:20px; padding:22px;
     box-shadow:0 12px 32px rgba(0,0,0,.20); }
@@ -1390,6 +1391,7 @@ _INDEX_HTML = """<!doctype html>
       <button type="button" class="tab-btn" data-game="main" onclick="onGameSelect('main')">Trivia &amp; Games</button>
       <button type="button" class="tab-btn" data-game="simply" onclick="onGameSelect('simply')">Simply Trivia</button>
       <button type="button" class="tab-btn" data-game="arena" onclick="onGameSelect('arena')">Mini-Game Arena</button>
+      __TV_TAB__
     </div>
   </header>
   <div id="subtext" class="sub">Answer live from your phone or computer — private, timed, and scored right alongside everyone in the channel.</div>
@@ -1535,6 +1537,10 @@ function onGameSelect(game) {
   localStorage.setItem('okra_game', currentGame);
   syncGameTabs(currentGame);
   loadGame(currentGame);
+}
+
+function onTvView() {
+  location.href = '/?view=tv&game=' + encodeURIComponent(currentGame);
 }
 
 function render(state) {
@@ -1913,7 +1919,12 @@ async def handle_index(request):
     # the Activity rather than a normal companion-app page load.
     if activity_web.ENABLED and request.query.get("frame_id"):
         return activity_web.render_activity_page(request)
-    return web.Response(text=_INDEX_HTML, content_type="text/html")
+    # Read-only landscape display for a TV -- same "/" route, switched by a query param rather
+    # than a separate path, so there's only ever one URL to share (see tv_view.py's docstring).
+    if tv_view.ENABLED and request.query.get("view") == "tv":
+        return tv_view.render_tv_page(request)
+    tv_tab = '<button type="button" class="tab-btn tv-tab" onclick="onTvView()">📺 TV View</button>' if tv_view.ENABLED else ""
+    return web.Response(text=_INDEX_HTML.replace("__TV_TAB__", tv_tab), content_type="text/html")
 
 
 async def handle_health(request):

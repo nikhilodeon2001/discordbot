@@ -5,6 +5,14 @@ choices, active modes, round lineup, scoreboard, and streak for the main round a
 or phase/whose-turn for the mini-game arena (which has no scoreboard concept at all). No flag
 button, no answer-submission UI -- this is strictly spectator.
 
+Served from the same "/" route as the phone companion, switched on by a "?view=tv" query param --
+exactly the same trick companion_web.py's handle_index already uses to serve activity_web's
+Activity page from "?frame_id=..." instead of a dedicated path, so there's only ever one URL
+(play.triviasphere.com) to share, not a second one to remember. render_tv_page() is a plain
+function (mirroring activity_web.render_activity_page), not a route handler itself -- handle_index
+calls it directly. Only /api/tv_poll is a real dedicated route, since that's a fetch target, not
+something anyone navigates to.
+
 Modeled on activity_web.py's shape (module-level HTML blob + init()-injected callables), but
 simpler: no Discord Activity SDK, no image-proxy, no sign/unsign/OAuth-secret plumbing of its
 own. Login is a plain redirect to companion_web.py's existing /login flow (same domain, same
@@ -39,7 +47,7 @@ def _login_redirect(request):
     return web.HTTPFound(f"/login?next={next_path}")
 
 
-async def handle_tv_page(request):
+def render_tv_page(request):
     if not _session_from_request(request):
         return _login_redirect(request)
     return web.Response(text=_TV_HTML, content_type="text/html")
@@ -56,10 +64,7 @@ async def handle_tv_poll(request):
 
 
 def tv_routes():
-    return [
-        web.get("/tv", handle_tv_page),
-        web.get("/api/tv_poll", handle_tv_poll),
-    ]
+    return [web.get("/api/tv_poll", handle_tv_poll)]
 
 
 _TV_HTML = """<!doctype html>
@@ -127,9 +132,9 @@ _TV_HTML = """<!doctype html>
 <body>
   <div class="lineup" id="lineup">
     <div class="tabs" id="tabs">
-      <button data-game="main" class="active">Main</button>
+      <button data-game="main" class="active">Trivia &amp; Games</button>
       <button data-game="simply">Simply Trivia</button>
-      <button data-game="arena">Arena</button>
+      <button data-game="arena">Mini-Game Arena</button>
     </div>
   </div>
   <div class="main" id="main"><div class="idle">Waiting for the next question…</div></div>
@@ -137,14 +142,20 @@ _TV_HTML = """<!doctype html>
 
 <script>
 (function () {
-  var currentGame = "main";
+  var GAMES = ["main", "simply", "arena"];
+  var initialGame = new URLSearchParams(location.search).get("game");
+  var currentGame = GAMES.indexOf(initialGame) !== -1 ? initialGame : "main";
   var esc = function (s) { var d = document.createElement("div"); d.textContent = String(s == null ? "" : s); return d.innerHTML; };
 
-  document.getElementById("tabs").addEventListener("click", function (e) {
+  // renderLineup() reassigns #lineup's innerHTML on every poll, which destroys and recreates the
+  // tab buttons -- a listener attached to #tabs directly would only survive until the first poll.
+  // Delegating on document (same fix as the Activity panel's button issue) survives every rebuild.
+  document.addEventListener("click", function (e) {
     var btn = e.target.closest("button[data-game]");
     if (!btn) return;
     currentGame = btn.getAttribute("data-game");
     document.querySelectorAll("#tabs button").forEach(function (b) { b.classList.toggle("active", b === btn); });
+    history.replaceState(null, "", "/?view=tv&game=" + currentGame);
     poll();
   });
 
@@ -239,6 +250,9 @@ _TV_HTML = """<!doctype html>
     }
   }
 
+  document.querySelectorAll("#tabs button").forEach(function (b) {
+    b.classList.toggle("active", b.getAttribute("data-game") === currentGame);
+  });
   poll();
   setInterval(poll, 2500);
 })();
