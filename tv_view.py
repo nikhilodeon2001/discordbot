@@ -81,7 +81,7 @@ _TV_HTML = """<!doctype html>
     --header-logo:url(/assets/logo-header.webp);
   }
   * { box-sizing: border-box; }
-  html, body { margin: 0; padding: 0; width: 100vw; height: 100vh; overflow: hidden; }
+  html, body { margin: 0; padding: 0; width: 100vw; min-height: 100vh; overflow-x: hidden; }
   body {
     color: var(--fg); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
     background: radial-gradient(1100px 560px at 50% -12%, rgba(20,109,232,.14), transparent 60%),
@@ -90,12 +90,12 @@ _TV_HTML = """<!doctype html>
     grid-template-areas: "brand brand" "lineup lineup" "main side";
   }
   .brand {
-    grid-area: brand; display: flex; align-items: center; gap: 16px;
+    grid-area: brand; display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
     padding: 14px 28px 0;
   }
   .brandlogo { height: 56px; width: 56px; flex: none;
     background: var(--header-logo) left center/contain no-repeat; }
-  .game-tabs { display: flex; gap: 4px; background: rgba(127,127,127,.10);
+  .game-tabs { display: flex; gap: 4px; flex-wrap: wrap; background: rgba(127,127,127,.10);
     border: 1px solid var(--line); border-radius: 12px; padding: 3px; }
   .tab-btn { flex: none; border: none; background: transparent; color: var(--muted); cursor: pointer;
     font-size: 15px; font-weight: 700; letter-spacing: .01em; padding: 9px 16px; border-radius: 9px;
@@ -116,7 +116,10 @@ _TV_HTML = """<!doctype html>
     grid-area: main; display: flex; flex-direction: column; align-items: center;
     justify-content: center; padding: 40px 60px; text-align: center; gap: 24px; min-width: 0;
   }
+  .qheader { display: flex; align-items: center; gap: 16px; }
   .category { font-size: 26px; color: var(--muted); text-transform: uppercase; letter-spacing: 2px; }
+  .timer { font-size: 26px; font-weight: 800; font-variant-numeric: tabular-nums; color: var(--muted); }
+  .timer.low { color: #ff4d6d; }
   .question { font-size: 48px; font-weight: 700; line-height: 1.25; max-width: 100%; }
   .qimage { max-height: 34vh; max-width: 100%; border-radius: 12px; margin-top: 8px; }
   .choices { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; width: 100%; max-width: 900px; }
@@ -140,7 +143,9 @@ _TV_HTML = """<!doctype html>
   .score-row { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--line); font-size: 18px; }
   .score-rank { width: 28px; text-align: center; }
   .score-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .score-val { color: var(--muted); font-variant-numeric: tabular-nums; }
+  .score-lightning { font-size: 14px; color: #ffcc4d; font-variant-numeric: tabular-nums; }
+  .score-val { color: var(--fg); font-weight: 700; font-variant-numeric: tabular-nums; }
+  .score-delta { font-size: 14px; font-weight: 700; color: #38c26b; font-variant-numeric: tabular-nums; }
   .arena-turn { font-size: 22px; color: var(--muted); }
 </style>
 </head>
@@ -198,13 +203,33 @@ _TV_HTML = """<!doctype html>
     el.innerHTML = chips + (modes ? '<div class="modes">' + modes + '</div>' : "");
   }
 
+  var timerInterval = null;
+
+  function stopTimer() {
+    if (timerInterval) { clearInterval(timerInterval); timerInterval = null; }
+  }
+
+  function tickTimer(endsAt) {
+    var el = document.getElementById("timer");
+    if (!el) { stopTimer(); return; }
+    var rem = Math.max(0, Math.ceil(endsAt - Date.now() / 1000));
+    el.textContent = rem + "s";
+    el.classList.toggle("low", rem <= 5);
+    if (rem <= 0) stopTimer();
+  }
+
   function renderMainOrSimply(state) {
     var main = document.getElementById("main");
+    stopTimer();
     if (state.phase === "idle" || !state.phase) {
       main.innerHTML = '<div class="idle">Waiting for the next question…</div>';
       return;
     }
-    var html = '<div class="category">' + esc(state.category || "") + '</div>';
+    var html = '<div class="qheader"><div class="category">' + esc(state.category || "") + '</div>';
+    if (state.phase === "open" && state.ends_at) {
+      html += '<span id="timer" class="timer"></span>';
+    }
+    html += '</div>';
     html += '<div class="question">' + esc(state.question || "") + '</div>';
     if (state.image_url) {
       html += '<img class="qimage" src="' + esc(state.image_url) + '" alt="">';
@@ -217,6 +242,10 @@ _TV_HTML = """<!doctype html>
       }).join("") + '</div>';
     }
     main.innerHTML = html;
+    if (state.phase === "open" && state.ends_at) {
+      tickTimer(state.ends_at);
+      timerInterval = setInterval(function () { tickTimer(state.ends_at); }, 250);
+    }
   }
 
   function renderArena(state) {
@@ -243,7 +272,10 @@ _TV_HTML = """<!doctype html>
       rows.forEach(function (r) {
         html += '<div class="score-row"><div class="score-rank">' + esc(r.rank) + '</div>' +
           '<div class="score-name">' + esc(r.name) + (r.via_companion ? " 🌐" : "") + '</div>' +
-          '<div class="score-val">' + esc(r.score) + '</div></div>';
+          (r.lightning ? '<div class="score-lightning">⚡' + esc(r.lightning) + '</div>' : '') +
+          '<div class="score-val">' + esc(r.score) + '</div>' +
+          (r.delta ? '<div class="score-delta">' + esc(r.delta) + '</div>' : '') +
+          '</div>';
       });
     }
     side.innerHTML = html;
