@@ -224,7 +224,7 @@ _TV_HTML = """<!doctype html>
       html += '<div class="answer-banner">✅ ' + esc(state.correct_answer || "") + '</div>';
     } else if ((state.choices || []).length) {
       html += '<div class="choices">' + state.choices.map(function (c) {
-        return '<div class="choice">' + esc(c.letter ? c.letter + ". " : "") + esc(c.text || c) + '</div>';
+        return '<div class="choice">' + esc(c.text || c) + '</div>';
       }).join("") + '</div>';
     }
     main.innerHTML = html;
