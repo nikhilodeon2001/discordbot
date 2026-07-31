@@ -73,70 +73,88 @@ _TV_HTML = """<!doctype html>
 <meta charset="utf-8">
 <title>TriviaSphere TV</title>
 <style>
+  :root {
+    color-scheme: dark;
+    --blue:#146DE8; --blue-600:#0A4FB5;
+    --bg:#06080D; --bg2:#0E1219; --fg:#F8F8F8; --muted:rgba(248,248,248,.58);
+    --card:rgba(248,248,248,.05); --line:rgba(248,248,248,.10);
+    --header-logo:url(/assets/logo-header.webp);
+  }
   * { box-sizing: border-box; }
   html, body { margin: 0; padding: 0; width: 100vw; height: 100vh; overflow: hidden; }
   body {
-    background: #0b0e14; color: #eef1f8;
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-    display: grid; grid-template-rows: auto 1fr; grid-template-columns: 1fr 320px;
-    grid-template-areas: "lineup lineup" "main side";
+    color: var(--fg); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: radial-gradient(1100px 560px at 50% -12%, rgba(20,109,232,.14), transparent 60%),
+                linear-gradient(180deg, var(--bg), var(--bg2)); background-attachment: fixed;
+    display: grid; grid-template-rows: auto auto 1fr; grid-template-columns: 1fr 340px;
+    grid-template-areas: "brand brand" "lineup lineup" "main side";
   }
+  .brand {
+    grid-area: brand; display: flex; align-items: center; gap: 16px;
+    padding: 14px 28px 0;
+  }
+  .brandlogo { height: 56px; width: 56px; flex: none;
+    background: var(--header-logo) left center/contain no-repeat; }
+  .game-tabs { display: flex; gap: 4px; background: rgba(127,127,127,.10);
+    border: 1px solid var(--line); border-radius: 12px; padding: 3px; }
+  .tab-btn { flex: none; border: none; background: transparent; color: var(--muted); cursor: pointer;
+    font-size: 15px; font-weight: 700; letter-spacing: .01em; padding: 9px 16px; border-radius: 9px;
+    white-space: nowrap; transition: background-color .15s, color .15s; }
+  .tab-btn.active { background: var(--blue); color: #fff; }
+  .companion-tab { margin-left: 6px; padding-left: 18px; border-left: 1px solid var(--line); }
   .lineup {
     grid-area: lineup; display: flex; gap: 10px; align-items: center;
-    padding: 14px 28px; background: #10141d; border-bottom: 1px solid #1e2430;
-    overflow-x: auto; white-space: nowrap;
+    padding: 14px 28px; overflow-x: auto; white-space: nowrap;
   }
   .lineup .chip {
-    padding: 6px 14px; border-radius: 999px; font-size: 15px; background: #1a2030; color: #8994a8;
+    padding: 6px 14px; border-radius: 999px; font-size: 15px; background: var(--card);
+    border: 1px solid var(--line); color: var(--muted);
   }
-  .lineup .chip.cur { background: #3d5afe; color: #fff; font-weight: 600; }
+  .lineup .chip.cur { background: var(--blue); border-color: var(--blue); color: #fff; font-weight: 600; }
   .lineup .chip.done { opacity: 0.5; text-decoration: line-through; }
-  .tabs { margin-left: auto; display: flex; gap: 6px; }
-  .tabs button {
-    background: #1a2030; color: #8994a8; border: none; border-radius: 8px;
-    padding: 8px 16px; font-size: 15px; cursor: pointer;
-  }
-  .tabs button.active { background: #3d5afe; color: #fff; }
   .main {
     grid-area: main; display: flex; flex-direction: column; align-items: center;
     justify-content: center; padding: 40px 60px; text-align: center; gap: 24px; min-width: 0;
   }
-  .category { font-size: 26px; color: #7c8aa5; text-transform: uppercase; letter-spacing: 2px; }
+  .category { font-size: 26px; color: var(--muted); text-transform: uppercase; letter-spacing: 2px; }
   .question { font-size: 48px; font-weight: 700; line-height: 1.25; max-width: 100%; }
   .qimage { max-height: 34vh; max-width: 100%; border-radius: 12px; margin-top: 8px; }
   .choices { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; width: 100%; max-width: 900px; }
   .choice {
-    background: #171d2b; border-radius: 10px; padding: 16px 22px; font-size: 24px; text-align: left;
+    background: var(--card); border: 1px solid var(--line); border-radius: 10px;
+    padding: 16px 22px; font-size: 24px; text-align: left;
   }
-  .choice.correct { background: #17351f; border: 2px solid #38c26b; }
   .answer-banner { font-size: 32px; font-weight: 700; color: #38c26b; }
   .modes { display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; }
-  .mode-pill { background: #1a2030; border-radius: 999px; padding: 6px 14px; font-size: 16px; }
-  .idle { font-size: 32px; color: #7c8aa5; }
+  .mode-pill { background: var(--card); border: 1px solid var(--line); border-radius: 999px; padding: 6px 14px; font-size: 16px; }
+  .idle { font-size: 32px; color: var(--muted); }
   .side {
-    grid-area: side; background: #10141d; border-left: 1px solid #1e2430;
+    grid-area: side; border-left: 1px solid var(--line);
     padding: 24px 20px; overflow-y: auto; display: flex; flex-direction: column; gap: 18px;
   }
   .streak-badge {
     background: linear-gradient(135deg, #ff8a3d, #ff4d6d); border-radius: 12px;
-    padding: 14px 16px; font-size: 18px; font-weight: 600;
+    padding: 14px 16px; font-size: 18px; font-weight: 600; color: #fff;
   }
-  .score-title { font-size: 15px; color: #7c8aa5; text-transform: uppercase; letter-spacing: 1.5px; }
-  .score-row { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid #1e2430; font-size: 18px; }
+  .score-title { font-size: 15px; color: var(--muted); text-transform: uppercase; letter-spacing: 1.5px; }
+  .score-row { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--line); font-size: 18px; }
   .score-rank { width: 28px; text-align: center; }
   .score-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .score-val { color: #a7b2c8; font-variant-numeric: tabular-nums; }
-  .arena-turn { font-size: 22px; color: #a7b2c8; }
+  .score-val { color: var(--muted); font-variant-numeric: tabular-nums; }
+  .arena-turn { font-size: 22px; color: var(--muted); }
 </style>
 </head>
 <body>
-  <div class="lineup" id="lineup">
-    <div class="tabs" id="tabs">
+  <div class="brand">
+    <div class="brandlogo" role="img" aria-label="TriviaSphere logo"></div>
+    <div class="game-tabs" id="tabs">
       <button data-game="main" class="active">Trivia &amp; Games</button>
       <button data-game="simply">Simply Trivia</button>
       <button data-game="arena">Mini-Game Arena</button>
+      <button class="companion-tab" data-action="back">📱 Companion View</button>
     </div>
   </div>
+  <div class="lineup" id="lineup"></div>
   <div class="main" id="main"><div class="idle">Waiting for the next question…</div></div>
   <div class="side" id="side"></div>
 
@@ -147,14 +165,19 @@ _TV_HTML = """<!doctype html>
   var currentGame = GAMES.indexOf(initialGame) !== -1 ? initialGame : "main";
   var esc = function (s) { var d = document.createElement("div"); d.textContent = String(s == null ? "" : s); return d.innerHTML; };
 
-  // renderLineup() reassigns #lineup's innerHTML on every poll, which destroys and recreates the
-  // tab buttons -- a listener attached to #tabs directly would only survive until the first poll.
-  // Delegating on document (same fix as the Activity panel's button issue) survives every rebuild.
+  // #tabs lives in the header (.brand), never rebuilt by any render function below, but delegating
+  // on document rather than binding directly to #tabs matches the same fix already applied to the
+  // Activity panel's buttons -- cheap insurance against a future render touching that markup too.
   document.addEventListener("click", function (e) {
+    var backBtn = e.target.closest('[data-action="back"]');
+    if (backBtn) {
+      location.href = "/?game=" + currentGame;
+      return;
+    }
     var btn = e.target.closest("button[data-game]");
     if (!btn) return;
     currentGame = btn.getAttribute("data-game");
-    document.querySelectorAll("#tabs button").forEach(function (b) { b.classList.toggle("active", b === btn); });
+    document.querySelectorAll("#tabs button[data-game]").forEach(function (b) { b.classList.toggle("active", b === btn); });
     history.replaceState(null, "", "/?view=tv&game=" + currentGame);
     poll();
   });
@@ -172,7 +195,7 @@ _TV_HTML = """<!doctype html>
     var modes = (state.modes || []).map(function (m) {
       return '<div class="mode-pill">' + esc(m.emoji) + ' ' + esc(m.label) + '</div>';
     }).join("");
-    el.innerHTML = chips + (modes ? '<div class="modes">' + modes + '</div>' : "") + el.querySelector(".tabs").outerHTML;
+    el.innerHTML = chips + (modes ? '<div class="modes">' + modes + '</div>' : "");
   }
 
   function renderMainOrSimply(state) {
@@ -240,7 +263,7 @@ _TV_HTML = """<!doctype html>
     if (!resp.ok) return;
     var state = await resp.json();
     if (currentGame === "arena") {
-      document.getElementById("lineup").querySelectorAll(".chip, .modes").forEach(function (n) { n.remove(); });
+      document.getElementById("lineup").innerHTML = "";
       renderArena(state);
       document.getElementById("side").innerHTML = "";
     } else {
@@ -250,7 +273,7 @@ _TV_HTML = """<!doctype html>
     }
   }
 
-  document.querySelectorAll("#tabs button").forEach(function (b) {
+  document.querySelectorAll("#tabs button[data-game]").forEach(function (b) {
     b.classList.toggle("active", b.getAttribute("data-game") === currentGame);
   });
   poll();
