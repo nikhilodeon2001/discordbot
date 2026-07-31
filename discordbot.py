@@ -25171,6 +25171,24 @@ def build_companion_reveal_state(solution_list):
     }
 
 
+def _companion_streak():
+    """Current longest-round-streak holder, for the TV view -- never exposed to the phone
+    companion or Activity, only build_tv_state() reads this."""
+    if not current_longest_round_streak.get("user_id"):
+        return None
+    return {"name": current_longest_round_streak["user"], "streak": current_longest_round_streak["streak"]}
+
+
+def build_tv_state(user_id=None):
+    """Live state for the read-only TV view -- build_companion_state() plus a scoreboard/streak
+    that the phone companion and Activity don't get until reveal (see build_companion_reveal_state).
+    Both reads are cheap and side-effect-free, safe to include at any phase."""
+    state = build_companion_state(user_id)
+    state["scoreboard"] = _companion_scoreboard()
+    state["streak"] = _companion_streak()
+    return state
+
+
 def companion_resolve_member(user_id):
     """Return the guild nickname for a Discord user id, or None if not a member.
     Backs the anti-impersonation check + keeps attribution consistent with scoring."""
@@ -25345,6 +25363,19 @@ def _companion_route_state(user_id, game):
     if game == "arena":
         return build_companion_arena_state(user_id)
     return build_companion_state(user_id)
+
+
+def _companion_route_tv_state(game):
+    """Same routing shape as _companion_route_state, for the read-only TV view -- always
+    user_id=None (no personalized fields, just a display). Both main and simply need a
+    TV-specific state builder to get their scoreboard outside of the reveal phase (see
+    build_tv_state / simply_trivia.build_tv_state); arena has no scoreboard concept at all, so
+    it's shown as-is (phase/whose-turn/game name only)."""
+    if game == "simply":
+        return simply_trivia.build_tv_state(None)
+    if game == "arena":
+        return build_companion_arena_state(None)
+    return build_tv_state(None)
 
 
 def _companion_route_submit_answer(user_id, display_name, text, game):
@@ -29023,6 +29054,7 @@ if __name__ == "__main__":
             await companion_web.start_companion_web(
                 resolve_member=companion_resolve_member,
                 get_state=_companion_route_state,
+                get_tv_state=_companion_route_tv_state,
                 submit_answer=_companion_route_submit_answer,
                 submit_action=_companion_route_submit_action,
                 reveal_extra=_companion_route_reveal_extra,

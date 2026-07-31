@@ -30,6 +30,7 @@ import boto3
 from aiohttp import web
 
 import activity_web
+import tv_view
 
 # ---------------------------------------------------------------------------
 # Module state (set by start_companion_web)
@@ -1938,7 +1939,7 @@ async def handle_logo_mark(request):
 # Startup
 # ---------------------------------------------------------------------------
 
-async def start_companion_web(*, resolve_member, get_state, submit_answer, submit_action=None, reveal_extra=None, submit_flag=None, submit_anon_flag=None, get_flag_reveal_context=None, submit_question=None, submit_bulk_questions=None):
+async def start_companion_web(*, resolve_member, get_state, get_tv_state=None, submit_answer, submit_action=None, reveal_extra=None, submit_flag=None, submit_anon_flag=None, get_flag_reveal_context=None, submit_question=None, submit_bulk_questions=None):
     """Bind the aiohttp server to $PORT and start serving. Called from the bot's main()
     before the long-running gather so Heroku sees the port bound promptly (avoids R10)."""
     global _resolve_member, _get_state, _submit_answer, _submit_action, _reveal_extra, _submit_flag, _submit_anon_flag
@@ -1987,6 +1988,9 @@ async def start_companion_web(*, resolve_member, get_state, submit_answer, submi
             get_last_published=lambda game: _last_published.get(game),
         )
 
+    if tv_view.ENABLED:
+        tv_view.init(get_tv_state=get_tv_state, session_from_request=_session_from_request)
+
     asyncio.create_task(_rate_limit_pruner())
 
     app = web.Application(middlewares=[_https_enforcement_middleware])
@@ -2015,6 +2019,8 @@ async def start_companion_web(*, resolve_member, get_state, submit_answer, submi
         ])
         if _ACTIVITY_ENABLED:
             routes.extend(activity_web.activity_routes())
+        if tv_view.ENABLED:
+            routes.extend(tv_view.tv_routes())
     app.add_routes(routes)
 
     runner = web.AppRunner(app)

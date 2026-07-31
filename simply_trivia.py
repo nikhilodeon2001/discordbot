@@ -472,6 +472,15 @@ def _companion_scoreboard():
     return rows
 
 
+def build_tv_state(user_id=None):
+    """Live state for the read-only TV view -- adds the scoreboard build_companion_state()
+    doesn't carry pre-reveal (see build_companion_reveal_state), mirroring discordbot.py's
+    build_tv_state for the main game."""
+    state = build_companion_state(user_id)
+    state["scoreboard"] = _companion_scoreboard()
+    return state
+
+
 def build_companion_reveal_state(main_answer):
     """State pushed to phones at the reveal transition."""
     q = active_question or {}
