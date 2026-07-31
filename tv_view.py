@@ -114,7 +114,7 @@ _TV_HTML = """<!doctype html>
   .timer { font-size: 26px; font-weight: 800; font-variant-numeric: tabular-nums; color: var(--muted); }
   .timer.low { color: #ff4d6d; }
   .question { font-size: 48px; font-weight: 700; line-height: 1.25; max-width: 100%; }
-  .qimage { max-height: 34vh; max-width: 100%; border-radius: 12px; margin-top: 8px; }
+  .qimage { max-height: 72vh; max-width: 100%; border-radius: 12px; margin-top: 8px; }
   .choices { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; width: 100%; max-width: 900px; }
   .choice {
     background: var(--card); border: 1px solid var(--line); border-radius: 10px;
@@ -217,7 +217,14 @@ _TV_HTML = """<!doctype html>
       main.innerHTML = '<div class="idle">Waiting for the next question…</div>';
       return;
     }
-    var html = '<div class="qheader"><div class="category">' + esc(state.category || "") + '</div>';
+    // Jeopardy question cards render the category into the image itself (a blank question with
+    // an image is otherwise only how the backend represents a Jeopardy clue -- see
+    // _companion_display_question) -- showing our own category label above it would duplicate it.
+    var isJeopardyCard = !state.question && !!state.image_url;
+    var html = '<div class="qheader">';
+    if (!isJeopardyCard) {
+      html += '<div class="category">' + esc(state.category || "") + '</div>';
+    }
     if (state.phase === "open" && state.ends_at) {
       html += '<span id="timer" class="timer"></span>';
     }
