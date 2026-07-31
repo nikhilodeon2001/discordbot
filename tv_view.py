@@ -10,19 +10,22 @@ exactly the same trick companion_web.py's handle_index already uses to serve act
 Activity page from "?frame_id=..." instead of a dedicated path, so there's only ever one URL
 (play.triviasphere.com) to share, not a second one to remember. render_tv_page() is a plain
 function (mirroring activity_web.render_activity_page), not a route handler itself -- handle_index
-calls it directly. Only /api/tv_poll is a real dedicated route, since that's a fetch target, not
-something anyone navigates to.
+calls it directly.
+
+No dedicated state endpoint of its own: the client JS below hits companion_web.py's existing
+/api/current and /api/stream directly (same session cookie, same "main"/"simply"/"arena" `game`
+values), exactly the same connect()/loadGame() pattern _INDEX_HTML's own JS uses. This isn't just
+simpler, it's the only way to actually see the "revealed" phase -- that phase is a one-shot
+broadcast (build_companion_reveal_state(), published via companion_web.publish_state() at the
+exact moment of reveal), never a queryable persistent field, so a poll loop calling a stateless
+"give me current state" builder can structurally never observe it. Riding the same SSE stream the
+phone uses is what makes the reveal (and everything else that's push-only) visible here too.
 
 Modeled on activity_web.py's shape (module-level HTML blob + init()-injected callables), but
 simpler: no Discord Activity SDK, no image-proxy, no sign/unsign/OAuth-secret plumbing of its
 own. Login is a plain redirect to companion_web.py's existing /login flow (same domain, same
 session cookie) -- this module only ever *checks* for a session via the injected
 `session_from_request`, it doesn't manage sessions itself.
-
-Poll-only (no SSE) for v1: a TV display tolerates a couple seconds of staleness fine, and this
-avoids extending companion_web.py's per-game SSE subscriber/sequence bookkeeping (_GAMES/_seq/
-_subscribers), which is scoped to ("main", "simply", "arena") and would need a parallel publish
-call wired into the round loop for each of the three states used here.
 """
 
 import os
@@ -32,13 +35,11 @@ from aiohttp import web
 
 ENABLED = os.getenv("TV_VIEW_ENABLED", "false").lower() == "true"
 
-_get_tv_state = None      # callable(game:str) -> dict (sanitized live state)
 _session_from_request = None  # callable(request) -> dict|None, injected from companion_web.py
 
 
-def init(*, get_tv_state, session_from_request):
-    global _get_tv_state, _session_from_request
-    _get_tv_state = get_tv_state
+def init(*, session_from_request):
+    global _session_from_request
     _session_from_request = session_from_request
 
 
@@ -51,20 +52,6 @@ def render_tv_page(request):
     if not _session_from_request(request):
         return _login_redirect(request)
     return web.Response(text=_TV_HTML, content_type="text/html")
-
-
-async def handle_tv_poll(request):
-    if not _session_from_request(request):
-        return web.json_response({"authenticated": False}, status=401)
-    game = request.query.get("game", "main")
-    if game not in ("main", "simply", "arena"):
-        game = "main"
-    state = _get_tv_state(game) if _get_tv_state else {"phase": "idle"}
-    return web.json_response(state)
-
-
-def tv_routes():
-    return [web.get("/api/tv_poll", handle_tv_poll)]
 
 
 _TV_HTML = """<!doctype html>
@@ -181,10 +168,9 @@ _TV_HTML = """<!doctype html>
     }
     var btn = e.target.closest("button[data-game]");
     if (!btn) return;
-    currentGame = btn.getAttribute("data-game");
     document.querySelectorAll("#tabs button[data-game]").forEach(function (b) { b.classList.toggle("active", b === btn); });
-    history.replaceState(null, "", "/?view=tv&game=" + currentGame);
-    poll();
+    history.replaceState(null, "", "/?view=tv&game=" + btn.getAttribute("data-game"));
+    loadGame(btn.getAttribute("data-game"));
   });
 
   function renderLineup(state) {
@@ -281,19 +267,7 @@ _TV_HTML = """<!doctype html>
     side.innerHTML = html;
   }
 
-  async function poll() {
-    var resp;
-    try {
-      resp = await fetch("/api/tv_poll?game=" + encodeURIComponent(currentGame));
-    } catch (e) {
-      return;
-    }
-    if (resp.status === 401) {
-      location.href = "/login?next=" + encodeURIComponent(location.pathname + location.search);
-      return;
-    }
-    if (!resp.ok) return;
-    var state = await resp.json();
+  function render(state) {
     if (currentGame === "arena") {
       document.getElementById("lineup").innerHTML = "";
       renderArena(state);
@@ -305,11 +279,29 @@ _TV_HTML = """<!doctype html>
     }
   }
 
+  // Same connect()/loadGame() shape as _INDEX_HTML's own JS: an initial fetch for instant paint,
+  // then a live EventSource for everything after, including the one-shot "revealed" broadcast a
+  // poll loop could never see (only pushed once at the moment of reveal, not a queryable field).
+  var es = null;
+
+  function connect() {
+    es = new EventSource("/api/stream?game=" + encodeURIComponent(currentGame));
+    es.onmessage = function (ev) { try { render(JSON.parse(ev.data)); } catch (e) {} };
+    es.onerror = function () { /* EventSource auto-reconnects */ };
+  }
+
+  function loadGame(game) {
+    currentGame = game;
+    if (es) { es.close(); es = null; }
+    fetch("/api/current?game=" + encodeURIComponent(game)).then(function (r) { return r.json(); })
+      .then(function (s) { render(s); connect(); })
+      .catch(function () { connect(); });
+  }
+
   document.querySelectorAll("#tabs button[data-game]").forEach(function (b) {
     b.classList.toggle("active", b.getAttribute("data-game") === currentGame);
   });
-  poll();
-  setInterval(poll, 2500);
+  loadGame(currentGame);
 })();
 </script>
 </body>

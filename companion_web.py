@@ -1253,7 +1253,7 @@ _INDEX_HTML = """<!doctype html>
   .switch input:checked ~ .track { background:var(--blue); border-color:var(--blue); }
   .switch input:checked ~ .track .thumb { transform:translateX(17px); }
   .switch input:focus-visible ~ .track { box-shadow:0 0 0 3px rgba(20,109,232,.30); }
-  .game-tabs { display:flex; gap:4px; flex:none; background:rgba(127,127,127,.10);
+  .game-tabs { display:flex; gap:4px; flex-wrap:wrap; flex:none; background:rgba(127,127,127,.10);
     border:1px solid var(--line); border-radius:12px; padding:3px; }
   .tab-btn { flex:none; border:none; background:transparent; color:var(--muted); cursor:pointer;
     font-size:.7rem; font-weight:700; letter-spacing:.01em; padding:7px 10px; border-radius:9px;
@@ -1950,7 +1950,7 @@ async def handle_logo_mark(request):
 # Startup
 # ---------------------------------------------------------------------------
 
-async def start_companion_web(*, resolve_member, get_state, get_tv_state=None, submit_answer, submit_action=None, reveal_extra=None, submit_flag=None, submit_anon_flag=None, get_flag_reveal_context=None, submit_question=None, submit_bulk_questions=None):
+async def start_companion_web(*, resolve_member, get_state, submit_answer, submit_action=None, reveal_extra=None, submit_flag=None, submit_anon_flag=None, get_flag_reveal_context=None, submit_question=None, submit_bulk_questions=None):
     """Bind the aiohttp server to $PORT and start serving. Called from the bot's main()
     before the long-running gather so Heroku sees the port bound promptly (avoids R10)."""
     global _resolve_member, _get_state, _submit_answer, _submit_action, _reveal_extra, _submit_flag, _submit_anon_flag
@@ -2000,7 +2000,7 @@ async def start_companion_web(*, resolve_member, get_state, get_tv_state=None, s
         )
 
     if tv_view.ENABLED:
-        tv_view.init(get_tv_state=get_tv_state, session_from_request=_session_from_request)
+        tv_view.init(session_from_request=_session_from_request)
 
     asyncio.create_task(_rate_limit_pruner())
 
@@ -2030,8 +2030,6 @@ async def start_companion_web(*, resolve_member, get_state, get_tv_state=None, s
         ])
         if _ACTIVITY_ENABLED:
             routes.extend(activity_web.activity_routes())
-        if tv_view.ENABLED:
-            routes.extend(tv_view.tv_routes())
     app.add_routes(routes)
 
     runner = web.AppRunner(app)

@@ -415,7 +415,10 @@ def build_companion_state(user_id=None):
     """Sanitized live-question state for the companion. No round/modes/timer concepts exist in
     Simply Trivia, so those fields are always empty/absent."""
     if active_question is None:
-        return {"phase": "idle"}
+        # scoreboard carried even while idle (between questions) so a spectator display (the TV
+        # view) doesn't go blank the moment a question closes -- the phone companion doesn't
+        # render it outside "open" today, so this is a no-op there.
+        return {"phase": "idle", "scoreboard": _companion_scoreboard()}
     q = active_question
     url = q.get("url", "")
     category = q.get("category", "Trivia")
@@ -436,6 +439,7 @@ def build_companion_state(user_id=None):
         "modes": [],
         "round_overview": [],
         "question_number": 0,
+        "scoreboard": _companion_scoreboard(),
     }
     if user_id is not None:
         mine = [a["text"] for a in _companion_answers if a["user_id"] == user_id]
@@ -470,15 +474,6 @@ def _companion_scoreboard():
             "via_companion": user.id in _companion_web_user_ids,
         })
     return rows
-
-
-def build_tv_state(user_id=None):
-    """Live state for the read-only TV view -- adds the scoreboard build_companion_state()
-    doesn't carry pre-reveal (see build_companion_reveal_state), mirroring discordbot.py's
-    build_tv_state for the main game."""
-    state = build_companion_state(user_id)
-    state["scoreboard"] = _companion_scoreboard()
-    return state
 
 
 def build_companion_reveal_state(main_answer):
