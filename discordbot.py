@@ -23636,45 +23636,63 @@ class StartRoundView(discord.ui.View):
         await interaction.response.defer()
 
 
+# (value, label, emoji, row) -- laid out as buttons rather than a select menu so all 6
+# choices are visible at once instead of hidden behind a dropdown someone has to open
+# and scroll through.
 DEVICE_POLL_OPTIONS = [
-    discord.SelectOption(label="Desktop Web - Discord.com", value="desktop_web", emoji="🖥️"),
-    discord.SelectOption(label="Desktop App — Windows", value="desktop_app_windows", emoji="🪟"),
-    discord.SelectOption(label="Desktop App — Mac", value="desktop_app_mac", emoji="🍎"),
-    discord.SelectOption(label="Mobile App — Android", value="mobile_app_android", emoji="🤖"),
-    discord.SelectOption(label="Mobile App — iPhone", value="mobile_app_iphone", emoji="📱"),
-    discord.SelectOption(label="Mobile Web - You psycho", value="mobile_web", emoji="🌐"),
+    ("desktop_web", "Desktop Web - Discord.com", "🖥️", 0),
+    ("desktop_app_windows", "Desktop App — Windows", "🪟", 0),
+    ("desktop_app_mac", "Desktop App — Mac", "🍎", 0),
+    ("mobile_app_android", "Mobile App — Android", "🤖", 1),
+    ("mobile_app_iphone", "Mobile App — iPhone", "📱", 1),
+    ("mobile_web", "Mobile Web - You psycho", "🌐", 1),
 ]
 
 
 class DevicePollView(discord.ui.View):
-    """Persistent 'which device do you play on' poll. One vote per user, stored in a Mongo
-    doc keyed by user id -- re-voting updates the existing doc rather than creating a new one."""
+    """Persistent 'which device do you play on' poll. Each button toggles that device in/out
+    of the clicking user's vote doc (upsert), keyed by user id, so all 6 choices stay visible
+    on the message at once instead of behind a select-menu dropdown."""
 
     def __init__(self):
         super().__init__(timeout=None)
-
-    @discord.ui.select(
-        placeholder="Which device do you usually play on? (pick all that apply)",
-        min_values=1, max_values=6,
-        options=DEVICE_POLL_OPTIONS,
-        custom_id="device_poll:select",
-    )
-    async def device_select(self, interaction: discord.Interaction, select: discord.ui.Select):
-        choices = select.values
-        try:
-            await db.device_poll_votes.update_one(
-                {"_id": interaction.user.id},
-                {"$set": {"choices": choices, "voted_at": datetime.datetime.utcnow()}},
-                upsert=True,
+        for value, label, emoji, row in DEVICE_POLL_OPTIONS:
+            button = discord.ui.Button(
+                label=label, emoji=emoji, style=discord.ButtonStyle.secondary,
+                custom_id=f"device_poll:{value}", row=row,
             )
+            button.callback = self._make_callback(value)
+            self.add_item(button)
+
+    def _make_callback(self, value):
+        async def callback(interaction: discord.Interaction):
+            await self._toggle(interaction, value)
+        return callback
+
+    async def _toggle(self, interaction: discord.Interaction, value: str):
+        try:
+            existing = await db.device_poll_votes.find_one({"_id": interaction.user.id})
+            current = set(existing["choices"]) if existing else set()
+            current.symmetric_difference_update({value})
+            if current:
+                await db.device_poll_votes.update_one(
+                    {"_id": interaction.user.id},
+                    {"$set": {"choices": list(current), "voted_at": datetime.datetime.utcnow()}},
+                    upsert=True,
+                )
+            else:
+                await db.device_poll_votes.delete_one({"_id": interaction.user.id})
         except Exception as e:
             sentry_sdk.capture_exception(e)
             await interaction.response.send_message(
                 "⚠️ Something went wrong recording your vote — try again in a moment.", ephemeral=True
             )
             return
-        labels = ", ".join(opt.label for opt in DEVICE_POLL_OPTIONS if opt.value in choices)
-        await interaction.response.send_message(f"✅ Thanks! Recorded: {labels}", ephemeral=True)
+        if current:
+            labels = ", ".join(label for v, label, emoji, row in DEVICE_POLL_OPTIONS if v in current)
+            await interaction.response.send_message(f"✅ Thanks! Recorded: {labels}", ephemeral=True)
+        else:
+            await interaction.response.send_message("Got it — cleared your vote.", ephemeral=True)
 
 
 async def start_trivia():
@@ -24057,7 +24075,7 @@ async def start_trivia():
             if not update_pending:
                 await safe_send(
                     channel,
-                    content="📊 **Quick poll:** which device do you usually play trivia on?",
+                    content="📊 **Quick poll:** which device(s) do you usually play trivia on? Click all that apply.",
                     view=DevicePollView(),
                     use_embed=False,
                 )
