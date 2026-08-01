@@ -34,6 +34,7 @@ from datetime import timezone
 import time
 import pytz
 from motor.motor_asyncio import AsyncIOMotorClient
+import pymongo
 import difflib
 import regex
 import string
@@ -427,7 +428,7 @@ async def send_question_queen_submit_ad():
 # e.g. for announcements (like a rebrand) that aren't a new feature pitch.
 # {base_url} is substituted with companion_web.get_base_url() at post time, so
 # the same text is correct whether this deploy is staging or prod.
-okra_lab_announcement_enabled = True
+okra_lab_announcement_enabled = False
 okra_lab_announcement_text = "🐝🔤 **Buzz Words** has launched — a real spelling bee.\n\nWords span easy to championship-level brutal, pulled from an official competitive word list, with real dictionary-quality pronunciation audio and definitions read aloud. Hear it, then race to type the spelling — no peeking, nothing's ever shown in chat.\n"
 okra_lab_announcement_show_new_badge = True
 
@@ -23636,6 +23637,68 @@ class StartRoundView(discord.ui.View):
         await interaction.response.defer()
 
 
+DEVICE_POLL_OPTIONS = [
+    discord.SelectOption(label="Desktop Web", value="desktop_web", emoji="🖥️"),
+    discord.SelectOption(label="Desktop App — Windows", value="desktop_app_windows", emoji="🪟"),
+    discord.SelectOption(label="Desktop App — Mac", value="desktop_app_mac", emoji="🍎"),
+    discord.SelectOption(label="Mobile App — Android", value="mobile_app_android", emoji="🤖"),
+    discord.SelectOption(label="Mobile App — iPhone", value="mobile_app_iphone", emoji="📱"),
+    discord.SelectOption(label="Mobile Web (you psycho)", value="mobile_web", emoji="🌐"),
+]
+
+
+class DevicePollView(discord.ui.View):
+    """Persistent 'which device do you play on' poll. One vote per user (blocked, not
+    updated, on re-vote) via a Mongo doc keyed by user id -- see interaction_check."""
+
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        try:
+            existing = await db.device_poll_votes.find_one({"_id": interaction.user.id})
+        except Exception as e:
+            sentry_sdk.capture_exception(e)
+            await interaction.response.send_message(
+                "⚠️ Couldn't check your vote status — try again shortly.", ephemeral=True
+            )
+            return False
+        if existing:
+            await interaction.response.send_message(
+                "✅ You've already voted in this poll — thanks!", ephemeral=True
+            )
+            return False
+        return True
+
+    @discord.ui.select(
+        placeholder="Which device do you usually play on? (pick all that apply)",
+        min_values=1, max_values=6,
+        options=DEVICE_POLL_OPTIONS,
+        custom_id="device_poll:select",
+    )
+    async def device_select(self, interaction: discord.Interaction, select: discord.ui.Select):
+        choices = select.values
+        try:
+            await db.device_poll_votes.insert_one({
+                "_id": interaction.user.id,
+                "choices": choices,
+                "voted_at": datetime.datetime.utcnow(),
+            })
+        except pymongo.errors.DuplicateKeyError:
+            await interaction.response.send_message(
+                "✅ You've already voted in this poll — thanks!", ephemeral=True
+            )
+            return
+        except Exception as e:
+            sentry_sdk.capture_exception(e)
+            await interaction.response.send_message(
+                "⚠️ Something went wrong recording your vote — try again in a moment.", ephemeral=True
+            )
+            return
+        labels = ", ".join(opt.label for opt in DEVICE_POLL_OPTIONS if opt.value in choices)
+        await interaction.response.send_message(f"✅ Thanks! Recorded: {labels}", ephemeral=True)
+
+
 async def start_trivia():
     global target_room_id, bot_user_id, bearer_token, question_time, questions_per_round, time_between_questions, filler_words
     global scoreboard, current_longest_round_streak, current_longest_answer_streak
@@ -24014,6 +24077,14 @@ async def start_trivia():
                 update_pending = await end_of_round(sent_round_end_message)
 
             if not update_pending:
+                await safe_send(
+                    channel,
+                    content="📊 **Quick poll:** which device do you usually play trivia on?",
+                    view=DevicePollView(),
+                    use_embed=False,
+                )
+                await asyncio.sleep(4)
+
                 blurb = await get_round_blurb()
                 if show_round_end_message:
                     # Merge the round blurb into the round-end message already sent above
@@ -28337,6 +28408,12 @@ async def on_ready():
     except Exception as _e:
         sentry_sdk.capture_exception(_e)
         print(f"⚠️ roast index startup hook: {_e}")
+
+    try:
+        bot.add_view(DevicePollView())
+    except Exception as _e:
+        sentry_sdk.capture_exception(_e)
+        print(f"⚠️ device poll view startup hook: {_e}")
 
     # User-submission feature: indexes + persistent views + initial role sync
     try:
