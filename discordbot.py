@@ -23637,12 +23637,12 @@ class StartRoundView(discord.ui.View):
 
 
 DEVICE_POLL_OPTIONS = [
-    discord.SelectOption(label="Desktop Web", value="desktop_web", emoji="🖥️"),
+    discord.SelectOption(label="Desktop Web - Discord.com", value="desktop_web", emoji="🖥️"),
     discord.SelectOption(label="Desktop App — Windows", value="desktop_app_windows", emoji="🪟"),
     discord.SelectOption(label="Desktop App — Mac", value="desktop_app_mac", emoji="🍎"),
     discord.SelectOption(label="Mobile App — Android", value="mobile_app_android", emoji="🤖"),
     discord.SelectOption(label="Mobile App — iPhone", value="mobile_app_iphone", emoji="📱"),
-    discord.SelectOption(label="Mobile Web (you psycho)", value="mobile_web", emoji="🌐"),
+    discord.SelectOption(label="Mobile Web - You psycho", value="mobile_web", emoji="🌐"),
 ]
 
 
