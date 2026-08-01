@@ -23664,6 +23664,7 @@ class DevicePollModal(discord.ui.Modal, title="Device Poll"):
     async def on_submit(self, interaction: discord.Interaction):
         choices = self.device_label.component.values
         try:
+            existing = await db.device_poll_votes.find_one({"_id": interaction.user.id})
             await db.device_poll_votes.update_one(
                 {"_id": interaction.user.id},
                 {"$set": {"choices": choices, "voted_at": datetime.datetime.utcnow()}},
@@ -23676,7 +23677,10 @@ class DevicePollModal(discord.ui.Modal, title="Device Poll"):
             )
             return
         labels = ", ".join(opt.label for opt in DEVICE_POLL_OPTIONS if opt.value in choices)
-        await interaction.response.send_message(f"✅ Thanks! Recorded: {labels}", ephemeral=True)
+        if existing:
+            await interaction.response.send_message(f"✅ Your response has been updated to: {labels}", ephemeral=True)
+        else:
+            await interaction.response.send_message(f"✅ Thanks! Recorded: {labels}", ephemeral=True)
 
 
 class DevicePollView(discord.ui.View):
