@@ -34,7 +34,6 @@ from datetime import timezone
 import time
 import pytz
 from motor.motor_asyncio import AsyncIOMotorClient
-import pymongo
 import difflib
 import regex
 import string
@@ -23648,27 +23647,11 @@ DEVICE_POLL_OPTIONS = [
 
 
 class DevicePollView(discord.ui.View):
-    """Persistent 'which device do you play on' poll. One vote per user (blocked, not
-    updated, on re-vote) via a Mongo doc keyed by user id -- see interaction_check."""
+    """Persistent 'which device do you play on' poll. One vote per user, stored in a Mongo
+    doc keyed by user id -- re-voting updates the existing doc rather than creating a new one."""
 
     def __init__(self):
         super().__init__(timeout=None)
-
-    async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        try:
-            existing = await db.device_poll_votes.find_one({"_id": interaction.user.id})
-        except Exception as e:
-            sentry_sdk.capture_exception(e)
-            await interaction.response.send_message(
-                "⚠️ Couldn't check your vote status — try again shortly.", ephemeral=True
-            )
-            return False
-        if existing:
-            await interaction.response.send_message(
-                "✅ You've already voted in this poll — thanks!", ephemeral=True
-            )
-            return False
-        return True
 
     @discord.ui.select(
         placeholder="Which device do you usually play on? (pick all that apply)",
@@ -23679,16 +23662,11 @@ class DevicePollView(discord.ui.View):
     async def device_select(self, interaction: discord.Interaction, select: discord.ui.Select):
         choices = select.values
         try:
-            await db.device_poll_votes.insert_one({
-                "_id": interaction.user.id,
-                "choices": choices,
-                "voted_at": datetime.datetime.utcnow(),
-            })
-        except pymongo.errors.DuplicateKeyError:
-            await interaction.response.send_message(
-                "✅ You've already voted in this poll — thanks!", ephemeral=True
+            await db.device_poll_votes.update_one(
+                {"_id": interaction.user.id},
+                {"$set": {"choices": choices, "voted_at": datetime.datetime.utcnow()}},
+                upsert=True,
             )
-            return
         except Exception as e:
             sentry_sdk.capture_exception(e)
             await interaction.response.send_message(
