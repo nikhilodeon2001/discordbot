@@ -408,6 +408,9 @@ _ACTIVITY_HTML = """<!doctype html>
     background:linear-gradient(180deg,var(--blue),var(--blue-600)); box-shadow:0 6px 16px rgba(20,109,232,.30); }
   button.primary:active { transform:translateY(1px); }
   button.primary:disabled { opacity:.5; box-shadow:none; cursor:default; }
+  .actionrow { display:flex; justify-content:flex-end; align-items:center; gap:10px; margin-top:14px; }
+  .actionrow button.primary { width:auto; margin-top:0; padding:11px 20px; font-size:.95rem; }
+  .actionrow .flagbar { display:inline-flex; align-items:center; width:auto; margin-top:0; padding:11px 16px; font-size:.85rem; white-space:nowrap; }
   .choices { display:grid; gap:10px; }
   .ortype { text-align:center; color:var(--muted); font-size:.78rem; margin:14px 0 10px; }
   .choice { padding:15px 16px; font-size:1.0rem; text-align:left; border-radius:14px;
@@ -525,7 +528,55 @@ function flagHtml(state) {
   return '<button type="button" class="flagbar' + (isFlagged ? ' flagged' : '') + '" ' +
     (isFlagged ? 'disabled ' : '') + 'data-action="open-flag" ' +
     'aria-label="' + (isFlagged ? 'Question flagged' : 'Flag this question') + '">' +
-    (isFlagged ? '🚩 Flagged' : '🚩 Flag this question') + '</button>';
+    (isFlagged ? '🚩 Flagged' : '🚩 Flag') + '</button>';
+}
+
+function promptHtml(state) {
+  // Post-round-menu / WoF mini-game picker (main round loop only -- Simply Trivia has no such
+  // menu, and the Activity doesn't support the separate Mini-Game Arena feature at all).
+  var p = state.prompt;
+  if (!p) return '';
+  var body = p.you_can_act
+    ? '<input id="actionInput" type="text" autocomplete="off" autocapitalize="off" ' +
+      'placeholder="Type your choice…">' +
+      '<button class="primary" data-action="submit-action-input">Submit</button>' +
+      '<div id="actionStatus" class="status"></div>'
+    : '<div class="idle" style="padding:6px 0 0">Waiting for ' +
+      esc((p.allowed_names || []).join(' / ') || 'the round winner') + ' to choose…</div>';
+  return '<div class="modalqctx" style="margin-top:16px">' +
+    '<div class="modalcat">Mini-Game Menu</div>' +
+    '<div class="modalq" style="white-space:pre-wrap">' + esc(p.prompt_text || '') + '</div>' +
+    '</div>' + body;
+}
+
+function submitActionInput() {
+  var el = document.getElementById('actionInput');
+  var text = el ? el.value.trim() : '';
+  if (!text) return;
+  submitAction(text, 'actionStatus');
+  if (el) el.value = '';
+}
+
+async function submitAction(text, statusElId) {
+  try {
+    const r = await fetch(P + '/api/action', {
+      method: 'POST',
+      headers: Object.assign({'Content-Type': 'application/json'}, authHeaders()),
+      body: JSON.stringify({text: text, game: currentGame}),
+    });
+    const data = await r.json();
+    const el = statusElId && document.getElementById(statusElId);
+    if (!el) return;
+    if (data.ok) { el.textContent = 'Sent ✓'; el.className = 'status ok'; }
+    else {
+      el.textContent = data.reason === 'no_active_prompt' ? 'That closed — refresh.' :
+        data.reason === 'not_allowed' ? 'Only the round winner can choose.' : 'Could not send, try again.';
+      el.className = 'status bad';
+    }
+  } catch (e) {
+    const el = statusElId && document.getElementById(statusElId);
+    if (el) { el.textContent = 'Network error'; el.className = 'status bad'; }
+  }
 }
 
 function imgHtml(state) {
@@ -706,7 +757,7 @@ function render(state) {
     app.innerHTML = '<div class="cat">' + esc(state.category || '') + '</div>' +
       (state.question ? '<div class="q">' + esc(state.question) + '</div>' : '') +
       imgHtml(state) +
-      resultBanner + answerLine + flagHtml(state) + mine +
+      resultBanner + answerLine + '<div class="actionrow">' + flagHtml(state) + '</div>' + mine +
       scoreboardHtml(state) + legendHtml(state) + roundHtml(state);
     if (countdownTimer) { clearInterval(countdownTimer); countdownTimer = null; }
     return;
@@ -714,7 +765,7 @@ function render(state) {
 
   if (state.phase !== 'open') {
     app.innerHTML = '<div class="idle"><span class="big">No live question right now</span>' +
-      'Hang tight — the next one is coming. ⏳</div>';
+      'Hang tight — the next one is coming. ⏳</div>' + promptHtml(state);
     if (countdownTimer) { clearInterval(countdownTimer); countdownTimer = null; }
     return;
   }
@@ -740,16 +791,18 @@ function render(state) {
       }).join('') + '</div>' +
         '<div class="ortype">or type your answer</div>' +
         '<input id="ans" type="text" autocomplete="off" autocapitalize="off" ' +
-        'placeholder="Type a letter or the answer…">' +
-        '<button class="primary" data-action="submit-text">Submit</button>';
+        'placeholder="Type a letter or the answer…">';
     } else {
       inputHtml = '<input id="ans" type="text" autocomplete="off" autocapitalize="off" ' +
-        'placeholder="Type your answer…">' +
-        '<button class="primary" data-action="submit-text">Submit</button>';
+        'placeholder="Type your answer…">';
     }
     if (prior) inputHtml = '<div class="status ok">✓ Submitted: ' + esc(prior) +
       ' — you can submit again</div>' + inputHtml;
   }
+
+  const actionRow = '<div class="actionrow">' +
+    (state.already_answered ? '' : '<button class="primary" data-action="submit-text">Submit</button>') +
+    flagHtml(state) + '</div>';
 
   const timerHtml = state.ends_at ? '<span id="timer" class="timer">--</span>' : '';
   app.innerHTML = '<div class="qhead"><span class="cat">' + esc(state.category || '') + '</span>' +
@@ -757,7 +810,7 @@ function render(state) {
       (state.question ? '<div class="q">' + esc(state.question) + '</div>' : '') +
       imgHtml(state) + puzzleHtml(state) +
       (state.warning ? '<div class="warn">' + esc(state.warning) + '</div>' : '') + inputHtml +
-      '<div id="status" class="status"></div>' + flagHtml(state) +
+      actionRow + '<div id="status" class="status"></div>' +
       scoreboardHtml(state) + legendHtml(state) + roundHtml(state);
 
   if (isNew && !state.already_answered) { const i = document.getElementById('ans'); if (i) i.focus(); }
@@ -878,10 +931,12 @@ document.addEventListener('click', function (e) {
   else if (action === 'open-flag') openFlagModal();
   else if (action === 'close-flag') closeFlagModal();
   else if (action === 'submit-flag') submitFlag();
+  else if (action === 'submit-action-input') submitActionInput();
 });
 
 document.addEventListener('keydown', function (e) {
   if (e.target && e.target.id === 'ans' && e.key === 'Enter') submitText();
+  else if (e.target && e.target.id === 'actionInput' && e.key === 'Enter') submitActionInput();
 });
 
 document.addEventListener('paste', function (e) {

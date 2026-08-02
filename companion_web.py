@@ -1334,6 +1334,9 @@ _INDEX_HTML = """<!doctype html>
     background:linear-gradient(180deg,var(--blue),var(--blue-600)); box-shadow:0 6px 16px rgba(20,109,232,.30); }
   button.primary:active { transform:translateY(1px); }
   button.primary:disabled { opacity:.5; box-shadow:none; cursor:default; }
+  .actionrow { display:flex; justify-content:flex-end; align-items:center; gap:10px; margin-top:14px; }
+  .actionrow button.primary { width:auto; margin-top:0; padding:11px 20px; font-size:.95rem; }
+  .actionrow .flagbar { display:inline-flex; align-items:center; width:auto; margin-top:0; padding:11px 16px; font-size:.85rem; white-space:nowrap; }
   .choices { display:grid; gap:10px; }
   .ortype { text-align:center; color:var(--muted); font-size:.78rem; margin:14px 0 10px; }
   .choice { padding:15px 16px; font-size:1.02rem; text-align:left; border-radius:14px;
@@ -1470,7 +1473,7 @@ function flagHtml(state) {
   return '<button type="button" class="flagbar' + (isFlagged ? ' flagged' : '') + '" ' +
     (isFlagged ? 'disabled ' : '') + 'onclick="openFlagModal()" ' +
     'aria-label="' + (isFlagged ? 'Question flagged' : 'Flag this question') + '">' +
-    (isFlagged ? '🚩 Flagged' : '🚩 Flag this question') + '</button>';
+    (isFlagged ? '🚩 Flagged' : '🚩 Flag') + '</button>';
 }
 
 function promptHtml(state) {
@@ -1596,11 +1599,11 @@ function render(state) {
       ? '<div class="status">🙈 Answers are hidden this round.</div>'
       : '<div class="status ok">✅ Answer: ' + esc(state.correct_answer || '') + '</div>';
     app.innerHTML = simpleMode
-      ? resultBanner + answerLine + flagHtml(state)
+      ? resultBanner + answerLine + '<div class="actionrow">' + flagHtml(state) + '</div>'
       : '<div class="cat">' + esc(state.category || '') + '</div>' +
         (state.question ? '<div class="q">' + esc(state.question) + '</div>' : '') +
         imgHtml(state) +
-        resultBanner + answerLine + flagHtml(state) + mine +
+        resultBanner + answerLine + '<div class="actionrow">' + flagHtml(state) + '</div>' + mine +
         scoreboardHtml(state) + legendHtml(state) + roundHtml(state);
     if (countdownTimer) { clearInterval(countdownTimer); countdownTimer = null; }
     return;
@@ -1640,27 +1643,29 @@ function render(state) {
       }).join('') + '</div>' +
         '<div class="ortype">or type your answer</div>' +
         '<input id="ans" type="text" autocomplete="off" autocapitalize="off" ' +
-        'placeholder="Type a letter or the answer…" onpaste="return false" onkeydown="if(event.key===\\'Enter\\')submitText()">' +
-        '<button class="primary" onclick="submitText()">Submit</button>';
+        'placeholder="Type a letter or the answer…" onpaste="return false" onkeydown="if(event.key===\\'Enter\\')submitText()">';
     } else {
       inputHtml = '<input id="ans" type="text" autocomplete="off" autocapitalize="off" ' +
-        'placeholder="Type your answer…" onpaste="return false" onkeydown="if(event.key===\\'Enter\\')submitText()">' +
-        '<button class="primary" onclick="submitText()">Submit</button>';
+        'placeholder="Type your answer…" onpaste="return false" onkeydown="if(event.key===\\'Enter\\')submitText()">';
     }
     // Multiple answers are allowed (like typing in Discord): note the last one, keep inputs open.
     if (prior) inputHtml = '<div class="status ok">✓ Submitted: ' + esc(prior) +
       ' — you can submit again</div>' + inputHtml;
   }
 
+  const actionRow = '<div class="actionrow">' +
+    (state.already_answered ? '' : '<button class="primary" onclick="submitText()">Submit</button>') +
+    flagHtml(state) + '</div>';
+
   const timerHtml = state.ends_at ? '<span id="timer" class="timer">--</span>' : '';
   app.innerHTML = simpleMode
-    ? inputHtml + '<div id="status" class="status"></div>' + legendHtml(state) + flagHtml(state)
+    ? inputHtml + actionRow + '<div id="status" class="status"></div>' + legendHtml(state)
     : '<div class="qhead"><span class="cat">' + esc(state.category || '') + '</span>' +
         timerHtml + '</div>' +
         (state.question ? '<div class="q">' + esc(state.question) + '</div>' : '') +
         imgHtml(state) + puzzleHtml(state) +
         (state.warning ? '<div class="warn">' + esc(state.warning) + '</div>' : '') + inputHtml +
-        '<div id="status" class="status"></div>' + flagHtml(state) +
+        actionRow + '<div id="status" class="status"></div>' +
         scoreboardHtml(state) + legendHtml(state) + roundHtml(state);
 
   if (isNew && !state.already_answered) { const i = document.getElementById('ans'); if (i) i.focus(); }
