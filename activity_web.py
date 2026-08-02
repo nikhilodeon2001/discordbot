@@ -510,7 +510,8 @@ function scoreboardHtml(state) {
       (r.lightning ? '<span class="sblight">⚡' + r.lightning + '</span>' : '') +
       '<span class="sbscore">' + esc(r.score || '') + '</span>' +
       (r.delta ? '<span class="sbdelta">' + esc(r.delta) + '</span>' : '') +
-      (r.via_companion ? '<span class="sbapp" title="Answered via the app">🌐</span>' : '') +
+      (r.via_activity ? '<span class="sbapp" title="Answered via the Activity">🧪</span>' :
+        r.via_companion ? '<span class="sbapp" title="Answered via the app">🌐</span>' : '') +
     '</div>';
   }).join('') + note + '</div>';
 }
@@ -756,7 +757,8 @@ function render(state) {
       (state.question ? '<div class="q">' + esc(state.question) + '</div>' : '') +
       imgHtml(state) + puzzleHtml(state) +
       (state.warning ? '<div class="warn">' + esc(state.warning) + '</div>' : '') + inputHtml +
-      '<div id="status" class="status"></div>' + flagHtml(state) + legendHtml(state) + roundHtml(state);
+      '<div id="status" class="status"></div>' + flagHtml(state) +
+      scoreboardHtml(state) + legendHtml(state) + roundHtml(state);
 
   if (isNew && !state.already_answered) { const i = document.getElementById('ans'); if (i) i.focus(); }
   if (countdownTimer) { clearInterval(countdownTimer); countdownTimer = null; }

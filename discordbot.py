@@ -619,6 +619,10 @@ _companion_flagged_user_ids = set()
 # subset of the above who got it right via a companion-app (web) answer, for the 📱 scoreboard icon.
 _companion_web_correct_user_ids = set()
 
+# further subset of the above who answered via the Discord Activity specifically (rather than the
+# phone companion app), for the scoreboard's 🧪 icon.
+_companion_activity_correct_user_ids = set()
+
 # Add this global variable to hold the submission queue
 submission_queue = []
 max_queue_size = 100  # Number of submissions to accumulate before flushing
@@ -21663,7 +21667,8 @@ async def check_correct_responses_delete(question_ask_time, trivia_answer_list, 
     # Define the first item in the list as trivia_answer
     trivia_answer = trivia_answer_list[0]  
     correct_responses = []
-    web_correct_user_ids = set()  # who got it right via a companion-app answer (for the 📱 icon)
+    web_correct_user_ids = set()  # who got it right via a companion/Activity answer (for the 🌐 icon)
+    activity_correct_user_ids = set()  # narrower subset: specifically via the Activity (for the 🧪 icon)
     has_responses = False
 
     fastest_correct_user = None
@@ -21795,6 +21800,8 @@ async def check_correct_responses_delete(question_ask_time, trivia_answer_list, 
             correct_responses.append((display_name, points, response_time, message_content, sender_id, message, None))
             if response.get("source") == "web":
                 web_correct_user_ids.add(sender_id)
+                if response.get("via_activity"):
+                    activity_correct_user_ids.add(sender_id)
 
             # Check if this is the fastest/slowest correct response so far
             if golf_mode:
@@ -21906,11 +21913,12 @@ async def check_correct_responses_delete(question_ask_time, trivia_answer_list, 
     # Hand this question's deltas + reveal mode to the companion scoreboard builder, plus the set of
     # user_ids who got it right so the companion reveal can tell each player their result.
     global _companion_last_points_gained, _companion_show_standings
-    global _companion_correct_user_ids, _companion_web_correct_user_ids
+    global _companion_correct_user_ids, _companion_web_correct_user_ids, _companion_activity_correct_user_ids
     _companion_last_points_gained = points_gained_this_question
     _companion_show_standings = show_standings_after
     _companion_correct_user_ids = {r[4] for r in correct_responses}
     _companion_web_correct_user_ids = web_correct_user_ids
+    _companion_activity_correct_user_ids = activity_correct_user_ids
 
     # Add the current state of the scoreboard to round_data
     current_question_data = next((q for q in round_data["questions"] if q["question_number"] == question_number), None)
@@ -22533,6 +22541,7 @@ def _compute_standings_rows(points_gained_this_question=None, row_notes=None,
             "delta_text": delta_text,
             "lightning_count": fastest_count,
             "via_companion": user_id in _companion_web_correct_user_ids,
+            "via_activity": user_id in _companion_activity_correct_user_ids,
         })
 
     return rows
@@ -25230,6 +25239,7 @@ def _companion_scoreboard():
         "delta": r.get("delta_text", ""),
         "lightning": r.get("lightning_count", 0),
         "via_companion": r.get("via_companion", False),
+        "via_activity": r.get("via_activity", False),
     } for r in rows]
 
 
@@ -25280,11 +25290,13 @@ def companion_resolve_member(user_id):
     return member.display_name
 
 
-def companion_submit_answer(user_id, display_name, text):
-    """Inject a phone answer into collected_responses with a server-authoritative timestamp.
-    Matches Discord's typed-answer behavior: a user may submit multiple answers (grading may
-    only look at the first) -- the only lock is the multiple-choice button, which is one-and-done
-    on Discord (answered_user_ids), so a button answer blocks further submits like it does there."""
+def companion_submit_answer(user_id, display_name, text, client="companion"):
+    """Inject a phone/Activity answer into collected_responses with a server-authoritative
+    timestamp. Matches Discord's typed-answer behavior: a user may submit multiple answers
+    (grading may only look at the first) -- the only lock is the multiple-choice button, which is
+    one-and-done on Discord (answered_user_ids), so a button answer blocks further submits like it
+    does there. `client` ("companion" or "activity", from companion_web._client_kind_from_request)
+    is carried into `via_activity` so the scoreboard can show 🧪 instead of 🌐 for Activity answers."""
     now = time.time()
     if question_asked_start is None or question_asked_end is None or not (question_asked_start <= now <= question_asked_end):
         return {"ok": False, "reason": "closed"}
@@ -25305,7 +25317,8 @@ def companion_submit_answer(user_id, display_name, text):
         "message_content": text,
         "response_time": now,
         "message": None,
-        "source": "web",  # marks a companion-app answer, for the 📱 scoreboard indicator
+        "source": "web",  # marks a companion/Activity answer, for the 🌐 scoreboard indicator
+        "via_activity": client == "activity",  # narrower subset, for the 🧪 indicator
     })
     return {"ok": True}
 
@@ -25444,8 +25457,9 @@ def _companion_route_state(user_id, game):
     return build_companion_state(user_id)
 
 
-def _companion_route_submit_answer(user_id, display_name, text, game):
-    return simply_trivia.companion_submit_answer(user_id, display_name, text) if game == "simply" else companion_submit_answer(user_id, display_name, text)
+def _companion_route_submit_answer(user_id, display_name, text, game, client):
+    return (simply_trivia.companion_submit_answer(user_id, display_name, text, client)
+            if game == "simply" else companion_submit_answer(user_id, display_name, text, client))
 
 
 async def _companion_route_submit_action(user_id, display_name, text, game):

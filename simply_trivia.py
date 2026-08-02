@@ -38,6 +38,7 @@ _companion_current_revealed = True  # False while simply_current_question is ope
 _companion_answers = []             # [{"user_id","text","correct"}] -- every raw guess this question, Discord + web
 _companion_correct_user_ids = set() # who got this question right (Discord + web)
 _companion_web_user_ids = set()     # who answered via the companion app this question, for the 🌐 icon
+_companion_activity_user_ids = set() # narrower subset: specifically via the Discord Activity, for the 🧪 icon
 _companion_flagged_user_ids = set() # one-flag-per-question guard, reset each question
 _companion_last_streak = 0          # streak value at the last reveal, read by _companion_scoreboard()
 _fuzzy_match_func = None            # captured once so companion callbacks (invoked outside the loop) can reach it
@@ -452,8 +453,8 @@ def build_companion_state(user_id=None):
 
 def _companion_scoreboard():
     """Simply Trivia has no points/round scoreboard -- just who got THIS question right, mirroring
-    the same {rank, name, score, delta, lightning, via_companion} row shape the companion's
-    scoreboardHtml() renders, so the 🌐 app-answer icon still works unchanged."""
+    the same {rank, name, score, delta, lightning, via_companion, via_activity} row shape the
+    companion's scoreboardHtml() renders, so the 🌐/🧪 answer-source icons still work unchanged."""
     rows = []
     if first_answerer:
         rows.append({
@@ -463,6 +464,7 @@ def _companion_scoreboard():
             "delta": "",
             "lightning": 0,
             "via_companion": first_answerer.id in _companion_web_user_ids,
+            "via_activity": first_answerer.id in _companion_activity_user_ids,
         })
     for user in additional_answerers:
         rows.append({
@@ -472,6 +474,7 @@ def _companion_scoreboard():
             "delta": "",
             "lightning": 0,
             "via_companion": user.id in _companion_web_user_ids,
+            "via_activity": user.id in _companion_activity_user_ids,
         })
     return rows
 
@@ -511,11 +514,15 @@ def companion_reveal_extra(user_id):
     }
 
 
-def companion_submit_answer(user_id, display_name, text):
-    """Inject a phone answer into the same first-to-answer tracking a Discord-typed guess uses."""
+def companion_submit_answer(user_id, display_name, text, client="companion"):
+    """Inject a phone/Activity answer into the same first-to-answer tracking a Discord-typed guess
+    uses. `client` ("companion" or "activity") additionally marks Activity answers so the
+    scoreboard can show 🧪 instead of 🌐 for them."""
     if active_question is None:
         return {"ok": False, "reason": "closed"}
     _companion_web_user_ids.add(user_id)
+    if client == "activity":
+        _companion_activity_user_ids.add(user_id)
     _record_guess(_CompanionUser(user_id, display_name), text, _fuzzy_match_func)
     return {"ok": True}
 
@@ -744,6 +751,7 @@ async def start_simply_trivia(bot, db, channel_id, fuzzy_match_func, count_flags
             _companion_answers.clear()
             _companion_correct_user_ids.clear()
             _companion_web_user_ids.clear()
+            _companion_activity_user_ids.clear()
             _companion_flagged_user_ids.clear()
             try:
                 companion_web.publish_state(build_companion_state(), game="simply")

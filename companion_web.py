@@ -158,6 +158,14 @@ def _session_from_request(request):
     return payload
 
 
+def _client_kind_from_request(request):
+    """Which surface authenticated this request: the Activity (no session cookie -- auth arrives
+    via the Authorization header, since the Activity iframe can't use the companion's session
+    cookie -- see _session_from_request) vs. the phone/web companion (session cookie present).
+    Used only to tag where a submitted answer came from, for the scoreboard's per-answer icon."""
+    return "companion" if request.cookies.get(_SESSION_COOKIE, "") else "activity"
+
+
 def get_base_url():
     """Public accessor for the companion app's base URL, so other modules (e.g. simply_trivia.py,
     building a flag link for an embed) don't need to reach into the private `_base_url` global."""
@@ -488,9 +496,10 @@ async def handle_answer(request):
     if not answer:
         return web.json_response({"ok": False, "reason": "empty"}, status=400)
     game = _game_from_body(body)
+    client = _client_kind_from_request(request)
 
     try:
-        result = _submit_answer(user_id, session["display_name"], answer, game) if _submit_answer else {"ok": False, "reason": "unavailable"}
+        result = _submit_answer(user_id, session["display_name"], answer, game, client) if _submit_answer else {"ok": False, "reason": "unavailable"}
     except Exception:
         return web.json_response({"ok": False, "reason": "server_error"}, status=500)
     status = 200 if result.get("ok") else 409
@@ -1446,7 +1455,8 @@ function scoreboardHtml(state) {
       (r.lightning ? '<span class="sblight">⚡' + r.lightning + '</span>' : '') +
       '<span class="sbscore">' + esc(r.score || '') + '</span>' +
       (r.delta ? '<span class="sbdelta">' + esc(r.delta) + '</span>' : '') +
-      (r.via_companion ? '<span class="sbapp" title="Answered via the app">🌐</span>' : '') +
+      (r.via_activity ? '<span class="sbapp" title="Answered via the Activity">🧪</span>' :
+        r.via_companion ? '<span class="sbapp" title="Answered via the app">🌐</span>' : '') +
     '</div>';
   }).join('') + note + '</div>';
 }
@@ -1650,7 +1660,8 @@ function render(state) {
         (state.question ? '<div class="q">' + esc(state.question) + '</div>' : '') +
         imgHtml(state) + puzzleHtml(state) +
         (state.warning ? '<div class="warn">' + esc(state.warning) + '</div>' : '') + inputHtml +
-        '<div id="status" class="status"></div>' + flagHtml(state) + legendHtml(state) + roundHtml(state);
+        '<div id="status" class="status"></div>' + flagHtml(state) +
+        scoreboardHtml(state) + legendHtml(state) + roundHtml(state);
 
   if (isNew && !state.already_answered) { const i = document.getElementById('ans'); if (i) i.focus(); }
   if (countdownTimer) { clearInterval(countdownTimer); countdownTimer = null; }
