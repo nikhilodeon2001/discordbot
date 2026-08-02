@@ -24078,7 +24078,7 @@ async def start_trivia():
             if not update_pending:
                 await safe_send(
                     channel,
-                    content="📊 **Quick poll:** which device(s) do you usually play trivia on?",
+                    content="​\n📊 **Quick poll:** which device(s) do you usually play trivia on?\n​",
                     view=DevicePollView(),
                     use_embed=False,
                 )
