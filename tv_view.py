@@ -94,12 +94,13 @@ _TV_HTML = """<!doctype html>
     border-radius: 10px; background: rgba(127,127,127,.10); color: var(--muted); font-size: 1rem;
     cursor: pointer; }
   .lineup {
-    grid-area: lineup; display: flex; gap: 10px; align-items: center;
-    padding: 14px 28px; flex-wrap: wrap;
+    grid-area: lineup; display: flex; align-items: center;
+    padding: 14px 28px; overflow: hidden;
   }
+  .lineup-inner { display: flex; gap: 10px; align-items: center; flex-wrap: nowrap; transform-origin: left center; }
   .lineup .chip {
     padding: 6px 14px; border-radius: 999px; font-size: 15px; background: var(--card);
-    border: 1px solid var(--line); color: var(--muted);
+    border: 1px solid var(--line); color: var(--muted); white-space: nowrap;
   }
   .lineup .chip.cur { background: var(--blue); border-color: var(--blue); color: #fff; font-weight: 600; }
   .lineup .chip.done { opacity: 0.5; text-decoration: line-through; }
@@ -121,8 +122,8 @@ _TV_HTML = """<!doctype html>
     padding: 16px 22px; font-size: 24px; text-align: left;
   }
   .answer-banner { font-size: 32px; font-weight: 700; color: #38c26b; }
-  .modes { display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; }
-  .mode-pill { background: var(--card); border: 1px solid var(--line); border-radius: 999px; padding: 6px 14px; font-size: 16px; }
+  .modes { display: flex; gap: 10px; flex-wrap: nowrap; }
+  .mode-pill { background: var(--card); border: 1px solid var(--line); border-radius: 999px; padding: 6px 14px; font-size: 16px; white-space: nowrap; }
   .idle { font-size: 32px; color: var(--muted); }
   .side {
     grid-area: side; border-left: 1px solid var(--line);
@@ -192,7 +193,8 @@ _TV_HTML = """<!doctype html>
     var modes = (state.modes || []).map(function (m) {
       return '<div class="mode-pill">' + esc(m.emoji) + ' ' + esc(m.label) + '</div>';
     }).join("");
-    el.innerHTML = chips + (modes ? '<div class="modes">' + modes + '</div>' : "");
+    el.innerHTML = '<div class="lineup-inner">' + chips + (modes ? '<div class="modes">' + modes + '</div>' : "") + '</div>';
+    fitContent(el, el.querySelector(".lineup-inner"));
   }
 
   var timerInterval = null;
@@ -210,13 +212,15 @@ _TV_HTML = """<!doctype html>
     if (rem <= 0) stopTimer();
   }
 
-  // Scales #main's rendered content down (never up) to guarantee it fits the box without
-  // scrolling, since question/answer length, images, and choice counts vary too much for any
-  // fixed font-size to guarantee no overflow.
+  // Scales inner's rendered content down (never up) to guarantee it fits container's content
+  // box without scrolling, since text/image/pill-list length varies too much for any fixed
+  // font-size to guarantee no overflow.
   function fitContent(container, inner) {
     if (!inner) return;
     inner.style.transform = "none";
-    var cw = container.clientWidth, ch = container.clientHeight;
+    var cs = getComputedStyle(container);
+    var cw = container.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+    var ch = container.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom);
     var iw = inner.scrollWidth, ih = inner.scrollHeight;
     if (!cw || !ch || !iw || !ih) return;
     var scale = Math.min(1, cw / iw, ch / ih);
@@ -341,7 +345,11 @@ _TV_HTML = """<!doctype html>
   var resizeRaf = null;
   window.addEventListener("resize", function () {
     if (resizeRaf) cancelAnimationFrame(resizeRaf);
-    resizeRaf = requestAnimationFrame(fitMain);
+    resizeRaf = requestAnimationFrame(function () {
+      var lineup = document.getElementById("lineup");
+      fitContent(lineup, lineup.querySelector(".lineup-inner"));
+      fitMain();
+    });
   });
 })();
 </script>
