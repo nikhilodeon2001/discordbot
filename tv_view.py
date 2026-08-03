@@ -68,13 +68,13 @@ _TV_HTML = """<!doctype html>
     --header-logo:url(/assets/logo-header.webp);
   }
   * { box-sizing: border-box; }
-  html, body { margin: 0; padding: 0; width: 100vw; min-height: 100vh; overflow-x: hidden; }
+  html, body { margin: 0; padding: 0; width: 100vw; height: 100vh; overflow: hidden; }
   body {
     position: relative;
     color: var(--fg); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
     background: radial-gradient(1100px 560px at 50% -12%, rgba(20,109,232,.14), transparent 60%),
                 linear-gradient(180deg, var(--bg), var(--bg2)); background-attachment: fixed;
-    display: grid; grid-template-rows: auto auto 1fr; grid-template-columns: 1fr 340px;
+    display: grid; grid-template-rows: auto auto minmax(0, 1fr); grid-template-columns: 1fr minmax(0, 340px);
     grid-template-areas: "brand brand" "lineup lineup" "main side";
   }
   .brand {
@@ -83,10 +83,8 @@ _TV_HTML = """<!doctype html>
   }
   .brandlogo { height: 56px; width: 56px; flex: none;
     background: var(--header-logo) left center/contain no-repeat; }
-  .game-tabs { display: flex; gap: 4px; max-width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch;
-    scrollbar-width: none; background: rgba(127,127,127,.10);
+  .game-tabs { display: flex; gap: 4px; max-width: 100%; flex-wrap: wrap; background: rgba(127,127,127,.10);
     border: 1px solid var(--line); border-radius: 12px; padding: 3px; }
-  .game-tabs::-webkit-scrollbar { display: none; }
   .tab-btn { flex: none; border: none; background: transparent; color: var(--muted); cursor: pointer;
     font-size: 15px; font-weight: 700; letter-spacing: .01em; padding: 9px 16px; border-radius: 9px;
     white-space: nowrap; transition: background-color .15s, color .15s; }
@@ -97,7 +95,7 @@ _TV_HTML = """<!doctype html>
     cursor: pointer; }
   .lineup {
     grid-area: lineup; display: flex; gap: 10px; align-items: center;
-    padding: 14px 28px; overflow-x: auto; white-space: nowrap;
+    padding: 14px 28px; flex-wrap: wrap;
   }
   .lineup .chip {
     padding: 6px 14px; border-radius: 999px; font-size: 15px; background: var(--card);
@@ -107,8 +105,10 @@ _TV_HTML = """<!doctype html>
   .lineup .chip.done { opacity: 0.5; text-decoration: line-through; }
   .main {
     grid-area: main; display: flex; flex-direction: column; align-items: center;
-    justify-content: center; padding: 40px 60px; text-align: center; gap: 24px; min-width: 0;
+    justify-content: center; padding: 40px 60px; text-align: center;
+    min-width: 0; min-height: 0; overflow: hidden;
   }
+  .fitwrap { display: flex; flex-direction: column; align-items: center; gap: 24px; }
   .qheader { display: flex; align-items: center; gap: 16px; }
   .category { font-size: 26px; color: var(--muted); text-transform: uppercase; letter-spacing: 2px; }
   .timer { font-size: 26px; font-weight: 800; font-variant-numeric: tabular-nums; color: var(--muted); }
@@ -210,11 +210,30 @@ _TV_HTML = """<!doctype html>
     if (rem <= 0) stopTimer();
   }
 
+  // Scales #main's rendered content down (never up) to guarantee it fits the box without
+  // scrolling, since question/answer length, images, and choice counts vary too much for any
+  // fixed font-size to guarantee no overflow.
+  function fitContent(container, inner) {
+    if (!inner) return;
+    inner.style.transform = "none";
+    var cw = container.clientWidth, ch = container.clientHeight;
+    var iw = inner.scrollWidth, ih = inner.scrollHeight;
+    if (!cw || !ch || !iw || !ih) return;
+    var scale = Math.min(1, cw / iw, ch / ih);
+    inner.style.transform = scale < 1 ? "scale(" + scale + ")" : "none";
+  }
+
+  function fitMain() {
+    var main = document.getElementById("main");
+    fitContent(main, main.querySelector(".fitwrap"));
+  }
+
   function renderMainOrSimply(state) {
     var main = document.getElementById("main");
     stopTimer();
     if (state.phase === "idle" || !state.phase) {
-      main.innerHTML = '<div class="idle">Waiting for the next question…</div>';
+      main.innerHTML = '<div class="fitwrap"><div class="idle">Waiting for the next question…</div></div>';
+      fitMain();
       return;
     }
     // Jeopardy question cards render the category into the image itself (a blank question with
@@ -240,7 +259,8 @@ _TV_HTML = """<!doctype html>
         return '<div class="choice">' + esc(c.text || c) + '</div>';
       }).join("") + '</div>';
     }
-    main.innerHTML = html;
+    main.innerHTML = '<div class="fitwrap">' + html + '</div>';
+    fitMain();
     if (state.phase === "open" && state.ends_at) {
       tickTimer(state.ends_at);
       timerInterval = setInterval(function () { tickTimer(state.ends_at); }, 250);
@@ -250,13 +270,15 @@ _TV_HTML = """<!doctype html>
   function renderArena(state) {
     var main = document.getElementById("main");
     if (state.phase === "idle" || !state.phase) {
-      main.innerHTML = '<div class="idle">No mini-game running</div>';
+      main.innerHTML = '<div class="fitwrap"><div class="idle">No mini-game running</div></div>';
+      fitMain();
       return;
     }
     var whoLine = "";
     var names = (state.prompt && state.prompt.allowed_names) || [];
     if (names.length) whoLine = '<div class="arena-turn">' + (state.phase === "spectating" ? "Watching " : "Waiting on ") + esc(names.join(", ")) + '</div>';
-    main.innerHTML = '<div class="category">Mini-Game Arena</div><div class="question">' + esc(state.game_name || "") + '</div>' + whoLine;
+    main.innerHTML = '<div class="fitwrap"><div class="category">Mini-Game Arena</div><div class="question">' + esc(state.game_name || "") + '</div>' + whoLine + '</div>';
+    fitMain();
   }
 
   function renderSide(state) {
@@ -315,6 +337,12 @@ _TV_HTML = """<!doctype html>
     b.classList.toggle("active", b.getAttribute("data-game") === currentGame);
   });
   loadGame(currentGame);
+
+  var resizeRaf = null;
+  window.addEventListener("resize", function () {
+    if (resizeRaf) cancelAnimationFrame(resizeRaf);
+    resizeRaf = requestAnimationFrame(fitMain);
+  });
 })();
 </script>
 </body>
