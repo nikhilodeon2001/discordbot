@@ -22553,9 +22553,11 @@ def _compute_standings_rows(points_gained_this_question=None, row_notes=None,
     # Whoever gained the most this question is the fastest correct answerer (points scale
     # with speed, plus the fastest gets first_place_bonus on top) -- so the top gain doubles
     # as a "fastest this round" flag for the renderers to highlight, with no extra plumbing.
+    # A solo leaderboard has nobody to have beaten, so it never counts as "fastest" -- their
+    # delta stays green and their name stays uncolored instead of gold.
     top_gain = max((r["gained"] for r in rows if r["gained"] is not None), default=None)
     for r in rows:
-        r["is_top_gain"] = r["gained"] is not None and r["gained"] == top_gain
+        r["is_top_gain"] = len(rows) > 1 and r["gained"] is not None and r["gained"] == top_gain
 
     return rows
 
