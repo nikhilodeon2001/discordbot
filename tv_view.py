@@ -296,7 +296,7 @@ _TV_HTML = """<!doctype html>
       html += '<div class="score-title">Standings</div>';
       rows.forEach(function (r) {
         html += '<div class="score-row"><div class="score-rank">' + esc(r.rank) + '</div>' +
-          '<div class="score-name">' + esc(r.name) + (r.via_companion ? " 🌐" : "") + '</div>' +
+          '<div class="score-name">' + esc(r.name) + (r.via_activity ? " 🧪" : r.via_companion ? " 🌐" : "") + '</div>' +
           (r.lightning ? '<div class="score-lightning">⚡' + esc(r.lightning) + '</div>' : '') +
           '<div class="score-val">' + esc(r.score) + '</div>' +
           (r.delta ? '<div class="score-delta">' + esc(r.delta) + '</div>' : '') +

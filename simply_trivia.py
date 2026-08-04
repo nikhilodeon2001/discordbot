@@ -848,7 +848,12 @@ async def start_simply_trivia(bot, db, channel_id, fuzzy_match_func, count_flags
                 await _real_record_question_outcome(question.get("db"), question.get("_id"), True, any_guess_received)
 
                 def _mention_with_indicator(user):
-                    tag = " 🌐" if user.id in _companion_web_user_ids else ""
+                    if user.id in _companion_activity_user_ids:
+                        tag = " 🧪"
+                    elif user.id in _companion_web_user_ids:
+                        tag = " 🌐"
+                    else:
+                        tag = ""
                     return f"{user.mention}{tag}"
 
                 answer_text = f"[**Answer:**]({flag_url}) {main_answer}\n\n"
