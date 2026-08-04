@@ -1061,7 +1061,8 @@ current_answer_view = None
 current_answer_message = None
 previous_answer_message = None
 current_report_view = None
-current_countdown_button = None
+current_question_embed = None
+current_footer_base_text = None
 pending_intro_preview_view = None  # Currently-live #newintro/#uploadintro confirmation, if any
 answer_buttons_enabled = True  # Feature flag: click-to-answer buttons on multiple-choice trivia questions
 jeopardy_boosted = False  # Set by "Alex"/"Xela" this round - signals 3-way coordination with crossword/SAT boosts
@@ -21078,7 +21079,7 @@ def apply_glyphs(text):
 
 async def ask_question(trivia_category, trivia_question, trivia_url, trivia_answer_list, question_number, trivia_db=None, trivia_id=None, trivia_paragraph=None):
     """Ask the trivia question."""
-    global current_answer_view, current_answer_message, current_report_view, current_countdown_button
+    global current_answer_view, current_answer_message, current_report_view, current_question_embed, current_footer_base_text
     _companion_set_puzzle_text(None)  # cleared each question; set below for text-mode puzzles
     _companion_set_footer_text(None)  # cleared each question; set from footer_text before the send
     await record_question_asked(trivia_db, trivia_id)
@@ -21283,22 +21284,13 @@ async def ask_question(trivia_category, trivia_question, trivia_url, trivia_answ
         "trivia_id": trivia_id,
     }
     # Testing the URL-based flag method here instead of the \ud83d\udea9 button (see ask_question's category
-    # link below) -- /flag still works unchanged, and current_report_view still exists to carry
-    # the countdown button, just without its \ud83d\udea9 child.
+    # link below) -- /flag still works unchanged, just without its \ud83d\udea9 child.
     current_report_view = ReportQuestionView(_question_dict)
     current_report_view.remove_item(current_report_view.report_btn)
 
     if answer_view is not None:
-        countdown_btn = discord.ui.Button(label=f"\u23f3 {question_time}s", style=discord.ButtonStyle.secondary, disabled=True, row=1)
-        answer_view.add_item(countdown_btn)
-        current_countdown_button = countdown_btn
-
         view_kwargs = {"view": answer_view}
     else:
-        countdown_btn = discord.ui.Button(label=f"\u23f3 {question_time}s", style=discord.ButtonStyle.secondary, disabled=True, row=0)
-        current_report_view.add_item(countdown_btn)
-        current_countdown_button = countdown_btn
-
         view_kwargs = {"view": current_report_view}
 
     if len(message_body) > 4000:
@@ -21330,6 +21322,8 @@ async def ask_question(trivia_category, trivia_question, trivia_url, trivia_answ
             embed.description = clean_leading_trailing_junk(message_body) + "\n​"
         message = await safe_send(channel, message_body, embed=embed, **view_kwargs)
 
+    current_question_embed = embed
+    current_footer_base_text = footer_text
     current_answer_view = answer_view
     current_answer_message = message
 
@@ -23727,7 +23721,7 @@ async def start_trivia():
     global scoreboard, current_longest_round_streak, current_longest_answer_streak
     global headers, params, filter_json, since_token, round_count, selected_questions, magic_number
     global previous_question, current_question
-    global current_answer_view, current_answer_message, previous_answer_message, current_report_view, current_countdown_button
+    global current_answer_view, current_answer_message, previous_answer_message, current_report_view, current_question_embed, current_footer_base_text
     global db
     global question_responders, round_responders
     global question_asked_start, question_asked_end
@@ -23942,15 +23936,15 @@ async def start_trivia():
                 # drift from a fixed-count sleep(1) loop.
                 while True:
                     remaining = max(0, math.ceil(question_asked_end - time.time()))
-                    if current_countdown_button is not None:
-                        view_to_edit = current_answer_view if current_answer_view is not None else current_report_view
+                    if current_question_embed is not None:
                         if remaining == 0:
-                            view_to_edit.remove_item(current_countdown_button)
+                            current_question_embed.set_footer(text=current_footer_base_text)
                         else:
-                            current_countdown_button.label = f"⏳ {remaining}s"
-                            current_countdown_button.style = discord.ButtonStyle.danger if remaining <= 5 else discord.ButtonStyle.secondary
+                            timer_line = f"⏳ {remaining}s"
+                            new_footer = f"{current_footer_base_text}\n\n{timer_line}" if current_footer_base_text else timer_line
+                            current_question_embed.set_footer(text=new_footer)
                         try:
-                            await current_answer_message.edit(view=view_to_edit)
+                            await current_answer_message.edit(embed=current_question_embed)
                         except (discord.NotFound, discord.HTTPException, aiohttp.ClientError):
                             break
                     if remaining <= 0:
