@@ -19335,12 +19335,13 @@ def generate_scoreboard_image(rows, title_outer_emoji="🏔️", title_inner_emo
         # their own font (baseline-aligned via draw_name_atoms), emoji pasted as icons -- instead
         # of one multiline_text call, which can only use a single font, can't paint color emoji,
         # and would align mixed fonts by a naive shared top instead of a shared baseline.
+        name_color = gold_color if row.get("is_top_gain") else text_color
         line_metrics = [line_font_metrics(line, name_size) for line in lines]
         block_height = sum(ascent + descent + 6 for ascent, descent in line_metrics)
         line_top_y = y + height // 2 - block_height // 2
         for line, (ascent, descent) in zip(lines, line_metrics):
             baseline_y = line_top_y + ascent
-            draw_name_atoms(draw, img, line, name_x, baseline_y, name_size, text_color, ascent, descent)
+            draw_name_atoms(draw, img, line, name_x, baseline_y, name_size, name_color, ascent, descent)
             line_top_y += ascent + descent + 6
 
         if row["lightning_count"] > 0:

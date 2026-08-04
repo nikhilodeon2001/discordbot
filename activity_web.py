@@ -436,6 +436,7 @@ _ACTIVITY_HTML = """<!doctype html>
     background:rgba(127,127,127,.07); font-size:.92rem; }
   .sbrank { min-width:1.5em; text-align:center; flex:none; }
   .sbname { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .sbname.fastest { color:#ffd24a; }
   .sblight { flex:none; font-size:.82rem; color:var(--muted); margin-right:6px; }
   .sbscore { flex:none; font-variant-numeric:tabular-nums; font-weight:700; }
   .sbdelta { flex:none; color:#3ddc84; font-weight:600; font-size:.85em; margin-left:4px; }
@@ -510,7 +511,7 @@ function scoreboardHtml(state) {
   return '<div class="sbtitle">Scoreboard</div><div class="sb">' + sb.map(function (r) {
     return '<div class="sbrow">' +
       '<span class="sbrank">' + esc(r.rank || '') + '</span>' +
-      '<span class="sbname">' + esc(r.name || '') + '</span>' +
+      '<span class="sbname' + (r.fastest_this_round ? ' fastest' : '') + '">' + esc(r.name || '') + '</span>' +
       (r.lightning ? '<span class="sblight">⚡' + r.lightning + '</span>' : '') +
       '<span class="sbscore">' + esc(r.score || '') + '</span>' +
       (r.delta ? '<span class="sbdelta' + (r.fastest_this_round ? ' fastest' : '') + '">' + esc(r.delta) + '</span>' : '') +
