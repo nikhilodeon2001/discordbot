@@ -19179,6 +19179,8 @@ def generate_scoreboard_image(rows, title_outer_emoji="🏔️", title_inner_emo
     background_color = (32, 34, 37)  # Discord dark-theme neutral
     text_color = (255, 255, 255)
     muted_color = (170, 175, 180)
+    gold_color = (255, 210, 74)  # #ffd24a -- fastest correct answerer's delta
+    green_color = (61, 220, 132)  # #3ddc84 -- everyone else's delta, matches the web UI's green
     img_width_min = 260
     img_width_max = 520
     side_margin = 14
@@ -19359,7 +19361,8 @@ def generate_scoreboard_image(rows, title_outer_emoji="🏔️", title_inner_emo
             draw.text((score_x + max_score_width - score_width, row_center_y), row["score_display"], fill=text_color, font=font)
 
         if row["delta_text"]:
-            draw.text((delta_x, row_center_y), row["delta_text"], fill=muted_color, font=font)
+            delta_color = gold_color if row.get("is_top_gain") else green_color
+            draw.text((delta_x, row_center_y), row["delta_text"], fill=delta_color, font=font)
 
         if max_phone_width and row.get("via_companion"):
             icon_emoji = "🧪" if row.get("via_activity") else "🌐"
@@ -22540,10 +22543,18 @@ def _compute_standings_rows(points_gained_this_question=None, row_notes=None,
             "name": display_name,
             "score_display": score_display,
             "delta_text": delta_text,
+            "gained": gained,
             "lightning_count": fastest_count,
             "via_companion": user_id in _companion_web_correct_user_ids,
             "via_activity": user_id in _companion_activity_correct_user_ids,
         })
+
+    # Whoever gained the most this question is the fastest correct answerer (points scale
+    # with speed, plus the fastest gets first_place_bonus on top) -- so the top gain doubles
+    # as a "fastest this round" flag for the renderers to highlight, with no extra plumbing.
+    top_gain = max((r["gained"] for r in rows if r["gained"] is not None), default=None)
+    for r in rows:
+        r["is_top_gain"] = r["gained"] is not None and r["gained"] == top_gain
 
     return rows
 
@@ -25238,6 +25249,7 @@ def _companion_scoreboard():
         "name": r.get("name", ""),
         "score": r.get("score_display", ""),
         "delta": r.get("delta_text", ""),
+        "fastest_this_round": r.get("is_top_gain", False),
         "lightning": r.get("lightning_count", 0),
         "via_companion": r.get("via_companion", False),
         "via_activity": r.get("via_activity", False),

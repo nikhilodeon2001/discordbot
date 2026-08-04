@@ -439,6 +439,7 @@ _ACTIVITY_HTML = """<!doctype html>
   .sblight { flex:none; font-size:.82rem; color:var(--muted); margin-right:6px; }
   .sbscore { flex:none; font-variant-numeric:tabular-nums; font-weight:700; }
   .sbdelta { flex:none; color:#3ddc84; font-weight:600; font-size:.85em; margin-left:4px; }
+  .sbdelta.fastest { color:#ffd24a; }
   .sbapp { flex:none; font-size:.9rem; margin-left:2px; }
   .sbnote { font-size:.78rem; color:var(--muted); margin-top:8px; text-align:center; }
   .legend { display:flex; flex-wrap:wrap; gap:6px; margin-top:16px; }
@@ -512,7 +513,7 @@ function scoreboardHtml(state) {
       '<span class="sbname">' + esc(r.name || '') + '</span>' +
       (r.lightning ? '<span class="sblight">⚡' + r.lightning + '</span>' : '') +
       '<span class="sbscore">' + esc(r.score || '') + '</span>' +
-      (r.delta ? '<span class="sbdelta">' + esc(r.delta) + '</span>' : '') +
+      (r.delta ? '<span class="sbdelta' + (r.fastest_this_round ? ' fastest' : '') + '">' + esc(r.delta) + '</span>' : '') +
       (r.via_activity ? '<span class="sbapp" title="Answered via the Activity">🧪</span>' :
         r.via_companion ? '<span class="sbapp" title="Answered via the app">🌐</span>' : '') +
     '</div>';
