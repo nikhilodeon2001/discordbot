@@ -23654,6 +23654,9 @@ class StartRoundView(discord.ui.View):
         await interaction.response.defer()
 
 
+# Kill switch for the device-usage poll shown before the round-end fun fact.
+device_poll_enabled = False
+
 DEVICE_POLL_OPTIONS = [
     discord.SelectOption(label="Desktop Web - Discord.com", value="desktop_web", emoji="🖥️"),
     discord.SelectOption(label="Desktop App — Windows", value="desktop_app_windows", emoji="🪟"),
@@ -24094,13 +24097,14 @@ async def start_trivia():
                 update_pending = await end_of_round(sent_round_end_message)
 
             if not update_pending:
-                await safe_send(
-                    channel,
-                    content="​\n📊 **Quick poll:** which device(s) do you usually play trivia on?\n​",
-                    view=DevicePollView(),
-                    use_embed=False,
-                )
-                await asyncio.sleep(4)
+                if device_poll_enabled:
+                    await safe_send(
+                        channel,
+                        content="​\n📊 **Quick poll:** which device(s) do you usually play trivia on?\n​",
+                        view=DevicePollView(),
+                        use_embed=False,
+                    )
+                    await asyncio.sleep(4)
 
                 blurb = await get_round_blurb()
                 if show_round_end_message:
