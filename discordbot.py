@@ -953,7 +953,7 @@ marx_mode_default = False
 marx_mode = marx_mode_default
 image_questions_default = True
 image_questions = image_questions_default
-okra_avatar_enabled = False  # code-level kill switch for the paid AI avatar edit -- flip to False to fall back to the plain Discord avatar
+okra_avatar_enabled = True  # code-level kill switch for the paid AI avatar edit -- flip to False to fall back to the plain Discord avatar
 scoreboard_image_enabled = True  # code-level kill switch for the image scoreboard experiment -- flip to False to fall back to the original monospace table
 sniper_mode_default = False
 sniper_mode = sniper_mode_default
@@ -17049,10 +17049,61 @@ async def generate_round_summary_image(round_data, winner, winner_id, winner_cof
         return False
 
 
+async def describe_okra_placement(avatar_url):
+    """Look at a member's avatar and suggest a short, funny, natural way to work a single
+    okra pod into it, informed by what's actually in the image (face close-up vs. hands
+    visible vs. headroom vs. group photo/pet/logo, etc). Returns a short phrase in the same
+    style as the old fixed hints ("as a jaunty hat", "tucked behind their ear"), or None on
+    any failure/timeout/empty response so the caller can fall back to a random hint."""
+    try:
+        response = await asyncio.wait_for(
+            openai_client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {
+                        "role": "system",
+                        "content": (
+                            "You suggest how to humorously edit a photo by adding a single "
+                            "okra pod (the green vegetable) into it. Look at what's actually "
+                            "in the image -- is it a close-up face with no headroom? Are "
+                            "hands visible? Is there already a hat or glasses in frame? Is "
+                            "it a group photo, a pet, a cartoon, or a logo? -- and suggest "
+                            "ONE short, funny, natural placement that fits what you see. "
+                            "Respond with only a short phrase in this style: 'as a jaunty "
+                            "hat', 'tucked behind their ear', 'peeking out of a shirt "
+                            "pocket', 'photobombing in the background'. No punctuation, no "
+                            "explanation, just the phrase."
+                        ),
+                    },
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": "Suggest a placement for the okra pod in this image.",
+                            },
+                            {"type": "image_url", "image_url": {"url": avatar_url}},
+                        ],
+                    },
+                ],
+                max_tokens=30,
+                temperature=0.9,
+            ),
+            timeout=15,
+        )
+        placement = response.choices[0].message.content.strip().strip('"').strip(".")
+        return placement or None
+    except Exception as e:
+        print(f"Okra placement classification failed, using random hint: {e}")
+        return None
+
+
 async def get_okra_avatar_url(member, user_id):
     """Return an S3 URL for member's avatar with okra worked in. Only regenerates when the
     member's underlying Discord avatar actually changes (compared via its hash key) --
-    not on any fixed schedule."""
+    not on any fixed schedule. Placement of the okra is chosen by looking at the actual
+    avatar first (see describe_okra_placement), falling back to a random generic hint if
+    that classification call fails."""
     try:
         current_avatar_key = member.display_avatar.key
 
@@ -17060,7 +17111,9 @@ async def get_okra_avatar_url(member, user_id):
         if cached and cached.get("source_avatar_key") == current_avatar_key:
             return cached["image_url"]
 
-        avatar_bytes = await member.display_avatar.replace(size=1024, format="png").read()
+        avatar_bytes_task = member.display_avatar.replace(size=1024, format="png").read()
+        placement_task = describe_okra_placement(member.display_avatar.replace(size=512, format="png").url)
+        avatar_bytes, placement = await asyncio.gather(avatar_bytes_task, placement_task)
 
         style_hints = [
             "as a jaunty hat", "as a mustache", "photobombing in the background",
@@ -17068,8 +17121,8 @@ async def get_okra_avatar_url(member, user_id):
             "as a pet", "growing out of their hair", "as sunglasses",
         ]
         prompt = (
-            f"Add a single okra pod into this image {random.choice(style_hints)}, in a "
-            "funny, lighthearted way that fits naturally with the rest of the image. "
+            f"Add a single okra pod into this image {placement or random.choice(style_hints)}, "
+            "in a funny, lighthearted way that fits naturally with the rest of the image. "
             "Keep everything else about the image the same."
         )
 
