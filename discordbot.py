@@ -17122,8 +17122,17 @@ async def get_okra_avatar_url(member, user_id):
         ]
         prompt = (
             f"Add a single okra pod into this image {placement or random.choice(style_hints)}, "
-            "in a funny, lighthearted way that fits naturally with the rest of the image. "
-            "Keep everything else about the image the same."
+            "in a funny, lighthearted way. This must be a seamless edit, not a sticker "
+            "pasted on top: render the okra pod in the exact same art style/medium as the "
+            "rest of the image (if it's a photo, render it photorealistically; if it's a "
+            "cartoon/anime/cel-shaded/painted/3D-rendered image, render the okra in that "
+            "same style with matching linework and shading technique). Match the image's "
+            "existing lighting direction, shadow style, color grading, and resolution, and "
+            "give the okra correct perspective and scale for where it's placed, occluded by "
+            "or occluding other elements as appropriate (e.g. following the contour of hair "
+            "or skin if tucked against it, casting a small consistent shadow). Do not leave "
+            "flat edges, mismatched resolution, or a floating cutout look. Keep everything "
+            "else about the image the same."
         )
 
         image_data = await _edit_image_bytes(avatar_bytes, prompt, IMAGE_PROVIDER, "gpt-image-1-mini", "medium")
