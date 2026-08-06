@@ -22486,28 +22486,25 @@ def build_standings_header(scoreboard_override=None, round_responders_override=N
     return f"🏔️📈 **Scoreboard** ({len(responders)}) 📈🏔️"
 
 
-_WIDE_UNICODE_RANGES = (
-    (0x1100, 0x115F),    # Hangul Jamo
-    (0x2460, 0x24FF),    # Enclosed Alphanumerics (circled letters/numbers)
-    (0x2600, 0x27BF),    # Misc symbols & dingbats
-    (0x1D400, 0x1D7FF),  # Mathematical Alphanumeric Symbols ("fancy font" letters)
-    (0x1F000, 0x1FAFF),  # Emoji & pictographs
-    (0xFF00, 0xFFEF),    # Fullwidth forms
-    (0x3000, 0x30FF),    # CJK/Japanese punctuation & kana
-    (0x4E00, 0x9FFF),    # CJK unified ideographs
+_NARROW_UNICODE_RANGES = (
+    (0x0000, 0x06FF),  # Latin, Greek, Cyrillic, Armenian, Hebrew, Arabic -- everyday alphabetic scripts
+    (0x10A0, 0x10FF),  # Georgian
 )
 
 
 def _char_display_width(ch):
-    """Approximate on-screen column width -- emoji, CJK, circled/fullwidth letters, and
-    other "fancy text" unicode render wider than one monospace cell in Discord's font, so
-    len()-based padding misaligns table columns whenever a name uses these ranges."""
+    """Approximate on-screen column width. Emoji, CJK, and rare/decorative scripts (Cherokee,
+    Egyptian Hieroglyphs, Mathematical Alphanumeric "fancy font" symbols, etc.) all render wider
+    than one monospace cell in Discord's font -- and the latter are exactly what people reach for
+    when they want a stylized username, since they look different from plain Latin precisely
+    *because* most fonts render them bigger/bolder via fallback. Rather than chase every such
+    block individually, default to wide and allowlist the scripts people actually type with day
+    to day; Unicode's own East-Asian-Width property doesn't help here since it marks Cherokee and
+    Hieroglyphs "Neutral", same as it would any ordinary narrow script."""
     if unicodedata.combining(ch):
         return 0
-    if unicodedata.east_asian_width(ch) in ("W", "F"):
-        return 2
     cp = ord(ch)
-    return 2 if any(lo <= cp <= hi for lo, hi in _WIDE_UNICODE_RANGES) else 1
+    return 1 if any(lo <= cp <= hi for lo, hi in _NARROW_UNICODE_RANGES) else 2
 
 
 def _display_width(s):
