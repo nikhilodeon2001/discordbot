@@ -5917,7 +5917,7 @@ class AnswerButtonView(discord.ui.View):
 
         user_id = interaction.user.id
 
-        if user_id in self.answered_user_ids or any(r["user_id"] == user_id for r in collected_responses):
+        if user_id in self.answered_user_ids:
             await interaction.response.send_message("✅ You already answered!", ephemeral=True)
             return
 
