@@ -40,7 +40,8 @@ async def _get_or_create_mirror_webhook(channel):
         webhook = discord.utils.get(webhooks, name=_MIRROR_WEBHOOK_NAME)
         if webhook is None:
             webhook = await channel.create_webhook(name=_MIRROR_WEBHOOK_NAME)
-    except (discord.HTTPException, discord.Forbidden):
+    except (discord.HTTPException, discord.Forbidden) as e:
+        print(f"⚠️ chat_mirror: failed to get/create webhook for #{channel.id}: {e}")
         return None
     _webhook_cache[channel.id] = webhook
     return webhook
@@ -72,8 +73,8 @@ async def _mirror_message(message, dest_channel):
             avatar_url=message.author.display_avatar.url,
             wait=True,
         )
-    except (discord.HTTPException, discord.Forbidden):
-        pass
+    except (discord.HTTPException, discord.Forbidden) as e:
+        print(f"⚠️ chat_mirror: failed to send mirrored message to #{dest_channel.id}: {e}")
 
 
 async def _worker(queue):

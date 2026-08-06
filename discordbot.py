@@ -24565,6 +24565,8 @@ async def on_message(message):
         dest_channel = message.guild.get_channel(dest_id)
         if dest_channel:
             chat_mirror.enqueue(message, dest_channel)
+        else:
+            print(f"⚠️ chat_mirror: destination channel {dest_id} not found in guild (source #{message.channel.id})")
 
     if message.channel.id == INTRO_IMAGE_ADMIN_CHANNEL_ID and message.author.id == okrag_id:
         if await handle_intro_image_admin_command(message):
@@ -24714,6 +24716,12 @@ async def on_message(message):
 @bot.event
 async def on_message_edit(before, after):
     if after.author == get_bot().user:
+        return
+
+    # Skip the chat-mirror's and companion app's webhook reposts -- Discord's async
+    # link-preview embed attach on these fires a phantom MESSAGE_UPDATE that would
+    # otherwise be misread as the user editing their trivia answer (see chat_mirror.py).
+    if (ACTIVITY_ENABLED and chat_mirror.is_mirror_webhook(after)) or companion_bridge.is_companion_relay_webhook(after):
         return
 
     # Only react to edits in this specific channel
