@@ -937,6 +937,16 @@ async def start_simply_trivia(bot, db, channel_id, fuzzy_match_func, count_flags
 
 # Statistics query functions
 
+def _apply_live_names(rows, id_key, name_key):
+    """Overwrite each row's stored name snapshot with the user's current server nickname where
+    available (see resolve_leaderboard_display_name in discordbot.py for why the stored name can
+    go stale). Lazy import to avoid the circular import with discordbot.py."""
+    from discordbot import resolve_leaderboard_display_name
+    for r in rows:
+        r[name_key] = resolve_leaderboard_display_name(r.get(id_key), r.get(name_key))
+    return rows
+
+
 async def get_longest_streaks(db, limit=100):
     """
     Get the top longest streaks ever recorded
@@ -953,7 +963,7 @@ async def get_longest_streaks(db, limit=100):
     # Sort by streak_count descending, limit to requested amount
     results = await collection.find().sort("streak_count", -1).limit(limit).to_list(limit)
 
-    return results
+    return _apply_live_names(results, "user_id", "user_name")
 
 
 async def get_longest_streaks_24h(db, limit=25):
@@ -979,7 +989,7 @@ async def get_longest_streaks_24h(db, limit=25):
         {"ended_at": {"$gte": time_threshold}}
     ).sort("streak_count", -1).limit(limit).to_list(limit)
 
-    return results
+    return _apply_live_names(results, "user_id", "user_name")
 
 
 async def get_longest_streaks_7d(db, limit=25):
@@ -1005,7 +1015,7 @@ async def get_longest_streaks_7d(db, limit=25):
         {"ended_at": {"$gte": time_threshold}}
     ).sort("streak_count", -1).limit(limit).to_list(limit)
 
-    return results
+    return _apply_live_names(results, "user_id", "user_name")
 
 
 async def get_top_users_alltime(db, limit=100):
@@ -1036,7 +1046,7 @@ async def get_top_users_alltime(db, limit=100):
 
     results = await collection.aggregate(pipeline).to_list(limit)
 
-    return results
+    return _apply_live_names(results, "_id", "user_name")
 
 
 async def get_top_users_24h(db, limit=100):
@@ -1073,7 +1083,7 @@ async def get_top_users_24h(db, limit=100):
 
     results = await collection.aggregate(pipeline).to_list(limit)
 
-    return results
+    return _apply_live_names(results, "_id", "user_name")
 
 
 async def get_top_users_7d(db, limit=100):
@@ -1110,7 +1120,7 @@ async def get_top_users_7d(db, limit=100):
 
     results = await collection.aggregate(pipeline).to_list(limit)
 
-    return results
+    return _apply_live_names(results, "_id", "user_name")
 
 
 async def get_user_answer_rank(db, user_id, time_threshold=None):
@@ -1145,8 +1155,10 @@ async def get_user_answer_rank(db, user_id, time_threshold=None):
     rank_result = await collection.aggregate(pipeline).to_list(1)
     higher = rank_result[0]["n"] if rank_result else 0
 
+    from discordbot import resolve_leaderboard_display_name
     doc = await collection.find_one({"user_id": user_id}, {"user_name": 1})
-    return {"rank": higher + 1, "name": doc["user_name"] if doc else "Unknown", "value": user_count}
+    fallback = doc["user_name"] if doc else "Unknown"
+    return {"rank": higher + 1, "name": resolve_leaderboard_display_name(user_id, fallback), "value": user_count}
 
 
 async def get_user_streak_rank(db, user_id, time_threshold=None):
@@ -1176,7 +1188,8 @@ async def get_user_streak_rank(db, user_id, time_threshold=None):
         count_query["ended_at"] = {"$gte": time_threshold}
     higher = await collection.count_documents(count_query)
 
-    return {"rank": higher + 1, "name": best[0]["user_name"], "value": user_streak}
+    from discordbot import resolve_leaderboard_display_name
+    return {"rank": higher + 1, "name": resolve_leaderboard_display_name(user_id, best[0]["user_name"]), "value": user_streak}
 
 
 # Leaderboard formatting functions

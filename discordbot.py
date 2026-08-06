@@ -15841,6 +15841,17 @@ async def get_winner_roast_text(winner_id, winner_display_name):
         return None
 
 
+def resolve_leaderboard_display_name(user_id, fallback_name):
+    """Prefer the user's current server nickname over a name snapshot stored on a leaderboard
+    doc, since those snapshots go stale -- frozen at streak/round start in classic mode (see
+    update_answer_streaks/update_round_streaks), or cached for up to 12h in a companion web
+    session. Falls back to the stored name if the user isn't a cached guild member (e.g. left
+    the server). Cheap: get_member is a local cache lookup, not an API call."""
+    if user_id is None:
+        return fallback_name
+    return companion_resolve_member(user_id) or fallback_name
+
+
 async def _query_leaderboard_counts(collection, start_time=None, limit=10):
     """Aggregate count-per-user from a Discord stats collection."""
     pipeline = []
@@ -15857,7 +15868,7 @@ async def _query_leaderboard_counts(collection, start_time=None, limit=10):
     ]
     cursor = db[collection].aggregate(pipeline)
     results = await cursor.to_list(length=limit)
-    return [{"user": r["user"], "count": r["count"]} for r in results]
+    return [{"user": resolve_leaderboard_display_name(r["_id"], r["user"]), "count": r["count"]} for r in results]
 
 
 async def _query_leaderboard_streaks(collection, start_time=None, limit=10):
@@ -15869,13 +15880,14 @@ async def _query_leaderboard_streaks(collection, start_time=None, limit=10):
     if start_time is not None:
         query["timestamp"] = {"$gte": start_time}
     cursor = db[collection].find(
-        query, {"_id": 0, "user": 1, "streak": 1, "timestamp": 1}
+        query, {"_id": 0, "user": 1, "user_id": 1, "streak": 1, "timestamp": 1}
     ).sort("streak", -1).limit(limit)
     results = await cursor.to_list(length=limit)
     out = []
     for r in results:
         date_str = datetime.datetime.fromtimestamp(r["timestamp"], pacific).strftime('%B %d, %Y')
-        out.append({"user": r["user"], "streak": r["streak"], "date": date_str})
+        name = resolve_leaderboard_display_name(r.get("user_id"), r["user"])
+        out.append({"user": name, "streak": r["streak"], "date": date_str})
     return out
 
 
@@ -15897,7 +15909,7 @@ async def _get_user_count_rank(collection, user_id, start_time=None):
     rank_result = await db[collection].aggregate(rank_pipeline).to_list(length=1)
     higher = rank_result[0]["n"] if rank_result else 0
 
-    return {"rank": higher + 1, "name": user_result[0]["user"], "value": user_count}
+    return {"rank": higher + 1, "name": resolve_leaderboard_display_name(user_id, user_result[0]["user"]), "value": user_count}
 
 
 async def _get_user_streak_rank(collection, user_id, start_time=None):
@@ -15916,7 +15928,7 @@ async def _get_user_streak_rank(collection, user_id, start_time=None):
         higher_query["timestamp"] = {"$gte": start_time}
     higher = await db[collection].count_documents(higher_query)
 
-    return {"rank": higher + 1, "name": best[0]["user"], "value": user_streak}
+    return {"rank": higher + 1, "name": resolve_leaderboard_display_name(user_id, best[0]["user"]), "value": user_streak}
 
 
 async def check_sovereignty(top_users):
