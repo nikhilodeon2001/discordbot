@@ -1134,7 +1134,8 @@ async def get_user_answer_rank(db, user_id, time_threshold=None):
         time_threshold: optional datetime; only answers at/after this time count
 
     Returns:
-        {"rank", "name", "value"} or None if the user has no qualifying answers
+        {"rank", "name", "value"}. Users with no qualifying answers get rank=None (rendered as
+        "NA") and value=0, rather than paying for an aggregation just to rank a zero.
     """
     collection = db["simply_trivia_stats"]
     match = {"user_id": user_id}
@@ -1142,7 +1143,8 @@ async def get_user_answer_rank(db, user_id, time_threshold=None):
         match["timestamp"] = {"$gte": time_threshold}
     user_count = await collection.count_documents(match)
     if user_count == 0:
-        return None
+        from discordbot import resolve_leaderboard_display_name
+        return {"rank": None, "name": resolve_leaderboard_display_name(user_id, "Unknown"), "value": 0}
 
     pipeline = []
     if time_threshold is not None:
@@ -1172,7 +1174,8 @@ async def get_user_streak_rank(db, user_id, time_threshold=None):
         time_threshold: optional datetime; only streaks that ended at/after this time count
 
     Returns:
-        {"rank", "name", "value"} or None if the user has no qualifying streaks
+        {"rank", "name", "value"}. Users with no qualifying streak get rank=None (rendered as
+        "NA") and value=0.
     """
     collection = db["simply_trivia_top_streaks"]
     query = {"user_id": user_id}
@@ -1180,7 +1183,8 @@ async def get_user_streak_rank(db, user_id, time_threshold=None):
         query["ended_at"] = {"$gte": time_threshold}
     best = await collection.find(query).sort("streak_count", -1).limit(1).to_list(1)
     if not best:
-        return None
+        from discordbot import resolve_leaderboard_display_name
+        return {"rank": None, "name": resolve_leaderboard_display_name(user_id, "Unknown"), "value": 0}
     user_streak = best[0]["streak_count"]
 
     count_query = {"streak_count": {"$gt": user_streak}}

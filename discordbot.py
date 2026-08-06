@@ -15893,8 +15893,9 @@ async def _query_leaderboard_streaks(collection, start_time=None, limit=10):
 
 async def _get_user_count_rank(collection, user_id, start_time=None):
     """Return {"rank", "name", "value"} for user_id in a count-based leaderboard (the same
-    match/group logic as _query_leaderboard_counts, minus the $limit), or None if they have no
-    qualifying entries in this window."""
+    match/group logic as _query_leaderboard_counts, minus the $limit). Users with no qualifying
+    entries in this window get rank=None (rendered as "NA") and value=0, rather than paying for
+    a $count query just to rank a zero."""
     match_stage = [{"$match": {"timestamp": {"$gte": start_time}}}] if start_time is not None else []
     match_stage.append({"$match": {"user_id": {"$exists": True, "$ne": None}}})
     group_stage = {"$group": {"_id": "$user_id", "count": {"$sum": 1}, "user": {"$first": "$user"}}}
@@ -15902,7 +15903,7 @@ async def _get_user_count_rank(collection, user_id, start_time=None):
     user_pipeline = match_stage + [group_stage, {"$match": {"_id": user_id}}]
     user_result = await db[collection].aggregate(user_pipeline).to_list(length=1)
     if not user_result:
-        return None
+        return {"rank": None, "name": resolve_leaderboard_display_name(user_id, "Unknown"), "value": 0}
     user_count = user_result[0]["count"]
 
     rank_pipeline = match_stage + [group_stage, {"$match": {"count": {"$gt": user_count}}}, {"$count": "n"}]
@@ -15914,13 +15915,14 @@ async def _get_user_count_rank(collection, user_id, start_time=None):
 
 async def _get_user_streak_rank(collection, user_id, start_time=None):
     """Return {"rank", "name", "value"} for user_id's best streak in this window (the same
-    match/sort logic as _query_leaderboard_streaks), or None if they have no qualifying entries."""
+    match/sort logic as _query_leaderboard_streaks). Users with no qualifying streak in this
+    window get rank=None (rendered as "NA") and value=0."""
     query = {"user": {"$exists": True, "$ne": None}, "user_id": user_id}
     if start_time is not None:
         query["timestamp"] = {"$gte": start_time}
     best = await db[collection].find(query, {"_id": 0, "user": 1, "streak": 1}).sort("streak", -1).limit(1).to_list(length=1)
     if not best:
-        return None
+        return {"rank": None, "name": resolve_leaderboard_display_name(user_id, "Unknown"), "value": 0}
     user_streak = best[0]["streak"]
 
     higher_query = {"user": {"$exists": True, "$ne": None}, "streak": {"$gt": user_streak}}
@@ -16157,10 +16159,13 @@ _LEADERBOARD_VALUE_WIDTH = 6
 
 
 def _format_leaderboard_row(marker, rank, name, value):
-    name = str(name or "Unknown")
-    if len(name) > _LEADERBOARD_NAME_WIDTH:
-        name = name[:_LEADERBOARD_NAME_WIDTH - 1] + "…"
-    return f"{marker}{rank:>2}. {name:<{_LEADERBOARD_NAME_WIDTH}} {str(value):>{_LEADERBOARD_VALUE_WIDTH}}"
+    # Padding by display width, not len() -- emoji/CJK/"fancy font" unicode render wider than
+    # one monospace cell in Discord's font, so raw character-count padding misaligns columns
+    # whenever a name uses those ranges (see _char_display_width).
+    name = _truncate_to_display_width(str(name or "Unknown"), _LEADERBOARD_NAME_WIDTH)
+    name = _pad_to_display_width(name, _LEADERBOARD_NAME_WIDTH)
+    rank_str = f"{rank:>2}" if rank is not None else "NA"
+    return f"{marker}{rank_str}. {name} {str(value):>{_LEADERBOARD_VALUE_WIDTH}}"
 
 
 def _format_leaderboard_rows(rows, name_key, value_key, viewer_rank=None):
@@ -16171,12 +16176,14 @@ def _format_leaderboard_rows(rows, name_key, value_key, viewer_rank=None):
 
     viewer_rank (optional {"rank", "name", "value"}, from _get_user_count_rank/_get_user_streak_rank
     or simply_trivia's get_user_answer_rank/get_user_streak_rank) marks the requesting user's row
-    green if they're within the displayed top 10, or appends their rank/score below in red if not."""
+    green if they're within the displayed top 10, or appends their rank/score below in red if not
+    -- rank=None (no qualifying entries in this window) renders as "NA" rather than a computed
+    position, since ranking a zero against everyone who's actually scored isn't meaningful."""
     lines = [
         _format_leaderboard_row("🟢" if viewer_rank and viewer_rank["rank"] == i else "  ", i, row.get(name_key), row.get(value_key, 0))
         for i, row in enumerate(rows[:10], 1)
     ]
-    if viewer_rank and viewer_rank["rank"] > 10:
+    if viewer_rank and (viewer_rank["rank"] is None or viewer_rank["rank"] > 10):
         lines.append("┄" * 24)
         lines.append(_format_leaderboard_row("🔴", viewer_rank["rank"], viewer_rank["name"], viewer_rank["value"]))
     if not lines:
