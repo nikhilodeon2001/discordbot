@@ -7408,7 +7408,7 @@ async def ask_border_challenge(winner, winner_id, num=5):
 
 
 
-async def ask_animal_challenge(winner, winner_id, num=5):
+async def ask_animal_challenge(winner, winner_id, num=7):
     global wf_winner
     wf_winner = True
 
