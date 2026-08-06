@@ -1113,6 +1113,72 @@ async def get_top_users_7d(db, limit=100):
     return results
 
 
+async def get_user_answer_rank(db, user_id, time_threshold=None):
+    """
+    Get a user's rank and total correct answers in the given window (same match/group logic
+    as get_top_users_alltime/_24h/_7d, without the $limit).
+
+    Args:
+        db: MongoDB database instance
+        user_id: Discord user ID to look up
+        time_threshold: optional datetime; only answers at/after this time count
+
+    Returns:
+        {"rank", "name", "value"} or None if the user has no qualifying answers
+    """
+    collection = db["simply_trivia_stats"]
+    match = {"user_id": user_id}
+    if time_threshold is not None:
+        match["timestamp"] = {"$gte": time_threshold}
+    user_count = await collection.count_documents(match)
+    if user_count == 0:
+        return None
+
+    pipeline = []
+    if time_threshold is not None:
+        pipeline.append({"$match": {"timestamp": {"$gte": time_threshold}}})
+    pipeline += [
+        {"$group": {"_id": "$user_id", "total_correct": {"$sum": 1}}},
+        {"$match": {"total_correct": {"$gt": user_count}}},
+        {"$count": "n"},
+    ]
+    rank_result = await collection.aggregate(pipeline).to_list(1)
+    higher = rank_result[0]["n"] if rank_result else 0
+
+    doc = await collection.find_one({"user_id": user_id}, {"user_name": 1})
+    return {"rank": higher + 1, "name": doc["user_name"] if doc else "Unknown", "value": user_count}
+
+
+async def get_user_streak_rank(db, user_id, time_threshold=None):
+    """
+    Get a user's rank and best streak in the given window (same match/sort logic as
+    get_longest_streaks/_24h/_7d).
+
+    Args:
+        db: MongoDB database instance
+        user_id: Discord user ID to look up
+        time_threshold: optional datetime; only streaks that ended at/after this time count
+
+    Returns:
+        {"rank", "name", "value"} or None if the user has no qualifying streaks
+    """
+    collection = db["simply_trivia_top_streaks"]
+    query = {"user_id": user_id}
+    if time_threshold is not None:
+        query["ended_at"] = {"$gte": time_threshold}
+    best = await collection.find(query).sort("streak_count", -1).limit(1).to_list(1)
+    if not best:
+        return None
+    user_streak = best[0]["streak_count"]
+
+    count_query = {"streak_count": {"$gt": user_streak}}
+    if time_threshold is not None:
+        count_query["ended_at"] = {"$gte": time_threshold}
+    higher = await collection.count_documents(count_query)
+
+    return {"rank": higher + 1, "name": best[0]["user_name"], "value": user_streak}
+
+
 # Leaderboard formatting functions
 
 def create_streaks_alltime_embed(all_time):
@@ -1332,14 +1398,14 @@ async def update_leaderboards(bot, db):
 
     try:
         # Fetch all data for streaks
-        streaks_all_time = await get_longest_streaks(db, limit=25)
-        streaks_24h = await get_longest_streaks_24h(db, limit=25)
-        streaks_7d = await get_longest_streaks_7d(db, limit=25)
+        streaks_all_time = await get_longest_streaks(db, limit=10)
+        streaks_24h = await get_longest_streaks_24h(db, limit=10)
+        streaks_7d = await get_longest_streaks_7d(db, limit=10)
 
         # Fetch all data for answers
-        answers_all_time = await get_top_users_alltime(db, limit=25)
-        answers_24h = await get_top_users_24h(db, limit=25)
-        answers_7d = await get_top_users_7d(db, limit=25)
+        answers_all_time = await get_top_users_alltime(db, limit=10)
+        answers_24h = await get_top_users_24h(db, limit=10)
+        answers_7d = await get_top_users_7d(db, limit=10)
 
         def to_entries(rows, value_key):
             return [(row.get("user_name", "Unknown"), row.get(value_key, 0)) for row in rows]

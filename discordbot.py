@@ -5877,7 +5877,7 @@ class LeaderboardView(discord.ui.View):
         new_view = LeaderboardView(mode=new_mode, category_key="answers", user_id=self.user_id)
         new_view.message = self.message
 
-        embed = await _build_leaderboard_embed(new_mode, "answers")
+        embed = await _build_leaderboard_embed(new_mode, "answers", self.user_id)
         await interaction.response.edit_message(embed=embed, view=new_view)
 
     @discord.ui.select(placeholder="Category", row=1, options=[discord.SelectOption(label="Loading...", value="_placeholder")])
@@ -5887,7 +5887,7 @@ class LeaderboardView(discord.ui.View):
         for option in select.options:
             option.default = option.value == new_category
 
-        embed = await _build_leaderboard_embed(self.mode, new_category)
+        embed = await _build_leaderboard_embed(self.mode, new_category, self.user_id)
         await interaction.response.edit_message(embed=embed, view=self)
 
 
@@ -15879,6 +15879,46 @@ async def _query_leaderboard_streaks(collection, start_time=None, limit=10):
     return out
 
 
+async def _get_user_count_rank(collection, user_id, start_time=None):
+    """Return {"rank", "name", "value"} for user_id in a count-based leaderboard (the same
+    match/group logic as _query_leaderboard_counts, minus the $limit), or None if they have no
+    qualifying entries in this window."""
+    match_stage = [{"$match": {"timestamp": {"$gte": start_time}}}] if start_time is not None else []
+    match_stage.append({"$match": {"user_id": {"$exists": True, "$ne": None}}})
+    group_stage = {"$group": {"_id": "$user_id", "count": {"$sum": 1}, "user": {"$first": "$user"}}}
+
+    user_pipeline = match_stage + [group_stage, {"$match": {"_id": user_id}}]
+    user_result = await db[collection].aggregate(user_pipeline).to_list(length=1)
+    if not user_result:
+        return None
+    user_count = user_result[0]["count"]
+
+    rank_pipeline = match_stage + [group_stage, {"$match": {"count": {"$gt": user_count}}}, {"$count": "n"}]
+    rank_result = await db[collection].aggregate(rank_pipeline).to_list(length=1)
+    higher = rank_result[0]["n"] if rank_result else 0
+
+    return {"rank": higher + 1, "name": user_result[0]["user"], "value": user_count}
+
+
+async def _get_user_streak_rank(collection, user_id, start_time=None):
+    """Return {"rank", "name", "value"} for user_id's best streak in this window (the same
+    match/sort logic as _query_leaderboard_streaks), or None if they have no qualifying entries."""
+    query = {"user": {"$exists": True, "$ne": None}, "user_id": user_id}
+    if start_time is not None:
+        query["timestamp"] = {"$gte": start_time}
+    best = await db[collection].find(query, {"_id": 0, "user": 1, "streak": 1}).sort("streak", -1).limit(1).to_list(length=1)
+    if not best:
+        return None
+    user_streak = best[0]["streak"]
+
+    higher_query = {"user": {"$exists": True, "$ne": None}, "streak": {"$gt": user_streak}}
+    if start_time is not None:
+        higher_query["timestamp"] = {"$gte": start_time}
+    higher = await db[collection].count_documents(higher_query)
+
+    return {"rank": higher + 1, "name": best[0]["user"], "value": user_streak}
+
+
 async def check_sovereignty(top_users):
     """Induct any user with 6/6 top-category score into hall_of_sovereigns_discord."""
     try:
@@ -16104,29 +16144,41 @@ _LEADERBOARD_NAME_WIDTH = 18
 _LEADERBOARD_VALUE_WIDTH = 6
 
 
-def _format_leaderboard_rows(rows, name_key, value_key):
+def _format_leaderboard_row(marker, rank, name, value):
+    name = str(name or "Unknown")
+    if len(name) > _LEADERBOARD_NAME_WIDTH:
+        name = name[:_LEADERBOARD_NAME_WIDTH - 1] + "…"
+    return f"{marker}{rank:>2}. {name:<{_LEADERBOARD_NAME_WIDTH}} {str(value):>{_LEADERBOARD_VALUE_WIDTH}}"
+
+
+def _format_leaderboard_rows(rows, name_key, value_key, viewer_rank=None):
     """Format leaderboard rows as a monospace, right-aligned table. Regular embed text uses a
     proportional font, so padding with spaces there never lines up -- a code block is the only
     way to get real column alignment, which costs the medal emoji/bold styling (both break
-    monospace alignment across clients) in exchange for numbers that actually line up."""
-    if not rows:
+    monospace alignment across clients) in exchange for numbers that actually line up.
+
+    viewer_rank (optional {"rank", "name", "value"}, from _get_user_count_rank/_get_user_streak_rank
+    or simply_trivia's get_user_answer_rank/get_user_streak_rank) marks the requesting user's row
+    green if they're within the displayed top 10, or appends their rank/score below in red if not."""
+    lines = [
+        _format_leaderboard_row("🟢" if viewer_rank and viewer_rank["rank"] == i else "  ", i, row.get(name_key), row.get(value_key, 0))
+        for i, row in enumerate(rows[:10], 1)
+    ]
+    if viewer_rank and viewer_rank["rank"] > 10:
+        lines.append("┄" * 24)
+        lines.append(_format_leaderboard_row("🔴", viewer_rank["rank"], viewer_rank["name"], viewer_rank["value"]))
+    if not lines:
         return "*No data yet*"
-    lines = []
-    for i, row in enumerate(rows[:8], 1):
-        name = str(row.get(name_key) or "Unknown")
-        if len(name) > _LEADERBOARD_NAME_WIDTH:
-            name = name[:_LEADERBOARD_NAME_WIDTH - 1] + "…"
-        value = str(row.get(value_key, 0))
-        lines.append(f"{i:>2}. {name:<{_LEADERBOARD_NAME_WIDTH}} {value:>{_LEADERBOARD_VALUE_WIDTH}}")
     return "```\n" + "\n".join(lines) + "\n```"
 
 
-async def build_classic_leaderboard_embed(category_key):
+async def build_classic_leaderboard_embed(category_key, user_id=None):
     """Build the on-demand /leaderboard embed for the main trivia channel."""
     cat = CLASSIC_LEADERBOARD_CATEGORIES[category_key]
     now = time.time()
     windows = [("All-Time", None), ("Past 7 Days", now - 604800), ("Past 24 Hours", now - 86400)]
     query = _query_leaderboard_counts if cat["kind"] == "count" else _query_leaderboard_streaks
+    rank_lookup = _get_user_count_rank if cat["kind"] == "count" else _get_user_streak_rank
     value_key = "count" if cat["kind"] == "count" else "streak"
 
     embed = discord.Embed(
@@ -16135,18 +16187,20 @@ async def build_classic_leaderboard_embed(category_key):
         timestamp=datetime.datetime.now(timezone.utc),
     )
     for label, start_time in windows:
-        rows = await query(cat["collection"], start_time, limit=8)
-        embed.add_field(name=label, value=_format_leaderboard_rows(rows, "user", value_key), inline=False)
+        rows = await query(cat["collection"], start_time, limit=10)
+        viewer_rank = await rank_lookup(cat["collection"], user_id, start_time) if user_id is not None else None
+        embed.add_field(name=label, value=_format_leaderboard_rows(rows, "user", value_key, viewer_rank), inline=False)
     embed.set_footer(text="Trivia & Games Leaderboard")
     return embed
 
 
-async def build_simply_trivia_leaderboard_embed(category_key):
+async def build_simply_trivia_leaderboard_embed(category_key, user_id=None):
     """Build the on-demand /leaderboard embed for the Simply Trivia channel."""
     try:
         from simply_trivia import (
             get_top_users_alltime, get_top_users_24h, get_top_users_7d,
             get_longest_streaks, get_longest_streaks_24h, get_longest_streaks_7d,
+            get_user_answer_rank, get_user_streak_rank,
         )
     except ImportError:
         return discord.Embed(
@@ -16155,34 +16209,43 @@ async def build_simply_trivia_leaderboard_embed(category_key):
         )
 
     cat = SIMPLY_TRIVIA_LEADERBOARD_CATEGORIES[category_key]
+    now_dt = datetime.datetime.now(timezone.utc)
+    thresholds = [None, now_dt - datetime.timedelta(days=7), now_dt - datetime.timedelta(hours=24)]
 
     if category_key == "answers":
         alltime, past_7d, past_24h = await asyncio.gather(
-            get_top_users_alltime(db, limit=8), get_top_users_7d(db, limit=8), get_top_users_24h(db, limit=8)
+            get_top_users_alltime(db, limit=10), get_top_users_7d(db, limit=10), get_top_users_24h(db, limit=10)
         )
         value_key = "total_correct"
+        rank_fn = get_user_answer_rank
     else:
         alltime, past_7d, past_24h = await asyncio.gather(
-            get_longest_streaks(db, limit=8), get_longest_streaks_7d(db, limit=8), get_longest_streaks_24h(db, limit=8)
+            get_longest_streaks(db, limit=10), get_longest_streaks_7d(db, limit=10), get_longest_streaks_24h(db, limit=10)
         )
         value_key = "streak_count"
+        rank_fn = get_user_streak_rank
+
+    if user_id is not None:
+        rank_alltime, rank_7d, rank_24h = await asyncio.gather(*(rank_fn(db, user_id, t) for t in thresholds))
+    else:
+        rank_alltime = rank_7d = rank_24h = None
 
     embed = discord.Embed(
         title=f"{cat['emoji']} {cat['label']}",
         color=discord.Color(0x146DE8),
         timestamp=datetime.datetime.now(timezone.utc),
     )
-    embed.add_field(name="All-Time", value=_format_leaderboard_rows(alltime, "user_name", value_key), inline=False)
-    embed.add_field(name="Past 7 Days", value=_format_leaderboard_rows(past_7d, "user_name", value_key), inline=False)
-    embed.add_field(name="Past 24 Hours", value=_format_leaderboard_rows(past_24h, "user_name", value_key), inline=False)
+    embed.add_field(name="All-Time", value=_format_leaderboard_rows(alltime, "user_name", value_key, rank_alltime), inline=False)
+    embed.add_field(name="Past 7 Days", value=_format_leaderboard_rows(past_7d, "user_name", value_key, rank_7d), inline=False)
+    embed.add_field(name="Past 24 Hours", value=_format_leaderboard_rows(past_24h, "user_name", value_key, rank_24h), inline=False)
     embed.set_footer(text="Simply Trivia Leaderboard")
     return embed
 
 
-async def _build_leaderboard_embed(mode, category_key):
+async def _build_leaderboard_embed(mode, category_key, user_id=None):
     if mode == "classic":
-        return await build_classic_leaderboard_embed(category_key)
-    return await build_simply_trivia_leaderboard_embed(category_key)
+        return await build_classic_leaderboard_embed(category_key, user_id)
+    return await build_simply_trivia_leaderboard_embed(category_key, user_id)
 
 
 # Kill switch for the Discord leaderboard image posts only -- write_leaderboard_to_s3()
@@ -28325,7 +28388,7 @@ async def leaderboard_command(interaction: discord.Interaction):
 
     mode = "simply_trivia" if interaction.channel_id == SIMPLY_TRIVIA_CHANNEL_ID else "classic"
 
-    embed = await _build_leaderboard_embed(mode, "answers")
+    embed = await _build_leaderboard_embed(mode, "answers", interaction.user.id)
     view = LeaderboardView(mode=mode, category_key="answers", user_id=interaction.user.id)
     await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
     view.message = await interaction.original_response()
