@@ -753,6 +753,7 @@ if prod_or_stage == "stage":
     ANNOUNCEMENTS_CHANNEL_ID = 1521519888546529301
     OKRA_MUSEUM_CHANNEL_ID = 1524928905989853258
     INTRO_IMAGE_ADMIN_CHANNEL_ID = 1449499426669334700
+    GAME_OPTIONS_CHANNEL_ID = 1535132000170541146
 
 elif prod_or_stage == "prod":
     okrag_id = 591861826690613248
@@ -805,6 +806,7 @@ elif prod_or_stage == "prod":
     ANNOUNCEMENTS_CHANNEL_ID = 1409217728388141206
     OKRA_MUSEUM_CHANNEL_ID = 1524472945240572075
     INTRO_IMAGE_ADMIN_CHANNEL_ID = 1449497884931395755
+    GAME_OPTIONS_CHANNEL_ID = 1535132787789795389
 
 AMBIENT_CHAT_CHANNEL_IDS = {channel_id, CHAT_CHANNEL_ID, PICS_CHANNEL_ID}
 
@@ -2949,7 +2951,7 @@ async def ask_okra_says_challenge(winner, winner_id, num=1):
     JOIN_TIMEOUT = 15
     INPUT_TIMEOUT = 20
     STARTING_PATTERN_LENGTH = 3
-    MAX_ROUNDS = 15
+    MAX_ROUNDS = 7
     COLORS = ["red", "blue", "green", "yellow"]
     COLOR_EMOJIS = {"red": "🟥", "blue": "🟦", "green": "🟩", "yellow": "🟨"}
 
@@ -19814,45 +19816,45 @@ async def process_round_options(round_winner, winner_points, round_winner_id, wi
         winner_coffees = await get_coffees(round_winner_id)
 
     if winner_coffees > 0:
-        message = f"\u200b\n🍔🍟 **<@{round_winner_id}>**, what's your order?\n" 
-    else: 
-        message = f"\u200b\n🥒 **<@{round_winner_id}>**, join the **Okrans** and choose from the following!\n"
-    
-    message += (
-        "\u200b\n🎮⚙️ ***Gameplay Options***\n\n"
-        "⏱️⏳ **<3 - 15>** Time (s) between questions\n"
-        "🔥🤘 **Yolo**: No scores until the end\n"
-        "🙈🚫 **Blind**: No answers shown\n"
-        "🚩🔨 **Marx**: No recognizing answers\n"
-        "📷❌ **Blank**: No image questions\n"
-        "👻🎃 **Ghost**: All responses vanish\n"
-        "🫥🕶️ **Cloak**: Your responses vanish\n"
-        "🧢🎤 **Sniper**: One answer per player\n"
-        "🏆⚡  **Blitz**: One winner per question\n"
-        "🤓🔍 **Poindexter**: Stricter answers\n"
-        "⛳📉 **Golf**: Slowest answers win\n" 
-        "🔐🛡️ **Glyph**: Add anti-Google defenses\n" 
+        message = f"\u200b\n🍔🍟 **<@{round_winner_id}>**, what's your order?\n"
+        message += (
+            "\u200b\n🎮⚙️ ***Gameplay Options***\n\n"
+            "⏱️⏳ **<3 - 15>** Time (s) between questions\n"
+            "🔥🤘 **Yolo**: No scores until the end\n"
+            "🙈🚫 **Blind**: No answers shown\n"
+            "🚩🔨 **Marx**: No recognizing answers\n"
+            "📷❌ **Blank**: No image questions\n"
+            "👻🎃 **Ghost**: All responses vanish\n"
+            "🫥🕶️ **Cloak**: Your responses vanish\n"
+            "🧢🎤 **Sniper**: One answer per player\n"
+            "🏆⚡  **Blitz**: One winner per question\n"
+            "🤓🔍 **Poindexter**: Stricter answers\n"
+            "⛳📉 **Golf**: Slowest answers win\n"
+            "🔐🛡️ **Glyph**: Add anti-Google defenses\n"
 
-        "\n🕹️: Toggle mid-round with **#[command]**"
-        "\n⛳: Golf excluded\n\n"
+            "\n🕹️: Toggle mid-round with **#[command]**"
+            "\n⛳: Golf excluded\n\n"
 
-        "\n📝🔀 ***Question Options***\n\n"
-        "🇺🇸🗽 **Freedom**: No multiple choice\n"
-        "⛓️🔐 **Bondage**: More multiple choice\n"
-        "🧮❌ **Greg**: No math questions\n"
-        "🟦❌ **Xela**: No Jeopardy questions\n"
-        "📰❌ **Cross**: No Crossword clues\n"
-        "📰✋ **Word**: More Crossword clues\n"
-        "🟦✋ **Alex**: More Jeopardy questions\n"
-        "🤓📝 **Nerd**: Add SAT questions\n"
-        "🎖🥒 **Dicktator**: Choose the categories\n"
-        "\n🏁⏭️ **x**: I'm Done / Skip\n"
-    )
-
-    await safe_send(channel, message)
-    if winner_coffees > 0:
+            "\n📝🔀 ***Question Options***\n\n"
+            "🇺🇸🗽 **Freedom**: No multiple choice\n"
+            "⛓️🔐 **Bondage**: More multiple choice\n"
+            "🧮❌ **Greg**: No math questions\n"
+            "🟦❌ **Xela**: No Jeopardy questions\n"
+            "📰❌ **Cross**: No Crossword clues\n"
+            "📰✋ **Word**: More Crossword clues\n"
+            "🟦✋ **Alex**: More Jeopardy questions\n"
+            "🤓📝 **Nerd**: Add SAT questions\n"
+            "🎖🥒 **Dicktator**: Choose the categories\n"
+            "\n🏁⏭️ **x**: I'm Done / Skip\n"
+        )
+        await safe_send(channel, message)
         await prompt_user_for_response(round_winner, winner_points, winner_coffees, round_winner_id, menu_text=message)
     else:
+        guild = get_bot().get_guild(OKRAN_GUILD_ID)
+        game_options_channel = guild.get_channel(GAME_OPTIONS_CHANNEL_ID) if guild else None
+        channel_ref = game_options_channel.mention if game_options_channel else "#game-options"
+        message = f"\u200b\n🥒 **<@{round_winner_id}>**, join the **Okrans** and choose from the following {channel_ref}!\n"
+        await safe_send(channel, message)
         await asyncio.sleep(1)
 
 
