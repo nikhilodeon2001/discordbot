@@ -8018,7 +8018,6 @@ async def ask_chaos_challenge(winner, winner_id, num_of_games):
         ask_movie_scenes_challenge,
         ask_missing_link,
         ask_ranker_people_challenge,
-        ask_magic_challenge,
         ask_animal_challenge,
         ask_riddle_challenge,
         ask_dictionary_challenge,
@@ -8034,13 +8033,11 @@ async def ask_chaos_challenge(winner, winner_id, num_of_games):
         ask_president_challenge,
         ask_wordle_challenge,
         ask_list_question,
-        ask_ranker_list_question,
         ask_music_challenge,
         ask_myopic_challenge,
         ask_microscopic_challenge,
         ask_fusion_challenge,
         ask_tally_challenge,
-        ask_currency_challenge,
         ask_chess_challenge,
         ask_stock_challenge,
         ask_search_challenge,
@@ -18371,6 +18368,9 @@ async def ask_wof_number(winner, winner_id, cached_coffees=None, menu_text=None)
     def check(m):
         return m.channel == target_channel and m.author != get_bot().user and m.author.id in {winner_id, okrag_id}
 
+    # Excluded from the "00" random pick only — still fully playable by explicit number
+    RANDOM_EXCLUDED_NUMBERS = {"5", "6", "7", "16", "17", "39"}
+
     unlocks = {
         "5": "Wikipedia Roulette",
         "6": "Dictionary Roulette",
@@ -18446,6 +18446,7 @@ async def ask_wof_number(winner, winner_id, cached_coffees=None, menu_text=None)
                 await message.add_reaction("👍")
                 set_a = [str(i) for i in range(5)]
                 set_b = [str(i) for i in range(5, 51)] if len(round_responders) >= num_list_players else [str(i) for i in range(5, 10)]
+                set_b = [g for g in set_b if g not in RANDOM_EXCLUDED_NUMBERS]
                 selected_question = random.choice(set_a if random.random() < 0.5 else set_b)
 
                 # Store frequency data for random selection
@@ -29143,7 +29144,7 @@ async def arena(interaction: discord.Interaction, game_name: str = None, num: in
             arena_game_starter_id = interaction.user.id
 
             if game_name is None or game_name.lower() == "random":
-                selected_game = random.choice(mini_games.GAME_NAMES)
+                selected_game = random.choice(mini_games.RANDOM_ELIGIBLE_GAME_NAMES)
                 arena_game_name = selected_game
                 await interaction.followup.send(f"🎮 **Starting arena game:** {selected_game.upper()}")
                 print(f"🎲 Running random mini-game '{selected_game}' for {interaction.user.display_name} in channel {interaction.channel.id}")

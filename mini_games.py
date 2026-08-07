@@ -23,6 +23,10 @@ GAME_NAMES = [
     "jock talk", "30 for 30", "okra says", "valedictorian", "buzz words"
 ]
 
+# Excluded from random selection only — still fully playable by explicit name via /arena <name>
+RANDOM_EXCLUDED_GAME_NAMES = {"xxxx", "ranker lists", "magic eye"}
+RANDOM_ELIGIBLE_GAME_NAMES = [g for g in GAME_NAMES if g not in RANDOM_EXCLUDED_GAME_NAMES]
+
 def resolve_game_name(game_name: str):
     if not game_name:
         return None
@@ -215,7 +219,7 @@ async def run_mini_game(bot, game_name: str, player_name: str, player_id: int,
 
 async def run_random_mini_game(bot, player_name: str, player_id: int, channel_override=None):
     """Run a random mini-game"""
-    game_name = random.choice(GAME_NAMES)
+    game_name = random.choice(RANDOM_ELIGIBLE_GAME_NAMES)
     print(f"🎲 Selected random game: {game_name}")
     return await run_mini_game(bot, game_name, player_name, player_id, channel_override=channel_override)
 
