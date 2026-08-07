@@ -29064,7 +29064,7 @@ async def arena_game_autocomplete(
 @discord.app_commands.autocomplete(game_name=arena_game_autocomplete)
 @discord.app_commands.describe(
     game_name="Game name (e.g., 'flags', 'random', 'chaos', 'cancel')",
-    num="Number of questions/rounds (default 1, max 5)"
+    num="Number of questions/rounds (default 1, max 7)"
 )
 async def arena(interaction: discord.Interaction, game_name: str = None, num: int = 1):
     """
@@ -29127,9 +29127,9 @@ async def arena(interaction: discord.Interaction, game_name: str = None, num: in
         await interaction.response.send_message("❌ Mini-games system not available", ephemeral=True)
         return
 
-    # Cap num at 5 for regular users (okrag_id has no limit) - applies to both specific games and chaos mode
-    if interaction.user.id != okrag_id and num > 5:
-        num = 5
+    # Cap num at 7 for regular users (okrag_id has no limit) - applies to both specific games and chaos mode
+    if interaction.user.id != okrag_id and num > 7:
+        num = 7
 
     # Check if a game is already running
     if arena_game_lock.locked():
