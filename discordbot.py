@@ -9335,7 +9335,7 @@ async def ask_buzz_words_challenge(winner, winner_id, num=5):
     ]
     gif_url = random.choice(gifs)
 
-    await safe_send(channel, content="\u200b\n🐝🔤 **Buzz Words**: Hear It, Spell It.\n\u200b", embed=discord.Embed().set_image(url=gif_url))
+    await safe_send(channel, content="\u200b\n🐝🔤 **Buzz Words 🎧**: Hear It, Spell It.\n\u200b", embed=discord.Embed().set_image(url=gif_url))
     await asyncio.sleep(3)
 
     # Tier selection -- built from what's actually seeded right now, since MW enrichment
@@ -17900,7 +17900,7 @@ async def select_wof_questions(winner, winner_id, winner_coffees=None):
         counter = counter + 1
         message += f"{counter}.\u200b 🎓📚 Valedictorian\n"
         counter = counter + 1
-        message += f"{counter}.\u200b 🐝🔤 Buzz Words\n"
+        message += f"{counter}.\u200b 🐝🔤 Buzz Words 🎧\n"
         message += f"99.\u200b 🌀🤯 CHAOS\n"
         
         message += f"\n⚙️ **Other Options**\n"

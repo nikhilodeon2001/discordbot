@@ -184,7 +184,7 @@ async def run_mini_game(bot, game_name: str, player_name: str, player_id: int,
     # For audio games, use the mini-game audio bot if available (to avoid voice conflicts).
     # Use sys.modules to get the live instance — discordbot.mini_game_audio_bot may point to
     # a dead instance created during the circular simply_trivia -> discordbot import.
-    audio_games = ["hear here", "who says", "lets talk"]
+    audio_games = ["hear here", "who says", "lets talk", "buzz words"]
     live_audio_bot = sys.modules.get('__mini_game_audio_bot__') or discordbot.mini_game_audio_bot
     if game_name.lower() in audio_games and live_audio_bot:
         print(f"🎵 Using mini-game audio bot for {game_name}")
