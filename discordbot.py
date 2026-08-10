@@ -19358,6 +19358,7 @@ def generate_scoreboard_image(rows, title_outer_emoji="🏔️", title_inner_emo
     # which pick a font per-character to support decorative Unicode and emoji, independent of
     # this variable.
     font = get_font("DejaVuSans-Bold.ttf", font_size)
+    font_ascent, font_descent = font.getmetrics()
     title_font = get_font("DejaVuSans-Bold.ttf", 18 * SUPERSAMPLE)
     title_icon_size = 20 * SUPERSAMPLE
     title_height = 34 * SUPERSAMPLE
@@ -19486,7 +19487,11 @@ def generate_scoreboard_image(rows, title_outer_emoji="🏔️", title_inner_emo
 
     y = title_height + top_padding
     for row, (name_size, lines, _), height in zip(rows, name_render, row_heights):
-        row_center_y = y + height // 2 - font_size // 2
+        # Text drawn with PIL's default anchor ("la") is positioned by the top of its
+        # ascender, not its true glyph top -- centering by (ascent+descent)//2 (the font's
+        # real metrics) instead of font_size//2 lines the visual glyph center up with
+        # icon_center_y and the name block's baseline centering below.
+        row_center_y = y + height // 2 - (font_ascent + font_descent) // 2
         icon_center_y = y + height // 2
 
         if row["rank_icon"]:
@@ -19501,12 +19506,16 @@ def generate_scoreboard_image(rows, title_outer_emoji="🏔️", title_inner_emo
         # and would align mixed fonts by a naive shared top instead of a shared baseline.
         name_color = gold_color if row.get("is_top_gain") else text_color
         line_metrics = [line_font_metrics(line, name_size) for line in lines]
-        block_height = sum(ascent + descent + 6 * SUPERSAMPLE for ascent, descent in line_metrics)
+        # Gap only goes *between* lines, not after the last one -- summing "+ 6 * SUPERSAMPLE"
+        # for every line (including the last) inflated block_height by one extra trailing gap,
+        # which pushed line_top_y (and so the visible glyphs) higher than true row center.
+        line_gap = 6 * SUPERSAMPLE
+        block_height = sum(ascent + descent for ascent, descent in line_metrics) + line_gap * (len(line_metrics) - 1)
         line_top_y = y + height // 2 - block_height // 2
         for line, (ascent, descent) in zip(lines, line_metrics):
             baseline_y = line_top_y + ascent
             draw_name_atoms(draw, img, line, name_x, baseline_y, name_size, name_color, ascent, descent)
-            line_top_y += ascent + descent + 6 * SUPERSAMPLE
+            line_top_y += ascent + descent + line_gap
 
         if row["lightning_count"] > 0:
             lightning_icon = render_emoji_icon("⚡", lightning_icon_size)
