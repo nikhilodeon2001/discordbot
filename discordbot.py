@@ -8055,6 +8055,11 @@ async def ask_chaos_challenge(winner, winner_id, num_of_games):
         ask_buzz_words_challenge
     ]
 
+    if len(round_responders) < 2:
+        # OkRACE, Valedictorian, and Okra Says auto-win/abort instead of really playing
+        # with 1 player -- keep them out of CHAOS's random draw when solo.
+        solo_incompatible = {ask_okrace_challenge, ask_valedictorian_challenge, ask_okra_says_challenge}
+        challenge_functions = [fn for fn in challenge_functions if fn not in solo_incompatible]
 
     num_of_games = min(num_of_games, len(challenge_functions))
     selected_challenges = random.sample(challenge_functions, k=num_of_games)
@@ -17644,7 +17649,7 @@ async def request_prompt(winner, winner_id):
 
     final_prompt, char_trimmed = answer_matching.limit_words(' '.join(collected_words), 10, 90)
     trim_note = "✂️ *(trimmed to the 10-word limit)* " if (trimmed or char_trimmed) else ""
-    final_msg = f"\u200b\n💥🤯 {trim_note}**Ok...ra I got**: 'Draw an okra-themed picture of **{final_prompt}**'\n\u200b"
+    final_msg = f"\u200b\n💥🤯 {trim_note}**Ok...ra I got**: '**{final_prompt}**'\n\u200b"
     await safe_send(channel, final_msg)
 
     return final_prompt
@@ -17818,8 +17823,6 @@ async def select_wof_questions(winner, winner_id, winner_coffees=None):
         counter = counter + 1
         message += f"{counter}.\u200b ⚔️🧍 FeUd (Single Player)\n"
         counter = counter + 1
-        player_suffix = f" ({num_list_players}+ players)" if num_list_players >= 2 else ""
-        message += f"\n🥒✨: **Okrans Only**{player_suffix}\n"
         message += f"{counter}.\u200b ⚔️⚡ FeUd Blitz\n"
         counter = counter + 1
         message += f"{counter}.\u200b 📝🥊 List Battle\n"
@@ -17880,7 +17883,7 @@ async def select_wof_questions(winner, winner_id, winner_coffees=None):
         counter = counter + 1
         message += f"{counter}.\u200b 🌍💵 XXXX\n"
         counter = counter + 1
-        message += f"{counter}.\u200b 🥒🏁 OkRACE\n"
+        message += f"{counter}.\u200b 🥒🏁 OkRACE (2+ players)\n"
         counter = counter + 1
         message += f"{counter}.\u200b 🔍🔤 Spotlight\n"
         counter = counter + 1
@@ -17894,11 +17897,11 @@ async def select_wof_questions(winner, winner_id, winner_coffees=None):
         counter = counter + 1
         message += f"{counter}.\u200b ⏱️⚡ 30 for 30\n"
         counter = counter + 1
-        message += f"{counter}.\u200b 🧠🥒 Okra Says\n"
+        message += f"{counter}.\u200b 🧠🥒 Okra Says (2+ players)\n"
         counter = counter + 1
         message += f"{counter}.\u200b 🧞‍♂️🪔 The Genie\n"
         counter = counter + 1
-        message += f"{counter}.\u200b 🎓📚 Valedictorian\n"
+        message += f"{counter}.\u200b 🎓📚 Valedictorian (2+ players)\n"
         counter = counter + 1
         message += f"{counter}.\u200b 🐝🔤 Buzz Words 🎧\n"
         message += f"99.\u200b 🌀🤯 CHAOS\n"
@@ -18422,7 +18425,7 @@ async def ask_wof_number(winner, winner_id, cached_coffees=None, menu_text=None)
         "50": "Buzz Words",
         "99": "CHAOS"
     }
-    multiplayer_required = {k for k in unlocks if k not in {"5", "6", "7", "8", "9"}}
+    multiplayer_required = {"40", "47", "49"}  # OkRACE, Okra Says, Valedictorian -- these auto-win/abort instead of really playing with 1 player
     all_options = {str(i) for i in range(51)} | {"00", "x", "99"}
 
     start = asyncio.get_event_loop().time()
@@ -18447,7 +18450,9 @@ async def ask_wof_number(winner, winner_id, cached_coffees=None, menu_text=None)
             if content == "00":
                 await message.add_reaction("👍")
                 set_a = [str(i) for i in range(5)]
-                set_b = [str(i) for i in range(5, 51)] if len(round_responders) >= num_list_players else [str(i) for i in range(5, 10)]
+                set_b = [str(i) for i in range(5, 51)]
+                if len(round_responders) < 2:
+                    set_b = [g for g in set_b if g not in multiplayer_required]
                 set_b = [g for g in set_b if g not in RANDOM_EXCLUDED_NUMBERS]
                 selected_question = random.choice(set_a if random.random() < 0.5 else set_b)
 
@@ -18468,9 +18473,9 @@ async def ask_wof_number(winner, winner_id, cached_coffees=None, menu_text=None)
                 continue
 
             # Check multiplayer lock
-            if content in multiplayer_required and len(round_responders) < num_list_players and responder_id != okrag_id:
+            if content in multiplayer_required and len(round_responders) < 2 and responder_id != okrag_id:
                 await message.add_reaction("😢")
-                await safe_send(channel, f"\n🙏😔 Sorry **<@{responder_id}>**. '**{unlocks[content]}**' requires **{num_list_players}+ players**.\n")
+                await safe_send(channel, f"\n🙏😔 Sorry **<@{responder_id}>**. '**{unlocks[content]}**' requires **2+ players**.\n")
                 continue
 
             selected_question = content
