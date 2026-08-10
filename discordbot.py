@@ -19334,27 +19334,38 @@ def generate_scoreboard_image(rows, title_outer_emoji="🏔️", title_inner_emo
     muted_color = (170, 175, 180)
     gold_color = (255, 210, 74)  # #ffd24a -- fastest correct answerer's delta
     green_color = (61, 220, 132)  # #3ddc84 -- everyone else's delta, matches the web UI's green
-    img_width_min = 260
-    img_width_max = 520
-    side_margin = 14
-    col_gap = 14
-    row_height = 36
-    top_padding = 10
-    font_size = 16
-    rank_icon_size = 20
-    lightning_icon_size = 15
-    phone_icon_size = 16
-    checkmark_icon_size = 18
 
-    font = get_font("DejaVuSans.ttf", font_size)
-    title_font = get_font("DejaVuSans-Bold.ttf", 18)
-    title_icon_size = 20
-    title_height = 34
+    # Drawn at SUPERSAMPLE-x scale, then downsampled back to these tuned dimensions with
+    # LANCZOS (see the resize right before img.save) -- gives properly anti-aliased text/icon
+    # edges instead of PIL's native small-size AA, without changing the final on-screen size
+    # (deliberately shrunk in the past after this image rendered too large in practice).
+    SUPERSAMPLE = 2
+    img_width_min = 260 * SUPERSAMPLE
+    img_width_max = 520 * SUPERSAMPLE
+    side_margin = 14 * SUPERSAMPLE
+    col_gap = 14 * SUPERSAMPLE
+    row_height = 36 * SUPERSAMPLE
+    top_padding = 10 * SUPERSAMPLE
+    font_size = 16 * SUPERSAMPLE
+    rank_icon_size = 20 * SUPERSAMPLE
+    lightning_icon_size = 15 * SUPERSAMPLE
+    phone_icon_size = 16 * SUPERSAMPLE
+    checkmark_icon_size = 18 * SUPERSAMPLE
 
-    rank_x = 12
-    name_x = 38
-    name_max_width = 260
-    name_min_font_size = 11
+    # Bold instead of regular weight for the row numbers/rank text -- thicker strokes read as
+    # crisper/higher-contrast at small sizes than a regular-weight glyph's anti-aliased edges.
+    # Player names aren't included: they route through draw_name_atoms/name_to_render_atoms,
+    # which pick a font per-character to support decorative Unicode and emoji, independent of
+    # this variable.
+    font = get_font("DejaVuSans-Bold.ttf", font_size)
+    title_font = get_font("DejaVuSans-Bold.ttf", 18 * SUPERSAMPLE)
+    title_icon_size = 20 * SUPERSAMPLE
+    title_height = 34 * SUPERSAMPLE
+
+    rank_x = 12 * SUPERSAMPLE
+    name_x = 38 * SUPERSAMPLE
+    name_max_width = 260 * SUPERSAMPLE
+    name_min_font_size = 11 * SUPERSAMPLE
 
     def fit_name(name):
         """Shrink the name's font a point at a time until it fits on one line within
@@ -19388,7 +19399,7 @@ def generate_scoreboard_image(rows, title_outer_emoji="🏔️", title_inner_emo
         using each line's real ascent+descent (line_font_metrics) rather than assuming every
         line is DejaVuSans-sized -- a circled/math-styled line can need more vertical room than
         the point size alone would suggest."""
-        return sum(ascent + descent + 6 for ascent, descent in (line_font_metrics(line, size) for line in lines)) + 16
+        return sum(ascent + descent + 6 * SUPERSAMPLE for ascent, descent in (line_font_metrics(line, size) for line in lines)) + 16 * SUPERSAMPLE
 
     row_heights = [max(row_height, name_block_height(size, lines)) for size, lines, _ in name_render]
     img_height = title_height + top_padding * 2 + sum(row_heights)
@@ -19402,7 +19413,7 @@ def generate_scoreboard_image(rows, title_outer_emoji="🏔️", title_inner_emo
             return 0
         width = lightning_icon_size
         if count > 1:
-            width += 4 + text_width(str(count))
+            width += 4 * SUPERSAMPLE + text_width(str(count))
         return width
 
     # The lightning/score/delta cluster's own width is content-driven (widest actual
@@ -19436,7 +19447,7 @@ def generate_scoreboard_image(rows, title_outer_emoji="🏔️", title_inner_emo
 
     title_text_bbox_probe = title_font.getbbox(title_text)
     title_text_width = title_text_bbox_probe[2] - title_text_bbox_probe[0]
-    title_gap = 10
+    title_gap = 10 * SUPERSAMPLE
     total_title_width = title_icon_size * 4 + title_gap * 4 + title_text_width
     title_required_width = total_title_width + side_margin * 2
 
@@ -19490,18 +19501,18 @@ def generate_scoreboard_image(rows, title_outer_emoji="🏔️", title_inner_emo
         # and would align mixed fonts by a naive shared top instead of a shared baseline.
         name_color = gold_color if row.get("is_top_gain") else text_color
         line_metrics = [line_font_metrics(line, name_size) for line in lines]
-        block_height = sum(ascent + descent + 6 for ascent, descent in line_metrics)
+        block_height = sum(ascent + descent + 6 * SUPERSAMPLE for ascent, descent in line_metrics)
         line_top_y = y + height // 2 - block_height // 2
         for line, (ascent, descent) in zip(lines, line_metrics):
             baseline_y = line_top_y + ascent
             draw_name_atoms(draw, img, line, name_x, baseline_y, name_size, name_color, ascent, descent)
-            line_top_y += ascent + descent + 6
+            line_top_y += ascent + descent + 6 * SUPERSAMPLE
 
         if row["lightning_count"] > 0:
             lightning_icon = render_emoji_icon("⚡", lightning_icon_size)
             img.paste(lightning_icon, (lightning_x, icon_center_y - lightning_icon_size // 2), lightning_icon)
             if row["lightning_count"] > 1:
-                draw.text((lightning_x + lightning_icon_size + 4, row_center_y), f"{row['lightning_count']}", fill=text_color, font=font)
+                draw.text((lightning_x + lightning_icon_size + 4 * SUPERSAMPLE, row_center_y), f"{row['lightning_count']}", fill=text_color, font=font)
 
         if row["score_display"] == "✅":
             check_icon = render_emoji_icon("✅", checkmark_icon_size)
@@ -19525,6 +19536,7 @@ def generate_scoreboard_image(rows, title_outer_emoji="🏔️", title_inner_emo
 
         y += height
 
+    img = img.resize((img_width // SUPERSAMPLE, img_height // SUPERSAMPLE), Image.LANCZOS)
     image_buffer = io.BytesIO()
     img.save(image_buffer, format="PNG")
     image_buffer.seek(0)
