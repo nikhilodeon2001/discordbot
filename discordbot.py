@@ -16430,8 +16430,6 @@ async def load_parameters():
             num_math_questions = num_math_questions_default
             num_stats_questions = num_stats_questions_default
             num_sat_questions = num_sat_questions_default
-            time_between_questions = time_between_questions_default
-            question_time = question_time_default
 
             # Exit loop if successful
             break
@@ -16475,8 +16473,6 @@ async def load_parameters():
                 num_math_questions = num_math_questions_default
                 num_stats_questions = num_stats_questions_default
                 num_sat_questions = num_sat_questions_default
-                time_between_questions = time_between_questions_default
-                question_time = question_time_default
 
 
 async def get_int_param(db, param_id, default_value):
