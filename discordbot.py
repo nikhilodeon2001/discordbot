@@ -427,8 +427,8 @@ async def send_question_queen_submit_ad():
 # e.g. for announcements (like a rebrand) that aren't a new feature pitch.
 # {base_url} is substituted with companion_web.get_base_url() at post time, so
 # the same text is correct whether this deploy is staging or prod.
-okra_lab_announcement_enabled = False
-okra_lab_announcement_text = "🐝🔤 **Buzz Words** has launched — a real spelling bee.\n\nWords span easy to championship-level brutal, pulled from an official competitive word list, with real dictionary-quality pronunciation audio and definitions read aloud. Hear it, then race to type the spelling — no peeking, nothing's ever shown in chat.\n"
+okra_lab_announcement_enabled = True
+okra_lab_announcement_text = "🍆💨 **Quickie** mode has launched — Dicktator's fast-and-loose cousin.\n\nInstead of one dictator picking every question for the whole round, power changes hands every question: whoever wins a question picks the next one. Toggle it with `quickie` (or `#quickie` mid-round) same as any other mode.\n"
 okra_lab_announcement_show_new_badge = True
 
 
@@ -927,6 +927,10 @@ god_mode_default = False
 god_mode = god_mode_default
 god_mode_points = 5000
 god_mode_players = 5
+quickie_mode_default = False
+quickie_mode = quickie_mode_default
+last_question_winner = None
+last_question_winner_id = None
 yolo_mode_default = False
 yolo_mode = yolo_mode_default
 emoji_mode_default = True
@@ -16480,7 +16484,7 @@ async def save_round_options_to_db():
     """Save current round options state to MongoDB parameters_discord collection."""
     global time_between_questions, ghost_mode, num_crossword_clues
     global num_jeopardy_clues, num_mysterybox_clues, num_wof_clues
-    global god_mode, yolo_mode, num_math_questions, num_stats_questions
+    global god_mode, quickie_mode, yolo_mode, num_math_questions, num_stats_questions
     global image_questions, marx_mode, blind_mode, sniper_mode, blitz_mode, exact_mode, golf_mode, glyph_mode
     global cloak_mode, cloaked_user
 
@@ -16494,6 +16498,7 @@ async def save_round_options_to_db():
             {"_id": "round_num_mysterybox_clues", "value": num_mysterybox_clues},
             {"_id": "round_num_wof_clues", "value": num_wof_clues},
             {"_id": "round_god_mode", "value": int(god_mode)},
+            {"_id": "round_quickie_mode", "value": int(quickie_mode)},
             {"_id": "round_yolo_mode", "value": int(yolo_mode)},
             {"_id": "round_num_math_questions", "value": num_math_questions},
             {"_id": "round_num_stats_questions", "value": num_stats_questions},
@@ -16526,7 +16531,7 @@ async def load_round_options_from_db():
     """Load round options state from MongoDB and set global variables."""
     global time_between_questions, ghost_mode, num_crossword_clues
     global num_jeopardy_clues, num_mysterybox_clues, num_wof_clues
-    global god_mode, yolo_mode, num_math_questions, num_stats_questions
+    global god_mode, quickie_mode, yolo_mode, num_math_questions, num_stats_questions
     global image_questions, marx_mode, blind_mode, sniper_mode, blitz_mode, exact_mode, golf_mode, glyph_mode
     global cloak_mode, cloaked_user
 
@@ -16539,6 +16544,7 @@ async def load_round_options_from_db():
         num_mysterybox_clues = await get_int_param(db, "round_num_mysterybox_clues", num_mysterybox_clues_default)
         num_wof_clues = await get_int_param(db, "round_num_wof_clues", num_wof_clues_default)
         god_mode = bool(await get_int_param(db, "round_god_mode", int(god_mode_default)))
+        quickie_mode = bool(await get_int_param(db, "round_quickie_mode", int(quickie_mode_default)))
         yolo_mode = bool(await get_int_param(db, "round_yolo_mode", int(yolo_mode_default)))
         num_math_questions = await get_int_param(db, "round_num_math_questions", num_math_questions_default)
         num_stats_questions = await get_int_param(db, "round_num_stats_questions", num_stats_questions_default)
@@ -19799,7 +19805,7 @@ def generate_crossword_image(answer, prefill=0.5):
 
 
 async def clear_round_options():
-    global since_token, time_between_questions, time_between_questions_default, ghost_mode, since_token, categories_to_exclude, num_crossword_clues, num_jeopardy_clues, num_mysterybox_clues, num_wof_clues, num_sat_questions, jeopardy_boosted, crossword_boosted, sat_boosted, god_mode, yolo_mode, magic_number, wf_winner, num_math_questions, num_stats_questions, image_questions, nice_okra, creep_okra, marx_mode, blind_mode, seductive_okra, joke_okra, sniper_mode, blitz_mode, exact_mode, golf_mode, glyph_mode, cloak_mode, cloaked_user, haiku_okra, trailer_okra, heist_okra, horoscope_okra, rap_okra, shakespeare_okra, pirate_okra, noir_okra, hype_okra, roast_okra
+    global since_token, time_between_questions, time_between_questions_default, ghost_mode, since_token, categories_to_exclude, num_crossword_clues, num_jeopardy_clues, num_mysterybox_clues, num_wof_clues, num_sat_questions, jeopardy_boosted, crossword_boosted, sat_boosted, god_mode, quickie_mode, last_question_winner, last_question_winner_id, yolo_mode, magic_number, wf_winner, num_math_questions, num_stats_questions, image_questions, nice_okra, creep_okra, marx_mode, blind_mode, seductive_okra, joke_okra, sniper_mode, blitz_mode, exact_mode, golf_mode, glyph_mode, cloak_mode, cloaked_user, haiku_okra, trailer_okra, heist_okra, horoscope_okra, rap_okra, shakespeare_okra, pirate_okra, noir_okra, hype_okra, roast_okra
     time_between_questions = time_between_questions_default
     ghost_mode = ghost_mode_default
     categories_to_exclude.clear()
@@ -19812,6 +19818,9 @@ async def clear_round_options():
     crossword_boosted = False
     sat_boosted = False
     god_mode = god_mode_default
+    quickie_mode = quickie_mode_default
+    last_question_winner = None
+    last_question_winner_id = None
     yolo_mode = yolo_mode_default
     magic_number_correct = False
     wf_winner = False
@@ -19879,6 +19888,7 @@ async def process_round_options(round_winner, winner_points, round_winner_id, wi
             "🟦✋ **Alex**: More Jeopardy questions\n"
             "🤓📝 **Nerd**: Add SAT questions\n"
             "🎖🥒 **Dicktator**: Choose the categories\n"
+            "🍆💨 **Quickie**: Winner of each question picks next\n"
             "\n🏁⏭️ **x**: I'm Done / Skip\n"
         )
         await safe_send(channel, message)
@@ -19896,7 +19906,7 @@ async def prompt_user_for_response(round_winner, winner_points, winner_coffees, 
     global since_token, time_between_questions, ghost_mode
     global num_jeopardy_clues, num_crossword_clues, num_mysterybox_clues, num_wof_clues
     global num_sat_questions, jeopardy_boosted, crossword_boosted, sat_boosted
-    global yolo_mode, god_mode, num_math_questions, num_stats_questions
+    global yolo_mode, god_mode, quickie_mode, num_math_questions, num_stats_questions
     global image_questions, marx_mode, blind_mode, sniper_mode, blitz_mode, exact_mode, glyph_mode, golf_mode, cloak_mode, cloaked_user
 
     # Central configuration for keywords
@@ -19916,6 +19926,7 @@ async def prompt_user_for_response(round_winner, winner_points, winner_coffees, 
         "word": {"requires_coffee": False, "exclude_hashtag": False},
         "nerd": {"requires_coffee": False, "exclude_hashtag": False},
         "dicktator": {"requires_coffee": False, "exclude_hashtag": True},
+        "quickie": {"requires_coffee": False, "exclude_hashtag": True},
         "sniper": {"requires_coffee": False, "exclude_hashtag": True},
         "cloak": {"requires_coffee": False, "exclude_hashtag": True},
         "blitz": {"requires_coffee": False, "exclude_hashtag": True},
@@ -20007,6 +20018,9 @@ async def prompt_user_for_response(round_winner, winner_points, winner_coffees, 
 
             if (not keyword_config["dicktator"]["exclude_hashtag"] or "#dicktator" not in message_content) and await coffee_gate("dicktator", f"🎖🍆 **<@{round_winner_id}>** is a dick.", "Dicktator"):
                 god_mode = True
+
+            if (not keyword_config["quickie"]["exclude_hashtag"] or "#quickie" not in message_content) and await coffee_gate("quickie", f"🍆💨 **<@{round_winner_id}>** wants a quickie.", "Quickie"):
+                quickie_mode = True
 
             if (not keyword_config["sniper"]["exclude_hashtag"] or "#sniper" not in message_content) and await coffee_gate("sniper", f"🧢🎤 **<@{round_winner_id}>** says 'You only get one shot, do not miss your chance!'", "Sniper"):
                 sniper_mode = True
@@ -21843,6 +21857,7 @@ async def check_correct_responses_delete(question_ask_time, trivia_answer_list, 
     """Check and respond to users who answered the trivia question correctly."""
     global max_retries, delay_between_retries, current_longest_answer_streak
     global question_responders, round_responders, discount_percentage
+    global last_question_winner, last_question_winner_id
     
     # Define the first item in the list as trivia_answer
     trivia_answer = trivia_answer_list[0]  
@@ -22242,6 +22257,9 @@ async def check_correct_responses_delete(question_ask_time, trivia_answer_list, 
         standings_text = build_standings_text()
         if standings_text:
             await safe_send(channel, standings_text)
+
+    last_question_winner = fastest_correct_user
+    last_question_winner_id = fastest_correct_user_id
 
     flush_submission_queue()
     await flush_offquestion_chat_buffer()
@@ -24069,14 +24087,24 @@ async def start_trivia():
             _companion_set_round(selected_questions)
 
             question_number = 1
+            quickie_current_picker_id = None
             while question_number <= questions_per_round:
                 randomize_embed_color()
                 question_responders.clear()  # Reset question responders for the new question
 
-                if god_mode and round_winner:
+                if quickie_mode and (last_question_winner_id or round_winner_id):
+                    picker_id = last_question_winner_id or round_winner_id
+                    picker_name = last_question_winner or round_winner
+                    if picker_id != quickie_current_picker_id:
+                        await safe_send(channel, f"🍆💨 **<@{picker_id}>** won that one — new Quickie dicktator!")
+                        quickie_current_picker_id = picker_id
+                    selected_index = await get_player_selected_question(selected_questions, picker_name, picker_id)
+                    selected_question = selected_questions[selected_index - 1]
+
+                elif god_mode and round_winner:
                     selected_index = await get_player_selected_question(selected_questions, round_winner, round_winner_id)
                     selected_question = selected_questions[selected_index - 1]
-                    
+
                 else:
                     selected_question = selected_questions[0]
 
@@ -24315,7 +24343,7 @@ async def start_trivia():
 
 
 def print_round_settings():
-    global time_between_questions, ghost_mode, god_mode, yolo_mode
+    global time_between_questions, ghost_mode, god_mode, quickie_mode, yolo_mode
     global image_questions, marx_mode
     global blind_mode, sniper_mode, cloak_mode, blitz_mode, exact_mode, golf_mode, glyph_mode
 
@@ -24323,6 +24351,7 @@ def print_round_settings():
     print(f"⏱️  Time Between Questions: {time_between_questions}")
     print(f"👻  Ghost Mode: {ghost_mode}")
     print(f"🎖️  God Mode: {god_mode}")
+    print(f"🍆💨 Quickie Mode: {quickie_mode}")
     print(f"🔥  Yolo Mode: {yolo_mode}")
     print(f"🖼️  Image Questions: {image_questions}")
     print(f"🔨  Marx Mode: {marx_mode}")
@@ -24335,7 +24364,7 @@ def print_round_settings():
     print(f"🔐🔍 Glyph Mode: {glyph_mode}")
 
 async def reset_round_options(reset_command, winner_id):
-    global time_between_questions, ghost_mode, god_mode, yolo_mode, mirror_mode, echo_mode, image_questions, marx_mode, blind_mode, zen_mode, sniper_mode, blitz_mode, exact_mode, golf_mode, glyph_mode, cloak_mode, cloaked_user
+    global time_between_questions, ghost_mode, god_mode, quickie_mode, yolo_mode, mirror_mode, echo_mode, image_questions, marx_mode, blind_mode, zen_mode, sniper_mode, blitz_mode, exact_mode, golf_mode, glyph_mode, cloak_mode, cloaked_user
 
     reset_success = False
 
@@ -24386,7 +24415,15 @@ async def reset_round_options(reset_command, winner_id):
             await safe_send(channel, content=f"\n🎖🍆 **{winner_id}** is a dick.\n")
         else:
             await safe_send(channel, content=f"\n🎖🫡 **{winner_id}** is not a dick.\n")
-    
+
+    if "quickie" in reset_command:
+        quickie_mode = not quickie_mode
+        reset_success = True
+        if quickie_mode:
+            await safe_send(channel, content=f"\n🍆💨 **{winner_id}** wants a quickie.\n")
+        else:
+            await safe_send(channel, content=f"\n🍆🫡 **{winner_id}** is done with quickies.\n")
+
     if "sniper" in reset_command:
         sniper_mode = not sniper_mode
         reset_success = True
@@ -25393,6 +25430,7 @@ def _companion_active_modes():
     specs = [
         (ghost_mode,      ghost_mode_default,      "👻🎃", "Ghost"),
         (god_mode,        god_mode_default,        "🎖️🍆", "Dicktator"),
+        (quickie_mode,    quickie_mode_default,    "🍆💨", "Quickie"),
         (yolo_mode,       yolo_mode_default,       "🔥🤘", "Yolo"),
         (blind_mode,      blind_mode_default,      "🙈🚫", "Blind"),
         (marx_mode,       marx_mode_default,       "🚩🔨", "Marx"),
