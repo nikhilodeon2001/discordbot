@@ -431,7 +431,7 @@ async def send_question_queen_submit_ad():
 # the same text is correct whether this deploy is staging or prod.
 okra_lab_announcement_enabled = True
 okra_lab_announcement_text = (
-    "🍆💨 **Quickie** mode has launched — Dicktator's fast-and-loose cousin. Instead of one dictator picking every question for the whole round, power changes hands every question: whoever wins a question picks the next one. Toggle it with `quickie` (or `#quickie` mid-round) same as any other mode.\n\n"
+    "🍑🔪 **Assassin** mode has launched — Dicktator's fast-and-loose cousin. Instead of one dictator picking every question for the whole round, power changes hands every question: whoever wins a question picks the next one. Toggle it with `assassin` (or `#assassin` mid-round) same as any other mode.\n\n"
     "⏱️❓ You can now also set how long you get to **answer** a question, not just the delay between them. Type `answer<N>` (e.g. `answer8`) for the answer window, and `delay<N>` (e.g. `delay7`) for the gap between questions — both work in the post-round menu or mid-round with `#` (e.g. `#answer6`).\n\n"
     "**Heads up**: setting the delay used to work with just a bare number — that no longer works on its own, use `delay<N>` instead.\n"
 )
@@ -19901,7 +19901,7 @@ async def process_round_options(round_winner, winner_points, round_winner_id, wi
             "🟦✋ **Alex**: More Jeopardy questions\n"
             "🤓📝 **Nerd**: Add SAT questions\n"
             "🎖🥒 **Dicktator**: Choose the categories\n"
-            "🍆💨 **Quickie**: Winner of each question picks next\n"
+            "🍑🔪 **Assassin**: Winner of each question picks next\n"
             "\n🏁⏭️ **x**: I'm Done / Skip\n"
         )
         await safe_send(channel, message)
@@ -19939,7 +19939,7 @@ async def prompt_user_for_response(round_winner, winner_points, winner_coffees, 
         "word": {"requires_coffee": False, "exclude_hashtag": False},
         "nerd": {"requires_coffee": False, "exclude_hashtag": False},
         "dicktator": {"requires_coffee": False, "exclude_hashtag": True},
-        "quickie": {"requires_coffee": False, "exclude_hashtag": True},
+        "assassin": {"requires_coffee": False, "exclude_hashtag": True},
         "sniper": {"requires_coffee": False, "exclude_hashtag": True},
         "cloak": {"requires_coffee": False, "exclude_hashtag": True},
         "blitz": {"requires_coffee": False, "exclude_hashtag": True},
@@ -20035,7 +20035,7 @@ async def prompt_user_for_response(round_winner, winner_points, winner_coffees, 
             if (not keyword_config["dicktator"]["exclude_hashtag"] or "#dicktator" not in message_content) and await coffee_gate("dicktator", f"🎖🍆 **<@{round_winner_id}>** is a dick.", "Dicktator"):
                 god_mode = True
 
-            if (not keyword_config["quickie"]["exclude_hashtag"] or "#quickie" not in message_content) and await coffee_gate("quickie", f"🍆💨 **<@{round_winner_id}>** wants a quickie.", "Quickie"):
+            if (not keyword_config["assassin"]["exclude_hashtag"] or "#assassin" not in message_content) and await coffee_gate("assassin", f"🍑🔪 **<@{round_winner_id}>** is an ass.", "Assassin"):
                 quickie_mode = True
 
             if (not keyword_config["sniper"]["exclude_hashtag"] or "#sniper" not in message_content) and await coffee_gate("sniper", f"🧢🎤 **<@{round_winner_id}>** says 'You only get one shot, do not miss your chance!'", "Sniper"):
@@ -24112,7 +24112,7 @@ async def start_trivia():
                     picker_id = last_question_winner_id or round_winner_id
                     picker_name = last_question_winner or round_winner
                     if picker_id != quickie_current_picker_id:
-                        await safe_send(channel, f"🍆💨 **<@{picker_id}>** won that one — new Quickie dicktator!")
+                        await safe_send(channel, f"🍑🔪 **<@{picker_id}>** won that one — new Assassin!")
                         quickie_current_picker_id = picker_id
                     selected_index = await get_player_selected_question(selected_questions, picker_name, picker_id)
                     selected_question = selected_questions[selected_index - 1]
@@ -24366,7 +24366,7 @@ def print_round_settings():
     print(f"⏱️  Time Between Questions: {time_between_questions}")
     print(f"👻  Ghost Mode: {ghost_mode}")
     print(f"🎖️  God Mode: {god_mode}")
-    print(f"🍆💨 Quickie Mode: {quickie_mode}")
+    print(f"🍑🔪 Assassin Mode: {quickie_mode}")
     print(f"🔥  Yolo Mode: {yolo_mode}")
     print(f"🖼️  Image Questions: {image_questions}")
     print(f"🔨  Marx Mode: {marx_mode}")
@@ -24431,13 +24431,13 @@ async def reset_round_options(reset_command, winner_id):
         else:
             await safe_send(channel, content=f"\n🎖🫡 **{winner_id}** is not a dick.\n")
 
-    if "quickie" in reset_command:
+    if "assassin" in reset_command:
         quickie_mode = not quickie_mode
         reset_success = True
         if quickie_mode:
-            await safe_send(channel, content=f"\n🍆💨 **{winner_id}** wants a quickie.\n")
+            await safe_send(channel, content=f"\n🍑🔪 **{winner_id}** is an ass.\n")
         else:
-            await safe_send(channel, content=f"\n🍆🫡 **{winner_id}** is done with quickies.\n")
+            await safe_send(channel, content=f"\n🍑🫡 **{winner_id}** is not an ass.\n")
 
     if "sniper" in reset_command:
         sniper_mode = not sniper_mode
@@ -25452,7 +25452,7 @@ def _companion_active_modes():
     specs = [
         (ghost_mode,      ghost_mode_default,      "👻🎃", "Ghost"),
         (god_mode,        god_mode_default,        "🎖️🍆", "Dicktator"),
-        (quickie_mode,    quickie_mode_default,    "🍆💨", "Quickie"),
+        (quickie_mode,    quickie_mode_default,    "🍑🔪", "Assassin"),
         (yolo_mode,       yolo_mode_default,       "🔥🤘", "Yolo"),
         (blind_mode,      blind_mode_default,      "🙈🚫", "Blind"),
         (marx_mode,       marx_mode_default,       "🚩🔨", "Marx"),
