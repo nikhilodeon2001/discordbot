@@ -8,7 +8,7 @@ button, no answer-submission UI -- this is strictly spectator.
 Served from the same "/" route as the phone companion, switched on by a "?view=tv" query param --
 exactly the same trick companion_web.py's handle_index already uses to serve activity_web's
 Activity page from "?frame_id=..." instead of a dedicated path, so there's only ever one URL
-(play.triviasphere.com) to share, not a second one to remember. render_tv_page() is a plain
+(play.okrasworld.com) to share, not a second one to remember. render_tv_page() is a plain
 function (mirroring activity_web.render_activity_page), not a route handler itself -- handle_index
 calls it directly.
 
@@ -58,7 +58,7 @@ _TV_HTML = """<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>TriviaSphere TV</title>
+<title>Okra's World TV</title>
 <style>
   :root {
     color-scheme: dark;
@@ -146,7 +146,7 @@ _TV_HTML = """<!doctype html>
 <body>
   <button type="button" class="icon-btn" data-action="back" aria-label="Companion View" title="Companion View">📱</button>
   <div class="brand">
-    <div class="brandlogo" role="img" aria-label="TriviaSphere logo"></div>
+    <div class="brandlogo" role="img" aria-label="Okra's World logo"></div>
     <div class="game-tabs" id="tabs">
       <button type="button" class="tab-btn active" data-game="main">Trivia &amp; Games</button>
       <button type="button" class="tab-btn" data-game="simply">Simply Trivia</button>

@@ -14,7 +14,7 @@ accessors -- via init(), called once from start_companion_web.
 
 The render logic in _ACTIVITY_HTML below is a deliberate COPY of the relevant pieces of
 companion_web._INDEX_HTML's client JS (the "detail" / non-simpleMode branch only), not a shared
-import. _INDEX_HTML has no test coverage and serves play.triviasphere.com directly; editing it to
+import. _INDEX_HTML has no test coverage and serves play.okrasworld.com directly; editing it to
 extract shared partials risks a quote-escaping slip breaking prod for the sake of a POC. If this
 graduates past POC, promote the copied builders to a shared constant instead.
 """
@@ -330,7 +330,7 @@ _ACTIVITY_HTML = """<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>TriviaSphere Activity</title>
+<title>Okra's World Activity</title>
 <meta name="theme-color" content="#06080D" media="(prefers-color-scheme: dark)">
 <meta name="theme-color" content="#F8F8F8" media="(prefers-color-scheme: light)">
 <style>
@@ -907,7 +907,7 @@ async function boot() {
     if (!tokenJson.ok) {
       document.getElementById('app').innerHTML = tokenJson.reason === 'not_a_member'
         ? '<div class="idle"><span class="big">Join the server to play</span>' +
-          '<a class="login" href="' + esc(tokenJson.invite || '#') + '" target="_blank">Join TriviaSphere</a></div>'
+          '<a class="login" href="' + esc(tokenJson.invite || '#') + '" target="_blank">Join Okra's World</a></div>'
         : '<div class="idle bad">Could not sign in (' + esc(tokenJson.reason || 'error') + ').</div>';
       return;
     }
