@@ -24103,7 +24103,6 @@ async def start_trivia():
             _companion_set_round(selected_questions)
 
             question_number = 1
-            quickie_current_picker_id = None
             while question_number <= questions_per_round:
                 randomize_embed_color()
                 question_responders.clear()  # Reset question responders for the new question
@@ -24111,9 +24110,6 @@ async def start_trivia():
                 if quickie_mode and (last_question_winner_id or round_winner_id):
                     picker_id = last_question_winner_id or round_winner_id
                     picker_name = last_question_winner or round_winner
-                    if picker_id != quickie_current_picker_id:
-                        await safe_send(channel, f"🍑🔪 **<@{picker_id}>** won that one — new Assassin!")
-                        quickie_current_picker_id = picker_id
                     selected_index = await get_player_selected_question(selected_questions, picker_name, picker_id)
                     selected_question = selected_questions[selected_index - 1]
 
