@@ -428,7 +428,11 @@ async def send_question_queen_submit_ad():
 # {base_url} is substituted with companion_web.get_base_url() at post time, so
 # the same text is correct whether this deploy is staging or prod.
 okra_lab_announcement_enabled = True
-okra_lab_announcement_text = "🍆💨 **Quickie** mode has launched — Dicktator's fast-and-loose cousin.\n\nInstead of one dictator picking every question for the whole round, power changes hands every question: whoever wins a question picks the next one. Toggle it with `quickie` (or `#quickie` mid-round) same as any other mode.\n"
+okra_lab_announcement_text = (
+    "🍆💨 **Quickie** mode has launched — Dicktator's fast-and-loose cousin. Instead of one dictator picking every question for the whole round, power changes hands every question: whoever wins a question picks the next one. Toggle it with `quickie` (or `#quickie` mid-round) same as any other mode.\n\n"
+    "⏱️❓ You can now also set how long you get to **answer** a question, not just the delay between them. Type `answer<N>` (e.g. `answer8`) for the answer window, and `delay<N>` (e.g. `delay7`) for the gap between questions — both work in the post-round menu or mid-round with `#` (e.g. `#answer6`).\n\n"
+    "**Heads up**: setting the delay used to work with just a bare number — that no longer works on its own, use `delay<N>` instead.\n"
+)
 okra_lab_announcement_show_new_badge = True
 
 
@@ -16345,6 +16349,7 @@ async def load_parameters():
     global max_retries
     global delay_between_retries
     global question_time
+    global question_time_default
     global questions_per_round
     global ai_on
     global sync_commands
@@ -16412,9 +16417,9 @@ async def load_parameters():
             time_between_questions_default = parameters["time_between_questions_default"]
             max_retries = parameters["max_retries"]
             delay_between_retries = parameters["delay_between_retries"]
-            question_time = parameters["question_time"]
+            question_time_default = parameters["question_time"]
             questions_per_round = parameters["questions_per_round"]
-            
+
             num_mysterybox_clues = num_mysterybox_clues_default
             num_crossword_clues = num_crossword_clues_default
             num_jeopardy_clues = num_jeopardy_clues_default
@@ -16424,6 +16429,7 @@ async def load_parameters():
             num_stats_questions = num_stats_questions_default
             num_sat_questions = num_sat_questions_default
             time_between_questions = time_between_questions_default
+            question_time = question_time_default
 
             # Exit loop if successful
             break
@@ -16456,7 +16462,7 @@ async def load_parameters():
                 time_between_questions_default = default_values["time_between_questions_default"]
                 max_retries = default_values["max_retries"]
                 delay_between_retries = default_values["delay_between_retries"]
-                question_time = default_values["question_time"]
+                question_time_default = default_values["question_time"]
                 questions_per_round = default_values["questions_per_round"]
 
                 num_mysterybox_clues = num_mysterybox_clues_default
@@ -16468,6 +16474,7 @@ async def load_parameters():
                 num_stats_questions = num_stats_questions_default
                 num_sat_questions = num_sat_questions_default
                 time_between_questions = time_between_questions_default
+                question_time = question_time_default
 
 
 async def get_int_param(db, param_id, default_value):
@@ -16482,7 +16489,7 @@ async def get_int_param(db, param_id, default_value):
 
 async def save_round_options_to_db():
     """Save current round options state to MongoDB parameters_discord collection."""
-    global time_between_questions, ghost_mode, num_crossword_clues
+    global time_between_questions, question_time, ghost_mode, num_crossword_clues
     global num_jeopardy_clues, num_mysterybox_clues, num_wof_clues
     global god_mode, quickie_mode, yolo_mode, num_math_questions, num_stats_questions
     global image_questions, marx_mode, blind_mode, sniper_mode, blitz_mode, exact_mode, golf_mode, glyph_mode
@@ -16492,6 +16499,7 @@ async def save_round_options_to_db():
         # Store each variable as a document with _id as the variable name
         updates = [
             {"_id": "round_time_between_questions", "value": time_between_questions},
+            {"_id": "round_question_time", "value": question_time},
             {"_id": "round_ghost_mode", "value": int(ghost_mode)},  # Convert bool to int
             {"_id": "round_num_crossword_clues", "value": num_crossword_clues},
             {"_id": "round_num_jeopardy_clues", "value": num_jeopardy_clues},
@@ -16529,7 +16537,7 @@ async def save_round_options_to_db():
 
 async def load_round_options_from_db():
     """Load round options state from MongoDB and set global variables."""
-    global time_between_questions, ghost_mode, num_crossword_clues
+    global time_between_questions, question_time, ghost_mode, num_crossword_clues
     global num_jeopardy_clues, num_mysterybox_clues, num_wof_clues
     global god_mode, quickie_mode, yolo_mode, num_math_questions, num_stats_questions
     global image_questions, marx_mode, blind_mode, sniper_mode, blitz_mode, exact_mode, golf_mode, glyph_mode
@@ -16538,6 +16546,7 @@ async def load_round_options_from_db():
     try:
         # Load each variable, with fallback to defaults
         time_between_questions = await get_int_param(db, "round_time_between_questions", time_between_questions_default)
+        question_time = await get_int_param(db, "round_question_time", question_time_default)
         ghost_mode = bool(await get_int_param(db, "round_ghost_mode", int(ghost_mode_default)))
         num_crossword_clues = await get_int_param(db, "round_num_crossword_clues", num_crossword_clues_default)
         num_jeopardy_clues = await get_int_param(db, "round_num_jeopardy_clues", num_jeopardy_clues_default)
@@ -19805,8 +19814,9 @@ def generate_crossword_image(answer, prefill=0.5):
 
 
 async def clear_round_options():
-    global since_token, time_between_questions, time_between_questions_default, ghost_mode, since_token, categories_to_exclude, num_crossword_clues, num_jeopardy_clues, num_mysterybox_clues, num_wof_clues, num_sat_questions, jeopardy_boosted, crossword_boosted, sat_boosted, god_mode, quickie_mode, last_question_winner, last_question_winner_id, yolo_mode, magic_number, wf_winner, num_math_questions, num_stats_questions, image_questions, nice_okra, creep_okra, marx_mode, blind_mode, seductive_okra, joke_okra, sniper_mode, blitz_mode, exact_mode, golf_mode, glyph_mode, cloak_mode, cloaked_user, haiku_okra, trailer_okra, heist_okra, horoscope_okra, rap_okra, shakespeare_okra, pirate_okra, noir_okra, hype_okra, roast_okra
+    global since_token, time_between_questions, time_between_questions_default, question_time, question_time_default, ghost_mode, since_token, categories_to_exclude, num_crossword_clues, num_jeopardy_clues, num_mysterybox_clues, num_wof_clues, num_sat_questions, jeopardy_boosted, crossword_boosted, sat_boosted, god_mode, quickie_mode, last_question_winner, last_question_winner_id, yolo_mode, magic_number, wf_winner, num_math_questions, num_stats_questions, image_questions, nice_okra, creep_okra, marx_mode, blind_mode, seductive_okra, joke_okra, sniper_mode, blitz_mode, exact_mode, golf_mode, glyph_mode, cloak_mode, cloaked_user, haiku_okra, trailer_okra, heist_okra, horoscope_okra, rap_okra, shakespeare_okra, pirate_okra, noir_okra, hype_okra, roast_okra
     time_between_questions = time_between_questions_default
+    question_time = question_time_default
     ghost_mode = ghost_mode_default
     categories_to_exclude.clear()
     num_crossword_clues = num_crossword_clues_default
@@ -19862,7 +19872,8 @@ async def process_round_options(round_winner, winner_points, round_winner_id, wi
         message = f"\u200b\n🍔🍟 **<@{round_winner_id}>**, what's your order?\n"
         message += (
             "\u200b\n🎮⚙️ ***Gameplay Options***\n\n"
-            "⏱️⏳ **<3 - 15>** Time (s) between questions\n"
+            "⏱️⏳ **delay<3-15>** Time (s) between questions\n"
+            f"⏱️❓ **answer<3-{question_time_default}>** Time (s) to answer\n"
             "🔥🤘 **Yolo**: No scores until the end\n"
             "🙈🚫 **Blind**: No answers shown\n"
             "🚩🔨 **Marx**: No recognizing answers\n"
@@ -19903,7 +19914,7 @@ async def process_round_options(round_winner, winner_points, round_winner_id, wi
 
 
 async def prompt_user_for_response(round_winner, winner_points, winner_coffees, round_winner_id, menu_text=None):
-    global since_token, time_between_questions, ghost_mode
+    global since_token, time_between_questions, question_time, question_time_default, ghost_mode
     global num_jeopardy_clues, num_crossword_clues, num_mysterybox_clues, num_wof_clues
     global num_sat_questions, jeopardy_boosted, crossword_boosted, sat_boosted
     global yolo_mode, god_mode, quickie_mode, num_math_questions, num_stats_questions
@@ -19960,15 +19971,18 @@ async def prompt_user_for_response(round_winner, winner_points, winner_coffees, 
                 kind="post_round_menu", prompt_text=menu_text
             )
             message_content = message.content.strip().lower()
-            matches = re.findall(r'(?<!#)\d+', message_content)
 
-            if matches:
-                try:
-                    delay_value = max(3, min(int(matches[0]), 15))
-                    time_between_questions = delay_value
-                    await safe_send(channel, f"⏱️⏳ **<@{round_winner_id}>** has set {delay_value}s between questions.")
-                except ValueError:
-                    pass
+            delay_match = re.search(r'\bdelay\s*(\d+)\b', message_content)
+            if delay_match:
+                delay_value = max(3, min(int(delay_match.group(1)), 15))
+                time_between_questions = delay_value
+                await safe_send(channel, f"⏱️⏳ **<@{round_winner_id}>** has set {delay_value}s between questions.")
+
+            answer_match = re.search(r'\banswer\s*(\d+)\b', message_content)
+            if answer_match:
+                answer_value = max(3, min(int(answer_match.group(1)), question_time_default))
+                question_time = answer_value
+                await safe_send(channel, f"⏱️❓ **<@{round_winner_id}>** has set {answer_value}s to answer.")
 
             # Keyword flags
             if (not keyword_config["blind"]["exclude_hashtag"] or "#blind" not in message_content) and await coffee_gate("blind", f"🙈🚫 **<@{round_winner_id}>** is blind to the truth. No answers will be shown.", "Blind"):
@@ -24364,7 +24378,7 @@ def print_round_settings():
     print(f"🔐🔍 Glyph Mode: {glyph_mode}")
 
 async def reset_round_options(reset_command, winner_id):
-    global time_between_questions, ghost_mode, god_mode, quickie_mode, yolo_mode, mirror_mode, echo_mode, image_questions, marx_mode, blind_mode, zen_mode, sniper_mode, blitz_mode, exact_mode, golf_mode, glyph_mode, cloak_mode, cloaked_user
+    global time_between_questions, question_time, question_time_default, ghost_mode, god_mode, quickie_mode, yolo_mode, mirror_mode, echo_mode, image_questions, marx_mode, blind_mode, zen_mode, sniper_mode, blitz_mode, exact_mode, golf_mode, glyph_mode, cloak_mode, cloaked_user
 
     reset_success = False
 
@@ -24466,12 +24480,19 @@ async def reset_round_options(reset_command, winner_id):
             cloaked_user = None
             await safe_send(channel, content=f"\n🌞✨ **{winner_id}** has taken off their cloak.\n")
         
-    if any(str(i) in reset_command for i in range(3, 16)):
-        delay_value = int(''.join(filter(str.isdigit, reset_command)))
-        delay_value = max(3, min(delay_value, 15))
+    delay_match = re.search(r'\bdelay\s*(\d+)\b', reset_command)
+    if delay_match:
+        delay_value = max(3, min(int(delay_match.group(1)), 15))
         time_between_questions = delay_value
         reset_success = True
-        await safe_send(channel, content=f"⏱️⏳ **{winner_id}** has set {time_between_questions}s between questions.\n")
+        await safe_send(channel, content=f"⏱️⏳ **{winner_id}** has set {delay_value}s between questions.\n")
+
+    answer_match = re.search(r'\banswer\s*(\d+)\b', reset_command)
+    if answer_match:
+        answer_value = max(3, min(int(answer_match.group(1)), question_time_default))
+        question_time = answer_value
+        reset_success = True
+        await safe_send(channel, content=f"⏱️❓ **{winner_id}** has set {answer_value}s to answer.\n")
 
     #print_round_settings()
     return reset_success
