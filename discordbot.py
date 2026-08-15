@@ -19893,7 +19893,7 @@ async def process_round_options(round_winner, winner_points, round_winner_id, wi
             "🟦✋ **Alex**: More Jeopardy questions\n"
             "🤓📝 **Nerd**: Add SAT questions\n"
             "🎖🥒 **Dicktator**: Choose the categories\n"
-            "🍑🔪 **Assassin**: Winner of each question picks next\n"
+            "🍑🔪 **Assassin**: Previous winner picks\n"
             "\n🏁⏭️ **x**: I'm Done / Skip\n"
         )
         await safe_send(channel, message)
