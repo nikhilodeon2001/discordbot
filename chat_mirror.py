@@ -25,7 +25,8 @@ import asyncio
 import discord
 
 _webhook_cache = {}  # channel_id -> discord.Webhook
-_MIRROR_WEBHOOK_NAME = "TriviaSphere Chat Mirror"
+_MIRROR_WEBHOOK_NAME = "Okra's World Chat Mirror"
+_LEGACY_MIRROR_WEBHOOK_NAME = "TriviaSphere Chat Mirror"
 
 _queues = {}  # dest_channel_id -> asyncio.Queue
 _worker_tasks = {}  # dest_channel_id -> asyncio.Task
@@ -39,7 +40,12 @@ async def _get_or_create_mirror_webhook(channel):
         webhooks = await channel.webhooks()
         webhook = discord.utils.get(webhooks, name=_MIRROR_WEBHOOK_NAME)
         if webhook is None:
-            webhook = await channel.create_webhook(name=_MIRROR_WEBHOOK_NAME)
+            # Rename the pre-rebrand webhook in place rather than creating a duplicate.
+            legacy_webhook = discord.utils.get(webhooks, name=_LEGACY_MIRROR_WEBHOOK_NAME)
+            if legacy_webhook is not None:
+                webhook = await legacy_webhook.edit(name=_MIRROR_WEBHOOK_NAME)
+            else:
+                webhook = await channel.create_webhook(name=_MIRROR_WEBHOOK_NAME)
     except (discord.HTTPException, discord.Forbidden) as e:
         print(f"⚠️ chat_mirror: failed to get/create webhook for #{channel.id}: {e}")
         return None

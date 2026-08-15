@@ -1458,7 +1458,7 @@ async def update_leaderboards(bot, db):
 
             await post_leaderboard_image(bot, SIMPLY_ANSWERS_CHANNEL_ID, combined_image.getvalue(), "simply_trivia_leaderboards.png")
 
-        # Mirror the same data to the website (triviasphere.com/leaderboard's Simply Trivia
+        # Mirror the same data to the website (okrasworld.com/leaderboard's Simply Trivia
         # tab), shaped to match the classic-trivia leaderboard.json's conventions so the site's
         # existing renderCountList/renderStreakList work unmodified.
         def to_json_count_entries(rows):
