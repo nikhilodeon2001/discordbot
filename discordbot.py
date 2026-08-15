@@ -17578,7 +17578,6 @@ async def ask_category(winner, categories, winner_coffees, winner_id, skip_messa
     while True:
         remaining_time = end_time - asyncio.get_event_loop().time()
         if remaining_time <= 0:
-            await safe_send(channel, "\u200b\n🐢⏳ Too slow. Okra time.\n\u200b")
             return None, additional_prompt
 
         try:
@@ -17608,7 +17607,6 @@ async def ask_category(winner, categories, winner_coffees, winner_id, skip_messa
             return message_content, additional_prompt
 
         except asyncio.TimeoutError:
-            await safe_send(channel, "\u200b\n🐢⏳ Too slow. Okra time.\n\u200b")
             return None, additional_prompt
 
 
