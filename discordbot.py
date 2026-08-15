@@ -19866,7 +19866,7 @@ async def process_round_options(round_winner, winner_points, round_winner_id, wi
         message = f"\u200b\n🍔🍟 **<@{round_winner_id}>**, what's your order?\n"
         message += (
             "\u200b\n🎮⚙️ ***Gameplay Options***\n\n"
-            "⏱️⏳ **delay<3-15>** Time (s) between questions\n"
+            "⏱️⏳ **delay<3-15>** Time between ?s\n"
             f"⏱️❓ **answer<3-{question_time_default}>** Time (s) to answer\n"
             "🔥🤘 **Yolo**: No scores until the end\n"
             "🙈🚫 **Blind**: No answers shown\n"
