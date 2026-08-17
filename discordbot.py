@@ -430,12 +430,8 @@ async def send_question_queen_submit_ad():
 # {base_url} is substituted with companion_web.get_base_url() at post time, so
 # the same text is correct whether this deploy is staging or prod.
 okra_lab_announcement_enabled = True
-okra_lab_announcement_text = (
-    "🍑🔪 **Assassin** mode has launched — Dicktator's fast-and-loose cousin. Instead of one dictator picking every question for the whole round, power changes hands every question: whoever wins a question picks the next one. Toggle it with `assassin` (or `#assassin` mid-round) same as any other mode.\n\n"
-    "⏱️❓ You can now also set how long you get to **answer** a question, not just the delay between them. Type `answer<N>` (e.g. `answer8`) for the answer window, and `delay<N>` (e.g. `delay7`) for the gap between questions — both work in the post-round menu or mid-round with `#` (e.g. `#answer6`).\n\n"
-    "**Heads up**: setting the delay used to work with just a bare number — that no longer works on its own, use `delay<N>` instead.\n"
-)
-okra_lab_announcement_show_new_badge = True
+okra_lab_announcement_text = "🥒🌐 Another day, another rebrand. TriviaSphere had a good run, but we've landed on our final form: **Okra's World**.\n\nNo more identity crises after this one — pinky promise. okrasworld.com is home now.\n"
+okra_lab_announcement_show_new_badge = False
 
 
 async def sync_okra_lab_announcement(content):
