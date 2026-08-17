@@ -430,7 +430,7 @@ async def send_question_queen_submit_ad():
 # {base_url} is substituted with companion_web.get_base_url() at post time, so
 # the same text is correct whether this deploy is staging or prod.
 okra_lab_announcement_enabled = True
-okra_lab_announcement_text = "🥒🌐 Another day, another rebrand. TriviaSphere had a good run, but we've landed on our final form: **Okra's World**.\n\nNo more identity crises after this one — pinky promise. okrasworld.com is home now.\n"
+okra_lab_announcement_text = "Another day, another rebrand. TriviaSphere had a good run, but we've landed on our final form: **Okra's World**.\n\nNo more identity crises after this one — pinky promise. okrasworld.com is home now.\n"
 okra_lab_announcement_show_new_badge = False
 
 
