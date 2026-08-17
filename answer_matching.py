@@ -362,6 +362,11 @@ class MatchConfig:
     allow_surname_match: bool
     # Accept a guess that matches ANY single significant token of the answer.
     allow_any_key_word: bool
+    # Accept a guess that's a plain substring of the answer (or vice versa),
+    # e.g. "cucu" for "cucumber". Restores the old legacy matcher's unguarded
+    # substring check; still floored by min_key_word_len so tiny guesses like
+    # "at" don't match everything.
+    allow_substring_match: bool = False
     min_key_word_len: int = 4
     # Whether the leniency (fuzzy/partial) layers run at all.
     enable_fuzzy: bool = True
@@ -410,6 +415,10 @@ GENEROUS = MatchConfig(
     # Einstein"). Generic type nouns (GENERIC_HEAD_WORDS: River, Mount, City...)
     # are still excluded, so "Mount" never counts for "Mount Everest".
     allow_any_key_word=True,
+    # Restores the old legacy matcher's plain substring leniency (e.g. "cucu"
+    # for "cucumber"). GENEROUS-only: BALANCED keeps requiring a full
+    # significant word, per the "cot"/"cat" guard above.
+    allow_substring_match=True,
 )
 
 # The adjustable default for normal (non-Poindexter) play. Point this at a
@@ -576,6 +585,15 @@ def _free_text_match(user_answer, correct_answer, url, config):
                and _word_match(uw, cw, config)
                for cw in correct_sig):
             return True
+    if config.allow_substring_match and len(user_sig) == 1:
+        uw = user_sig[0]
+        # Prefix-of-token only (not "anywhere in the token"): a negation
+        # prefix like "un-"/"non-" pushes the root off position 0, so this
+        # naturally excludes stem collisions such as "reac" against
+        # "unreactive" (which IS a substring, just not a prefix).
+        if len(uw) >= config.min_key_word_len:
+            if any(cw not in GENERIC_HEAD_WORDS and cw.startswith(uw) for cw in correct_sig):
+                return True
 
     return False
 
