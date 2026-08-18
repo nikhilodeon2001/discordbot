@@ -587,12 +587,16 @@ def _free_text_match(user_answer, correct_answer, url, config):
             return True
     if config.allow_substring_match and len(user_sig) == 1:
         uw = user_sig[0]
-        # Prefix-of-token only (not "anywhere in the token"): a negation
-        # prefix like "un-"/"non-" pushes the root off position 0, so this
-        # naturally excludes stem collisions such as "reac" against
-        # "unreactive" (which IS a substring, just not a prefix).
+        # Substring match in either direction (not prefix-only): explicitly
+        # accepted trade-off -- this also re-admits stem collisions like
+        # "reac" inside "unreactive", which a prefix-only version would guard
+        # against. Still floored by min_key_word_len on both sides and still
+        # excludes GENERIC_HEAD_WORDS, so "river" still doesn't match "Nile
+        # River" -- that guard is a separate, unrelated feature.
         if len(uw) >= config.min_key_word_len:
-            if any(cw not in GENERIC_HEAD_WORDS and cw.startswith(uw) for cw in correct_sig):
+            if any(len(cw) >= config.min_key_word_len and cw not in GENERIC_HEAD_WORDS
+                   and (uw in cw or cw in uw)
+                   for cw in correct_sig):
                 return True
 
     return False
