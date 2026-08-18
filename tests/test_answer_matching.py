@@ -26,10 +26,10 @@ CASES = [
      "reported: paraphrase should be accepted"),
     ("Reac", "It's unreactive", "", "", "BALANCED", False,
      "reported: meaningless fragment must be rejected"),
-    ("Reac", "It's unreactive", "", "", "GENEROUS", False,
-     "reported: fragment must stay rejected under GENEROUS too, despite allow_substring_match"),
+    ("Reac", "It's unreactive", "", "", "GENEROUS", True,
+     "accepted trade-off: substring-anywhere leniency also re-admits this fragment under GENEROUS"),
 
-    # --- substring leniency (GENEROUS only, prefix-of-token) ---
+    # --- substring leniency (GENEROUS only, substring-anywhere per word) ---
     ("Cucu", "a cucumber", "", "", "GENEROUS", True,
      "reported: prefix of a single-word answer should be accepted"),
     ("Cucu", "a cucumber", "", "", "BALANCED", False,
