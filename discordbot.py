@@ -21674,7 +21674,7 @@ def trig_checker(response, answer):
 # Flip to True to revert answer grading to the pre-answer_matching.py heuristics
 # (legacy_fuzzy_match below), in case the answer_matching.py rewrite needs to be backed out.
 # Requires a code deploy to flip -- not a live/runtime toggle.
-USE_LEGACY_FUZZY_MATCH = False
+USE_LEGACY_FUZZY_MATCH = True
 
 
 def legacy_fuzzy_match(user_answer, correct_answer, category, url, _skip_alias_check=False, ignore_exact_mode=False):
