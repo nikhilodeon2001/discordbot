@@ -1495,7 +1495,8 @@ function promptHtml(state) {
   var p = state.prompt;
   if (!p) return '';
   var body = p.you_can_act
-    ? '<input id="actionInput" type="text" autocomplete="off" autocapitalize="off" ' +
+    ? optionsHtml(p, 'actionInput', 'actionStatus', 'submitActionInput', 'submitActionOptions') +
+      '<input id="actionInput" type="text" autocomplete="off" autocapitalize="off" ' +
       'placeholder="Type your choice…" onkeydown="if(event.key===\\'Enter\\')submitActionInput()">' +
       '<button class="primary" onclick="submitActionInput()">Submit</button>' +
       '<div id="actionStatus" class="status"></div>'
@@ -1507,12 +1508,65 @@ function promptHtml(state) {
     '</div>' + body;
 }
 
+// Shared button/checkbox renderer for any prompt that carries a structured `options` list
+// (see companion_bridge.Prompt.options) -- mirrors the .choice button styling already used
+// for multiple-choice trivia answers below, so a converted flow (museum theme picker, WoF
+// menu, survey, etc.) looks and behaves the same way. Falls back to nothing (just the plain
+// text input already in promptHtml/renderArena) when a prompt has no options, so free-text-only
+// flows are completely unaffected. Single-select options resolve immediately on tap, matching
+// choose()/submit() below; multi-select (p.multi) accumulates a Set and needs an explicit
+// Submit tap, since Discord's own multi-select Selects work the same way.
+var _optionSelections = {};
+
+function optionsHtml(p, inputElId, statusElId, singleSubmitFnName, multiSubmitFnName) {
+  var options = p.options;
+  if (!options || !options.length) return '';
+  var groupKey = inputElId;
+  if (p.multi) {
+    _optionSelections[groupKey] = _optionSelections[groupKey] || new Set();
+    var sel = _optionSelections[groupKey];
+    var buttons = options.map(function (o) {
+      var on = sel.has(o.value);
+      return '<button type="button" class="choice simple' + (on ? ' selected' : '') + '" ' +
+        'onclick="toggleOptionChoice(\\'' + esc(groupKey) + '\\',\\'' + esc(o.value) + '\\',\\'' +
+        esc(statusElId) + '\\')">' + esc(o.label) + (on ? '<span class="tick">✓</span>' : '') + '</button>';
+    }).join('');
+    return '<div class="choices">' + buttons + '</div>' +
+      '<button class="primary" onclick="' + multiSubmitFnName + '(\\'' + esc(statusElId) + '\\')">Submit selection</button>' +
+      '<div class="ortype">or type your choice</div>';
+  }
+  var buttons = options.map(function (o) {
+    return '<button type="button" class="choice simple" onclick="' + singleSubmitFnName +
+      'Value(\\'' + esc(o.value) + '\\')">' + esc(o.label) + '</button>';
+  }).join('');
+  return '<div class="choices">' + buttons + '</div><div class="ortype">or type your choice</div>';
+}
+
+function toggleOptionChoice(groupKey, value, statusElId) {
+  _optionSelections[groupKey] = _optionSelections[groupKey] || new Set();
+  var sel = _optionSelections[groupKey];
+  if (sel.has(value)) sel.delete(value); else sel.add(value);
+  render(lastState); // re-render so the tapped choice's selected state updates
+}
+
 function submitActionInput() {
   var el = document.getElementById('actionInput');
   var text = el ? el.value.trim() : '';
   if (!text) return;
   submitAction(text, 'actionStatus');
   if (el) el.value = '';
+}
+
+function submitActionInputValue(value) {
+  submitAction(value, 'actionStatus');
+}
+
+function submitActionOptions(statusElId) {
+  var sel = _optionSelections['actionInput'];
+  var text = sel && sel.size ? Array.from(sel).join(' ') : '';
+  if (!text) return;
+  submitAction(text, statusElId);
+  _optionSelections['actionInput'] = new Set();
 }
 
 function submitAction(text, statusElId) {
@@ -1715,6 +1769,7 @@ function renderArena(state) {
     '<div class="modalcat">🎮 ' + gameName + '</div>' +
     '<div class="modalq" style="white-space:pre-wrap">' + esc(p.prompt_text || 'Your turn — type your answer.') + '</div>' +
     '</div>' +
+    optionsHtml(p, 'arenaInput', 'arenaStatus', 'submitArenaInput', 'submitArenaOptions') +
     '<input id="arenaInput" type="text" autocomplete="off" autocapitalize="off" ' +
     'placeholder="Type your answer…" onkeydown="if(event.key===\\'Enter\\')submitArenaInput()">' +
     '<button class="primary" onclick="submitArenaInput()">Submit</button>' +
@@ -1728,6 +1783,18 @@ function submitArenaInput() {
   if (!text) return;
   submitAction(text, 'arenaStatus');
   if (el) el.value = '';
+}
+
+function submitArenaInputValue(value) {
+  submitAction(value, 'arenaStatus');
+}
+
+function submitArenaOptions(statusElId) {
+  var sel = _optionSelections['arenaInput'];
+  var text = sel && sel.size ? Array.from(sel).join(' ') : '';
+  if (!text) return;
+  submitAction(text, statusElId);
+  _optionSelections['arenaInput'] = new Set();
 }
 
 function esc(s) { return String(s).replace(/[&<>"']/g, function (c) {

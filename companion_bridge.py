@@ -129,7 +129,8 @@ class CompanionMessage:
 
 
 class Prompt:
-    def __init__(self, prompt_id, channel, scope, allowed_user_ids, kind, prompt_text, reveal_answer=True):
+    def __init__(self, prompt_id, channel, scope, allowed_user_ids, kind, prompt_text, reveal_answer=True,
+                 options=None, multi=False):
         self.id = prompt_id
         self.channel = channel
         self.scope = scope
@@ -141,6 +142,16 @@ class Prompt:
         self.allowed_user_ids = set() if self.open_floor else set(allowed_user_ids)
         self.kind = kind
         self.prompt_text = prompt_text
+        # Optional list of {"value","label"[,"emoji"]} dicts -- the *same* option list a
+        # Discord-side RestrictedView (discordbot.py) was built from, so the companion web page
+        # can render matching buttons/checkboxes from one source of truth instead of a second
+        # hand-maintained mapping. None means "free text only", unchanged behavior. `multi`
+        # marks a multi-select prompt (the companion renders checkboxes + one Submit that joins
+        # selected values into a single space-separated string -- see companion_web.py's
+        # optionsHtml()/submitOptions()); the joined string round-trips through the exact same
+        # `text` field submit_companion_input() already accepts, so no new resolution path.
+        self.options = options
+        self.multi = multi
         # Whether the webhook echo shows the literal submitted text. True for post-round-menu/
         # WoF-selection prompts (a public one-shot pick, no different from typing it in Discord)
         # and for "first correct answer wins the round" mini-games (Discord-typed guesses are
@@ -163,12 +174,14 @@ def _scope_for_channel(channel):
     return "main"
 
 
-def register_prompt(channel, allowed_user_ids, kind, prompt_text=None, reveal_answer=True):
+def register_prompt(channel, allowed_user_ids, kind, prompt_text=None, reveal_answer=True, options=None, multi=False):
     """`allowed_user_ids=None` registers an "open floor" prompt -- any authenticated companion
     user may submit (matching a Discord check() with no author-id restriction). Otherwise pass
-    the concrete set of ids check() already restricts to."""
+    the concrete set of ids check() already restricts to. See Prompt.options for `options`/
+    `multi`."""
     prompt_id = next(_prompt_id_counter)
-    prompt = Prompt(prompt_id, channel, _scope_for_channel(channel), allowed_user_ids, kind, prompt_text, reveal_answer)
+    prompt = Prompt(prompt_id, channel, _scope_for_channel(channel), allowed_user_ids, kind, prompt_text,
+                     reveal_answer, options=options, multi=multi)
     _prompts[prompt_id] = prompt
     for uid in prompt.allowed_user_ids:
         _prompts_by_user.setdefault(uid, set()).add(prompt_id)
@@ -206,6 +219,8 @@ def describe_prompt(prompt, user_id=None):
         "you_can_act": user_id is not None and (prompt.open_floor or user_id in prompt.allowed_user_ids),
         "open_floor": prompt.open_floor,
         "allowed_user_ids": sorted(prompt.allowed_user_ids),
+        "options": prompt.options,
+        "multi": prompt.multi,
     }
 
 
@@ -311,14 +326,18 @@ def _notify_prompt_change(scope):
         pass
 
 
-async def wait_for_message_or_companion(check, timeout, channel, allowed_user_ids, kind, prompt_text=None, reveal_answer=True):
+async def wait_for_message_or_companion(check, timeout, channel, allowed_user_ids, kind, prompt_text=None,
+                                         reveal_answer=True, options=None, multi=False):
     """Drop-in replacement for `get_bot().wait_for("message", timeout=timeout, check=check)`
     that also accepts a matching companion (web) submission. Returns a real discord.Message
     when Discord wins the race, or a CompanionMessage when the companion app does. Raises
     asyncio.TimeoutError exactly like the plain wait_for did, on the same timeout budget.
     `reveal_answer=False` masks the webhook echo's content (see Prompt.reveal_answer) -- pass
-    it for mini-games where multiple players can independently get credit in the same window."""
-    prompt = register_prompt(channel, allowed_user_ids, kind, prompt_text, reveal_answer=reveal_answer)
+    it for mini-games where multiple players can independently get credit in the same window.
+    `options`/`multi`: see Prompt.options -- pass the same option list a Discord-side
+    RestrictedView (discordbot.py) was built from so the companion renders matching buttons."""
+    prompt = register_prompt(channel, allowed_user_ids, kind, prompt_text, reveal_answer=reveal_answer,
+                              options=options, multi=multi)
     _notify_prompt_change(prompt.scope)
     msg_task = asyncio.ensure_future(_get_bot().wait_for("message", check=check))
     comp_task = asyncio.ensure_future(prompt.future)

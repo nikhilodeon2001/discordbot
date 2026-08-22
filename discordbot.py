@@ -2973,10 +2973,13 @@ async def ask_okra_says_challenge(winner, winner_id, num=1):
     await asyncio.sleep(3)
 
     # Join Phase
-    join_message = await safe_send(channel, f"\u200b\n🎯 **Join Okra Says!**\n\nType **\"okra\"** to join! (**{JOIN_TIMEOUT}** seconds)\n\u200b")
-
-    # Wait for messages saying "okra" during join phase
     joined_users = {}  # user_id -> user_name
+    join_view = OkraJoinView(joined_users, timeout=JOIN_TIMEOUT)
+    join_view.message = await safe_send(
+        channel,
+        f"\u200b\n\U0001f3af **Join Okra Says!**\n\nType **\"okra\"** or click below to join! (**{JOIN_TIMEOUT}** seconds)\n\u200b",
+        view=join_view,
+    )
 
     start_time = asyncio.get_event_loop().time()
 
@@ -2993,16 +2996,19 @@ async def ask_okra_says_challenge(winner, winner_id, num=1):
         try:
             timeout_remaining = JOIN_TIMEOUT - (asyncio.get_event_loop().time() - start_time)
             # Joining isn't a competitive answer to protect -- just a headcount, same as a
-            # post-round-menu pick -- so it's safe to show.
+            # post-round-menu pick -- so it's safe to show. Companion users get a matching
+            # "Join" button too (see OkraJoinView docstring for why this is plain collection,
+            # not a single-shot race like the picker views).
             message = await companion_bridge.wait_for_message_or_companion(
                 message_check, timeout_remaining, target_channel, None,
-                kind="mini_game_answer"
+                kind="mini_game_answer", options=[{"value": "okra", "label": "\U0001f952 Join"}]
             )
 
             joined_users[message.author.id] = message.author.display_name
 
         except asyncio.TimeoutError:
             break
+
 
     if len(joined_users) == 0:
         await safe_send(channel, "\u200b\n😢 No one joined! Maybe next time.\n\u200b")
@@ -5686,27 +5692,29 @@ class ReportQuestionView(discord.ui.View):
         await interaction.response.send_modal(modal)
 
 
-class SimonSaysView(discord.ui.View):
-    """Interactive button grid for Simon Says pattern input - shared by all players"""
+class SimonSaysView(RestrictedView):
+    """Interactive button grid for Simon Says pattern input - shared by all players.
+
+    Per-user restriction (eligibility) and its rejection message are handled by an
+    interaction_check override here rather than RestrictedView's default text, since this
+    view's wording ("not in this game") predates and differs slightly from the convention
+    RestrictedView standardized on elsewhere ("not in this round")."""
 
     def __init__(self, active_players: list, pattern_length: int):
-        super().__init__(timeout=20)
-        self.active_players = set(active_players)  # User IDs who can participate
+        super().__init__(set(active_players), timeout=20)
         self.pattern_length = pattern_length
         self.player_inputs = {user_id: [] for user_id in active_players}  # Track each player's input
         self.completed_players = set()  # Track who has finished
 
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id not in self.allowed_user_ids:
+            await interaction.response.send_message("❌ You're not in this game!", ephemeral=True)
+            return False
+        return True
+
     async def handle_color_click(self, interaction: discord.Interaction, color: str):
         """Common handler for all color button clicks"""
         user_id = interaction.user.id
-
-        # Check if user is in the game
-        if user_id not in self.active_players:
-            await interaction.response.send_message(
-                "❌ You're not in this game!",
-                ephemeral=True
-            )
-            return
 
         # Check if user already completed
         if user_id in self.completed_players:
@@ -5777,26 +5785,785 @@ class VoiceChannelJoinView(discord.ui.View):
             await interaction.response.send_message("❌ An error occurred.", ephemeral=True)
 
 
-class ValedictorianView(discord.ui.View):
+def _normalize_options(options):
+    """Accepts options as a list of dicts ({"value","label"[,"emoji"]}) or plain
+    (value, label[, emoji]) tuples; returns a list of normalized dicts. Shared by every
+    button/select builder below so callers can pass whichever shape is convenient."""
+    normalized = []
+    for opt in options:
+        if isinstance(opt, dict):
+            normalized.append({"value": str(opt["value"]), "label": opt["label"], "emoji": opt.get("emoji")})
+        else:
+            value, label = opt[0], opt[1]
+            emoji = opt[2] if len(opt) > 2 else None
+            normalized.append({"value": str(value), "label": label, "emoji": emoji})
+    return normalized
+
+
+class ComponentChoice:
+    """Duck-typed stand-in for a discord.Message, returned by resolve_input_race() when a
+    button/select click wins the race against wait_for_message_or_companion(). Mirrors
+    companion_bridge.CompanionMessage's interface (.content/.author/.add_reaction) so every
+    existing call site's `response.content` / `response.add_reaction(...)` keeps working
+    unchanged regardless of which of the three input paths (Discord chat, companion, or a
+    component click) actually won."""
+
+    def __init__(self, content, interaction: discord.Interaction):
+        self.content = content
+        self.author = interaction.user
+        self.interaction = interaction
+        self.channel = interaction.channel
+        self.created_at = interaction.created_at
+
+    async def add_reaction(self, emoji):
+        pass  # component clicks already show their own feedback (ephemeral ack / disabled state)
+
+    async def remove_reaction(self, emoji, member):
+        pass
+
+    async def delete(self):
+        pass
+
+
+class RestrictedView(discord.ui.View):
+    """Base class for the option-picker views below: shared per-user restriction, timeout
+    handling, and a `future` that a click resolves so it can race against typed chat (see
+    resolve_input_race()). allowed_user_ids=None means open floor -- mirrors
+    companion_bridge.Prompt.open_floor's meaning for the same concept. The ineligible-click
+    rejection message matches the existing convention (ValedictorianView.handle_letter_click,
+    just below) rather than inventing a new one."""
+
+    def __init__(self, allowed_user_ids, *, timeout):
+        super().__init__(timeout=timeout)
+        self.allowed_user_ids = set(allowed_user_ids) if allowed_user_ids is not None else None
+        self.message = None  # set by the caller right after sending; used by on_timeout
+        self.future = asyncio.get_running_loop().create_future()
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if self.allowed_user_ids is not None and interaction.user.id not in self.allowed_user_ids:
+            await interaction.response.send_message("❌ You're not in this round!", ephemeral=True)
+            return False
+        return True
+
+    async def on_timeout(self):
+        for item in self.children:
+            item.disabled = True
+        if self.message is not None:
+            try:
+                await self.message.edit(view=self)
+            except (discord.HTTPException, discord.NotFound):
+                pass
+        if not self.future.done():
+            self.future.cancel()
+
+    async def _resolve(self, interaction: discord.Interaction, value: str):
+        if self.future.done():
+            await interaction.response.send_message("✅ Already answered!", ephemeral=True)
+            return
+        self.future.set_result(ComponentChoice(value, interaction))
+        for item in self.children:
+            item.disabled = True
+        await interaction.response.edit_message(view=self)
+
+    async def reset(self):
+        """Re-arm the view for another pick after the caller rejects the resolved selection
+        (coffee-lock, multiplayer-lock, invalid choice) and needs to loop and re-prompt rather
+        than terminate -- e.g. ask_wof_number's Select can pick a coffee-gated or 1-player-only
+        game, unlike the pre-disabled/pre-validated buttons elsewhere. Only call this between
+        resolve_input_race() calls against the same view, never while one is still in flight.
+        Re-enables what _resolve() disabled and re-edits the message to match, then hands out a
+        fresh future to await. No-ops if the view was never actually resolved."""
+        if not self.future.done():
+            return
+        self.future = asyncio.get_running_loop().create_future()
+        for item in self.children:
+            item.disabled = False
+        if self.message is not None:
+            try:
+                await self.message.edit(view=self)
+            except (discord.HTTPException, discord.NotFound):
+                pass
+
+
+async def resolve_input_race(view: "RestrictedView", chat_wait_coro):
+    """Race a RestrictedView's button/select click (view.future) against the existing chat/
+    companion wait (pass `companion_bridge.wait_for_message_or_companion(...)` as
+    chat_wait_coro), returning whichever resolves first as a message-shaped object
+    (.content/.author/.add_reaction) -- either a real discord.Message, a
+    companion_bridge.CompanionMessage, or a ComponentChoice. Raises asyncio.TimeoutError if
+    both time out, matching wait_for_message_or_companion's own contract so every existing
+    `except asyncio.TimeoutError` call site keeps working unchanged when converted to also
+    pass a view through here.
+
+    Deliberately never cancels view.future itself here (only the chat_task side): some call
+    sites (ask_category's invalid-choice retry loop) call this repeatedly against the same
+    still-live view across several iterations, and asyncio.ensure_future() on a plain Future
+    returns that same object rather than wrapping it, so cancelling "the losing task" would
+    mean cancelling the view's actual future -- permanently disabling its buttons after the
+    first stray typed message, not just this one race. view.future is only ever finalized by a
+    click (RestrictedView._resolve) or by the view's own on_timeout -- both terminal, unlike a
+    retry loop's typed-message misses -- so its lifecycle is left to those, not to this race."""
+    chat_task = asyncio.ensure_future(chat_wait_coro)
+    try:
+        done, pending = await asyncio.wait({view.future, chat_task}, return_when=asyncio.FIRST_COMPLETED)
+    except asyncio.CancelledError:
+        chat_task.cancel()
+        raise
+    if chat_task in pending:
+        chat_task.cancel()
+    try:
+        return done.pop().result()
+    except asyncio.CancelledError:
+        raise asyncio.TimeoutError()
+
+
+def build_option_button_view(options, allowed_user_ids, *, timeout=60, style=discord.ButtonStyle.primary,
+                              disabled_values=None):
+    """Small-fixed-set button row (<=25 options, <=5 per row) -- the button-based counterpart
+    to build_option_select_view() below, for choice sets that fit in a row or two without
+    needing a dropdown (e.g. the 5-option Okra Museum theme picker). `options` accepts dicts
+    ({"value","label"[,"emoji"]}) or (value, label[, emoji]) tuples. `disabled_values`, if
+    given, greys out those buttons up front (e.g. a coffee-gated option the current picker
+    can't afford) instead of letting them click it and only then rejecting it -- since these
+    views are typically built for one specific restricted user, not shared across viewers with
+    different eligibility, disabling per-view is safe here (unlike a per-user visual state,
+    which Discord buttons can't express). Pair with resolve_input_race() so typed chat keeps
+    working alongside the buttons."""
+    normalized = _normalize_options(options)[:25]
+    disabled_values = disabled_values or set()
+    view = RestrictedView(allowed_user_ids, timeout=timeout)
+    for i, opt in enumerate(normalized):
+        button = discord.ui.Button(label=opt["label"][:80], style=style, emoji=opt["emoji"], row=i // 5,
+                                    disabled=opt["value"] in disabled_values)
+
+        async def _callback(interaction: discord.Interaction, value=opt["value"]):
+            await view._resolve(interaction, value)
+
+        button.callback = _callback
+        view.add_item(button)
+    return view
+
+
+class _SelectPage(discord.ui.Select):
+    """One page of a flat or cascading option Select; resolves its owning view's future
+    immediately on pick (single-select only -- see build_multi_select_modal for multi-select)."""
+
+    def __init__(self, owner_view: "RestrictedView", options, placeholder):
+        super().__init__(
+            placeholder=placeholder,
+            options=[
+                discord.SelectOption(label=opt["label"][:100], value=opt["value"], emoji=opt["emoji"])
+                for opt in options
+            ],
+        )
+        self._owner = owner_view
+
+    async def callback(self, interaction: discord.Interaction):
+        await self._owner._resolve(interaction, self.values[0])
+
+
+class _GroupSelect(discord.ui.Select):
+    """First-stage select in a cascading two-option-set view: picking a group repopulates the
+    second-stage item Select in place, mirroring LeaderboardView's mode/category
+    dependent-dropdown pattern (edit_message with a refreshed second Select)."""
+
+    def __init__(self, cascading_view: "_CascadingSelectView"):
+        super().__init__(
+            placeholder=cascading_view.group_placeholder,
+            options=[discord.SelectOption(label=g[:100], value=g) for g in cascading_view.groups],
+        )
+        self._owner = cascading_view
+
+    async def callback(self, interaction: discord.Interaction):
+        self._owner.set_group(self.values[0])
+        await interaction.response.edit_message(view=self._owner)
+
+
+class _CascadingSelectView(RestrictedView):
+    """Two-stage Select (group -> item) for option sets exceeding Discord's 25-per-Select cap.
+    Modeled directly on LeaderboardView's mode/category dependent-dropdown pattern."""
+
+    def __init__(self, grouped_options, allowed_user_ids, *, timeout, group_placeholder, item_placeholder):
+        super().__init__(allowed_user_ids, timeout=timeout)
+        self.grouped_options = grouped_options  # dict[str, list[normalized option dict]]
+        self.groups = list(grouped_options.keys())
+        self.group_placeholder = group_placeholder
+        self.item_placeholder = item_placeholder
+        self.current_group = self.groups[0]
+        self.add_item(_GroupSelect(self))
+        self._item_select = None
+        self._refresh_item_select()
+
+    def set_group(self, group):
+        self.current_group = group
+        self._refresh_item_select()
+
+    def _refresh_item_select(self):
+        if self._item_select is not None:
+            self.remove_item(self._item_select)
+        self._item_select = _SelectPage(self, self.grouped_options[self.current_group][:25], self.item_placeholder)
+        self.add_item(self._item_select)
+
+
+def _default_grouping(normalized_options, group_size=25):
+    """Fallback grouping when a call site doesn't provide curated groups: chunk alphabetically
+    by label into ~group_size-sized buckets, labeled by their label range."""
+    ordered = sorted(normalized_options, key=lambda o: o["label"].lower())
+    groups = {}
+    for i in range(0, len(ordered), group_size):
+        chunk = ordered[i:i + group_size]
+        label = f"{chunk[0]['label'][:12]}…{chunk[-1]['label'][:12]}"
+        groups[label] = chunk
+    return groups
+
+
+def _build_flat_select_view(normalized_options, allowed_user_ids, timeout, placeholder):
+    view = RestrictedView(allowed_user_ids, timeout=timeout)
+    view.add_item(_SelectPage(view, normalized_options, placeholder))
+    return view
+
+
+def build_option_select_view(options, allowed_user_ids, *, timeout=60,
+                              placeholder="Pick one…", groups=None,
+                              group_placeholder="Pick a category…"):
+    """Generic Select-menu builder for option sets too numerous/varied for a button row.
+    `options` accepts dicts ({"value","label"[,"emoji"]}) or (value, label[, emoji]) tuples.
+    `groups`, if given, is a dict[str, list[option]] curating how a >25-option set splits into
+    a cascading two-stage Select (group picker -> item picker); omit it to fall back to
+    automatic alphabetical chunking. A single flat Select is used when the option count fits
+    in one page. Pair with resolve_input_race() so typed chat keeps working alongside it."""
+    if groups is not None:
+        normalized_groups = {name: _normalize_options(opts) for name, opts in groups.items()}
+        if len(normalized_groups) == 1 and len(next(iter(normalized_groups.values()))) <= 25:
+            return _build_flat_select_view(next(iter(normalized_groups.values())), allowed_user_ids, timeout, placeholder)
+        return _CascadingSelectView(normalized_groups, allowed_user_ids, timeout=timeout,
+                                     group_placeholder=group_placeholder, item_placeholder=placeholder)
+
+    normalized = _normalize_options(options)
+    if len(normalized) <= 25:
+        return _build_flat_select_view(normalized, allowed_user_ids, timeout, placeholder)
+    return _CascadingSelectView(_default_grouping(normalized), allowed_user_ids, timeout=timeout,
+                                 group_placeholder=group_placeholder, item_placeholder=placeholder)
+
+
+class MuseumPromptModal(discord.ui.Modal, title="Draw an Okra-Themed Picture Of..."):
+    """Single free-text field replacing request_prompt()'s old multi-message word-by-word chat
+    collector -- one submission, word/char-limited the same way via answer_matching.limit_words
+    as the typed-chat flow it replaces."""
+
+    idea = discord.ui.TextInput(
+        label="Draw an okra themed picture of...",
+        placeholder="Up to 10 words, and be good",
+        style=discord.TextStyle.short,
+        max_length=200,
+        required=True,
+    )
+
+    def __init__(self, result_future: asyncio.Future):
+        super().__init__()
+        self._result_future = result_future
+
+    async def on_submit(self, interaction: discord.Interaction):
+        words = answer_matching.extract_words(self.idea.value)
+        if not words:
+            await interaction.response.send_message("Nothing there — Okra time.", ephemeral=True)
+            if not self._result_future.done():
+                self._result_future.set_result("")
+            return
+        final_prompt, char_trimmed = answer_matching.limit_words(' '.join(words[:10]), 10, 90)
+        trim_note = "✂️ *(trimmed to the 10-word limit)* " if (len(words) > 10 or char_trimmed) else ""
+        await interaction.response.send_message(
+            f"​\n💥🤯 {trim_note}**Ok...ra I got**: '**{final_prompt}**'\n​"
+        )
+        if not self._result_future.done():
+            self._result_future.set_result(final_prompt)
+
+
+class MuseumThemeView(RestrictedView):
+    """5-button Okra Museum theme picker (replaces ask_category's typed-digit flow). The
+    coffee-gated "Provide the Prompt" option opens MuseumPromptModal instead of resolving
+    immediately through RestrictedView._resolve like the other four -- a Modal must be the
+    direct response to the button's own interaction, so it's special-cased here."""
+
+    def __init__(self, categories, winner_coffees, winner_id, *, timeout):
+        super().__init__({winner_id}, timeout=timeout)
+        self.winner_coffees = winner_coffees
+        # Only set once the coffee-gated option is chosen -- ask_category awaits this instead
+        # of the old request_prompt() call when it's present. None means "not that path."
+        self.prompt_future = None
+        for i, (key, label) in enumerate(categories.items()):
+            disabled = key == "4" and winner_coffees <= 0
+            button = discord.ui.Button(label=label[:80], style=discord.ButtonStyle.primary, row=i // 5,
+                                        disabled=disabled)
+            button.callback = self._make_callback(key)
+            self.add_item(button)
+
+    def _make_callback(self, key):
+        async def _callback(interaction: discord.Interaction):
+            if self.future.done():
+                await interaction.response.send_message("✅ Already answered!", ephemeral=True)
+                return
+            if key == "4" and self.winner_coffees > 0:
+                self.prompt_future = asyncio.get_running_loop().create_future()
+                self.future.set_result(ComponentChoice(key, interaction))
+                await interaction.response.send_modal(MuseumPromptModal(self.prompt_future))
+                return
+            await self._resolve(interaction, key)
+        return _callback
+
+
+class SurveyView(discord.ui.View):
+    """Button/select overlay for ask_survey_question()'s open-floor multi-answer collection.
+    Unlike RestrictedView's single-shot picker views (one winner, one resolution), a survey is
+    open to every guild member and stays open for the whole voting window -- many different
+    people click during that window, and a person can change their vote by clicking again, just
+    like they could by typing again in chat. So this writes directly into the same `collected`
+    dict the existing chat-loop path already fills, rather than resolving a single Future/race;
+    no per-user restriction (plain discord.ui.View, not RestrictedView), no click limit.
+    question_type == "word-3" gets no buttons here -- it's genuine free text."""
+
+    def __init__(self, question_type, valid_answers, collected, current_time, *, timeout):
+        super().__init__(timeout=timeout)
+        self.collected = collected
+        self.current_time = current_time
+        self.message = None
+        if question_type == "yes-no":
+            self._add_choice_button("👍 Yes", "Yes")
+            self._add_choice_button("👎 No", "No")
+        elif question_type == "multiple-choice":
+            for answer in list(valid_answers)[:25]:
+                self._add_choice_button(str(answer), str(answer))
+        elif question_type == "rating-10":
+            select = discord.ui.Select(
+                placeholder="Rate 1-10…",
+                options=[discord.SelectOption(label=str(i), value=str(i)) for i in range(1, 11)],
+            )
+
+            async def _rating_callback(interaction: discord.Interaction):
+                self.collected[interaction.user.display_name] = {
+                    "answer": float(select.values[0]), "timestamp": self.current_time,
+                }
+                await interaction.response.send_message(f"✅ Locked in: **{select.values[0]}**", ephemeral=True)
+
+            select.callback = _rating_callback
+            self.add_item(select)
+
+    def _add_choice_button(self, label, value):
+        button = discord.ui.Button(label=label, style=discord.ButtonStyle.primary)
+
+        async def _callback(interaction: discord.Interaction, value=value):
+            self.collected[interaction.user.display_name] = {"answer": value, "timestamp": self.current_time}
+            await interaction.response.send_message(f"✅ Locked in: **{value}**", ephemeral=True)
+
+        button.callback = _callback
+        self.add_item(button)
+
+    async def on_timeout(self):
+        for item in self.children:
+            item.disabled = True
+        if self.message is not None:
+            try:
+                await self.message.edit(view=self)
+            except (discord.HTTPException, discord.NotFound):
+                pass
+
+
+class OkraJoinView(discord.ui.View):
+    """Join-button overlay for ask_okra_says_challenge()'s open join phase. Like SurveyView,
+    this is open-floor multi-user collection (anyone can join within the window), so it writes
+    directly into the same `joined_users` dict the chat "type okra" loop already fills, rather
+    than a single-shot Future/race. The button label shows a live joined-count, refreshed via
+    edit_message on every join -- safest possible first conversion since joining is a headcount,
+    not graded content (see the existing companion comment this mirrors)."""
+
+    def __init__(self, joined_users, *, timeout):
+        super().__init__(timeout=timeout)
+        self.joined_users = joined_users
+        self.message = None
+        self.button = discord.ui.Button(label="🥒 Join Okra Says!", style=discord.ButtonStyle.success)
+        self.button.callback = self._join
+        self.add_item(self.button)
+
+    async def _join(self, interaction: discord.Interaction):
+        if interaction.user.id in self.joined_users:
+            await interaction.response.send_message("✅ You're already in!", ephemeral=True)
+            return
+        self.joined_users[interaction.user.id] = interaction.user.display_name
+        self.button.label = f"🥒 Join Okra Says! ({len(self.joined_users)} joined)"
+        await interaction.response.edit_message(view=self)
+
+    async def on_timeout(self):
+        for item in self.children:
+            item.disabled = True
+        if self.message is not None:
+            try:
+                await self.message.edit(view=self)
+            except (discord.HTTPException, discord.NotFound):
+                pass
+
+
+def _set_globals(**kwargs):
+    """Set module-level globals by name -- equivalent to a `global x; x = value` statement for
+    each kwarg, but usable from a small shared helper instead of needing every call site to
+    redeclare all ~20 names. Used only by _KEYWORD_EFFECTS' apply_fn callables below."""
+    globals().update(kwargs)
+
+
+# One entry per prompt_user_for_response() keyword: (select_label, success_msg_template,
+# fail_display_name, apply_fn). success_msg_template takes a `{mention}` placeholder;
+# apply_fn(round_winner_id) sets whatever global(s) that keyword controls. Shared by both the
+# typed-chat substring-match path (prompt_user_for_response's existing loop) and
+# WofModifierModal's multi-select path below, so the 20-keyword effect table isn't duplicated
+# between the two input mechanisms -- each keyword's game logic exists exactly once here.
+_KEYWORD_EFFECTS = {
+    "blind": ("🙈 Blind (no answers shown)",
+              "🙈🚫 {mention} is blind to the truth. No answers will be shown.", "Blind",
+              lambda rw_id: _set_globals(blind_mode=True)),
+    "marx": ("🚩 Marx (no celebrating)",
+             "🚩🔨 {mention} is a commie. No celebrating right answers.", "Marx",
+             lambda rw_id: _set_globals(marx_mode=True)),
+    "yolo": ("🤘 Yolo (scores hidden till end)",
+             "🤘🔥 Yolo. {mention} says 'don't sweat the small stuff'. No scores till the end.", "Yolo",
+             lambda rw_id: _set_globals(yolo_mode=True)),
+    "blank": ("❌ Blank (text only, no images)",
+              "❌📷 {mention} thinks a word is worth 1000 images.", "Blank",
+              lambda rw_id: _set_globals(image_questions=False)),
+    "ghost": ("👻 Ghost (answers disappear)",
+              "👻🎃 {mention} says Boo! Your responses will disappear.\n✍️⚫ Start messages with **.** to avoid deletion.", "Ghost",
+              lambda rw_id: _set_globals(ghost_mode=1)),
+    "freedom": ("🇺🇸 Freedom (no multiple choice)",
+                "🇺🇸🗽 {mention} has broken the chains. No multiple choice.", "Freedom",
+                lambda rw_id: _set_globals(num_mysterybox_clues=0)),
+    "bondage": ("⛓️ Bondage (more multiple choice)",
+                "⛓️🔐 {mention} has put on the cuffs. More multiple choice, less free will.", "Bondage",
+                lambda rw_id: _set_globals(num_mysterybox_clues=max(questions_per_round - num_jeopardy_clues - num_crossword_clues, 1))),
+    "alex": ("🟦 Alex (more Jeopardy)",
+             "🟦✋ {mention} wants more Jeopardy questions.", "Alex",
+             lambda rw_id: _set_globals(num_jeopardy_clues=5, jeopardy_boosted=True)),
+    "xela": ("🟦❌ Xela (no Jeopardy)",
+             "🟦❌ {mention} doesn't like Jeopardy. Sorry Alex.", "Xela",
+             lambda rw_id: _set_globals(num_jeopardy_clues=0, jeopardy_boosted=False)),
+    "greg": ("📰 Greg (no math)",
+             "📰✏️ {mention} hates math. What a 'Greg'.", "Greg",
+             lambda rw_id: _set_globals(num_math_questions=0)),
+    "cross": ("📰❌ Cross (no crossword)",
+              "📰❌ {mention} has crossed off all Crossword questions.", "Cross",
+              lambda rw_id: _set_globals(num_crossword_clues=0, crossword_boosted=False)),
+    "word": ("📰 Word (more crossword)",
+             "📰✏️ Word. {mention} wants more Crossword questions.", "Word",
+             lambda rw_id: _set_globals(num_crossword_clues=5, crossword_boosted=True)),
+    "nerd": ("🤓 Nerd (SAT questions)",
+             "🤓📝  Nerd. {mention} wants some SAT questions.", "Nerd",
+             lambda rw_id: _set_globals(num_sat_questions=5, sat_boosted=True)),
+    "dicktator": ("🎖 Dicktator (god mode)",
+                  "🎖🍆 {mention} is a dick.", "Dicktator",
+                  lambda rw_id: _set_globals(god_mode=True)),
+    "assassin": ("🍑 Assassin (quickie mode)",
+                 "🍑🔪 {mention} is an ass.", "Assassin",
+                 lambda rw_id: _set_globals(quickie_mode=True)),
+    "sniper": ("🧢 Sniper (one shot)",
+               "🧢🎤 {mention} says 'You only get one shot, do not miss your chance!'", "Sniper",
+               lambda rw_id: _set_globals(sniper_mode=True)),
+    "cloak": ("🫥 Cloak (hide messages)",
+              "\n🫥🕶️ {mention} has put on their cloak.\n✍️⚫ Start messages with **.** to avoid deletion.", "Cloak",
+              lambda rw_id: _set_globals(cloak_mode=True, cloaked_user=rw_id)),
+    "blitz": ("🏆 Blitz (all the glory)",
+              "\n🏆⚡ {mention} wants all the glory!", "Blitz",
+              lambda rw_id: _set_globals(blitz_mode=True)),
+    "poindexter": ("🥇 Poindexter (exact answers)",
+                   "\n🥇🤩 {mention} demands perfection!", "Poindexter",
+                   lambda rw_id: _set_globals(exact_mode=True)),
+    "golf": ("⛳ Golf (lowest score wins)",
+             "\n⛳📉 {mention} strives for the bottom!", "Golf",
+             lambda rw_id: _set_globals(golf_mode=True)),
+    "glyph": ("🔐 Glyph (obscured questions)",
+              "\n🔐🛡️ {mention} has obscured the questions!", "Glyph",
+              lambda rw_id: _set_globals(glyph_mode=True)),
+}
+
+
+async def _apply_keyword_flag(keyword, keyword_config, winner_coffees, round_winner_id):
+    """Applies one _KEYWORD_EFFECTS entry (coffee-gate + global flag(s) + announcement),
+    identically whether `keyword` came from a typed-chat substring match or a
+    WofModifierModal multi-select pick."""
+    config = keyword_config.get(keyword, {"requires_coffee": False, "exclude_hashtag": True})
+    label, success_template, fail_name, apply_fn = _KEYWORD_EFFECTS[keyword]
+    if config["requires_coffee"] and winner_coffees <= 0:
+        await safe_send(channel, f"🙏😔 Sorry **<@{round_winner_id}>**. **'{fail_name}'** is for **Okrans Only** 🥒.")
+        return
+    await safe_send(channel, success_template.format(mention=f"<@{round_winner_id}>"))
+    apply_fn(round_winner_id)
+
+
+class WofModifierModal(discord.ui.Modal, title="Set Round Modifiers"):
+    """One-submission multi-select for prompt_user_for_response()'s keyword flags, mirroring
+    DevicePollModal's Label-wrapped multi-select Select pattern -- avoids a separate Confirm
+    button since Modal submission already is the confirm step. Applies every picked keyword via
+    the shared _apply_keyword_flag() table so the effects exactly match typing the same
+    keywords in chat."""
+
+    flags_label = discord.ui.Label(
+        text="Round modifiers",
+        description="Pick any that apply (optional)",
+        component=discord.ui.Select(
+            options=[
+                discord.SelectOption(label=info[0][:100], value=key)
+                for key, info in _KEYWORD_EFFECTS.items()
+            ],
+            min_values=0,
+            max_values=len(_KEYWORD_EFFECTS),
+            required=False,
+        ),
+    )
+
+    def __init__(self, keyword_config, winner_coffees, round_winner_id):
+        super().__init__()
+        self.keyword_config = keyword_config
+        self.winner_coffees = winner_coffees
+        self.round_winner_id = round_winner_id
+
+    async def on_submit(self, interaction: discord.Interaction):
+        selected = self.flags_label.component.values
+        await interaction.response.send_message(
+            f"✅ Applied {len(selected)} modifier(s)." if selected else "No modifiers picked.",
+            ephemeral=True,
+        )
+        for keyword in selected:
+            await _apply_keyword_flag(keyword, self.keyword_config, self.winner_coffees, self.round_winner_id)
+
+
+class WofModifierView(RestrictedView):
+    """Button that opens WofModifierModal, plus a "Done" button matching the existing typed
+    standalone-"x" early-exit shortcut. Typed chat (including "x") keeps working unchanged
+    alongside this -- see prompt_user_for_response, which races this view exactly like the
+    other converted flows."""
+
+    def __init__(self, keyword_config, winner_coffees, round_winner_id, *, timeout):
+        super().__init__({round_winner_id, okrag_id}, timeout=timeout)
+        self.keyword_config = keyword_config
+        self.winner_coffees = winner_coffees
+        self.round_winner_id = round_winner_id
+
+        flags_button = discord.ui.Button(label="🚩 Set Round Modifiers", style=discord.ButtonStyle.primary)
+        flags_button.callback = self._open_modal
+        self.add_item(flags_button)
+
+        done_button = discord.ui.Button(label="✅ I'm Done", style=discord.ButtonStyle.success)
+        done_button.callback = self._done
+        self.add_item(done_button)
+
+    async def _open_modal(self, interaction: discord.Interaction):
+        await interaction.response.send_modal(
+            WofModifierModal(self.keyword_config, self.winner_coffees, self.round_winner_id)
+        )
+
+    async def _done(self, interaction: discord.Interaction):
+        await self._resolve(interaction, "x")
+
+
+class WofPhraseModal(discord.ui.Modal, title="Guess the Phrase"):
+    """Single free-text field replacing the old ambient "just type the whole phrase in chat"
+    path in ask_wof_letters/process_wof_guesses with an explicit action. Only resolves
+    `result_future` on a correct guess -- an incorrect one is just an ephemeral miss, exactly
+    like an incorrect typed guess in chat gets a no-op/❌ and nothing else, so it doesn't need
+    to interrupt whatever letter-picking loop might still be running alongside it."""
+
+    guess = discord.ui.TextInput(label="Your answer", style=discord.TextStyle.short, max_length=100, required=True)
+
+    def __init__(self, answer, result_future: asyncio.Future):
+        super().__init__()
+        self.answer = answer
+        self._result_future = result_future
+
+    async def on_submit(self, interaction: discord.Interaction):
+        guess_text = self.guess.value.upper().strip()
+        if guess_text == self.answer:
+            await interaction.response.send_message(f"✅🎉 Correct: **{self.answer}**", ephemeral=True)
+            if not self._result_future.done():
+                # Content is the answer itself, not just a truthy flag, so the surrounding loop's
+                # existing `if message_content == answer:` check (unchanged) is what fires --
+                # this needs no special-casing in ask_wof_letters/process_wof_guesses at all.
+                self._result_future.set_result(ComponentChoice(self.answer, interaction))
+        else:
+            await interaction.response.send_message("❌ Not quite -- try again!", ephemeral=True)
+
+
+class WofPhraseView(discord.ui.View):
+    """Single "Guess Phrase" button for process_wof_guesses()'s pure full-phrase WOF variant (no
+    letter-picking) -- opens WofPhraseModal. Plain discord.ui.View, not RestrictedView, since
+    the per-user check here is a simple one-off (no eligible-player set) and there's no
+    single-shot resolution semantics to inherit beyond the future WofPhraseModal already
+    manages directly."""
+
+    def __init__(self, answer, winner_id, *, timeout):
+        super().__init__(timeout=timeout)
+        self.answer = answer
+        self.winner_id = winner_id
+        self.message = None
+        self.future = asyncio.get_running_loop().create_future()
+        button = discord.ui.Button(label="💬 Guess Phrase", style=discord.ButtonStyle.success)
+        button.callback = self._open_modal
+        self.add_item(button)
+
+    async def _open_modal(self, interaction: discord.Interaction):
+        if interaction.user.id != self.winner_id:
+            await interaction.response.send_message("❌ You're not in this round!", ephemeral=True)
+            return
+        await interaction.response.send_modal(WofPhraseModal(self.answer, self.future))
+
+    async def on_timeout(self):
+        for item in self.children:
+            item.disabled = True
+        if self.message is not None:
+            try:
+                await self.message.edit(view=self)
+            except (discord.HTTPException, discord.NotFound):
+                pass
+
+
+class WofLetterView(discord.ui.View):
+    """Letter-pick overlay for ask_wof_letters()'s WoF round. Unlike RestrictedView's
+    single-shot picker views, up to num_wf_letters individual letters get picked one at a time
+    over the whole window (same as typing several letters across one or more chat messages), so
+    each Select pick writes directly into the same `wf_letters` list the chat-parsing loop
+    already fills, rather than resolving a future per pick. The surrounding loop is otherwise
+    blocked awaiting a chat/companion message, so once a Select pick fills the letter quota this
+    resolves `future` with an empty-content ComponentChoice purely to wake that loop up early --
+    the loop's own existing "enough letters yet?" check (unchanged) does the rest, so an empty
+    content never needs special-casing there either. The "Guess Phrase" button opens
+    WofPhraseModal exactly like WofPhraseView, sharing the same `future`."""
+
+    def __init__(self, wf_letters, num_wf_letters, fixed_letters, answer, winner_id, *, timeout):
+        super().__init__(timeout=timeout)
+        self.wf_letters = wf_letters
+        self.num_wf_letters = num_wf_letters
+        self.answer = answer
+        self.winner_id = winner_id
+        self.message = None
+        self.future = asyncio.get_running_loop().create_future()
+
+        used = set(fixed_letters) | set(wf_letters)
+        vowels = [l for l in "AEIOU" if l not in used]
+        consonants = [l for l in "BCDFGHJKLMNPQRSTVWXYZ" if l not in used]
+        if vowels:
+            self._add_letter_select(vowels, "Pick a vowel…")
+        if consonants:
+            self._add_letter_select(consonants, "Pick a consonant…")
+
+        phrase_button = discord.ui.Button(label="💬 Guess Phrase", style=discord.ButtonStyle.success)
+        phrase_button.callback = self._open_modal
+        self.add_item(phrase_button)
+
+    def _add_letter_select(self, letters, placeholder):
+        select = discord.ui.Select(placeholder=placeholder, options=[discord.SelectOption(label=l, value=l) for l in letters])
+
+        async def _callback(interaction: discord.Interaction):
+            if interaction.user.id != self.winner_id:
+                await interaction.response.send_message("❌ You're not in this round!", ephemeral=True)
+                return
+            letter = select.values[0]
+            if letter not in self.wf_letters and len(self.wf_letters) < self.num_wf_letters:
+                self.wf_letters.append(letter)
+            await interaction.response.send_message(f"✅ Picked: **{letter}**", ephemeral=True)
+            if len(self.wf_letters) >= self.num_wf_letters and not self.future.done():
+                self.future.set_result(ComponentChoice("", interaction))
+
+        select.callback = _callback
+        self.add_item(select)
+
+    async def _open_modal(self, interaction: discord.Interaction):
+        if interaction.user.id != self.winner_id:
+            await interaction.response.send_message("❌ You're not in this round!", ephemeral=True)
+            return
+        await interaction.response.send_modal(WofPhraseModal(self.answer, self.future))
+
+    async def on_timeout(self):
+        for item in self.children:
+            item.disabled = True
+        if self.message is not None:
+            try:
+                await self.message.edit(view=self)
+            except (discord.HTTPException, discord.NotFound):
+                pass
+
+
+class SportsLeagueModal(discord.ui.Modal, title="Pick Your Leagues"):
+    """One-submission multi-select for ask_sports_logos_challenge()'s league picker, mirroring
+    DevicePollModal/WofModifierModal's Label-wrapped multi-select pattern. `league_options` is
+    built per-call from the function's own LEAGUES list rather than a module-level constant, so
+    this constructs its Select dynamically in __init__ instead of declaring it at class level
+    like the fixed-option modals elsewhere in this file. Submitting synthesizes the same
+    space-separated-numbers content the typed-chat path already parses via re.findall(r'\\d+'),
+    so ask_sports_logos_challenge needs no separate handling for this path."""
+
+    def __init__(self, league_options, result_future: asyncio.Future):
+        super().__init__()
+        self._result_future = result_future
+        self.leagues_select = discord.ui.Select(
+            options=[discord.SelectOption(label=label[:100], value=str(num)) for num, label in league_options],
+            min_values=1,
+            max_values=len(league_options),
+        )
+        self.add_item(discord.ui.Label(text="Leagues", description="Pick any that apply, or Everything",
+                                        component=self.leagues_select))
+
+    async def on_submit(self, interaction: discord.Interaction):
+        selected = self.leagues_select.values
+        await interaction.response.send_message(f"✅ Selected {len(selected)} option(s).", ephemeral=True)
+        if not self._result_future.done():
+            self._result_future.set_result(ComponentChoice(" ".join(selected), interaction))
+
+
+class SportsLeagueView(discord.ui.View):
+    """Button that opens SportsLeagueModal. Plain discord.ui.View (single winner-only picker,
+    single submission) -- see SportsLeagueModal for why the Select is built dynamically here
+    rather than reusing build_option_select_view (this needs multi-select-in-one-Modal, not a
+    per-click resolution)."""
+
+    def __init__(self, league_options, winner_id, *, timeout):
+        super().__init__(timeout=timeout)
+        self.league_options = league_options
+        self.winner_id = winner_id
+        self.message = None
+        self.future = asyncio.get_running_loop().create_future()
+        button = discord.ui.Button(label="🏈 Pick Leagues", style=discord.ButtonStyle.primary)
+        button.callback = self._open_modal
+        self.add_item(button)
+
+    async def _open_modal(self, interaction: discord.Interaction):
+        if interaction.user.id != self.winner_id:
+            await interaction.response.send_message("❌ You're not in this round!", ephemeral=True)
+            return
+        await interaction.response.send_modal(SportsLeagueModal(self.league_options, self.future))
+
+    async def on_timeout(self):
+        for item in self.children:
+            item.disabled = True
+        if self.message is not None:
+            try:
+                await self.message.edit(view=self)
+            except (discord.HTTPException, discord.NotFound):
+                pass
+
+
+class ValedictorianView(RestrictedView):
     """Shared A/B/C/D button grid for one round of Valedictorian.
 
     eligible_players=None means anyone may click (round 1, roster not yet known).
-    A real set restricts clicks to that roster (round 2+).
-    """
+    A real set restricts clicks to that roster (round 2+). Per-user restriction and the
+    ineligible-click rejection message are inherited from RestrictedView -- this was the
+    original convention RestrictedView itself was modeled on. Answers are tracked in
+    self.answers (many players each answer independently within one shared round), not
+    RestrictedView.future, a single-resolution primitive this view has no use for."""
 
     def __init__(self, eligible_players, correct_letter: str):
-        super().__init__(timeout=20)
-        self.eligible_players = set(eligible_players) if eligible_players is not None else None
+        super().__init__(eligible_players, timeout=20)
         self.correct_letter = correct_letter
         self.answers = {}  # user_id -> letter clicked
         self.display_names = {}  # user_id -> display name (round 1 has no prior roster to draw names from)
 
     async def handle_letter_click(self, interaction: discord.Interaction, letter: str):
         user_id = interaction.user.id
-
-        if self.eligible_players is not None and user_id not in self.eligible_players:
-            await interaction.response.send_message("❌ You're not in this round!", ephemeral=True)
-            return
 
         if user_id in self.answers:
             await interaction.response.send_message("✅ You already answered!", ephemeral=True)
@@ -5823,17 +6590,18 @@ class ValedictorianView(discord.ui.View):
         await self.handle_letter_click(interaction, "D")
 
 
-class LeaderboardView(discord.ui.View):
+class LeaderboardView(RestrictedView):
     """Ephemeral /leaderboard viewer: a game-mode toggle (Trivia & Games vs Simply Trivia) plus
     a category dropdown whose options depend on the currently selected mode. Both selects edit
-    the same message in place rather than posting new ones."""
+    the same message in place rather than posting new ones. on_timeout is inherited from
+    RestrictedView unchanged (this was the original template it was modeled on); the
+    interaction_check override below is kept for its command-specific rejection message."""
 
     def __init__(self, mode, category_key, user_id):
-        super().__init__(timeout=180)
+        super().__init__({user_id}, timeout=180)
         self.mode = mode
         self.category_key = category_key
         self.user_id = user_id
-        self.message = None
         self._refresh_mode_options()
         self._refresh_category_options()
 
@@ -5861,15 +6629,6 @@ class LeaderboardView(discord.ui.View):
             )
             return False
         return True
-
-    async def on_timeout(self):
-        for item in self.children:
-            item.disabled = True
-        if self.message:
-            try:
-                await self.message.edit(view=self)
-            except Exception:
-                pass
 
     @discord.ui.select(
         placeholder="Game Mode",
@@ -5899,16 +6658,19 @@ class LeaderboardView(discord.ui.View):
         await interaction.response.edit_message(embed=embed, view=self)
 
 
-class AnswerButtonView(discord.ui.View):
+class AnswerButtonView(RestrictedView):
     """Click-to-answer buttons for a main-trivia-loop multiple-choice question.
 
     Built with a dynamic option count (2 for True/False, N for letter-based),
     so buttons are added via add_item() rather than the fixed @discord.ui.button
-    decorator style used elsewhere in this file.
+    decorator style used elsewhere in this file. Open floor (allowed_user_ids=None) --
+    any guild member may click, same as RestrictedView.interaction_check's default
+    "no restriction" behavior for that case (matching Discord's own unrestricted default,
+    which is what this view relied on before this class existed).
     """
 
     def __init__(self, letters):
-        super().__init__(timeout=None)  # cleanup is explicit, see start_trivia()'s post-grading step
+        super().__init__(None, timeout=None)  # cleanup is explicit, see start_trivia()'s post-grading step
         self.answered_user_ids = set()
         for letter in letters:
             button = discord.ui.Button(label=letter, style=discord.ButtonStyle.primary)
@@ -8558,9 +9320,11 @@ async def ask_audio_music_challenge(winner, winner_id, num=5):
         return None  # If not found, return None
 
     # Ask winner for category selection
-    await safe_send(
+    category_options = [{"value": str(i), "label": f"{emoji_map[i]} {category_map[i]}"} for i in range(1, 15)]
+    view = build_option_select_view(category_options, {winner_id}, timeout=magic_time + 5, placeholder="Pick a category\u2026")
+    view.message = await safe_send(
         channel,
-        f"\u200b\n🎵📊 **<@{winner_id}>**, choose a music category:\n\n"
+        f"\u200b\n\U0001f3b5\U0001f4ca **<@{winner_id}>**, choose a music category:\n\n"
         f"**1.** {emoji_map[1]} {category_map[1]}\n"
         f"**2.** {emoji_map[2]} {category_map[2]}\n"
         f"**3.** {emoji_map[3]} {category_map[3]}\n"
@@ -8574,9 +9338,10 @@ async def ask_audio_music_challenge(winner, winner_id, num=5):
         f"**11.** {emoji_map[11]} {category_map[11]}\n"
         f"**12.** {emoji_map[12]} {category_map[12]}\n"
         f"**13.** {emoji_map[13]} {category_map[13]}\n"
-        f"**14.** {emoji_map[14]} {category_map[14]}\n\u200b"
+        f"**14.** {emoji_map[14]} {category_map[14]}\n\u200b",
+        view=view,
     )
-    
+
     start_time = asyncio.get_event_loop().time()
 
     target_channel = _active_game_channel or channel
@@ -8587,8 +9352,11 @@ async def ask_audio_music_challenge(winner, winner_id, num=5):
     while asyncio.get_event_loop().time() - start_time < magic_time + 5:
         try:
             timeout = magic_time + 5 - (asyncio.get_event_loop().time() - start_time)
-            msg = await companion_bridge.wait_for_message_or_companion(
-                check_category, timeout, target_channel, {winner_id}, kind="mini_game_answer"
+            msg = await resolve_input_race(
+                view,
+                companion_bridge.wait_for_message_or_companion(
+                    check_category, timeout, target_channel, {winner_id}, kind="mini_game_answer", options=category_options
+                ),
             )
 
             # Extract first number from message
@@ -8599,8 +9367,10 @@ async def ask_audio_music_challenge(winner, winner_id, num=5):
                     selected_category = category_map[user_choice]
                     await msg.add_reaction(emoji_map[user_choice])
                     break
+            await view.reset()
         except asyncio.TimeoutError:
             break
+
 
     if selected_category:
         await safe_send(channel, f"\u200b\n🎯✅ Great choice! We'll play from **{selected_category}**!\n\u200b")
@@ -9024,34 +9794,52 @@ async def ask_audio_question_challenge(winner, winner_id, num=5):
     }
 
     # Build complete voice selection message
-    voice_msg = f"\u200b\n🎤🗣️ **<@{winner_id}>**, choose a voice model:\n\n"
+    voice_msg = f"\u200b\n\U0001f3a4\U0001f5e3\ufe0f **<@{winner_id}>**, choose a voice model:\n\n"
+
+    # Category buckets, reused both for the text menu and the Select view's curated groups
+    # (each stays well under Discord's 25-per-Select cap on its own, so no further splitting
+    # is needed the way the 46-minigame post-round menu required).
+    voice_categories = {
+        "Female - American": [1, 2, 3, 5, 6, 7, 9, 10, 11, 13, 14, 15, 16, 17, 18, 20, 21, 22, 23, 24],
+        "Female - Other": [4, 8, 12, 19],
+        "Male - American": [25, 26, 27, 28, 29, 30, 31, 33, 35, 36, 37, 38, 39, 40, 41, 42, 43],
+        "Male - Other": [32, 34],
+        "Spanish": list(range(44, 49)),
+    }
 
     # Female - American (1-3, 5-7, 9-11, 13-18, 20-24)
     voice_msg += "**FEMALE - AMERICAN:**\n"
-    for i in [1, 2, 3, 5, 6, 7, 9, 10, 11, 13, 14, 15, 16, 17, 18, 20, 21, 22, 23, 24]:
+    for i in voice_categories["Female - American"]:
         voice_msg += f"**{i}.** {voice_model_map[i][1]}\n"
 
     # Female - Other (4=British, 8=Filipino, 12=Irish, 19=British)
     voice_msg += "\n**FEMALE - OTHER:**\n"
-    for i in [4, 8, 12, 19]:
+    for i in voice_categories["Female - Other"]:
         voice_msg += f"**{i}.** {voice_model_map[i][1]}\n"
 
     # Male - American (25-31, 33, 35-43)
     voice_msg += "\n**MALE - AMERICAN:**\n"
-    for i in [25, 26, 27, 28, 29, 30, 31, 33, 35, 36, 37, 38, 39, 40, 41, 42, 43]:
+    for i in voice_categories["Male - American"]:
         voice_msg += f"**{i}.** {voice_model_map[i][1]}\n"
 
     # Male - Other (32=British, 34=Australian)
     voice_msg += "\n**MALE - OTHER:**\n"
-    for i in [32, 34]:
+    for i in voice_categories["Male - Other"]:
         voice_msg += f"**{i}.** {voice_model_map[i][1]}\n"
 
     # Spanish
     voice_msg += "\n**SPANISH:**\n"
-    for i in range(44, 49):
+    for i in voice_categories["Spanish"]:
         voice_msg += f"**{i}.** {voice_model_map[i][1]}\n"
 
-    await safe_send(channel, voice_msg)
+    groups = {
+        name: [{"value": str(i), "label": voice_model_map[i][1]} for i in idxs]
+        for name, idxs in voice_categories.items()
+    }
+    view = build_option_select_view([], {winner_id}, timeout=magic_time + 5, groups=groups,
+                                     group_placeholder="Pick a voice category\u2026", placeholder="Pick a voice\u2026")
+    view.message = await safe_send(channel, voice_msg, view=view)
+    companion_voice_options = [opt for group in groups.values() for opt in group]
 
     start_time = asyncio.get_event_loop().time()
 
@@ -9063,8 +9851,12 @@ async def ask_audio_question_challenge(winner, winner_id, num=5):
     while asyncio.get_event_loop().time() - start_time < magic_time + 5:
         try:
             timeout = magic_time + 5 - (asyncio.get_event_loop().time() - start_time)
-            msg = await companion_bridge.wait_for_message_or_companion(
-                check_voice, timeout, target_channel, {winner_id}, kind="mini_game_answer"
+            msg = await resolve_input_race(
+                view,
+                companion_bridge.wait_for_message_or_companion(
+                    check_voice, timeout, target_channel, {winner_id}, kind="mini_game_answer",
+                    options=companion_voice_options
+                ),
             )
 
             # Extract first number from message
@@ -9073,18 +9865,19 @@ async def ask_audio_question_challenge(winner, winner_id, num=5):
                 user_choice = int(numbers[0])
                 if user_choice in voice_model_map:
                     selected_voice_model = voice_model_map[user_choice][0]
-                    await msg.add_reaction("🎤")
+                    await msg.add_reaction("\U0001f3a4")
                     break
+            await view.reset()
         except asyncio.TimeoutError:
             break
 
     if selected_voice_model:
         voice_name = [v[1] for k, v in voice_model_map.items() if v[0] == selected_voice_model][0]
-        await safe_send(channel, f"\u200b\n🎯✅ Great choice! Using **{voice_name}**!\n\u200b")
+        await safe_send(channel, f"\u200b\n\U0001f3af\u2705 Great choice! Using **{voice_name}**!\n\u200b")
     else:
         # Default to Thalia if no response
         selected_voice_model = voice_model_map[1][0]
-        await safe_send(channel, f"\u200b\n😬⏱️ Time's up! Using **{voice_model_map[1][1]}**!\n\u200b")
+        await safe_send(channel, f"\u200b\n\U0001f62c\u23f1\ufe0f Time's up! Using **{voice_model_map[1][1]}**!\n\u200b")
 
     await asyncio.sleep(2)
 
@@ -9385,11 +10178,13 @@ async def ask_buzz_words_challenge(winner, winner_id, num=5):
         await safe_send(channel, f"\u200b\n🐝 Only **{BUZZ_WORDS_TIER_LABELS[selected_tier]}** is ready so far — let's go!\n\u200b")
     else:
         tier_options = {i: tier for i, tier in enumerate(available_tiers, start=1)}
+        button_options = [{"value": str(i), "label": BUZZ_WORDS_TIER_LABELS[tier]} for i, tier in tier_options.items()]
+        view = build_option_button_view(button_options, {winner_id}, timeout=magic_time + 5)
 
-        tier_msg = f"\u200b\n🔤🎚️ **<@{winner_id}>**, choose a difficulty tier:\n\n"
+        tier_msg = f"\u200b\n\U0001f524\U0001f6da\ufe0f **<@{winner_id}>**, choose a difficulty tier:\n\n"
         for i, tier in tier_options.items():
             tier_msg += f"**{i}.** {BUZZ_WORDS_TIER_LABELS[tier]}\n"
-        await safe_send(channel, tier_msg)
+        view.message = await safe_send(channel, tier_msg, view=view)
 
         start_time = asyncio.get_event_loop().time()
 
@@ -9401,24 +10196,28 @@ async def ask_buzz_words_challenge(winner, winner_id, num=5):
         while asyncio.get_event_loop().time() - start_time < magic_time + 5:
             try:
                 timeout = magic_time + 5 - (asyncio.get_event_loop().time() - start_time)
-                msg = await companion_bridge.wait_for_message_or_companion(
-                    check_tier, timeout, target_channel, {winner_id}, kind="mini_game_answer"
+                msg = await resolve_input_race(
+                    view,
+                    companion_bridge.wait_for_message_or_companion(
+                        check_tier, timeout, target_channel, {winner_id}, kind="mini_game_answer", options=button_options
+                    ),
                 )
                 numbers = re.findall(r'\d+', msg.content.strip())
                 if numbers:
                     choice = int(numbers[0])
                     if choice in tier_options:
                         selected_tier = tier_options[choice]
-                        await msg.add_reaction("🐝")
+                        await msg.add_reaction("\U0001f41d")
                         break
+                await view.reset()
             except asyncio.TimeoutError:
                 break
 
         if selected_tier:
-            await safe_send(channel, f"\u200b\n🎯✅ Let's do **{BUZZ_WORDS_TIER_LABELS[selected_tier]}**!\n\u200b")
+            await safe_send(channel, f"\u200b\n\U0001f3af\u2705 Let's do **{BUZZ_WORDS_TIER_LABELS[selected_tier]}**!\n\u200b")
         else:
             selected_tier = available_tiers[0]
-            await safe_send(channel, f"\u200b\n😬⏱️ Time's up! Defaulting to **{BUZZ_WORDS_TIER_LABELS[selected_tier]}**!\n\u200b")
+            await safe_send(channel, f"\u200b\n\U0001f62c\u23f1\ufe0f Time's up! Defaulting to **{BUZZ_WORDS_TIER_LABELS[selected_tier]}**!\n\u200b")
 
     await asyncio.sleep(2)
 
@@ -9979,9 +10778,17 @@ async def ask_sports_logos_challenge(winner, winner_id, num=5):
     def check_league_selection(m):
         return m.channel == target_channel and m.author.id == winner_id and any(char.isdigit() for char in m.content)
 
+    league_options = [(i, league_display_map[i]) for i in sorted(league_display_map)] + [(everything_option_num, "\U0001f3c6 Everything")]
+    view = SportsLeagueView(league_options, winner_id, timeout=20)
+    view.message = await safe_send(channel, "\U0001f447 Or pick from the button:", view=view)
+
     try:
-        league_msg = await companion_bridge.wait_for_message_or_companion(
-            check_league_selection, 20, target_channel, {winner_id}, kind="mini_game_answer"
+        league_msg = await resolve_input_race(
+            view,
+            companion_bridge.wait_for_message_or_companion(
+                check_league_selection, 20, target_channel, {winner_id}, kind="mini_game_answer",
+                options=[{"value": str(num), "label": label} for num, label in league_options], multi=True
+            ),
         )
         # Extract all numbers from the message (dynamically check up to everything_option_num)
         import re
@@ -9990,21 +10797,21 @@ async def ask_sports_logos_challenge(winner, winner_id, num=5):
         if not numbers:
             # Default to everything if no valid numbers
             selected_leagues = all_leagues.copy()
-            await safe_send(channel, "\u200b\n🤷 No valid selection, using **everything**!\n\u200b")
+            await safe_send(channel, "\u200b\n\U0001f937 No valid selection, using **everything**!\n\u200b")
         elif everything_option_num in numbers:
             # "Everything" option selected
             selected_leagues = all_leagues.copy()
-            await safe_send(channel, "\u200b\n🌟 **Everything** selected!\n\u200b")
+            await safe_send(channel, "\u200b\n\U0001f31f **Everything** selected!\n\u200b")
         else:
             # Remove duplicates and map to league names (plain names for DB queries)
             selected_leagues = [league_map[n] for n in sorted(set(numbers)) if n in league_map]
             # Use display map with emojis for user-facing message
             league_display = ", ".join([league_display_map[n] for n in sorted(set(numbers)) if n in league_display_map])
-            await safe_send(channel, f"\u200b\n✅ Selected leagues: **{league_display}**\n\u200b")
+            await safe_send(channel, f"\u200b\n\u2705 Selected leagues: **{league_display}**\n\u200b")
     except asyncio.TimeoutError:
         # Default to everything on timeout
         selected_leagues = all_leagues.copy()
-        await safe_send(channel, "\u200b\n⏰ Time's up! Using **everything**!\n\u200b")
+        await safe_send(channel, "\u200b\n\u23f0 Time's up! Using **everything**!\n\u200b")
 
     await asyncio.sleep(2)
 
@@ -14248,16 +15055,23 @@ async def ask_ranker_list_number(winner, winner_id, num=5):
     def check(m):
         return m.channel == target_channel and m.author != get_bot().user and m.author.id == winner_id and m.content.strip() in {"1", "2", "3", "4", "5"}
 
+    options = [{"value": str(i), "label": str(i)} for i in range(1, 6)]
+    view = build_option_button_view(options, {winner_id}, timeout=20)
+    view.message = await safe_send(channel, "\U0001f447 Or pick a number:", view=view)
+
     try:
-        message = await companion_bridge.wait_for_message_or_companion(
-            check, 20, target_channel, {winner_id}, kind="mini_game_answer"
+        message = await resolve_input_race(
+            view,
+            companion_bridge.wait_for_message_or_companion(
+                check, 20, target_channel, {winner_id}, kind="mini_game_answer", options=options
+            ),
         )
-        await message.add_reaction("💪")  # Acknowledge with a muscle emoji
-        await safe_send(channel, f"\u200b\n💪🛡️ I got you **<@{winner_id}>**. **{message.content}** it is.\n\u200b")
+        await message.add_reaction("\U0001f4aa")  # Acknowledge with a muscle emoji
+        await safe_send(channel, f"\u200b\n\U0001f4aa\U0001f6e1\ufe0f I got you **<@{winner_id}>**. **{message.content}** it is.\n\u200b")
         return int(message.content)
     except asyncio.TimeoutError:
         selected_question = random.choice(["1", "2", "3", "4", "5"])
-        await safe_send(channel, f"\u200b\n🐢⏳ Too slow. I choose **{selected_question}**.\n\u200b")
+        await safe_send(channel, f"\u200b\n\U0001f422\u23f3 Too slow. I choose **{selected_question}**.\n\u200b")
         return int(selected_question)
 
 
@@ -14540,7 +15354,6 @@ async def ask_list_question(winner, winner_id, num=5):
         await asyncio.sleep(5)
         return None
 
-
 async def ask_survey_question():
     collection = db["survey_questions_discord"]
 
@@ -14551,7 +15364,7 @@ async def ask_survey_question():
     ]).to_list(length=1)
 
     if not question_list:
-        await safe_send(channel, "📭 No survey questions available.")
+        await safe_send(channel, "\U0001f4ed No survey questions available.")
         return
 
     survey_question = question_list[0]
@@ -14563,25 +15376,39 @@ async def ask_survey_question():
     current_time = datetime.datetime.now(datetime.timezone.utc).isoformat()
 
     type_info = {
-        "yes-no": {"emojis": "👍👎", "prompt": "Answer YES or NO"},
-        "multiple-choice": {"emojis": "🄠📝", "prompt": "Choose a letter"},
-        "rating-10": {"emojis": "⭐️🔟", "prompt": "Rate 1 👎 to 10 👍"},
-        "word-3": {"emojis": "3️⃣🔤", "prompt": "3 word limit"}
+        "yes-no": {"emojis": "\U0001f44d\U0001f44e", "prompt": "Answer YES or NO"},
+        "multiple-choice": {"emojis": "\U0001f520\U0001f4dd", "prompt": "Choose a letter"},
+        "rating-10": {"emojis": "\u2b50\ufe0f\U0001f51f", "prompt": "Rate 1 \U0001f44e to 10 \U0001f44d"},
+        "word-3": {"emojis": "3\ufe0f\u20e3\U0001f524", "prompt": "3 word limit"}
     }
 
-    emojis = type_info.get(question_type, {}).get("emojis", "🤔")
+    emojis = type_info.get(question_type, {}).get("emojis", "\U0001f914")
     prompt_text = type_info.get(question_type, {}).get("prompt", "What do you think?")
 
-    await safe_send(channel, "\u200b\n\u200b\n📋✅ Survey Time!\n\n1️⃣☝️ Only 1 answer stored per user.\n\u200b\n\u200b")
+    await safe_send(channel, "\u200b\n\u200b\n\U0001f4cb\u2705 Survey Time!\n\n1\ufe0f\u20e3\u261d\ufe0f Only 1 answer stored per user.\n\u200b\n\u200b")
     await asyncio.sleep(2)
-    await safe_send(channel, f"\n{emojis} {prompt_text}\n\n❓ {question_text}\n\u200b\n\u200b")
+
+    end_time = asyncio.get_event_loop().time() + 15
+    view = SurveyView(question_type, valid_answers, collected, current_time, timeout=end_time - asyncio.get_event_loop().time())
+    view.message = await safe_send(channel, f"\n{emojis} {prompt_text}\n\n\u2753 {question_text}\n\u200b\n\u200b", view=view)
 
     target_channel = _active_game_channel or channel
 
     def check(m):
         return m.channel == target_channel and m.author != get_bot().user
 
-    end_time = asyncio.get_event_loop().time() + 15
+    # Companion (phone/web) users see matching buttons/select too -- this is purely descriptive
+    # metadata for rendering, since resolution here still just parses `content` same as always
+    # (see SurveyView's docstring for why this isn't a single-shot race like the picker views).
+    if question_type == "yes-no":
+        options = [{"value": "Yes", "label": "\U0001f44d Yes"}, {"value": "No", "label": "\U0001f44e No"}]
+    elif question_type == "multiple-choice":
+        options = [{"value": str(a), "label": str(a)} for a in list(valid_answers)[:25]]
+    elif question_type == "rating-10":
+        options = [{"value": str(i), "label": str(i)} for i in range(1, 11)]
+    else:
+        options = None
+
     while True:
         timeout = end_time - asyncio.get_event_loop().time()
         if timeout <= 0:
@@ -14589,15 +15416,15 @@ async def ask_survey_question():
 
         try:
             msg = await companion_bridge.wait_for_message_or_companion(
-                check, timeout, target_channel, None, kind="mini_game_answer", reveal_answer=False
+                check, timeout, target_channel, None, kind="mini_game_answer", reveal_answer=False, options=options
             )
             username = msg.author.display_name
             content = msg.content.strip()
 
             if question_type == "yes-no":
-                if content.lower().startswith("y") or content == "👍":
+                if content.lower().startswith("y") or content == "\U0001f44d":
                     collected[username] = {"answer": "Yes", "timestamp": current_time}
-                elif content.lower().startswith("n") or content == "👎":
+                elif content.lower().startswith("n") or content == "\U0001f44e":
                     collected[username] = {"answer": "No", "timestamp": current_time}
 
             elif question_type == "multiple-choice":
@@ -17551,20 +18378,26 @@ async def handle_intro_image_admin_command(message: discord.Message) -> bool:
 
 async def ask_category(winner, categories, winner_coffees, winner_id, skip_message=False):
     additional_prompt = ""
+    target_channel = _active_game_channel or channel
+    end_time = asyncio.get_event_loop().time() + magic_time + 5
 
-    # Display categories (skipped if already shown, e.g. merged into the winner announcement)
+    view = MuseumThemeView(categories, winner_coffees, winner_id, timeout=end_time - asyncio.get_event_loop().time())
+
+    # Display categories (skipped if already shown, e.g. merged into the winner announcement) --
+    # the buttons themselves always show regardless, so a picker is never left with nothing to
+    # click even when the announcement embed already listed the options as plain text.
     if not skip_message:
-        category_message = f"\u200b\n🎨🖍️ **<@{winner_id}>** Pick a theme for the Okra Museum!\n\u200b"
+        category_message = f"\u200b\n\U0001f3a8\U0001f58d\ufe0f **<@{winner_id}>** Pick a theme for the Okra Museum!\n\u200b"
         for key, value in categories.items():
             category_message += f"**{key}**: {value}\n"
-        await safe_send(channel, category_message)
-
-    target_channel = _active_game_channel or channel
+        view.message = await safe_send(channel, category_message, view=view)
+    else:
+        view.message = await safe_send(channel, "\u200b", view=view)
 
     def check(m):
         return m.channel == target_channel and m.author != get_bot().user and m.author.id == winner_id
 
-    end_time = asyncio.get_event_loop().time() + magic_time + 5
+    options = [{"value": key, "label": value} for key, value in categories.items()]
 
     while True:
         remaining_time = end_time - asyncio.get_event_loop().time()
@@ -17572,28 +18405,37 @@ async def ask_category(winner, categories, winner_coffees, winner_id, skip_messa
             return None, additional_prompt
 
         try:
-            response = await companion_bridge.wait_for_message_or_companion(
-                check, remaining_time, target_channel, {winner_id}, kind="mini_game_answer"
+            response = await resolve_input_race(
+                view,
+                companion_bridge.wait_for_message_or_companion(
+                    check, remaining_time, target_channel, {winner_id}, kind="mini_game_answer", options=options
+                ),
             )
             message_content = response.content.strip()
 
-            # Case 1: Invalid choice (not in categories)
+            # Case 1: Invalid choice (not in categories) -- only reachable via typed chat, since
+            # the buttons only ever offer a valid key.
             if message_content not in categories:
-                await response.add_reaction("❌")
+                await response.add_reaction("\u274c")
                 continue
 
-            # Case 2: Coffee-locked option, no coffee
+            # Case 2: Coffee-locked option, no coffee -- only reachable via typed chat, since the
+            # "Provide the Prompt" button is pre-disabled for a winner with no coffee.
             if message_content == '4' and winner_coffees <= 0:
-                await response.add_reaction("🥒")
-                await safe_send(channel, f"🙏😔 Sorry **<@{winner_id}>**, choice **{message_content}** is for **Okrans Only** 🥒.")
+                await response.add_reaction("\U0001f952")
+                await safe_send(channel, f"\U0001f64f\U0001f614 Sorry **<@{winner_id}>**, choice **{message_content}** is for **Okrans Only** \U0001f952.")
                 continue
 
             # Case 3: Valid choice
-            await response.add_reaction("✅")
-            await safe_send(channel, f"💪🛡️ I got you **<@{winner_id}>**! Choice {message_content} it is.")
+            await response.add_reaction("\u2705")
+            await safe_send(channel, f"\U0001f4aa\U0001f6e1\ufe0f I got you **<@{winner_id}>**! Choice {message_content} it is.")
 
             if message_content == '4' and winner_coffees > 0:
-                additional_prompt = await request_prompt(winner, winner_id)
+                # Button path: MuseumThemeView already opened MuseumPromptModal and set
+                # view.prompt_future -- await its one-shot submission instead of the old
+                # multi-message word collector. Chat/companion path (typed "4" directly, no
+                # button click involved): fall back to request_prompt() unchanged.
+                additional_prompt = await view.prompt_future if view.prompt_future is not None else await request_prompt(winner, winner_id)
 
             return message_content, additional_prompt
 
@@ -17805,12 +18647,16 @@ async def select_wof_questions(winner, winner_id, winner_coffees=None):
 
         message = f"\u200b\n\u200b\n🍷⚔️ **<@{winner_id}>**, your mini-game awaits (#)...\n\n"
         
-        message += f"😎 **Everyone's Welcome**"
+        message += f"\U0001f60e **Everyone\'s Welcome**"
         counter = 0
+        wof_tier_options = []  # dynamic per-round labels for ask_wof_number's Select view -- the
+        # "0"-"4" keys have no static label (unlike unlocks' minigames), since which WoF category
+        # sits at each number changes every round.
         for doc in wof_questions:
             category = doc["question"]  # Use the key name to access category
-            message += f"\n{counter}.\u200b 🎡💰 WoF: {category}"
-            counter = counter + 1        
+            message += f"\n{counter}.\u200b \U0001f3a1\U0001f4b0 WoF: {category}"
+            wof_tier_options.append({"value": str(counter), "label": f"\U0001f3a1 WoF: {category}"[:100]})
+            counter = counter + 1
         premium_counts = counter
         message += f"\n\n🥒 **Okrans Only**"
         message += f"\n{counter}.\u200b 🌐🎲 Wikipedia Roulette\n"
@@ -17912,7 +18758,7 @@ async def select_wof_questions(winner, winner_id, winner_coffees=None):
         message += f"x.\u200b ⏭️🕹️ Skip Mini-Game\n\u200b"
         await safe_send(channel, message) 
                 
-        selected_wof_category = await ask_wof_number(winner, winner_id, cached_coffees=winner_coffees, menu_text=message)
+        selected_wof_category = await ask_wof_number(winner, winner_id, cached_coffees=winner_coffees, menu_text=message, wof_tier_options=wof_tier_options)
 
         randomize_embed_color()
 
@@ -18265,7 +19111,7 @@ async def process_wof_guesses(winner, answer, extra_time, winner_id, clue):
     global wf_winner
 
     answer = answer.upper()
-    await safe_send(channel, f"\u200b\n\u200b\n**<@{winner_id}>** ❓**Your Answer**❓\n\u200b")
+    await safe_send(channel, f"\u200b\n\u200b\n**<@{winner_id}>** \u2753**Your Answer**\u2753\n\u200b")
 
     target_channel = _active_game_channel or channel
 
@@ -18274,24 +19120,31 @@ async def process_wof_guesses(winner, answer, extra_time, winner_id, clue):
 
     start_time = time.time()  # Track when the question starts
 
+    view = WofPhraseView(answer, winner_id, timeout=magic_time + extra_time)
+    view.message = await safe_send(channel, "\U0001f447 Or guess with the button:", view=view)
+    phrase_options = [{"value": "guess", "label": "\U0001f4ac Guess the Phrase"}]
+
     while time.time() - start_time < (magic_time + extra_time):
         try:
             remaining = (magic_time + extra_time) - (time.time() - start_time)
             timeout = min(remaining, 30)
-            message = await companion_bridge.wait_for_message_or_companion(
-                check, timeout, target_channel, {winner_id}, kind="mini_game_answer"
+            message = await resolve_input_race(
+                view,
+                companion_bridge.wait_for_message_or_companion(
+                    check, timeout, target_channel, {winner_id}, kind="mini_game_answer", options=phrase_options
+                ),
             )
             message_content = message.content.upper().strip()
 
             if message_content == answer:
-                await message.add_reaction("🎉")
+                await message.add_reaction("\U0001f389")
                 await send_wof_solved_board(answer, clue)
-                await safe_send(channel, f"\n✅🎉 Correct: **{answer}**\n\u200b")
+                await safe_send(channel, f"\n\u2705\U0001f389 Correct: **{answer}**\n\u200b")
                 wf_winner = True
                 return
 
             # Incorrect guess
-            await message.add_reaction("❌")
+            await message.add_reaction("\u274c")
 
         except asyncio.TimeoutError:
             break
@@ -18300,7 +19153,7 @@ async def process_wof_guesses(winner, answer, extra_time, winner_id, clue):
             break
 
     await send_wof_solved_board(answer, clue)
-    await safe_send(channel, f"⏰ Time's up! The answer was: {answer}")
+    await safe_send(channel, f"\u23f0 Time's up! The answer was: {answer}")
 
 
 async def ask_wof_letters(winner, answer, extra_time, winner_id, clue):
@@ -18312,15 +19165,19 @@ async def ask_wof_letters(winner, answer, extra_time, winner_id, clue):
 
     answer = answer.upper()
     start_time = time.time()
-    await safe_send(channel, f"\u200b\n**<@{winner_id}>**:❓**Pick {num_wf_letters} Letters**❓\n" +
-                       (f"\n🥒 I'll give you **O K R A** 🥒\n\u200b" if fixed_letters else ""))    
-    
+    await safe_send(channel, f"\u200b\n**<@{winner_id}>**:\u2753**Pick {num_wf_letters} Letters**\u2753\n" +
+                       (f"\n\U0001f952 I'll give you **O K R A** \U0001f952\n\u200b" if fixed_letters else ""))
+
     wf_letters = []
 
     target_channel = _active_game_channel or channel
 
     def check(m):
         return m.channel == target_channel and m.author != get_bot().user and m.author.id == winner_id
+
+    view = WofLetterView(wf_letters, num_wf_letters, fixed_letters, answer, winner_id, timeout=magic_time + extra_time)
+    view.message = await safe_send(channel, "\U0001f447 Or pick from the dropdowns:", view=view)
+    letter_options = [{"value": l, "label": l} for l in "ABCDEFGHIJKLMNOPQRSTUVWXYZ" if l not in fixed_letters]
 
     while time.time() - start_time < (magic_time + extra_time):
         try:
@@ -18329,15 +19186,18 @@ async def ask_wof_letters(winner, answer, extra_time, winner_id, clue):
 
             remaining_time = (magic_time + extra_time) - (time.time() - start_time)
             timeout = min(remaining_time, 30)
-            message = await companion_bridge.wait_for_message_or_companion(
-                check, timeout, target_channel, {winner_id}, kind="mini_game_answer"
+            message = await resolve_input_race(
+                view,
+                companion_bridge.wait_for_message_or_companion(
+                    check, timeout, target_channel, {winner_id}, kind="mini_game_answer", options=letter_options
+                ),
             )
             message_content = message.content.upper()
 
             if message_content == answer:
-                await message.add_reaction("🎉")
+                await message.add_reaction("\U0001f389")
                 await send_wof_solved_board(answer, clue)
-                await safe_send(channel, f"\n✅🎉 Correct **<@{winner_id}>**! {answer}\n\u200b")
+                await safe_send(channel, f"\n\u2705\U0001f389 Correct **<@{winner_id}>**! {answer}\n\u200b")
                 wf_winner = True
                 return True
 
@@ -18346,15 +19206,15 @@ async def ask_wof_letters(winner, answer, extra_time, winner_id, clue):
                     continue
                 if len(wf_letters) < num_wf_letters and char.isalpha() and char not in wf_letters:
                     wf_letters.append(char)
-            
+
             if len(wf_letters) >= num_wf_letters:
-                await message.add_reaction("🥒")  # ✅ This is your Discord equivalent of `react_to_message`
+                await message.add_reaction("\U0001f952")  # \u2705 This is your Discord equivalent of `react_to_message`
                 break
 
         except Exception as e:
             print(f"Error collecting responses: {e}")
             break
-    
+
     if len(wf_letters) < num_wf_letters:
         needed = num_wf_letters - len(wf_letters)
         available = [l for l in "BCDEFGHIJLMNPQSTUVWXYZ" if l not in wf_letters]
@@ -18367,20 +19227,20 @@ async def ask_wof_letters(winner, answer, extra_time, winner_id, clue):
     return final_letters
 
 
-async def ask_wof_number(winner, winner_id, cached_coffees=None, menu_text=None):
+async def ask_wof_number(winner, winner_id, cached_coffees=None, menu_text=None, wof_tier_options=None):
     target_channel = _active_game_channel or channel
 
     def check(m):
         return m.channel == target_channel and m.author != get_bot().user and m.author.id in {winner_id, okrag_id}
 
-    # Excluded from the "00" random pick only — still fully playable by explicit number
+    # Excluded from the "00" random pick only \u2014 still fully playable by explicit number
     RANDOM_EXCLUDED_NUMBERS = {"5", "6", "7", "16", "17", "39"}
 
     unlocks = {
         "5": "Wikipedia Roulette",
         "6": "Dictionary Roulette",
         "7": "Thesaurus Roulette",
-        "8": "Where's Okra?",
+        "8": "Where\'s Okra?",
         "9": "FeUd (Single Player)",
         "10": "FeUd Blitz",
         "11": "List Battle",
@@ -18416,7 +19276,7 @@ async def ask_wof_number(winner, winner_id, cached_coffees=None, menu_text=None)
         "41": "Spotlight",
         "42": "Hear Here",
         "43": "Who Says?",
-        "44": "Let's Talk",
+        "44": "Let\'s Talk",
         "45": "Jock Talk",
         "46": "30 for 30",
         "47": "Okra Says",
@@ -18428,14 +19288,41 @@ async def ask_wof_number(winner, winner_id, cached_coffees=None, menu_text=None)
     multiplayer_required = {"40", "47", "49"}  # OkRACE, Okra Says, Valedictorian -- these auto-win/abort instead of really playing with 1 player
     all_options = {str(i) for i in range(51)} | {"00", "x", "99"}
 
+    # Discord's Select cap is 25 options -- 51+ choices need the curated group->item cascade
+    # from build_option_select_view's `groups`, split roughly in half by dict order since
+    # `unlocks` has no existing category metadata to reuse (see the plan's group-curation note).
+    game_items = [(k, v) for k, v in unlocks.items() if k != "99"]
+    mid = len(game_items) // 2
+    groups = {
+        "\U0001f3a1 WoF Tiers": wof_tier_options or [],
+        "\U0001f952 Minigames (1/2)": [{"value": k, "label": v} for k, v in game_items[:mid]],
+        "\U0001f952 Minigames (2/2)": [{"value": k, "label": v} for k, v in game_items[mid:]],
+        "\u2699\ufe0f Other": [
+            {"value": "99", "label": "\U0001f300 CHAOS"},
+            {"value": "00", "label": "\U0001f957 Okra\'s Choice (Random)"},
+            {"value": "x", "label": "\u23ed\ufe0f Skip Mini-Game"},
+        ],
+    }
+    view = build_option_select_view([], {winner_id, okrag_id}, timeout=magic_time, groups=groups,
+                                     group_placeholder="Pick a category\u2026", placeholder="Pick a mini-game\u2026")
+    view.message = await safe_send(channel, "\U0001f447 Or pick from the dropdown:", view=view)
+    # Companion (phone/web) doesn't support the Discord Select's grouped/cascading UI -- a flat
+    # list is still a real improvement over typing (and the companion page scrolls fine), so
+    # this passes every option in one list rather than skipping companion buttons altogether.
+    companion_options = [opt for group in groups.values() for opt in group]
+
     start = asyncio.get_event_loop().time()
     selected_question = None
 
     try:
         while asyncio.get_event_loop().time() - start < magic_time:
             remaining = magic_time - (asyncio.get_event_loop().time() - start)
-            message = await companion_bridge.wait_for_message_or_companion(
-                check, remaining, target_channel, {winner_id, okrag_id}, kind="wof_selection", prompt_text=menu_text
+            message = await resolve_input_race(
+                view,
+                companion_bridge.wait_for_message_or_companion(
+                    check, remaining, target_channel, {winner_id, okrag_id}, kind="wof_selection",
+                    prompt_text=menu_text, options=companion_options
+                ),
             )
             content = message.content.strip().lower()
             responder_id = message.author.id
@@ -18448,7 +19335,7 @@ async def ask_wof_number(winner, winner_id, cached_coffees=None, menu_text=None)
                 return "x"
 
             if content == "00":
-                await message.add_reaction("👍")
+                await message.add_reaction("\U0001f44d")
                 set_a = [str(i) for i in range(5)]
                 set_b = [str(i) for i in range(5, 51)]
                 if len(round_responders) < 2:
@@ -18459,23 +19346,26 @@ async def ask_wof_number(winner, winner_id, cached_coffees=None, menu_text=None)
                 # Store frequency data for random selection
                 await store_minigame_frequency(selected_question, "random", "discord")
 
-                await safe_send(channel, f"\n🎁 **<@{responder_id}>**, let's do {selected_question}.\n")
+                await safe_send(channel, f"\n\U0001f381 **<@{responder_id}>**, let\'s do {selected_question}.\n")
                 return selected_question
 
             if content not in all_options:
-                await message.add_reaction("❌")
+                await message.add_reaction("\u274c")
+                await view.reset()
                 continue
 
             # Check coffee lock
             if content in unlocks and winner_coffees <= 0:
-                await message.add_reaction("🥒")
-                await safe_send(channel, f"\n🙏😔 Sorry **<@{responder_id}>**. '**{unlocks[content]}**' is for **Okrans Only** 🥒.\n")
+                await message.add_reaction("\U0001f952")
+                await safe_send(channel, f"\n\U0001f64f\U0001f614 Sorry **<@{responder_id}>**. \'**{unlocks[content]}**\' is for **Okrans Only** \U0001f952.\n")
+                await view.reset()
                 continue
 
             # Check multiplayer lock
             if content in multiplayer_required and len(round_responders) < 2 and responder_id != okrag_id:
-                await message.add_reaction("😢")
-                await safe_send(channel, f"\n🙏😔 Sorry **<@{responder_id}>**. '**{unlocks[content]}**' requires **2+ players**.\n")
+                await message.add_reaction("\U0001f622")
+                await safe_send(channel, f"\n\U0001f64f\U0001f614 Sorry **<@{responder_id}>**. \'**{unlocks[content]}**\' requires **2+ players**.\n")
+                await view.reset()
                 continue
 
             selected_question = content
@@ -18483,8 +19373,8 @@ async def ask_wof_number(winner, winner_id, cached_coffees=None, menu_text=None)
             # Store frequency data for user selection
             await store_minigame_frequency(selected_question, "user", "discord")
 
-            await message.add_reaction("✅")
-            await safe_send(channel, f"\n💪🛡️ I got you **<@{responder_id}>**. **{selected_question}** it is.\n\u200b")
+            await message.add_reaction("\u2705")
+            await safe_send(channel, f"\n\U0001f4aa\U0001f6e1\ufe0f I got you **<@{responder_id}>**. **{selected_question}** it is.\n\u200b")
             await asyncio.sleep(2)
             return selected_question
 
@@ -19938,22 +20828,21 @@ async def prompt_user_for_response(round_winner, winner_points, winner_coffees, 
 
     start_time = time.time()
 
-    async def coffee_gate(keyword, success_msg, fail_msg):
-        if keyword in message_content:
-            config = keyword_config.get(keyword, {"requires_coffee": False, "exclude_hashtag": True})
-            requires_coffee = config["requires_coffee"]
-            if not requires_coffee or winner_coffees > 0:
-                await safe_send(channel, success_msg)
-                return True
-            else:
-                await safe_send(channel, f"🙏😔 Sorry **<@{round_winner_id}>**. **'{fail_msg}'** is for **Okrans Only** 🥒.")
-        return False
+    view = WofModifierView(keyword_config, winner_coffees, round_winner_id, timeout=magic_time)
+    view.message = await safe_send(channel, "\U0001f447 Or set modifiers from the buttons below:", view=view)
+    # Companion (phone/web) gets a flat multi-select of every keyword plus the "Done" shortcut --
+    # applied via the same message_content substring pass as typed chat (see the loop below), so
+    # no separate resolution path is needed here, only the rendering metadata.
+    companion_options = [{"value": k, "label": info[0]} for k, info in _KEYWORD_EFFECTS.items()]
 
     while time.time() - start_time < magic_time:
         try:
-            message = await companion_bridge.wait_for_message_or_companion(
-                check, magic_time - (time.time() - start_time), target_channel, {round_winner_id, okrag_id},
-                kind="post_round_menu", prompt_text=menu_text
+            message = await resolve_input_race(
+                view,
+                companion_bridge.wait_for_message_or_companion(
+                    check, magic_time - (time.time() - start_time), target_channel, {round_winner_id, okrag_id},
+                    kind="post_round_menu", prompt_text=menu_text, options=companion_options, multi=True
+                ),
             )
             message_content = message.content.strip().lower()
 
@@ -19961,96 +20850,34 @@ async def prompt_user_for_response(round_winner, winner_points, winner_coffees, 
             if delay_match:
                 delay_value = max(3, min(int(delay_match.group(1)), 15))
                 time_between_questions = delay_value
-                await safe_send(channel, f"⏱️⏳ **<@{round_winner_id}>** has set {delay_value}s between questions.")
+                await safe_send(channel, f"\u23f1\ufe0f\u23f3 **<@{round_winner_id}>** has set {delay_value}s between questions.")
 
             answer_match = re.search(r'\banswer\s*(\d+)\b', message_content)
             if answer_match:
                 answer_value = max(3, min(int(answer_match.group(1)), question_time_default))
                 question_time = answer_value
-                await safe_send(channel, f"⏱️❓ **<@{round_winner_id}>** has set {answer_value}s to answer.")
+                await safe_send(channel, f"\u23f1\ufe0f\u2753 **<@{round_winner_id}>** has set {answer_value}s to answer.")
 
-            # Keyword flags
-            if (not keyword_config["blind"]["exclude_hashtag"] or "#blind" not in message_content) and await coffee_gate("blind", f"🙈🚫 **<@{round_winner_id}>** is blind to the truth. No answers will be shown.", "Blind"):
-                blind_mode = True
-
-            if (not keyword_config["marx"]["exclude_hashtag"] or "#marx" not in message_content) and await coffee_gate("marx", f"🚩🔨 **<@{round_winner_id}>** is a commie. No celebrating right answers.", "Marx"):
-                marx_mode = True
-
-            if (not keyword_config["yolo"]["exclude_hashtag"] or "#yolo" not in message_content) and await coffee_gate("yolo", f"🤘🔥 Yolo. **<@{round_winner_id}>** says 'don't sweat the small stuff'. No scores till the end.", "Yolo"):
-                yolo_mode = True
-
-            if (not keyword_config["blank"]["exclude_hashtag"] or "#blank" not in message_content) and await coffee_gate("blank", f"❌📷 **<@{round_winner_id}>** thinks a word is worth 1000 images.", "Blank"):
-                image_questions = False
-
-            if (not keyword_config["ghost"]["exclude_hashtag"] or "#ghost" not in message_content) and await coffee_gate("ghost", f"👻🎃 **<@{round_winner_id}>** says Boo! Your responses will disappear.\n✍️⚫ Start messages with **.** to avoid deletion.", "Ghost"):
-                ghost_mode = 1
-
-            # Coffee-gated
-            if (not keyword_config["freedom"]["exclude_hashtag"] or "#freedom" not in message_content) and await coffee_gate("freedom", f"🇺🇸🗽 **<@{round_winner_id}>** has broken the chains. No multiple choice.", "Freedom"):
-                num_mysterybox_clues = 0
-
-            if (not keyword_config["bondage"]["exclude_hashtag"] or "#bondage" not in message_content) and await coffee_gate("bondage", f"⛓️🔐 **<@{round_winner_id}>** has put on the cuffs. More multiple choice, less free will.", "Bondage"):
-                num_mysterybox_clues = max(questions_per_round - num_jeopardy_clues - num_crossword_clues, 1)
-
-            if (not keyword_config["alex"]["exclude_hashtag"] or "#alex" not in message_content) and await coffee_gate("alex", f"🟦✋ **<@{round_winner_id}>** wants more Jeopardy questions.", "Alex"):
-                num_jeopardy_clues = 5
-                jeopardy_boosted = True
-
-            if (not keyword_config["xela"]["exclude_hashtag"] or "#xela" not in message_content) and await coffee_gate("xela", f"🟦❌ **<@{round_winner_id}>** doesn't like Jeopardy. Sorry Alex.", "Xela"):
-                num_jeopardy_clues = 0
-                jeopardy_boosted = False
-
-            if (not keyword_config["greg"]["exclude_hashtag"] or "#greg" not in message_content) and await coffee_gate("greg", f"📰✏️ **<@{round_winner_id}>** hates math. What a 'Greg'.", "Greg"):
-                num_math_questions = 0
-
-            if (not keyword_config["cross"]["exclude_hashtag"] or "#cross" not in message_content) and await coffee_gate("cross", f"📰❌ **<@{round_winner_id}>** has crossed off all Crossword questions.", "Cross"):
-                num_crossword_clues = 0
-                crossword_boosted = False
-
-            if (not keyword_config["word"]["exclude_hashtag"] or "#word" not in message_content) and await coffee_gate("word", f"📰✏️ Word. **<@{round_winner_id}>** wants more Crossword questions.", "Word"):
-                num_crossword_clues = 5
-                crossword_boosted = True
-
-            if (not keyword_config["nerd"]["exclude_hashtag"] or "#nerd" not in message_content) and await coffee_gate("nerd", f"🤓📝  Nerd. **<@{round_winner_id}>** wants some SAT questions.", "Nerd"):
-                num_sat_questions = 5
-                sat_boosted = True
-
-            if (not keyword_config["dicktator"]["exclude_hashtag"] or "#dicktator" not in message_content) and await coffee_gate("dicktator", f"🎖🍆 **<@{round_winner_id}>** is a dick.", "Dicktator"):
-                god_mode = True
-
-            if (not keyword_config["assassin"]["exclude_hashtag"] or "#assassin" not in message_content) and await coffee_gate("assassin", f"🍑🔪 **<@{round_winner_id}>** is an ass.", "Assassin"):
-                quickie_mode = True
-
-            if (not keyword_config["sniper"]["exclude_hashtag"] or "#sniper" not in message_content) and await coffee_gate("sniper", f"🧢🎤 **<@{round_winner_id}>** says 'You only get one shot, do not miss your chance!'", "Sniper"):
-                sniper_mode = True
-
-            if (not keyword_config["cloak"]["exclude_hashtag"] or "#cloak" not in message_content) and await coffee_gate("cloak", f"\n🫥🕶️ **<@{round_winner_id}>** has put on their cloak.\n✍️⚫ Start messages with **.** to avoid deletion.", "Cloak"):
-                cloak_mode = True
-                cloaked_user = round_winner_id
-
-            if (not keyword_config["blitz"]["exclude_hashtag"] or "#blitz" not in message_content) and await coffee_gate("blitz", f"\n🏆⚡ **<@{round_winner_id}>** wants all the glory!", "Blitz"):
-                blitz_mode = True
-
-            if (not keyword_config["poindexter"]["exclude_hashtag"] or "#poindexter" not in message_content) and await coffee_gate("poindexter", f"\n🥇🤩 **<@{round_winner_id}>** demands perfection!", "Poindexter"):
-                exact_mode = True
-
-            if (not keyword_config["golf"]["exclude_hashtag"] or "#golf" not in message_content) and await coffee_gate("golf", f"\n⛳📉 **<@{round_winner_id}>** strives for the bottom!", "Golf"):
-                golf_mode = True
-
-            if (not keyword_config["glyph"]["exclude_hashtag"] or "#glyph" not in message_content) and await coffee_gate("glyph", f"\n🔐🛡️ **<@{round_winner_id}>** has obscured the questions!", "Glyph"):
-                glyph_mode = True
+            # Keyword flags -- one shared table (_KEYWORD_EFFECTS) drives both this typed-chat
+            # substring match and WofModifierModal's multi-select, so each keyword's coffee-gate
+            # + global flag(s) + announcement exists exactly once (see _apply_keyword_flag).
+            for keyword in _KEYWORD_EFFECTS:
+                config = keyword_config[keyword]
+                if keyword in message_content and (not config["exclude_hashtag"] or f"#{keyword}" not in message_content):
+                    await _apply_keyword_flag(keyword, keyword_config, winner_coffees, round_winner_id)
 
             # x (as a standalone word, not e.g. inside "xela"/"marx") ends the prompt early --
             # checked last so it still chains with whatever other keywords were in this same
-            # message, matching how every other option can be combined in one string.
+            # message, matching how every other option can be combined in one string. The
+            # WofModifierView "Done" button also resolves to this same "x" content.
             if re.search(r'\bx\b', message_content):
-                await message.add_reaction("🏁")
-                await safe_send(channel, f"🏁 **<@{round_winner_id}>** is all set. Let's get to it!")
+                await message.add_reaction("\U0001f3c1")
+                await safe_send(channel, f"\U0001f3c1 **<@{round_winner_id}>** is all set. Let's get to it!")
                 break
 
         except asyncio.TimeoutError:
             break
-    
+
     await save_round_options_to_db()
 
     
