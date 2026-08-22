@@ -5692,99 +5692,6 @@ class ReportQuestionView(discord.ui.View):
         await interaction.response.send_modal(modal)
 
 
-class SimonSaysView(RestrictedView):
-    """Interactive button grid for Simon Says pattern input - shared by all players.
-
-    Per-user restriction (eligibility) and its rejection message are handled by an
-    interaction_check override here rather than RestrictedView's default text, since this
-    view's wording ("not in this game") predates and differs slightly from the convention
-    RestrictedView standardized on elsewhere ("not in this round")."""
-
-    def __init__(self, active_players: list, pattern_length: int):
-        super().__init__(set(active_players), timeout=20)
-        self.pattern_length = pattern_length
-        self.player_inputs = {user_id: [] for user_id in active_players}  # Track each player's input
-        self.completed_players = set()  # Track who has finished
-
-    async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        if interaction.user.id not in self.allowed_user_ids:
-            await interaction.response.send_message("❌ You're not in this game!", ephemeral=True)
-            return False
-        return True
-
-    async def handle_color_click(self, interaction: discord.Interaction, color: str):
-        """Common handler for all color button clicks"""
-        user_id = interaction.user.id
-
-        # Check if user already completed
-        if user_id in self.completed_players:
-            await interaction.response.send_message(
-                "✅ You already submitted your pattern!",
-                ephemeral=True
-            )
-            return
-
-        # Add color to their input
-        self.player_inputs[user_id].append(color)
-
-        # Build visual feedback showing their input so far
-        color_emojis = {"red": "🟥", "blue": "🟦", "green": "🟩", "yellow": "🟨"}
-        input_display = " ".join([color_emojis[c] for c in self.player_inputs[user_id]])
-
-        if len(self.player_inputs[user_id]) >= self.pattern_length:
-            # Pattern complete
-            self.completed_players.add(user_id)
-            await interaction.response.send_message(
-                f"✅ Pattern submitted: {input_display}",
-                ephemeral=True
-            )
-        else:
-            # Still building pattern - acknowledge silently
-            await interaction.response.defer()
-
-    @discord.ui.button(label="🟥 Red", style=discord.ButtonStyle.danger, row=0)
-    async def red_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self.handle_color_click(interaction, "red")
-
-    @discord.ui.button(label="🟦 Blue", style=discord.ButtonStyle.primary, row=0)
-    async def blue_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self.handle_color_click(interaction, "blue")
-
-    @discord.ui.button(label="🟩 Green", style=discord.ButtonStyle.success, row=0)
-    async def green_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self.handle_color_click(interaction, "green")
-
-    @discord.ui.button(label="🟨 Yellow", style=discord.ButtonStyle.secondary, row=0)
-    async def yellow_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self.handle_color_click(interaction, "yellow")
-
-
-class VoiceChannelJoinView(discord.ui.View):
-    """View with a green button to join voice channel (shows native Discord join UI)"""
-
-    def __init__(self, voice_channel_id: int, guild_id: int):
-        super().__init__(timeout=None)
-        self.voice_channel_id = voice_channel_id
-        self.guild_id = guild_id
-
-    @discord.ui.button(label="Join Voice", style=discord.ButtonStyle.success, emoji="🎧")
-    async def join_voice_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        """Green button that shows the channel mention - clicking it opens native Discord join UI"""
-        try:
-            voice_channel = interaction.guild.get_channel(self.voice_channel_id)
-            if voice_channel:
-                # Send message with channel mention - Discord will render this with the native join UI
-                await interaction.response.send_message(
-                    f"**Click the channel name below to join:**\n\n{voice_channel.mention}",
-                    ephemeral=True
-                )
-            else:
-                await interaction.response.send_message("❌ Voice channel not found!", ephemeral=True)
-        except Exception as e:
-            print(f"Error in join voice button: {e}")
-            await interaction.response.send_message("❌ An error occurred.", ephemeral=True)
-
-
 def _normalize_options(options):
     """Accepts options as a list of dicts ({"value","label"[,"emoji"]}) or plain
     (value, label[, emoji]) tuples; returns a list of normalized dicts. Shared by every
@@ -6044,6 +5951,101 @@ def build_option_select_view(options, allowed_user_ids, *, timeout=60,
         return _build_flat_select_view(normalized, allowed_user_ids, timeout, placeholder)
     return _CascadingSelectView(_default_grouping(normalized), allowed_user_ids, timeout=timeout,
                                  group_placeholder=group_placeholder, item_placeholder=placeholder)
+
+
+class SimonSaysView(RestrictedView):
+    """Interactive button grid for Simon Says pattern input - shared by all players.
+
+    Per-user restriction (eligibility) and its rejection message are handled by an
+    interaction_check override here rather than RestrictedView's default text, since this
+    view's wording ("not in this game") predates and differs slightly from the convention
+    RestrictedView standardized on elsewhere ("not in this round")."""
+
+    def __init__(self, active_players: list, pattern_length: int):
+        super().__init__(set(active_players), timeout=20)
+        self.pattern_length = pattern_length
+        self.player_inputs = {user_id: [] for user_id in active_players}  # Track each player's input
+        self.completed_players = set()  # Track who has finished
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id not in self.allowed_user_ids:
+            await interaction.response.send_message("❌ You're not in this game!", ephemeral=True)
+            return False
+        return True
+
+    async def handle_color_click(self, interaction: discord.Interaction, color: str):
+        """Common handler for all color button clicks"""
+        user_id = interaction.user.id
+
+        # Check if user already completed
+        if user_id in self.completed_players:
+            await interaction.response.send_message(
+                "✅ You already submitted your pattern!",
+                ephemeral=True
+            )
+            return
+
+        # Add color to their input
+        self.player_inputs[user_id].append(color)
+
+        # Build visual feedback showing their input so far
+        color_emojis = {"red": "🟥", "blue": "🟦", "green": "🟩", "yellow": "🟨"}
+        input_display = " ".join([color_emojis[c] for c in self.player_inputs[user_id]])
+
+        if len(self.player_inputs[user_id]) >= self.pattern_length:
+            # Pattern complete
+            self.completed_players.add(user_id)
+            await interaction.response.send_message(
+                f"✅ Pattern submitted: {input_display}",
+                ephemeral=True
+            )
+        else:
+            # Still building pattern - acknowledge silently
+            await interaction.response.defer()
+
+    @discord.ui.button(label="🟥 Red", style=discord.ButtonStyle.danger, row=0)
+    async def red_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.handle_color_click(interaction, "red")
+
+    @discord.ui.button(label="🟦 Blue", style=discord.ButtonStyle.primary, row=0)
+    async def blue_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.handle_color_click(interaction, "blue")
+
+    @discord.ui.button(label="🟩 Green", style=discord.ButtonStyle.success, row=0)
+    async def green_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.handle_color_click(interaction, "green")
+
+    @discord.ui.button(label="🟨 Yellow", style=discord.ButtonStyle.secondary, row=0)
+    async def yellow_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.handle_color_click(interaction, "yellow")
+
+
+class VoiceChannelJoinView(discord.ui.View):
+    """View with a green button to join voice channel (shows native Discord join UI)"""
+
+    def __init__(self, voice_channel_id: int, guild_id: int):
+        super().__init__(timeout=None)
+        self.voice_channel_id = voice_channel_id
+        self.guild_id = guild_id
+
+    @discord.ui.button(label="Join Voice", style=discord.ButtonStyle.success, emoji="🎧")
+    async def join_voice_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        """Green button that shows the channel mention - clicking it opens native Discord join UI"""
+        try:
+            voice_channel = interaction.guild.get_channel(self.voice_channel_id)
+            if voice_channel:
+                # Send message with channel mention - Discord will render this with the native join UI
+                await interaction.response.send_message(
+                    f"**Click the channel name below to join:**\n\n{voice_channel.mention}",
+                    ephemeral=True
+                )
+            else:
+                await interaction.response.send_message("❌ Voice channel not found!", ephemeral=True)
+        except Exception as e:
+            print(f"Error in join voice button: {e}")
+            await interaction.response.send_message("❌ An error occurred.", ephemeral=True)
+
+
 
 
 class MuseumPromptModal(discord.ui.Modal, title="Draw an Okra-Themed Picture Of..."):
