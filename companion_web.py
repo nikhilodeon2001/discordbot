@@ -1242,7 +1242,7 @@ _INDEX_HTML = """<!doctype html>
     --bg:#06080D; --bg2:#0E1219; --fg:#F8F8F8; --muted:rgba(248,248,248,.58);
     --card:rgba(248,248,248,.05); --line:rgba(248,248,248,.10);
     --play:url(__PLAY_LOGO__); --okra:url(__OKRA_LOGO__);
-    --header-logo:url(/assets/logo-header.webp); --footer-logo:url(/assets/logo-mark.webp);
+    --header-logo:url(/assets/logo-header.webp);
   }
   @media (prefers-color-scheme: light) {
     :root { --bg:#F8F8F8; --bg2:#FCFCFC; --fg:#06080D; --muted:rgba(6,8,13,.55);
@@ -1404,10 +1404,6 @@ _INDEX_HTML = """<!doctype html>
   .idle .big { display:block; font-weight:650; color:var(--fg); margin:2px 0 2px; }
   .me { font-size:.78rem; color:var(--muted); margin-top:20px; text-align:center; }
   .logout { color:var(--blue); text-decoration:none; font-weight:600; }
-  .foot { display:flex; align-items:center; justify-content:center; gap:8px; margin-top:16px;
-    color:var(--muted); font-size:.72rem; font-weight:600; opacity:.85; }
-  .footlogo { height:32px; width:32px; display:inline-block;
-    background:var(--footer-logo) center/contain no-repeat; }
 </style>
 </head>
 <body>
@@ -1426,7 +1422,6 @@ _INDEX_HTML = """<!doctype html>
   <div id="subtext" class="sub">Answer live from your phone or computer — private, timed, and scored right alongside everyone in the channel.</div>
   <div id="app" class="card"><div class="idle">Loading…</div></div>
   <div id="me" class="me"></div>
-  <footer class="foot"><span class="footlogo" role="img" aria-label="Okra's World"></span></footer>
 </div>
 <script>
 let es = null, countdownTimer = null, endsAt = 0, currentKey = null, answeredKey = null, answeredValue = null, oneGuess = false;
