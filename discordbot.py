@@ -16418,14 +16418,7 @@ async def load_parameters():
             question_time_default = parameters["question_time"]
             questions_per_round = parameters["questions_per_round"]
 
-            num_mysterybox_clues = num_mysterybox_clues_default
-            num_crossword_clues = num_crossword_clues_default
-            num_jeopardy_clues = num_jeopardy_clues_default
-            num_wof_clues = num_wof_clues_default
             num_wof_clues_final = num_wof_clues_final_default
-            num_math_questions = num_math_questions_default
-            num_stats_questions = num_stats_questions_default
-            num_sat_questions = num_sat_questions_default
 
             # Exit loop if successful
             break
