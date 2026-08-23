@@ -19185,8 +19185,8 @@ async def ask_wof_number(winner, winner_id, cached_coffees=None, menu_text=None,
         {"value": "x", "label": "\u23ed\ufe0f Skip Mini-Game"},
     ]
     view = build_option_select_view(wof_options + other_options, {winner_id, okrag_id}, timeout=magic_time,
-                                     placeholder="Pick a WoF tier or other option\u2026")
-    view.message = await safe_send(channel, "\U0001f447 Or pick from the dropdown:", view=view)
+                                     placeholder="\u26a1 Shortcuts\u2026")
+    view.message = await safe_send(channel, "\U0001f447 Or pick a shortcut:", view=view)
     # Companion (phone/web) mirrors the same trimmed set -- minigame numbers stay typeable
     # there too, same as Discord chat, just not offered as a button/select option.
     companion_options = wof_options + other_options
