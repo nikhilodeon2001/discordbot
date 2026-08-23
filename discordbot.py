@@ -6276,13 +6276,26 @@ class WofModifierModal(discord.ui.Modal, title="Set Round Modifiers"):
         ),
     )
 
-    def __init__(self, keyword_config, winner_coffees, round_winner_id):
+    def __init__(self, keyword_config, winner_coffees, round_winner_id, window_closed):
         super().__init__()
         self.keyword_config = keyword_config
         self.winner_coffees = winner_coffees
         self.round_winner_id = round_winner_id
+        # Shared with prompt_user_for_response via WofModifierView -- Discord has no way for
+        # the bot to force-close an already-open modal, so a player can sit on this past the
+        # round-options window closing and submit it minutes later. {"value": True} once that
+        # window's owner is done with it (see prompt_user_for_response) is the only signal
+        # on_submit has that applying these flags would now be silently mutating global state
+        # for whatever round happens to be running by the time this finally arrives.
+        self.window_closed = window_closed
 
     async def on_submit(self, interaction: discord.Interaction):
+        if self.window_closed["value"]:
+            await interaction.response.send_message(
+                "⏰ Too late — the round already moved on, these modifiers weren't applied.",
+                ephemeral=True,
+            )
+            return
         selected = self.flags_label.component.values
         await interaction.response.send_message(
             f"✅ Applied {len(selected)} modifier(s)." if selected else "No modifiers picked.",
@@ -6298,11 +6311,12 @@ class WofModifierView(RestrictedView):
     alongside this -- see prompt_user_for_response, which races this view exactly like the
     other converted flows."""
 
-    def __init__(self, keyword_config, winner_coffees, round_winner_id, *, timeout):
+    def __init__(self, keyword_config, winner_coffees, round_winner_id, window_closed, *, timeout):
         super().__init__({round_winner_id, okrag_id}, timeout=timeout)
         self.keyword_config = keyword_config
         self.winner_coffees = winner_coffees
         self.round_winner_id = round_winner_id
+        self.window_closed = window_closed
 
         flags_button = discord.ui.Button(label="🚩 Set Round Modifiers", style=discord.ButtonStyle.primary)
         flags_button.callback = self._open_modal
@@ -6314,7 +6328,7 @@ class WofModifierView(RestrictedView):
 
     async def _open_modal(self, interaction: discord.Interaction):
         await interaction.response.send_modal(
-            WofModifierModal(self.keyword_config, self.winner_coffees, self.round_winner_id)
+            WofModifierModal(self.keyword_config, self.winner_coffees, self.round_winner_id, self.window_closed)
         )
 
     async def _done(self, interaction: discord.Interaction):
@@ -6386,9 +6400,15 @@ class SportsLeagueModal(discord.ui.Modal, title="Pick Your Leagues"):
     space-separated-numbers content the typed-chat path already parses via re.findall(r'\\d+'),
     so ask_sports_logos_challenge needs no separate handling for this path."""
 
-    def __init__(self, league_options, result_future: asyncio.Future):
+    def __init__(self, league_options, result_future: asyncio.Future, window_closed):
         super().__init__()
         self._result_future = result_future
+        # Shared with ask_sports_logos_challenge via SportsLeagueView -- Discord has no way for
+        # the bot to force-close an already-open modal, so a player can sit on this past the
+        # 20s picker window and submit late. {"value": True} once that window's try/except has
+        # already moved on (see ask_sports_logos_challenge) means on_submit should say so
+        # rather than showing a success message for a pick that never took effect.
+        self._window_closed = window_closed
         self.leagues_select = discord.ui.Select(
             options=[discord.SelectOption(label=label[:100], value=str(num)) for num, label in league_options],
             min_values=1,
@@ -6398,6 +6418,11 @@ class SportsLeagueModal(discord.ui.Modal, title="Pick Your Leagues"):
                                         component=self.leagues_select))
 
     async def on_submit(self, interaction: discord.Interaction):
+        if self._window_closed["value"]:
+            await interaction.response.send_message(
+                "⏰ Too late — leagues already defaulted for this round.", ephemeral=True
+            )
+            return
         selected = self.leagues_select.values
         await interaction.response.send_message(f"✅ Selected {len(selected)} option(s).", ephemeral=True)
         if not self._result_future.done():
@@ -6410,10 +6435,11 @@ class SportsLeagueView(discord.ui.View):
     rather than reusing build_option_select_view (this needs multi-select-in-one-Modal, not a
     per-click resolution)."""
 
-    def __init__(self, league_options, winner_id, *, timeout):
+    def __init__(self, league_options, winner_id, window_closed, *, timeout):
         super().__init__(timeout=timeout)
         self.league_options = league_options
         self.winner_id = winner_id
+        self.window_closed = window_closed
         self.message = None
         self.future = asyncio.get_running_loop().create_future()
         button = discord.ui.Button(label="🏈 Pick Leagues", style=discord.ButtonStyle.primary)
@@ -6424,7 +6450,7 @@ class SportsLeagueView(discord.ui.View):
         if interaction.user.id != self.winner_id:
             await interaction.response.send_message("❌ You're not in this round!", ephemeral=True)
             return
-        await interaction.response.send_modal(SportsLeagueModal(self.league_options, self.future))
+        await interaction.response.send_modal(SportsLeagueModal(self.league_options, self.future, self.window_closed))
 
     async def on_timeout(self):
         for item in self.children:
@@ -10669,7 +10695,11 @@ async def ask_sports_logos_challenge(winner, winner_id, num=5):
         return m.channel == target_channel and m.author.id == winner_id and any(char.isdigit() for char in m.content)
 
     league_options = [(i, league_display_map[i]) for i in sorted(league_display_map)] + [(everything_option_num, "\U0001f3c6 Everything")]
-    view = SportsLeagueView(league_options, winner_id, timeout=20)
+    # Discord can't force-close an already-open modal, so SportsLeagueModal checks this after
+    # the try/except below finishes -- a late submission becomes a no-op with a "too late"
+    # reply instead of a misleading success message for a pick that never took effect.
+    window_closed = {"value": False}
+    view = SportsLeagueView(league_options, winner_id, window_closed, timeout=20)
     view.message = await safe_send(channel, "\U0001f447 Or pick from the button:", view=view)
 
     try:
@@ -10702,6 +10732,7 @@ async def ask_sports_logos_challenge(winner, winner_id, num=5):
         # Default to everything on timeout
         selected_leagues = all_leagues.copy()
         await safe_send(channel, "\u200b\n\u23f0 Time's up! Using **everything**!\n\u200b")
+    window_closed["value"] = True
 
     await asyncio.sleep(2)
 
@@ -20708,7 +20739,11 @@ async def prompt_user_for_response(round_winner, winner_points, winner_coffees, 
 
     start_time = time.time()
 
-    view = WofModifierView(keyword_config, winner_coffees, round_winner_id, timeout=magic_time)
+    # Discord can't force-close an already-open modal, so WofModifierModal checks this after
+    # the window below closes -- a late submission becomes a no-op with a "too late" reply
+    # instead of silently mutating global flags for whatever round is running by then.
+    window_closed = {"value": False}
+    view = WofModifierView(keyword_config, winner_coffees, round_winner_id, window_closed, timeout=magic_time)
     view.message = await safe_send(channel, "\U0001f447 Or set modifiers from the buttons below:", view=view)
     # Companion (phone/web) gets a flat multi-select of every keyword plus the "Done" shortcut --
     # applied via the same message_content substring pass as typed chat (see the loop below), so
@@ -20758,6 +20793,7 @@ async def prompt_user_for_response(round_winner, winner_points, winner_coffees, 
         except asyncio.TimeoutError:
             break
 
+    window_closed["value"] = True
     await save_round_options_to_db()
 
     
