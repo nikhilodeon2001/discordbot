@@ -19167,28 +19167,23 @@ async def ask_wof_number(winner, winner_id, cached_coffees=None, menu_text=None,
     multiplayer_required = {"40", "47", "49"}  # OkRACE, Okra Says, Valedictorian -- these auto-win/abort instead of really playing with 1 player
     all_options = {str(i) for i in range(51)} | {"00", "x", "99"}
 
-    # Discord's Select cap is 25 options -- 51+ choices need the curated group->item cascade
-    # from build_option_select_view's `groups`, split roughly in half by dict order since
-    # `unlocks` has no existing category metadata to reuse (see the plan's group-curation note).
-    game_items = [(k, v) for k, v in unlocks.items() if k != "99"]
-    mid = len(game_items) // 2
-    groups = {
-        "\U0001f3a1 WoF Tiers": wof_tier_options or [],
-        "\U0001f952 Minigames (1/2)": [{"value": k, "label": v} for k, v in game_items[:mid]],
-        "\U0001f952 Minigames (2/2)": [{"value": k, "label": v} for k, v in game_items[mid:]],
-        "\u2699\ufe0f Other": [
-            {"value": "99", "label": "\U0001f300 CHAOS"},
-            {"value": "00", "label": "\U0001f957 Okra\'s Choice (Random)"},
-            {"value": "x", "label": "\u23ed\ufe0f Skip Mini-Game"},
-        ],
-    }
-    view = build_option_select_view([], {winner_id, okrag_id}, timeout=magic_time, groups=groups,
-                                     group_placeholder="Pick a category\u2026", placeholder="Pick a mini-game\u2026")
+    # The ~46 minigames (5-50) aren't offered via button/select at all -- 51+ choices would
+    # need the group->item cascade from build_option_select_view's `groups`, and a 2-page
+    # "Minigames (1/2)/(2/2)" split was worse UX than just leaving them typed-chat-only (still
+    # a first-class fast path, unaffected -- content-based dispatch below handles any of 5-50
+    # regardless of how it arrived). Only the two small, real fixed-choice groups get buttons.
+    wof_options = wof_tier_options or []
+    other_options = [
+        {"value": "99", "label": "\U0001f300 CHAOS"},
+        {"value": "00", "label": "\U0001f957 Okra\'s Choice (Random)"},
+        {"value": "x", "label": "\u23ed\ufe0f Skip Mini-Game"},
+    ]
+    view = build_option_select_view(wof_options + other_options, {winner_id, okrag_id}, timeout=magic_time,
+                                     placeholder="Pick a WoF tier or other option\u2026")
     view.message = await safe_send(channel, "\U0001f447 Or pick from the dropdown:", view=view)
-    # Companion (phone/web) doesn't support the Discord Select's grouped/cascading UI -- a flat
-    # list is still a real improvement over typing (and the companion page scrolls fine), so
-    # this passes every option in one list rather than skipping companion buttons altogether.
-    companion_options = [opt for group in groups.values() for opt in group]
+    # Companion (phone/web) mirrors the same trimmed set -- minigame numbers stay typeable
+    # there too, same as Discord chat, just not offered as a button/select option.
+    companion_options = wof_options + other_options
 
     start = asyncio.get_event_loop().time()
     selected_question = None
