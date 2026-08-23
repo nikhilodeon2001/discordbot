@@ -648,6 +648,7 @@ _FLAG_PAGE_HTML = """<!doctype html>
   .authcard--in .authicon { color:#3ddc84; font-weight:800; font-size:1rem; }
   .authtext { flex:1; min-width:0; display:flex; flex-direction:column; gap:1px; font-size:.9rem; font-weight:700; }
   .authtext span { font-size:.76rem; font-weight:500; color:var(--muted); }
+  .authcard--out .authtext .authwarn { color:var(--red); font-weight:700; }
   .authswitch { flex:none; font-size:.8rem; font-weight:700; color:var(--blue); text-decoration:none; }
   .modalsub { color:var(--muted); font-size:.85rem; margin:0 0 14px; line-height:1.4; }
   .reasons { display:flex; flex-direction:column; gap:8px; margin-bottom:14px; }
@@ -786,7 +787,7 @@ async def handle_flag_page(request):
             f'<a class="authcard authcard--out" href="/login?next={return_param}">'
             f'<span class="authicon">{_DISCORD_ICON_SVG}</span>'
             '<div class="authtext"><b>Link Discord account</b>'
-            '<span>Optional — attaches your name to this report</span></div></a>'
+            '<span class="authwarn">Optional — but you won\'t get credit for rewards</span></div></a>'
         )
 
     html = (_FLAG_PAGE_HTML
