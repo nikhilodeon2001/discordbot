@@ -18266,7 +18266,7 @@ async def handle_intro_image_admin_command(message: discord.Message) -> bool:
     return False
 
 
-async def ask_category(winner, categories, winner_coffees, winner_id, skip_message=False):
+async def ask_category(winner, categories, winner_coffees, winner_id, skip_message=False, existing_message=None):
     additional_prompt = ""
     target_channel = _active_game_channel or channel
     end_time = asyncio.get_event_loop().time() + magic_time + 5
@@ -18281,6 +18281,12 @@ async def ask_category(winner, categories, winner_coffees, winner_id, skip_messa
         for key, value in categories.items():
             category_message += f"**{key}**: {value}\n"
         view.message = await safe_send(channel, category_message, view=view)
+    elif existing_message is not None:
+        # The caller already sent an embed listing the theme choices (e.g. merged into the
+        # winner announcement) -- attach the buttons to that same message instead of sending a
+        # separate near-empty one just to carry them.
+        await existing_message.edit(view=view)
+        view.message = existing_message
     else:
         view.message = await safe_send(channel, "\u200b", view=view)
 
@@ -23152,7 +23158,8 @@ async def update_round_streaks(user, user_id, roast_task=None):
         show_theme_picker = ai_on and banked > 0 and user != "OkraStrut" and winner_coffees <= 100
         if show_theme_picker:
             categories = museum_categories()
-            category_result = await ask_category(user, categories, winner_coffees, user_id, skip_message=True)
+            category_result = await ask_category(user, categories, winner_coffees, user_id, skip_message=True,
+                                                  existing_message=sent_message)
 
         if roast_text and sent_message is not None:
             test_channel = bot.get_channel(ROAST_TEST_CHANNEL_ID)
