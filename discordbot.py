@@ -6048,51 +6048,17 @@ class VoiceChannelJoinView(discord.ui.View):
 
 
 
-class MuseumPromptModal(discord.ui.Modal, title="Draw an Okra-Themed Picture Of..."):
-    """Single free-text field replacing request_prompt()'s old multi-message word-by-word chat
-    collector -- one submission, word/char-limited the same way via answer_matching.limit_words
-    as the typed-chat flow it replaces."""
-
-    idea = discord.ui.TextInput(
-        label="Draw an okra themed picture of...",
-        placeholder="Up to 10 words, and be good",
-        style=discord.TextStyle.short,
-        max_length=200,
-        required=True,
-    )
-
-    def __init__(self, result_future: asyncio.Future):
-        super().__init__()
-        self._result_future = result_future
-
-    async def on_submit(self, interaction: discord.Interaction):
-        words = answer_matching.extract_words(self.idea.value)
-        if not words:
-            await interaction.response.send_message("Nothing there — Okra time.", ephemeral=True)
-            if not self._result_future.done():
-                self._result_future.set_result("")
-            return
-        final_prompt, char_trimmed = answer_matching.limit_words(' '.join(words[:10]), 10, 90)
-        trim_note = "✂️ *(trimmed to the 10-word limit)* " if (len(words) > 10 or char_trimmed) else ""
-        await interaction.response.send_message(
-            f"​\n💥🤯 {trim_note}**Ok...ra I got**: '**{final_prompt}**'\n​"
-        )
-        if not self._result_future.done():
-            self._result_future.set_result(final_prompt)
-
-
 class MuseumThemeView(RestrictedView):
-    """5-button Okra Museum theme picker (replaces ask_category's typed-digit flow). The
-    coffee-gated "Provide the Prompt" option opens MuseumPromptModal instead of resolving
-    immediately through RestrictedView._resolve like the other four -- a Modal must be the
-    direct response to the button's own interaction, so it's special-cased here."""
+    """5-button Okra Museum theme picker (replaces ask_category's typed-digit flow). All five
+    options, including the coffee-gated "Provide the Prompt", resolve through
+    RestrictedView._resolve -- the free-text prompt itself is still collected via chat
+    (request_prompt(), unchanged) rather than a modal, since a modal wrapping a bare text
+    field offers nothing typing doesn't already, and unlike a click it can be left open
+    indefinitely with nothing to fall back on."""
 
     def __init__(self, categories, winner_coffees, winner_id, *, timeout):
         super().__init__({winner_id}, timeout=timeout)
         self.winner_coffees = winner_coffees
-        # Only set once the coffee-gated option is chosen -- ask_category awaits this instead
-        # of the old request_prompt() call when it's present. None means "not that path."
-        self.prompt_future = None
         for i, (key, label) in enumerate(categories.items()):
             disabled = key == "4" and winner_coffees <= 0
             button = discord.ui.Button(label=label[:80], style=discord.ButtonStyle.primary, row=i // 5,
@@ -6102,14 +6068,6 @@ class MuseumThemeView(RestrictedView):
 
     def _make_callback(self, key):
         async def _callback(interaction: discord.Interaction):
-            if self.future.done():
-                await interaction.response.send_message("✅ Already answered!", ephemeral=True)
-                return
-            if key == "4" and self.winner_coffees > 0:
-                self.prompt_future = asyncio.get_running_loop().create_future()
-                self.future.set_result(ComponentChoice(key, interaction))
-                await interaction.response.send_modal(MuseumPromptModal(self.prompt_future))
-                return
             await self._resolve(interaction, key)
         return _callback
 
@@ -6363,66 +6321,6 @@ class WofModifierView(RestrictedView):
         await self._resolve(interaction, "x")
 
 
-class WofPhraseModal(discord.ui.Modal, title="Guess the Phrase"):
-    """Single free-text field replacing the old ambient "just type the whole phrase in chat"
-    path in ask_wof_letters/process_wof_guesses with an explicit action. Only resolves
-    `result_future` on a correct guess -- an incorrect one is just an ephemeral miss, exactly
-    like an incorrect typed guess in chat gets a no-op/❌ and nothing else, so it doesn't need
-    to interrupt whatever letter-picking loop might still be running alongside it."""
-
-    guess = discord.ui.TextInput(label="Your answer", style=discord.TextStyle.short, max_length=100, required=True)
-
-    def __init__(self, answer, result_future: asyncio.Future):
-        super().__init__()
-        self.answer = answer
-        self._result_future = result_future
-
-    async def on_submit(self, interaction: discord.Interaction):
-        guess_text = self.guess.value.upper().strip()
-        if guess_text == self.answer:
-            await interaction.response.send_message(f"✅🎉 Correct: **{self.answer}**", ephemeral=True)
-            if not self._result_future.done():
-                # Content is the answer itself, not just a truthy flag, so the surrounding loop's
-                # existing `if message_content == answer:` check (unchanged) is what fires --
-                # this needs no special-casing in ask_wof_letters/process_wof_guesses at all.
-                self._result_future.set_result(ComponentChoice(self.answer, interaction))
-        else:
-            await interaction.response.send_message("❌ Not quite -- try again!", ephemeral=True)
-
-
-class WofPhraseView(discord.ui.View):
-    """Single "Guess Phrase" button for process_wof_guesses()'s pure full-phrase WOF variant (no
-    letter-picking) -- opens WofPhraseModal. Plain discord.ui.View, not RestrictedView, since
-    the per-user check here is a simple one-off (no eligible-player set) and there's no
-    single-shot resolution semantics to inherit beyond the future WofPhraseModal already
-    manages directly."""
-
-    def __init__(self, answer, winner_id, *, timeout):
-        super().__init__(timeout=timeout)
-        self.answer = answer
-        self.winner_id = winner_id
-        self.message = None
-        self.future = asyncio.get_running_loop().create_future()
-        button = discord.ui.Button(label="💬 Guess Phrase", style=discord.ButtonStyle.success)
-        button.callback = self._open_modal
-        self.add_item(button)
-
-    async def _open_modal(self, interaction: discord.Interaction):
-        if interaction.user.id != self.winner_id:
-            await interaction.response.send_message("❌ You're not in this round!", ephemeral=True)
-            return
-        await interaction.response.send_modal(WofPhraseModal(self.answer, self.future))
-
-    async def on_timeout(self):
-        for item in self.children:
-            item.disabled = True
-        if self.message is not None:
-            try:
-                await self.message.edit(view=self)
-            except (discord.HTTPException, discord.NotFound):
-                pass
-
-
 class WofLetterView(discord.ui.View):
     """Letter-pick overlay for ask_wof_letters()'s WoF round. Unlike RestrictedView's
     single-shot picker views, up to num_wf_letters individual letters get picked one at a time
@@ -6432,14 +6330,14 @@ class WofLetterView(discord.ui.View):
     blocked awaiting a chat/companion message, so once a Select pick fills the letter quota this
     resolves `future` with an empty-content ComponentChoice purely to wake that loop up early --
     the loop's own existing "enough letters yet?" check (unchanged) does the rest, so an empty
-    content never needs special-casing there either. The "Guess Phrase" button opens
-    WofPhraseModal exactly like WofPhraseView, sharing the same `future`."""
+    content never needs special-casing there either. The full-phrase guess stays typed-chat-only
+    (no modal here) -- wrapping a bare text field in a modal offers nothing typing doesn't
+    already, and unlike a click it can be left open indefinitely with no fallback."""
 
-    def __init__(self, wf_letters, num_wf_letters, fixed_letters, answer, winner_id, *, timeout):
+    def __init__(self, wf_letters, num_wf_letters, fixed_letters, winner_id, *, timeout):
         super().__init__(timeout=timeout)
         self.wf_letters = wf_letters
         self.num_wf_letters = num_wf_letters
-        self.answer = answer
         self.winner_id = winner_id
         self.message = None
         self.future = asyncio.get_running_loop().create_future()
@@ -6451,10 +6349,6 @@ class WofLetterView(discord.ui.View):
             self._add_letter_select(vowels, "Pick a vowel…")
         if consonants:
             self._add_letter_select(consonants, "Pick a consonant…")
-
-        phrase_button = discord.ui.Button(label="💬 Guess Phrase", style=discord.ButtonStyle.success)
-        phrase_button.callback = self._open_modal
-        self.add_item(phrase_button)
 
     def _add_letter_select(self, letters, placeholder):
         select = discord.ui.Select(placeholder=placeholder, options=[discord.SelectOption(label=l, value=l) for l in letters])
@@ -6472,12 +6366,6 @@ class WofLetterView(discord.ui.View):
 
         select.callback = _callback
         self.add_item(select)
-
-    async def _open_modal(self, interaction: discord.Interaction):
-        if interaction.user.id != self.winner_id:
-            await interaction.response.send_message("❌ You're not in this round!", ephemeral=True)
-            return
-        await interaction.response.send_modal(WofPhraseModal(self.answer, self.future))
 
     async def on_timeout(self):
         for item in self.children:
@@ -18433,11 +18321,7 @@ async def ask_category(winner, categories, winner_coffees, winner_id, skip_messa
             await safe_send(channel, f"\U0001f4aa\U0001f6e1\ufe0f I got you **<@{winner_id}>**! Choice {message_content} it is.")
 
             if message_content == '4' and winner_coffees > 0:
-                # Button path: MuseumThemeView already opened MuseumPromptModal and set
-                # view.prompt_future -- await its one-shot submission instead of the old
-                # multi-message word collector. Chat/companion path (typed "4" directly, no
-                # button click involved): fall back to request_prompt() unchanged.
-                additional_prompt = await view.prompt_future if view.prompt_future is not None else await request_prompt(winner, winner_id)
+                additional_prompt = await request_prompt(winner, winner_id)
 
             return message_content, additional_prompt
 
@@ -19122,19 +19006,12 @@ async def process_wof_guesses(winner, answer, extra_time, winner_id, clue):
 
     start_time = time.time()  # Track when the question starts
 
-    view = WofPhraseView(answer, winner_id, timeout=magic_time + extra_time)
-    view.message = await safe_send(channel, "\U0001f447 Or guess with the button:", view=view)
-    phrase_options = [{"value": "guess", "label": "\U0001f4ac Guess the Phrase"}]
-
     while time.time() - start_time < (magic_time + extra_time):
         try:
             remaining = (magic_time + extra_time) - (time.time() - start_time)
             timeout = min(remaining, 30)
-            message = await resolve_input_race(
-                view,
-                companion_bridge.wait_for_message_or_companion(
-                    check, timeout, target_channel, {winner_id}, kind="mini_game_answer", options=phrase_options
-                ),
+            message = await companion_bridge.wait_for_message_or_companion(
+                check, timeout, target_channel, {winner_id}, kind="mini_game_answer"
             )
             message_content = message.content.upper().strip()
 
@@ -19177,7 +19054,7 @@ async def ask_wof_letters(winner, answer, extra_time, winner_id, clue):
     def check(m):
         return m.channel == target_channel and m.author != get_bot().user and m.author.id == winner_id
 
-    view = WofLetterView(wf_letters, num_wf_letters, fixed_letters, answer, winner_id, timeout=magic_time + extra_time)
+    view = WofLetterView(wf_letters, num_wf_letters, fixed_letters, winner_id, timeout=magic_time + extra_time)
     view.message = await safe_send(channel, "\U0001f447 Or pick from the dropdowns:", view=view)
     letter_options = [{"value": l, "label": l} for l in "ABCDEFGHIJKLMNOPQRSTUVWXYZ" if l not in fixed_letters]
 
