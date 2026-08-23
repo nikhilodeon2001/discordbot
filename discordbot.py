@@ -28248,6 +28248,11 @@ class ClearFlaggedModal(discord.ui.Modal, title="Clear Audit"):
         description="Uncheck to clear silently.",
         component=discord.ui.Checkbox(default=True),
     )
+    credit_label = discord.ui.Label(
+        text="Award credit to flagger(s)",
+        description="Check to credit them for the Question Queen crown even though nothing was changed.",
+        component=discord.ui.Checkbox(default=False),
+    )
 
     def __init__(self, collection_name, doc_id):
         super().__init__()
@@ -28270,16 +28275,22 @@ class ClearFlaggedModal(discord.ui.Modal, title="Clear Audit"):
             flaggers = doc.get("audit", []) if doc else (flag_record or {}).get("flaggers", [])
             context = doc if doc else (flag_record or {}).get("question_snapshot", {})
 
+            award_credit = self.credit_label.component.value and bool(flaggers)
+            if award_credit:
+                await record_edit_credits(col, doc_id, flaggers)
+                await sync_crown_roles()
+
             notify_text = (self.notify.value or "").strip() or None
             await _dm_flaggers(
                 interaction.guild, flaggers,
                 notify=self.notify_label.component.value, notify_text=notify_text,
                 intro_text="⚠️ Your flag was reviewed!", before=context,
             )
+            action_field = ("🏅 Credit", "Awarded to flagger(s)") if award_credit else None
             embed = _build_flagged_resolution_embed(
                 flag_record, doc,
                 title="🚩 Question Flagged", color=discord.Color.greyple(),
-                footer_text=f"🧹 Audit cleared by {interaction.user.display_name}",
+                action_field=action_field, footer_text=f"🧹 Audit cleared by {interaction.user.display_name}",
             )
             await interaction.response.send_message("🧹 Audit cleared.", ephemeral=True)
             if interaction.message:
