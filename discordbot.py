@@ -28777,7 +28777,7 @@ class SubmitTypeView(discord.ui.View):
         self.submitter_id = submitter_id
         self.submitter_name = submitter_name
 
-    @discord.ui.button(label="Free-text", style=discord.ButtonStyle.primary)
+    @discord.ui.button(label="📝 Free-text", style=discord.ButtonStyle.primary)
     async def free_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_modal(SubmitQuestionModal(
             submitter_id=self.submitter_id,
@@ -28785,7 +28785,7 @@ class SubmitTypeView(discord.ui.View):
             sub_type="free_text",
         ))
 
-    @discord.ui.button(label="Multiple Choice", style=discord.ButtonStyle.success)
+    @discord.ui.button(label="🔘 Multiple Choice", style=discord.ButtonStyle.success)
     async def mc_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_modal(SubmitQuestionModal(
             submitter_id=self.submitter_id,
@@ -28793,14 +28793,14 @@ class SubmitTypeView(discord.ui.View):
             sub_type="multiple_choice",
         ))
 
-    @discord.ui.button(label="Crossword", style=discord.ButtonStyle.secondary)
+    @discord.ui.button(label="🧩 Crossword", style=discord.ButtonStyle.danger)
     async def crossword_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_modal(SubmitCrosswordModal(
             submitter_id=self.submitter_id,
             submitter_name=self.submitter_name,
         ))
 
-    @discord.ui.button(label="Bulk Submit", style=discord.ButtonStyle.danger)
+    @discord.ui.button(label="📦 Bulk Submit", style=discord.ButtonStyle.secondary)
     async def bulk_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_modal(BulkSubmitModal(
             submitter_id=self.submitter_id,
