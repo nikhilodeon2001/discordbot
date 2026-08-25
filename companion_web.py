@@ -979,13 +979,14 @@ _SUBMIT_PAGE_HTML = """<!doctype html>
     <div class="typerow">
       <div class="typebtn active" id="typeFree" onclick="setType('free_text')">Free-text</div>
       <div class="typebtn" id="typeMC" onclick="setType('multiple_choice')">Multiple Choice</div>
+      <div class="typebtn" id="typeCrossword" onclick="setType('crossword')">Crossword</div>
       <div class="typebtn" id="typeBulk" onclick="setType('bulk')">Bulk</div>
     </div>
     <div id="singleFields">
-      <div class="field"><label class="fieldlabel">Category</label><input type="text" id="fCategory" maxlength="40" placeholder="e.g. Science, History, Movies"></div>
-      <div class="field"><label class="fieldlabel">Question</label><textarea id="fQuestion" maxlength="300" placeholder="15–300 characters"></textarea></div>
+      <div class="field" id="categoryField"><label class="fieldlabel">Category</label><input type="text" id="fCategory" maxlength="40" placeholder="e.g. Science, History, Movies"></div>
+      <div class="field"><label class="fieldlabel" id="lblQuestion">Question</label><textarea id="fQuestion" maxlength="300" placeholder="15–300 characters"></textarea></div>
       <div class="field"><label class="fieldlabel" id="lblAnswer">Primary Answer</label><input type="text" id="fAnswer" maxlength="100"></div>
-      <div class="field"><label class="fieldlabel" id="lblAlts">Alternate Spellings (optional, up to 3)</label><textarea id="fAlts" maxlength="300" placeholder="One per line or comma-separated"></textarea></div>
+      <div class="field" id="altsField"><label class="fieldlabel" id="lblAlts">Alternate Spellings (optional, up to 3)</label><textarea id="fAlts" maxlength="300" placeholder="One per line or comma-separated"></textarea></div>
     </div>
     <div id="bulkFields" style="display:none">
       <span class="guidetoggle" onclick="toggleGuide()">📋 Format Guide</span>
@@ -994,12 +995,14 @@ _SUBMIT_PAGE_HTML = """<!doctype html>
         <b>Free-text:</b><br><code>Category | Question | free | Answer</code><br>
         <code>Category | Question | free | Answer | Alt1, Alt2</code><br><br>
         <b>Multiple choice:</b><br><code>Category | Question | mc | CorrectAnswer | Wrong1, Wrong2, Wrong3</code><br><br>
-        Type field must be <code>free</code> or <code>mc</code>. MC needs 1–3 wrong choices; free-text alternates are optional. Questions must be 15–300 characters. Blank lines are ignored.<br><br>
+        <b>Crossword:</b><br><code>Crossword | Clue | cw | ANSWER</code><br><br>
+        Type field must be <code>free</code>, <code>mc</code>, or <code>cw</code>. MC needs 1–3 wrong choices; free-text alternates are optional; crossword answers must be 2–20 letters and the category is ignored (forced to "Crossword"). Questions must be 15–300 characters. Blank lines are ignored.<br><br>
         <b>Example:</b><br>
         <code>History | Who was the first US president? | free | George Washington | Washington</code><br>
-        <code>Sports | How many players on a basketball team? | mc | 5 | 4, 6, 7</code>
+        <code>Sports | How many players on a basketball team? | mc | 5 | 4, 6, 7</code><br>
+        <code>Crossword | Supplement to a book | cw | Addendum</code>
       </div>
-      <div class="field"><label class="fieldlabel">Questions (one per line)</label><textarea id="fBulk" maxlength="4000" placeholder="Category | Question | free/mc | Answer | Alternates"></textarea></div>
+      <div class="field"><label class="fieldlabel">Questions (one per line)</label><textarea id="fBulk" maxlength="4000" placeholder="Category | Question | free/mc/cw | Answer | Alternates"></textarea></div>
     </div>
     <div class="cf-turnstile" data-sitekey="__TURNSTILE_SITE_KEY__"></div>
     <button type="button" class="primary" id="submitBtn" onclick="submitQuestion()">Submit</button>
@@ -1013,11 +1016,18 @@ function setType(t) {
   subType = t;
   document.getElementById('typeFree').classList.toggle('active', t === 'free_text');
   document.getElementById('typeMC').classList.toggle('active', t === 'multiple_choice');
+  document.getElementById('typeCrossword').classList.toggle('active', t === 'crossword');
   document.getElementById('typeBulk').classList.toggle('active', t === 'bulk');
   document.getElementById('singleFields').style.display = t === 'bulk' ? 'none' : 'block';
   document.getElementById('bulkFields').style.display = t === 'bulk' ? 'block' : 'none';
+  document.getElementById('categoryField').style.display = t === 'crossword' ? 'none' : 'block';
+  document.getElementById('altsField').style.display = t === 'crossword' ? 'none' : 'block';
   document.getElementById('modalSub').style.display = t === 'bulk' ? 'none' : 'block';
-  document.getElementById('lblAnswer').textContent = t === 'multiple_choice' ? 'Correct Answer' : 'Primary Answer';
+  document.getElementById('modalSub').textContent = t === 'crossword'
+    ? 'Crossword needs a clue and a single-word answer (2–20 letters).'
+    : 'Multiple-choice needs 1–3 wrong choices; free-text can include up to 3 alternate spellings.';
+  document.getElementById('lblQuestion').textContent = t === 'crossword' ? 'Crossword Clue' : 'Question';
+  document.getElementById('lblAnswer').textContent = t === 'multiple_choice' ? 'Correct Answer' : (t === 'crossword' ? 'Crossword Answer' : 'Primary Answer');
   document.getElementById('lblAlts').textContent = t === 'multiple_choice' ? 'Wrong Choices (1–3, comma or new lines)' : 'Alternate Spellings (optional, up to 3)';
 }
 function toggleGuide() {
@@ -1040,12 +1050,12 @@ async function submitQuestion() {
       ? { lines: document.getElementById('fBulk').value, turnstile_token: turnstileToken }
       : {
           sub_type: subType,
-          category: document.getElementById('fCategory').value,
+          category: subType === 'crossword' ? 'Crossword' : document.getElementById('fCategory').value,
           question: document.getElementById('fQuestion').value,
           correct_answer: document.getElementById('fAnswer').value,
           // Sent as the same raw comma/newline-delimited string the Discord modal collects --
           // server-side parsing (_parse_alternates) is shared, so don't pre-split here.
-          alternates: document.getElementById('fAlts').value,
+          alternates: subType === 'crossword' ? '' : document.getElementById('fAlts').value,
           turnstile_token: turnstileToken,
         };
     var r = await fetch(url, {
@@ -1135,7 +1145,7 @@ async def handle_submit_question(request):
     if not await _verify_turnstile(str(body.get("turnstile_token") or ""), remote_ip):
         return web.json_response({"ok": False, "reason": "captcha_failed"}, status=400)
 
-    sub_type = body.get("sub_type") if body.get("sub_type") in ("free_text", "multiple_choice") else "free_text"
+    sub_type = body.get("sub_type") if body.get("sub_type") in ("free_text", "multiple_choice", "crossword") else "free_text"
     if not _submit_question:
         return web.json_response({"ok": False, "reason": "unavailable"}, status=503)
     doc, err = await _submit_question(

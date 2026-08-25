@@ -26861,7 +26861,7 @@ def _get_flag_lock(user_id):
 
 
 def _validate_submission(category, question, correct_answer, alternates, sub_type):
-    cat = (category or "").strip().title()
+    cat = "Crossword" if sub_type == "crossword" else (category or "").strip().title()
     if not cat:
         return None, "Category is required."
     if cat in categories_to_exclude:
@@ -26880,6 +26880,18 @@ def _validate_submission(category, question, correct_answer, alternates, sub_typ
         return None, "Correct/primary answer is required."
     if len(ca) > 100:
         return None, "Answer must be at most 100 characters."
+    if sub_type == "crossword":
+        if not re.fullmatch(r"[A-Za-z ]+", ca):
+            return None, "Crossword answer must contain only letters (and spaces)."
+        letters_only = ca.replace(" ", "")
+        if not (2 <= len(letters_only) <= 20):
+            return None, "Crossword answer must be 2–20 letters."
+        return {
+            "category": cat,
+            "question": q,
+            "correct_answer": ca,
+            "alternates": [],
+        }, None
     alts = _parse_alternates(alternates)
     if sub_type == "multiple_choice":
         if not (1 <= len(alts) <= 3):
@@ -26913,7 +26925,7 @@ def _build_submission_embed(sub):
         color = discord.Color.green()
     elif sub.get("status") == "rejected":
         color = discord.Color.red()
-    type_label = "Multiple Choice" if sub.get("type") == "multiple_choice" else "Free-text"
+    type_label = {"multiple_choice": "Multiple Choice", "crossword": "Crossword"}.get(sub.get("type"), "Free-text")
     embed = discord.Embed(
         title=f"📝 New Question Submission · {type_label}",
         color=color,
@@ -26921,16 +26933,20 @@ def _build_submission_embed(sub):
     )
     embed.add_field(name="Submitter", value=f"<@{sub['submitter_id']}> ({sub.get('submitter_name', 'unknown')})", inline=False)
     embed.add_field(name="Category", value=sub.get("category", ""), inline=True)
-    embed.add_field(name="Question", value=sub.get("question", "")[:1024], inline=False)
-    if sub.get("type") == "multiple_choice":
-        embed.add_field(name="Correct", value=sub.get("correct_answer", ""), inline=False)
-        wrongs = sub.get("alternates", [])
-        embed.add_field(name=f"Wrong choices ({len(wrongs)})", value=("\n".join(f"• {w}" for w in wrongs) or "—"), inline=False)
+    if sub.get("type") == "crossword":
+        embed.add_field(name="Clue", value=sub.get("question", "")[:1024], inline=False)
+        embed.add_field(name="Answer", value=sub.get("correct_answer", ""), inline=False)
     else:
-        embed.add_field(name="Primary answer", value=sub.get("correct_answer", ""), inline=False)
-        alts = sub.get("alternates", [])
-        if alts:
-            embed.add_field(name=f"Alternate spellings ({len(alts)})", value="\n".join(f"• {a}" for a in alts), inline=False)
+        embed.add_field(name="Question", value=sub.get("question", "")[:1024], inline=False)
+        if sub.get("type") == "multiple_choice":
+            embed.add_field(name="Correct", value=sub.get("correct_answer", ""), inline=False)
+            wrongs = sub.get("alternates", [])
+            embed.add_field(name=f"Wrong choices ({len(wrongs)})", value=("\n".join(f"• {w}" for w in wrongs) or "—"), inline=False)
+        else:
+            embed.add_field(name="Primary answer", value=sub.get("correct_answer", ""), inline=False)
+            alts = sub.get("alternates", [])
+            if alts:
+                embed.add_field(name=f"Alternate spellings ({len(alts)})", value="\n".join(f"• {a}" for a in alts), inline=False)
     decision = sub.get("mod_decision")
     if decision:
         embed.set_footer(text=f"{decision} by {sub.get('mod_name', 'unknown')}")
@@ -27021,6 +27037,47 @@ class SubmitQuestionModal(discord.ui.Modal):
         except Exception as e:
             sentry_sdk.capture_exception(e)
             print(f"❌ SubmitQuestionModal.on_submit: {e}")
+            try:
+                await interaction.response.send_message("❌ Something went wrong submitting.", ephemeral=True)
+            except Exception:
+                pass
+
+
+class SubmitCrosswordModal(discord.ui.Modal, title="Submit a Crossword Clue"):
+    clue_input = discord.ui.TextInput(
+        label="Crossword Clue",
+        placeholder="The clue (15–300 chars)",
+        style=discord.TextStyle.paragraph, required=True, max_length=300,
+    )
+    answer_input = discord.ui.TextInput(
+        label="Crossword Answer",
+        placeholder="One word, letters only (2–20 letters)",
+        style=discord.TextStyle.short, required=True, max_length=30,
+    )
+
+    def __init__(self, submitter_id, submitter_name):
+        super().__init__()
+        self.submitter_id = submitter_id
+        self.submitter_name = submitter_name
+
+    async def on_submit(self, interaction: discord.Interaction):
+        try:
+            doc, err = await submit_question_for_review(
+                self.submitter_id, self.submitter_name, "crossword",
+                "Crossword", self.clue_input.value,
+                self.answer_input.value, "",
+                source="discord",
+            )
+            if err:
+                await interaction.response.send_message(f"❌ {err}", ephemeral=True)
+                return
+            await interaction.response.send_message(
+                "✅ Submitted! A moderator will review it shortly.",
+                ephemeral=True,
+            )
+        except Exception as e:
+            sentry_sdk.capture_exception(e)
+            print(f"❌ SubmitCrosswordModal.on_submit: {e}")
             try:
                 await interaction.response.send_message("❌ Something went wrong submitting.", ephemeral=True)
             except Exception:
@@ -27218,11 +27275,14 @@ async def _approve_submission(interaction, submission_id, edited=False, notify_t
             await interaction.followup.send("❌ Submission no longer pending.", ephemeral=True)
             return
         now = datetime.datetime.utcnow()
-        is_mc = sub.get("type") == "multiple_choice"
-        if is_mc:
+        if sub.get("type") == "multiple_choice":
             answers = _build_mc_answers(sub["correct_answer"], sub.get("alternates", []))
             url_val = "multiple choice"
             target_pool = "mysterybox_questions"
+        elif sub.get("type") == "crossword":
+            answers = [sub["correct_answer"]]
+            url_val = ""
+            target_pool = "crossword_questions"
         else:
             answers = [sub["correct_answer"], *(sub.get("alternates") or [])]
             url_val = ""
@@ -27448,11 +27508,14 @@ async def _approve_submission_direct(submission_id, mod_id, mod_name, edited=Fal
         if not sub:
             return False, "Submission no longer pending"
         now = datetime.datetime.utcnow()
-        is_mc = sub.get("type") == "multiple_choice"
-        if is_mc:
+        if sub.get("type") == "multiple_choice":
             answers = _build_mc_answers(sub["correct_answer"], sub.get("alternates", []))
             url_val = "multiple choice"
             target_pool = "mysterybox_questions"
+        elif sub.get("type") == "crossword":
+            answers = [sub["correct_answer"]]
+            url_val = ""
+            target_pool = "crossword_questions"
         else:
             answers = [sub["correct_answer"], *(sub.get("alternates") or [])]
             url_val = ""
@@ -28730,6 +28793,13 @@ class SubmitTypeView(discord.ui.View):
             sub_type="multiple_choice",
         ))
 
+    @discord.ui.button(label="Crossword", style=discord.ButtonStyle.secondary)
+    async def crossword_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_modal(SubmitCrosswordModal(
+            submitter_id=self.submitter_id,
+            submitter_name=self.submitter_name,
+        ))
+
     @discord.ui.button(label="Bulk Submit", style=discord.ButtonStyle.danger)
     async def bulk_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_modal(BulkSubmitModal(
@@ -28751,9 +28821,14 @@ class SubmitTypeView(discord.ui.View):
             "```\n"
             "Category | Question | mc | CorrectAnswer | Wrong1, Wrong2, Wrong3\n"
             "```\n"
+            "**Crossword:**\n"
+            "```\n"
+            "Crossword | Clue | cw | ANSWER\n"
+            "```\n"
             "**Rules:**\n"
-            "• `free` or `mc` in the 3rd field sets the type\n"
+            "• `free`, `mc`, or `cw` in the 3rd field sets the type\n"
             "• MC requires 1–3 wrong choices; free-text alternates are optional\n"
+            "• Crossword answer must be 2–20 letters (no digits/punctuation); category is ignored and forced to \"Crossword\"\n"
             "• Question must be 15–300 characters\n"
             "• Max 100 characters per answer\n"
             "• Blank lines are ignored\n\n"
@@ -28761,6 +28836,7 @@ class SubmitTypeView(discord.ui.View):
             "```\n"
             "History | Who was the first US president? | free | George Washington | Washington\n"
             "Sports | How many players on a basketball team? | mc | 5 | 4, 6, 7\n"
+            "Crossword | Supplement to a book | cw | Addendum\n"
             "```"
         )
         await interaction.response.send_message(guide, ephemeral=True)
@@ -28814,10 +28890,10 @@ async def submit_bulk_questions_for_review(submitter_id, submitter_name, raw_tex
                 skipped.append(f"Line {i}: need at least 4 fields (Category | Question | free/mc | Answer)")
                 continue
             category, question, qtype_raw = parts[0], parts[1], parts[2].lower()
-            if qtype_raw not in ("free", "mc"):
-                skipped.append(f"Line {i}: type must be 'free' or 'mc', got '{parts[2]}'")
+            if qtype_raw not in ("free", "mc", "cw"):
+                skipped.append(f"Line {i}: type must be 'free', 'mc', or 'cw', got '{parts[2]}'")
                 continue
-            sub_type = "free_text" if qtype_raw == "free" else "multiple_choice"
+            sub_type = {"free": "free_text", "mc": "multiple_choice", "cw": "crossword"}[qtype_raw]
             correct_answer = parts[3] if len(parts) > 3 else ""
             alternates_raw = parts[4] if len(parts) > 4 else ""
 
