@@ -431,7 +431,7 @@ async def send_question_queen_submit_ad():
 # {base_url} is substituted with companion_web.get_base_url() at post time, so
 # the same text is correct whether this deploy is staging or prod.
 okra_lab_announcement_enabled = True
-okra_lab_announcement_text = "😱✖️ **Greg's Nightmare** just joined the Arena! Pick from 10 math categories (algebra, geometry, trig, calculus, stats, and more), choose Normal or Hard, decide if you want multiple choice or type-your-own-answer, then race the clock on procedurally generated problems. Try `/arena game_name:\"greg's nightmare\"`.\n"
+okra_lab_announcement_text = "😱🔢 **Greg's Nightmare** just joined the Arena! Pick from 10 math categories (algebra, geometry, trig, calculus, stats, and more), choose Normal or Hard, decide if you want multiple choice or type-your-own-answer, then race the clock on procedurally generated problems. Try `/arena game_name:\"greg's nightmare\"`.\n"
 okra_lab_announcement_show_new_badge = True
 
 
@@ -6522,7 +6522,7 @@ class MathSetupView(discord.ui.View):
         self.window_closed = window_closed
         self.message = None
         self.future = asyncio.get_running_loop().create_future()
-        button = discord.ui.Button(label="✖️ Set Up Game", style=discord.ButtonStyle.primary)
+        button = discord.ui.Button(label="🔢 Set Up Game", style=discord.ButtonStyle.primary)
         button.callback = self._open_modal
         self.add_item(button)
 
@@ -11427,13 +11427,13 @@ async def ask_gregs_nightmare_challenge(winner, winner_id, num=5):
 
     user_data = {}
 
-    await safe_send(channel, content="​\n😱✖️ **Greg's Nightmare**: Math Trivia Gauntlet!\n​")
+    await safe_send(channel, content="​\n😱🔢 **Greg's Nightmare**: Math Trivia Gauntlet!\n​")
     await asyncio.sleep(2)
 
     categories = gregs_nightmare.CATEGORIES
     everything_option_num = len(categories) + 1
 
-    prompt_lines = ["😱✖️ Pick your categories, difficulty, and answer mode!", ""]
+    prompt_lines = ["😱🔢 Pick your categories, difficulty, and answer mode!", ""]
     for i, cat in enumerate(categories, start=1):
         prompt_lines.append(f"{i}️⃣ {cat['emoji']} {cat['display']}")
     prompt_lines.append(f"{everything_option_num}️⃣ 🏆 Everything")
