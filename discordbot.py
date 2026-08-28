@@ -80,6 +80,7 @@ import asyncio
 import difflib
 from metaphone import doublemetaphone
 import answer_matching
+import gregs_nightmare
 import discord
 from discord.ext import commands
 from discord import app_commands
@@ -429,9 +430,9 @@ async def send_question_queen_submit_ad():
 # e.g. for announcements (like a rebrand) that aren't a new feature pitch.
 # {base_url} is substituted with companion_web.get_base_url() at post time, so
 # the same text is correct whether this deploy is staging or prod.
-okra_lab_announcement_enabled = False
-okra_lab_announcement_text = "Another day, another rebrand. TriviaSphere had a good run, but we've landed on our final form: **Okra's World**.\n\nNo more identity crises after this one — pinky promise. okrasworld.com is home now.\n"
-okra_lab_announcement_show_new_badge = False
+okra_lab_announcement_enabled = True
+okra_lab_announcement_text = "😱✖️ **Greg's Nightmare** just joined the Arena! Pick from 10 math categories (algebra, geometry, trig, calculus, stats, and more), choose Normal or Hard, decide if you want multiple choice or type-your-own-answer, then race the clock on procedurally generated problems. Try `/arena game_name:\"greg's nightmare\"`.\n"
+okra_lab_announcement_show_new_badge = True
 
 
 async def sync_okra_lab_announcement(content):
@@ -6462,6 +6463,116 @@ class SportsLeagueView(discord.ui.View):
                 pass
 
 
+class MathSetupModal(discord.ui.Modal, title="Set Up Greg's Nightmare"):
+    """One-submission picker for ask_gregs_nightmare_challenge()'s category/difficulty/answer-mode
+    setup -- three Label-wrapped Selects in one Modal (categories multi-select, difficulty,
+    answer mode), mirroring SportsLeagueModal's dynamic-Select-in-__init__ pattern. Submitting
+    synthesizes "<category numbers> <difficulty> <mode>" so the typed-chat fallback path parses
+    it the same way as a real chat message (see ask_gregs_nightmare_challenge's parsing)."""
+
+    def __init__(self, category_options, result_future: asyncio.Future, window_closed):
+        super().__init__()
+        self._result_future = result_future
+        self._window_closed = window_closed
+        self.categories_select = discord.ui.Select(
+            options=[discord.SelectOption(label=label[:100], value=str(num)) for num, label in category_options],
+            min_values=1,
+            max_values=len(category_options),
+        )
+        self.add_item(discord.ui.Label(text="Categories", description="Pick any that apply, or Everything",
+                                        component=self.categories_select))
+        self.difficulty_select = discord.ui.Select(
+            options=[discord.SelectOption(label="Normal", value="normal"),
+                     discord.SelectOption(label="Hard", value="hard")],
+            min_values=1, max_values=1,
+        )
+        self.add_item(discord.ui.Label(text="Difficulty", description="How hard should the questions be?",
+                                        component=self.difficulty_select))
+        self.mode_select = discord.ui.Select(
+            options=[discord.SelectOption(label="Multiple Choice", value="mc"),
+                     discord.SelectOption(label="Type your answer", value="text")],
+            min_values=1, max_values=1,
+        )
+        self.add_item(discord.ui.Label(text="Answer Mode", description="How do you want to answer?",
+                                        component=self.mode_select))
+
+    async def on_submit(self, interaction: discord.Interaction):
+        if self._window_closed["value"]:
+            await interaction.response.send_message(
+                "⏰ Too late — settings already defaulted for this round.", ephemeral=True
+            )
+            return
+        categories = self.categories_select.values
+        difficulty = self.difficulty_select.values[0]
+        mode = self.mode_select.values[0]
+        await interaction.response.send_message("✅ Settings locked in.", ephemeral=True)
+        if not self._result_future.done():
+            content = f"{' '.join(categories)} {difficulty} {mode}"
+            self._result_future.set_result(ComponentChoice(content, interaction))
+
+
+class MathSetupView(discord.ui.View):
+    """Button that opens MathSetupModal. See SportsLeagueView for why this is a plain
+    discord.ui.View rather than RestrictedView (single winner-only picker, single submission)."""
+
+    def __init__(self, category_options, winner_id, window_closed, *, timeout):
+        super().__init__(timeout=timeout)
+        self.category_options = category_options
+        self.winner_id = winner_id
+        self.window_closed = window_closed
+        self.message = None
+        self.future = asyncio.get_running_loop().create_future()
+        button = discord.ui.Button(label="✖️ Set Up Game", style=discord.ButtonStyle.primary)
+        button.callback = self._open_modal
+        self.add_item(button)
+
+    async def _open_modal(self, interaction: discord.Interaction):
+        if interaction.user.id != self.winner_id:
+            await interaction.response.send_message("❌ You're not in this round!", ephemeral=True)
+            return
+        await interaction.response.send_modal(MathSetupModal(self.category_options, self.future, self.window_closed))
+
+    async def on_timeout(self):
+        for item in self.children:
+            item.disabled = True
+        if self.message is not None:
+            try:
+                await self.message.edit(view=self)
+            except (discord.HTTPException, discord.NotFound):
+                pass
+
+
+class MathAnswerView(RestrictedView):
+    """Click-to-answer buttons for one Greg's Nightmare round. Unlike AnswerButtonView (which is
+    hard-wired to the main trivia loop's collected_responses/question_asked_start globals), this
+    is fully self-contained: correctness is checked right in the click handler, and only a
+    correct click resolves the view's future. A wrong click just gets an ephemeral nudge and the
+    buttons stay live, so the round keeps going (for this or another player) until someone gets
+    it or time runs out -- open floor, like every other mini-game's answer window."""
+
+    def __init__(self, choices, correct_answer, timeout):
+        super().__init__(None, timeout=timeout)
+        self.correct_answer = correct_answer
+        for choice in choices:
+            button = discord.ui.Button(label=choice[:80], style=discord.ButtonStyle.primary)
+            button.callback = self._make_callback(choice)
+            self.add_item(button)
+
+    def _make_callback(self, choice):
+        async def callback(interaction: discord.Interaction):
+            await self._handle_click(interaction, choice)
+        return callback
+
+    async def _handle_click(self, interaction: discord.Interaction, choice: str):
+        if self.future.done():
+            await interaction.response.send_message("✅ Already answered!", ephemeral=True)
+            return
+        if choice == self.correct_answer:
+            await self._resolve(interaction, choice)
+        else:
+            await interaction.response.send_message("❌ Not quite — try again!", ephemeral=True)
+
+
 class ValedictorianView(RestrictedView):
     """Shared A/B/C/D button grid for one round of Valedictorian.
 
@@ -11278,6 +11389,207 @@ async def ask_sports_logos_challenge(winner, winner_id, num=5):
     return sports_logos_winner_id
 
 
+async def _play_math_round(view, category_url, correct_answer, timeout, target_channel):
+    """Wait for a correct answer to one Greg's Nightmare round, racing MC button clicks (if
+    `view` is given) against typed chat/companion answers. A wrong typed guess doesn't end the
+    round -- unlike a click (already validated correct-only in MathAnswerView), free text has to
+    be graded here, so on a miss this loops and keeps waiting out the remaining time, leaving any
+    MC buttons live the whole while (resolve_input_race is documented safe to call repeatedly
+    against the same still-live view). Raises asyncio.TimeoutError if nobody gets it in time."""
+    start_time = asyncio.get_event_loop().time()
+
+    def check(m):
+        return m.channel == target_channel and m.author != get_bot().user
+
+    while True:
+        remaining = timeout - (asyncio.get_event_loop().time() - start_time)
+        if remaining <= 0:
+            raise asyncio.TimeoutError()
+        chat_coro = companion_bridge.wait_for_message_or_companion(
+            check, remaining, target_channel, None, kind="mini_game_answer"
+        )
+        if view is not None:
+            result = await resolve_input_race(view, chat_coro)
+        else:
+            result = await chat_coro
+
+        if view is not None and view.future.done() and not view.future.cancelled() and view.future.result() is result:
+            return result  # correct button click -- MathAnswerView only resolves on a match
+
+        if gregs_nightmare.check_answer(category_url, (result.content or "").strip(), correct_answer):
+            return result
+        # Wrong typed/companion guess -- keep waiting out the rest of the round.
+
+
+async def ask_gregs_nightmare_challenge(winner, winner_id, num=5):
+    global wf_winner
+    wf_winner = True
+
+    user_data = {}
+
+    await safe_send(channel, content="​\n😱✖️ **Greg's Nightmare**: Math Trivia Gauntlet!\n​")
+    await asyncio.sleep(2)
+
+    categories = gregs_nightmare.CATEGORIES
+    everything_option_num = len(categories) + 1
+
+    prompt_lines = ["😱✖️ Pick your categories, difficulty, and answer mode!", ""]
+    for i, cat in enumerate(categories, start=1):
+        prompt_lines.append(f"{i}️⃣ {cat['emoji']} {cat['display']}")
+    prompt_lines.append(f"{everything_option_num}️⃣ 🏆 Everything")
+    prompt_lines.append("")
+    prompt_lines.append("(Reply with category numbers plus 'normal'/'hard' and 'mc'/'text', "
+                         "e.g. '1 3 hard text', or use the button below)")
+    await safe_send(channel, "\n".join(prompt_lines))
+
+    category_options = [(i, f"{cat['emoji']} {cat['display']}") for i, cat in enumerate(categories, start=1)]
+    category_options.append((everything_option_num, "\U0001f3c6 Everything"))
+    all_urls = [cat["url"] for cat in categories]
+    url_by_num = {i: cat["url"] for i, cat in enumerate(categories, start=1)}
+
+    target_channel = _active_game_channel or channel
+
+    def check_setup_message(m):
+        return m.channel == target_channel and m.author.id == winner_id and any(ch.isdigit() for ch in m.content)
+
+    def parse_setup(content):
+        numbers = [int(n) for n in re.findall(r"\d+", content) if 1 <= int(n) <= everything_option_num]
+        lower = content.lower()
+        difficulty = "hard" if "hard" in lower else "normal"
+        answer_mode = "text" if ("text" in lower or "type" in lower) else "mc"
+        return numbers, difficulty, answer_mode
+
+    window_closed = {"value": False}
+    view = MathSetupView(category_options, winner_id, window_closed, timeout=20)
+    view.message = await safe_send(channel, "\U0001f447 Or set up with the button:", view=view)
+
+    try:
+        setup_msg = await resolve_input_race(
+            view,
+            companion_bridge.wait_for_message_or_companion(
+                check_setup_message, 20, target_channel, {winner_id}, kind="mini_game_answer",
+                options=[{"value": str(num), "label": label} for num, label in category_options], multi=True
+            ),
+        )
+        numbers, difficulty, answer_mode = parse_setup(setup_msg.content)
+        if not numbers or everything_option_num in numbers:
+            selected_urls = all_urls.copy()
+        else:
+            selected_urls = [url_by_num[n] for n in sorted(set(numbers)) if n in url_by_num]
+            if not selected_urls:
+                selected_urls = all_urls.copy()
+        selected_display = ", ".join(
+            f"{cat['emoji']} {cat['display']}" for cat in categories if cat["url"] in selected_urls
+        ) if set(selected_urls) != set(all_urls) else "\U0001f3c6 Everything"
+        await safe_send(
+            channel,
+            f"​\n✅ Categories: **{selected_display}** | Difficulty: **{difficulty.title()}** | "
+            f"Answer mode: **{'Multiple Choice' if answer_mode == 'mc' else 'Type your answer'}**\n​"
+        )
+    except asyncio.TimeoutError:
+        selected_urls = all_urls.copy()
+        difficulty = "normal"
+        answer_mode = "mc"
+        await safe_send(channel, "​\n⏰ Time's up! Using **everything**, Normal, Multiple Choice!\n​")
+    window_closed["value"] = True
+
+    # Round-robin across selected categories (like ask_sports_logos_challenge's league_order)
+    # so multiple picks get even coverage and never repeat back-to-back.
+    round_robin_order = [selected_urls[i % len(selected_urls)] for i in range(num)]
+
+    sorted_users = []
+    round_num = 1
+    while round_num <= num:
+        try:
+            category_url = round_robin_order[round_num - 1]
+            category_meta = next(c for c in categories if c["url"] == category_url)
+            qdata = gregs_nightmare.generate_question(category_url, difficulty)
+
+            image_file = discord.File(fp=qdata["image_buffer"], filename="question.png")
+            question_embed = discord.Embed(
+                title=f"{category_meta['emoji']} {category_meta['display']} — Round {round_num}/{num}",
+                description=qdata["question_text"],
+            )
+            question_embed.set_image(url="attachment://question.png")
+            question_embed.set_footer(text="⏱️ 15 seconds!")
+
+            answer_view = None
+            if answer_mode == "mc":
+                answer_view = MathAnswerView(qdata["mc_choices"], qdata["answer"], timeout=15)
+                answer_view.message = await safe_send(channel, file=image_file, embed=question_embed, view=answer_view)
+            else:
+                await safe_send(channel, file=image_file, embed=question_embed)
+
+            target_channel = _active_game_channel or channel
+            try:
+                result = await _play_math_round(answer_view, category_url, qdata["answer"], 15, target_channel)
+                display = result.author.display_name
+                uid = result.author.id
+                await result.add_reaction("✅")
+                user_data[uid] = (display, user_data.get(uid, (display, 0))[1] + 1)
+                await safe_send(channel, embed=discord.Embed(
+                    title="✅🎉 Correct!",
+                    description=f"**{display}** got it! Answer: **{qdata['answer']}**",
+                    color=discord.Color.green(),
+                ))
+            except asyncio.TimeoutError:
+                await safe_send(channel, embed=discord.Embed(
+                    title="❌😢 Time's up!",
+                    description=f"Answer: **{qdata['answer']}**",
+                    color=discord.Color.red(),
+                ))
+
+            await asyncio.sleep(3)
+
+        except Exception as e:
+            sentry_sdk.capture_exception(e)
+            print(traceback.format_exc())
+            await safe_send(channel, "​\n⚠️ Error during round, skipping.\n​")
+
+        await asyncio.sleep(1)
+
+        round_num += 1
+
+        message = ""
+        sorted_users = sorted(user_data.items(), key=lambda x: x[1][1], reverse=True)
+
+        if num == 1:
+            if sorted_users:
+                top_score = sorted_users[0][1][1]
+                top_winners = [uid for uid, (name, score) in sorted_users if score == top_score]
+                return top_winners[0] if len(top_winners) == 1 else None
+            return None
+
+        if sorted_users:
+            message += "​\n🏁🏆 Final Standings\n​" if round_num > num else "​\n📊🏆 Current Standings\n​"
+            for counter, (uid, (name, score)) in enumerate(sorted_users, start=1):
+                message += f"{counter}. **{name}**: {score}\n​"
+
+        if message:
+            await safe_send(channel, message)
+        await asyncio.sleep(3)
+
+    await asyncio.sleep(2)
+    gregs_nightmare_winner_id = None
+    if sorted_users:
+        top_score = sorted_users[0][1][1]
+        top_winners = [(uid, name) for uid, (name, score) in sorted_users if score == top_score]
+        if len(top_winners) == 1:
+            gregs_nightmare_winner_id, display_name = top_winners[0]
+            await safe_send(channel, f"​\n🎉🥇 The winner is **{display_name}**!\n​")
+        else:
+            message = "​\n🤝 It's a tie! **Winners:**\n​"
+            for uid, name in top_winners:
+                message += f"• **{name}** ({top_score} pts)\n"
+            message += "​"
+            await safe_send(channel, message)
+    else:
+        await safe_send(channel, "​\n👎😢 **No right answers**. Greg would be disappointed.\n​")
+
+    wf_winner = True
+    await asyncio.sleep(3)
+
+    return gregs_nightmare_winner_id
 
 
 async def ask_poster_challenge(winner, winner_id, num=5):
