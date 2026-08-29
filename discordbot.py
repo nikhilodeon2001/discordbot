@@ -18772,12 +18772,40 @@ async def get_coffees(user_id):
         return 0
 
 
-def get_math_question():
-    question_functions = [create_mean_question, create_median_question, create_derivative_question, create_zeroes_question, create_factors_question, create_base_question, create_trig_question, create_algebra_question]
-    selected_question_function = random.choice(question_functions)
-    return selected_question_function()
+# trivia_id -> the full gregs_nightmare.generate_question() result, bridging the
+# eager generation in get_math_question() (needed so trivia_answer_list already has
+# real distractors before the round starts -- see ask_question()'s gregs_nightmare
+# branch) to the lazy image/plain_text render step. Popped on consumption.
+_GREG_QDATA_CACHE = {}
 
-        
+
+def get_math_question():
+    """Pulls from Greg's Nightmare's full engine (gregs_nightmare.py) -- a superset
+    of the old 8 create_*_question subtypes below (which are no longer called from
+    here, left in place for now) plus geometry, number theory, probability,
+    sequences, coordinate geometry, and exponents/logs. Always Normal difficulty,
+    since the main trivia loop has no per-question difficulty selector the way the
+    Greg's Nightmare mini-game does, and always multiple choice, using gregs_nightmare's
+    own per-category realistic distractors -- same "click a button" flow as every
+    other multiple-choice trivia category (build_answer_view/_build_mc_answers).
+    Unlike the old shell-based subtypes, the real question has to be generated here
+    (not lazily in ask_question()) since trivia_answer_list needs real distractors
+    before the round even starts; the image itself is still rendered lazily, handed
+    off via _GREG_QDATA_CACHE keyed by the _id set below."""
+    category = random.choice(gregs_nightmare.CATEGORIES)
+    qdata = gregs_nightmare.generate_question(category["url"], "normal")
+    qid = str(random.randint(10000, 99999))
+    _GREG_QDATA_CACHE[qid] = qdata
+    wrong_choices = [c for c in qdata["mc_choices"] if c != qdata["answer"]]
+    return {
+        "category": f"Mathematics: {category['display']}",
+        "question": qdata["question_text"],
+        "url": f"{category['url']} multiple choice",
+        "answers": _build_mc_answers(qdata["answer"], wrong_choices),
+        "_id": qid,
+    }
+
+
 def get_stats_question():
     question_functions = [create_mean_question, create_median_question]
     selected_question_function = random.choice(question_functions)
@@ -22407,6 +22435,38 @@ async def ask_question(trivia_category, trivia_question, trivia_url, trivia_answ
         image_url = trivia_url
         send_image_flag = True
 
+    elif trivia_url.rsplit(" multiple choice", 1)[0] in gregs_nightmare.CATEGORY_URLS:
+        # Supersedes the old algebra/trig/base/derivative/zeroes*/factors/mean/median
+        # branches below (whose url strings get_math_question() no longer produces,
+        # since it now draws from gregs_nightmare.py's 10 categories instead of the
+        # old 8 create_*_question shells) -- catching every gregs_nightmare url here,
+        # including "algebra"/"trig" which overlap in name with the old branches
+        # further down, means those old branches are simply never reached anymore.
+        #
+        # The question/image/answer/distractors were already fully generated back in
+        # get_math_question() (not lazily here) -- unlike every other math branch,
+        # this one needs trivia_answer_list fully populated with real distractors
+        # *before* the round even starts, since that's what the existing
+        # multiple-choice grading machinery (build_answer_view/_mc_guess_tokens,
+        # below) reads. _GREG_QDATA_CACHE bridges that eagerly-built image/plain_text
+        # to this lazy render step via trivia_id.
+        greg_qdata = _GREG_QDATA_CACHE.pop(trivia_id, None)
+        if greg_qdata is None:
+            greg_qdata = gregs_nightmare.generate_question(trivia_url.rsplit(" multiple choice", 1)[0], "normal")
+        image_buffer = greg_qdata["image_buffer"]
+        if image_questions == True:
+            message_body += f"​\n​\n{number_block} [**{get_category_title(trivia_category, trivia_url, include_emoji=False)}**]({flag_url}) {get_category_emoji(trivia_category)}\n\n"
+            send_image_flag = True
+        else:
+            message_body += f"​\n​\n{number_block} [**{get_category_title(trivia_category, trivia_url, include_emoji=False)}**]({flag_url}) {get_category_emoji(trivia_category)}\n\n{greg_qdata['plain_text']}\n"
+        footer_text = "🚨 One guess"
+        message_body += "\n"
+        for answer in trivia_answer_list[1:]:
+            message_body += f"{answer}\n"
+        message_body += "\n"
+        answer_view = build_answer_view(trivia_answer_list, trivia_url)
+        trivia_answer_list = trivia_answer_list[:1]
+
     elif trivia_url == "algebra":
         image_buffer, new_question, new_solution, text_problem = generate_and_render_linear_problem()
         if image_questions == True:
@@ -22948,7 +23008,7 @@ async def check_correct_responses_delete(question_ask_time, trivia_answer_list, 
     fastest_correct_user_id = None
     fastest_response_time = None
 
-    # Check if trivia_answer_list is a single-element list with a numeric answer  
+    # Check if trivia_answer_list is a single-element list with a numeric answer
     single_answer = (
         (len(trivia_answer_list) == 1 and (is_number(trivia_answer) or len(trivia_answer) == 1)) or
         "multiple choice" in trivia_url or
@@ -24043,19 +24103,17 @@ async def select_trivia_questions(questions_per_round):
 
             for doc in math_questions:
                 doc["db"] = "math_questions"
-                doc["_id"] = str(random.randint(10000, 99999))
-                
+                # get_math_question() already set this, correlating to _GREG_QDATA_CACHE --
+                # don't clobber it with a fresh one.
+                doc.setdefault("_id", str(random.randint(10000, 99999)))
+
             selected_questions.extend(math_questions)
 
-        sample_size = min(num_stats_questions, questions_per_round - len(selected_questions))
-        if sample_size > 0:
-            stats_questions = [get_stats_question() for _ in range(sample_size)]
-
-            for doc in stats_questions:
-                doc["db"] = "stats_questions"
-                doc["_id"] = str(random.randint(10000, 99999))
-                
-            selected_questions.extend(stats_questions)
+        # num_stats_questions retired: Statistics is now just one of the categories
+        # get_math_question() already draws from (gregs_nightmare.py), so sampling
+        # it separately here would double up on Statistics relative to every other
+        # math category. get_stats_question() and the setting itself are left in
+        # place, just no longer called from round assembly.
 
         sample_size = min(num_wof_clues, questions_per_round - len(selected_questions))
         if sample_size > 0:
