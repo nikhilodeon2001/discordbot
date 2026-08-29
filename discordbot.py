@@ -436,7 +436,7 @@ okra_lab_announcement_text = (
     "🎮 **Greg's Nightmare** — a new mini-game with 10 math categories, Normal/Hard difficulty, and multiple choice or typed answers\n"
     "🔢 **Gerg** — a new round modifier for more in-game math questions (stacks fairly with Alex/Word/Nerd/Bondage)\n"
     "🔢 In-game math trivia got smarter too — more categories, now presented as multiple choice with realistic wrong answers\n\n"
-    "▶️ Try `/arena game_name:\"greg's nightmare\"`, or type `gerg` after winning a round\n"
+    "▶️ Try `/arena game_name:\"greg's nightmare\"`, type `67` after winning a round to pick the mini-game, or type `gerg` for more in-game math questions\n"
 )
 okra_lab_announcement_show_new_badge = True
 
