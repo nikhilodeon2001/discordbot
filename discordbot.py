@@ -18838,13 +18838,6 @@ async def get_coffees(user_id):
         return 0
 
 
-# trivia_id -> the full gregs_nightmare.generate_question() result, bridging the
-# eager generation in get_math_question() (needed so trivia_answer_list already has
-# real distractors before the round starts -- see ask_question()'s gregs_nightmare
-# branch) to the lazy image/plain_text render step. Popped on consumption.
-_GREG_QDATA_CACHE = {}
-
-
 def get_math_question():
     """Pulls from Greg's Nightmare's full engine (gregs_nightmare.py) -- a superset
     of the old 8 create_*_question subtypes below (which are no longer called from
@@ -18854,25 +18847,37 @@ def get_math_question():
     Greg's Nightmare mini-game does, and always multiple choice, using gregs_nightmare's
     own per-category realistic distractors -- same "click a button" flow as every
     other multiple-choice trivia category (build_answer_view/_build_mc_answers).
+
     Unlike the old shell-based subtypes, the real question has to be generated here
     (not lazily in ask_question()) since trivia_answer_list needs real distractors
-    before the round even starts; the image itself is still rendered lazily, handed
-    off via _GREG_QDATA_CACHE keyed by the _id set below."""
+    before the round even starts -- the caller's own copy of trivia_answer_list
+    (unpacked before ask_question() is called) is what grading and the reveal
+    breakdown read afterward, and ask_question() has no way to feed a lazily-computed
+    answer list back into it.
+
+    The rendered image has no such constraint -- nothing reads it before display time
+    -- so instead of the in-memory id->qdata cache this used to need (a real bug: any
+    cache miss, from an id collision or just the process restarting mid-round, fell
+    back to generating a brand-new *different* random question for the image while the
+    already-locked-in answer choices stayed from the original, e.g. showing "What is
+    20% of 80?" with multiple-choice answers that were actually for an unrelated GCD
+    question), the already-rendered image + plain_text ride along in the "paragraph"
+    tuple slot (unused for math otherwise) all the way to ask_question() -- generated
+    exactly once, nothing to cache or regenerate, so there's no path left for the two
+    to ever drift apart."""
     category = random.choice(gregs_nightmare.CATEGORIES)
     qdata = gregs_nightmare.generate_question(category["url"], "normal")
-    # uuid4, not random.randint(10000, 99999) -- a 5-digit id collides across enough
-    # rounds that two different math questions can land in the same cache slot, so the
-    # second one's qdata silently clobbers the first's (image for one question, answer
-    # choices for a completely different one once the first is displayed).
-    qid = uuid.uuid4().hex
-    _GREG_QDATA_CACHE[qid] = qdata
     wrong_choices = [c for c in qdata["mc_choices"] if c != qdata["answer"]]
+    paragraph = json.dumps({
+        "image_b64": base64.b64encode(qdata["image_buffer"].getvalue()).decode("ascii"),
+        "plain_text": qdata["plain_text"],
+    })
     return {
         "category": f"Mathematics: {category['display']}",
         "question": qdata["question_text"],
         "url": f"{category['url']} multiple choice",
         "answers": _build_mc_answers(qdata["answer"], wrong_choices),
-        "_id": qid,
+        "paragraph": paragraph,
     }
 
 
@@ -22477,7 +22482,11 @@ async def ask_question(trivia_category, trivia_question, trivia_url, trivia_answ
     if trivia_url.startswith("jeopardy"):
         trivia_question = jeopardy_html_to_discord(trivia_question)
 
-    if trivia_paragraph and trivia_paragraph != "null":
+    # Math questions repurpose "paragraph" to carry their pre-rendered image + plain_text
+    # (JSON+base64, decoded in the gregs_nightmare branch below) -- not real reading-
+    # comprehension text, so it must never be prepended into the visible question here.
+    _is_greg_url = trivia_url.rsplit(" multiple choice", 1)[0] in gregs_nightmare.CATEGORY_URLS
+    if trivia_paragraph and trivia_paragraph != "null" and not _is_greg_url:
         trivia_question = f"{trivia_paragraph.replace('$', '')[:1500]}\n\n{trivia_question}"
 
     trivia_answer = trivia_answer_list[0]  # The first item is the main answer
@@ -22522,17 +22531,15 @@ async def ask_question(trivia_category, trivia_question, trivia_url, trivia_answ
         # this one needs trivia_answer_list fully populated with real distractors
         # *before* the round even starts, since that's what the existing
         # multiple-choice grading machinery (build_answer_view/_mc_guess_tokens,
-        # below) reads. _GREG_QDATA_CACHE bridges that eagerly-built image/plain_text
-        # to this lazy render step via trivia_id.
-        greg_qdata = _GREG_QDATA_CACHE.pop(trivia_id, None)
-        if greg_qdata is None:
-            greg_qdata = gregs_nightmare.generate_question(trivia_url.rsplit(" multiple choice", 1)[0], "normal")
-        image_buffer = greg_qdata["image_buffer"]
+        # below) reads. The already-rendered image + plain_text ride along in
+        # trivia_paragraph (JSON+base64) rather than being cached or regenerated here.
+        greg_payload = json.loads(trivia_paragraph)
+        image_buffer = io.BytesIO(base64.b64decode(greg_payload["image_b64"]))
         if image_questions == True:
             message_body += f"​\n​\n{number_block} [**{get_category_title(trivia_category, trivia_url, include_emoji=False)}**]({flag_url}) {get_category_emoji(trivia_category)}\n\n"
             send_image_flag = True
         else:
-            message_body += f"​\n​\n{number_block} [**{get_category_title(trivia_category, trivia_url, include_emoji=False)}**]({flag_url}) {get_category_emoji(trivia_category)}\n\n{greg_qdata['plain_text']}\n"
+            message_body += f"​\n​\n{number_block} [**{get_category_title(trivia_category, trivia_url, include_emoji=False)}**]({flag_url}) {get_category_emoji(trivia_category)}\n\n{greg_payload['plain_text']}\n"
         footer_text = "🚨 One guess"
         # Greg's Nightmare style: answer text lives on the buttons only, not repeated
         # here as text -- MathTriviaButtonView (not the generic build_answer_view) is
@@ -24194,8 +24201,6 @@ async def select_trivia_questions(questions_per_round):
 
             for doc in math_questions:
                 doc["db"] = "math_questions"
-                # get_math_question() already set this, correlating to _GREG_QDATA_CACHE --
-                # don't clobber it with a fresh one.
                 doc.setdefault("_id", str(random.randint(10000, 99999)))
 
             selected_questions.extend(math_questions)

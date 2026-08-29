@@ -973,6 +973,72 @@ def _check_sequences(guess, answer):
 _PYTHAGOREAN_TRIPLES = [(3, 4, 5), (6, 8, 10), (5, 12, 13), (8, 15, 17), (9, 12, 15)]
 
 
+def _draw_coord_plane(draw, font, w, h, y_offset, color, x1, y1, x2, y2, show_midpoint=False, show_line=True):
+    """A real-to-scale coordinate-plane plot of the two points -- unlike geometry's
+    fixed-layout diagrams, the axis range here depends on the actual point values, so
+    positions are computed via a data-space -> pixel-space mapping instead of hardcoded
+    coordinates. The origin is always kept in view (min/max always include 0) so the
+    axes are always drawable without extra bounds-checking."""
+    left, right = 70, w - 30
+    top, bottom = y_offset + 10, y_offset + h - 30
+
+    xs = [x1, x2, 0]
+    ys = [y1, y2, 0]
+    if show_midpoint:
+        xs.append((x1 + x2) / 2)
+        ys.append((y1 + y2) / 2)
+    min_x, max_x = min(xs), max(xs)
+    min_y, max_y = min(ys), max(ys)
+    span_x = max(max_x - min_x, 1)
+    span_y = max(max_y - min_y, 1)
+    min_x -= span_x * 0.2 + 1
+    max_x += span_x * 0.2 + 1
+    min_y -= span_y * 0.2 + 1
+    max_y += span_y * 0.2 + 1
+
+    def to_px(x, y):
+        px = left + (x - min_x) / (max_x - min_x) * (right - left)
+        py = bottom - (y - min_y) / (max_y - min_y) * (bottom - top)
+        return px, py
+
+    draw.rectangle([left, top, right, bottom], outline=color, width=1)
+
+    x0_px, _ = to_px(0, min_y)
+    _, y0_px = to_px(min_x, 0)
+    draw.line([(x0_px, top), (x0_px, bottom)], fill=color, width=2)
+    draw.line([(left, y0_px), (right, y0_px)], fill=color, width=2)
+
+    p1, p2 = to_px(x1, y1), to_px(x2, y2)
+    if show_line:
+        draw.line([p1, p2], fill=color, width=3)
+
+    # Push each label away from the connecting line (along the p1<->p2 direction,
+    # outward from whichever point it belongs to) instead of a fixed up/right offset --
+    # a fixed offset puts the label directly in the line's path whenever the segment
+    # happens to run through that corner of the point (e.g. the lower-left point on an
+    # upward-sloping line, where "above and to the right" is exactly where the line goes).
+    r = 7
+    seg_dx, seg_dy = p2[0] - p1[0], p2[1] - p1[1]
+    seg_len = math.hypot(seg_dx, seg_dy) or 1
+    ux, uy = seg_dx / seg_len, seg_dy / seg_len
+    gap = 32
+    for (px, py), label, sign in [(p1, f"({x1}, {y1})", -1), (p2, f"({x2}, {y2})", 1)]:
+        draw.ellipse([px - r, py - r, px + r, py + r], fill=color)
+        bbox = draw.textbbox((0, 0), label, font=font)
+        tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
+        label_x = px + sign * ux * gap - tw / 2
+        label_y = py + sign * uy * gap - th / 2
+        # Keep the label inside the plotting box even after the directional offset.
+        label_x = max(left + 2, min(label_x, right - tw - 2))
+        label_y = max(top + 2, min(label_y, bottom - th - 2))
+        draw.text((label_x, label_y), label, fill=color, font=font)
+
+    if show_midpoint:
+        mx, my = (x1 + x2) / 2, (y1 + y2) / 2
+        pm = to_px(mx, my)
+        draw.ellipse([pm[0] - 6, pm[1] - 6, pm[0] + 6, pm[1] + 6], fill=color)
+
+
 def _gen_coordgeo(difficulty):
     if difficulty == "hard":
         kind = random.choice(["slope", "distance_decimal"])
@@ -994,7 +1060,8 @@ def _gen_coordgeo(difficulty):
             answer = f"{dist:.1f}"
             wrongs = [str(dx + dy), f"{dist + 1:.1f}", str(dx * dy)]
             question_text = f"Find the distance between ({x1}, {y1}) and ({x2}, {y2}) (round to 1 decimal):"
-        return {"question_text": question_text, "display": None, "answer": answer, "wrongs": wrongs}
+        shape_fn = lambda d, f, w, h, yo, c: _draw_coord_plane(d, f, w, h, yo, c, x1, y1, x2, y2)
+        return {"question_text": question_text, "shape_fn": shape_fn, "answer": answer, "wrongs": wrongs}
 
     kind = random.choice(["midpoint", "distance_triple"])
     if kind == "midpoint":
@@ -1005,6 +1072,7 @@ def _gen_coordgeo(difficulty):
         answer = f"({mx}, {my})"
         wrongs = [f"({x1 + x2}, {y1 + y2})", f"({my}, {mx})", f"({mx + 1}, {my})"]
         question_text = f"Find the midpoint of ({x1}, {y1}) and ({x2}, {y2}):"
+        shape_fn = lambda d, f, w, h, yo, c: _draw_coord_plane(d, f, w, h, yo, c, x1, y1, x2, y2, show_midpoint=True)
     else:
         a, b, c = random.choice(_PYTHAGOREAN_TRIPLES)
         if random.choice([True, False]):
@@ -1014,8 +1082,9 @@ def _gen_coordgeo(difficulty):
         answer = str(c)
         wrongs = [str(a + b), str(round(math.sqrt(a * b), 1)), str(c + 1)]
         question_text = f"Find the distance between ({x1}, {y1}) and ({x2}, {y2}):"
+        shape_fn = lambda d, f, w, h, yo, col: _draw_coord_plane(d, f, w, h, yo, col, x1, y1, x2, y2)
 
-    return {"question_text": question_text, "display": None, "answer": answer, "wrongs": wrongs}
+    return {"question_text": question_text, "shape_fn": shape_fn, "answer": answer, "wrongs": wrongs}
 
 
 def _check_coordgeo(guess, answer):
@@ -1106,8 +1175,8 @@ def generate_question(category_url, difficulty):
     question_text as a separate caption."""
     if category_url not in _GENERATORS:
         raise ValueError(f"Unknown category: {category_url}")
-    spec = _GENERATORS[category_url](difficulty)
 
+    spec = _GENERATORS[category_url](difficulty)
     shape_fn = spec.get("shape_fn")
     math_line = spec.get("display")
     header_color = random.choice(_NEON_COLORS)
@@ -1117,6 +1186,7 @@ def generate_question(category_url, difficulty):
         content_color = random.choice([c for c in _NEON_COLORS if c != header_color])
     else:
         content_color = header_color
+
     image_buffer = _render_composed_image(
         spec["question_text"], math_line=math_line, shape_fn=shape_fn,
         header_color=header_color, content_color=content_color,
