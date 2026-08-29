@@ -21327,6 +21327,8 @@ async def process_round_options(round_winner, winner_points, round_winner_id, wi
             "🤓🔍 **Poindexter**: Stricter answers\n"
             "⛳📉 **Golf**: Slowest answers win\n"
             "🔐🛡️ **Glyph**: Add anti-Google defenses\n"
+            "🎖🥒 **Dicktator**: Choose the categories\n"
+            "🍑🔪 **Assassin**: Previous winner picks\n"
 
             "\n🕹️: Toggle mid-round with **#[command]**"
             "\n⛳: Golf excluded\n\n"
@@ -21341,8 +21343,6 @@ async def process_round_options(round_winner, winner_points, round_winner_id, wi
             "📰❌ **Cross**: No Crossword clues\n"
             "📰✋ **Word**: More Crossword clues\n"
             "🤓📝 **Nerd**: Add SAT questions\n"
-            "🎖🥒 **Dicktator**: Choose the categories\n"
-            "🍑🔪 **Assassin**: Previous winner picks\n"
             "\n🏁⏭️ **x**: I'm Done / Skip\n"
         )
         await safe_send(channel, message)
