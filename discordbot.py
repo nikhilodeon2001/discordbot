@@ -433,9 +433,9 @@ async def send_question_queen_submit_ad():
 okra_lab_announcement_enabled = True
 okra_lab_announcement_text = (
     "😱🔢 A math-focused update just landed!\n\n"
+    "🔢 In-game math trivia got smarter — more categories, now presented as multiple choice with realistic wrong answers\n"
     "🎮 **Greg's Nightmare** — a new mini-game with 10 math categories, Normal/Hard difficulty, and multiple choice or typed answers\n"
-    "🔢 **Gerg** — a new round modifier for more in-game math questions (stacks fairly with Alex/Word/Nerd/Bondage)\n"
-    "🔢 In-game math trivia got smarter too — more categories, now presented as multiple choice with realistic wrong answers\n\n"
+    "🔢 **Gerg** — a new round modifier for more in-game math questions (stacks fairly with Alex/Word/Nerd/Bondage)\n\n"
     "▶️ Type `67` after winning a round to pick Greg's Nightmare, `gerg` for more in-game math questions, or try `/arena game_name:\"greg's nightmare\"`\n"
 )
 okra_lab_announcement_show_new_badge = True
