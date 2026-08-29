@@ -25669,10 +25669,6 @@ async def start_trivia():
                 # the button reflects the true time left and hits 0 exactly at question_asked_end —
                 # matching the phone/web pill (which uses Math.ceil) — instead of accumulating per-edit
                 # drift from a fixed-count sleep(1) loop.
-                DISCO_FLASH_INTERVAL = 0.35  # separate, faster cadence than the 1s footer tick below --
-                # Discord's per-message edit rate limit (commonly ~5 req/5s) may throttle this in
-                # practice; discord.py sleeps and retries on 429 rather than raising, so the failure
-                # mode is a slower-than-requested flicker, not a broken loop.
                 while True:
                     remaining = max(0, math.ceil(question_asked_end - time.time()))
                     if current_question_embed is not None:
@@ -25683,9 +25679,12 @@ async def start_trivia():
                             new_footer = f"{current_footer_base_text}\n\n{timer_line}" if current_footer_base_text else timer_line
                             current_question_embed.set_footer(text=new_footer)
                         if current_disco_urls is not None:
-                            # Wall-clock-synced, like the countdown itself -- so the flash rate doesn't
-                            # drift with per-edit latency the way a plain tick counter would.
-                            toggle_idx = int((time.time() - question_asked_start) / DISCO_FLASH_INTERVAL) % 2
+                            # Rides the same once-per-second tick as the countdown -- a separate,
+                            # faster edit loop was tried first but Discord's per-message edit rate
+                            # limit (commonly ~5 req/5s) throttled it into a sporadic-looking flicker
+                            # instead of a smooth strobe. One flash per tick, wall-clock-synced like
+                            # `remaining` itself, stays reliably in sync with the countdown instead.
+                            toggle_idx = int(time.time() - question_asked_start) % 2
                             flash_url = current_disco_urls[toggle_idx]
                             if current_disco_secondary_embed is not None:
                                 current_disco_secondary_embed.set_image(url=flash_url)
@@ -25700,8 +25699,7 @@ async def start_trivia():
                             break
                     if remaining <= 0:
                         break
-                    tick_interval = DISCO_FLASH_INTERVAL if current_disco_urls is not None else 1.0
-                    await asyncio.sleep(min(tick_interval, max(0.0, question_asked_end - time.time())))
+                    await asyncio.sleep(min(1.0, max(0.0, question_asked_end - time.time())))
                 # Grading grace: let a last-instant in-flight Discord message arrive before we snapshot
                 # collected_responses (the old slow countdown provided this buffer implicitly).
                 await asyncio.sleep(1)
