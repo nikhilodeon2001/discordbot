@@ -8854,7 +8854,8 @@ async def ask_chaos_challenge(winner, winner_id, num_of_games):
         ask_rapidfire_challenge,
         ask_valedictorian_challenge,  # full elimination game, not a single quick round like its CHAOS siblings
         ask_okra_says_challenge,
-        ask_buzz_words_challenge
+        ask_buzz_words_challenge,
+        ask_gregs_nightmare_challenge
     ]
 
     if len(round_responders) < 2:
@@ -18992,6 +18993,8 @@ async def select_wof_questions(winner, winner_id, winner_coffees=None):
         message += f"{counter}.\u200b 🎓📚 Valedictorian (2+ players)\n"
         counter = counter + 1
         message += f"{counter}.\u200b 🐝🔤 Buzz Words 🎧\n"
+        counter = counter + 1
+        message += f"{counter}.\u200b 😱🔢 Greg's Nightmare\n"
         message += f"99.\u200b 🌀🤯 CHAOS\n"
         
         message += f"\n⚙️ **Other Options**\n"
@@ -19223,6 +19226,11 @@ async def select_wof_questions(winner, winner_id, winner_coffees=None):
 
         elif selected_wof_category == "50":
             await ask_buzz_words_challenge(winner, winner_id, 5)
+            await asyncio.sleep(3)
+            return None
+
+        elif selected_wof_category == "51":
+            await ask_gregs_nightmare_challenge(winner, winner_id, 5)
             await asyncio.sleep(3)
             return None
 
@@ -19518,10 +19526,11 @@ async def ask_wof_number(winner, winner_id, cached_coffees=None, menu_text=None,
         "48": "The Genie",
         "49": "Valedictorian",
         "50": "Buzz Words",
+        "51": "Greg's Nightmare",
         "99": "CHAOS"
     }
     multiplayer_required = {"40", "47", "49"}  # OkRACE, Okra Says, Valedictorian -- these auto-win/abort instead of really playing with 1 player
-    all_options = {str(i) for i in range(51)} | {"00", "x", "99"}
+    all_options = {str(i) for i in range(52)} | {"00", "x", "99"}
 
     # The ~46 minigames (5-50) aren't offered via button/select at all -- 51+ choices would
     # need the group->item cascade from build_option_select_view's `groups`, and a 2-page
@@ -19567,7 +19576,7 @@ async def ask_wof_number(winner, winner_id, cached_coffees=None, menu_text=None,
             if content == "00":
                 await message.add_reaction("\U0001f44d")
                 set_a = [str(i) for i in range(5)]
-                set_b = [str(i) for i in range(5, 51)]
+                set_b = [str(i) for i in range(5, 52)]
                 if len(round_responders) < 2:
                     set_b = [g for g in set_b if g not in multiplayer_required]
                 set_b = [g for g in set_b if g not in RANDOM_EXCLUDED_NUMBERS]
@@ -25937,6 +25946,7 @@ def get_minigame_name(number):
         "48": "The Genie",
         "49": "Valedictorian",
         "50": "Buzz Words",
+        "51": "Greg's Nightmare",
         "99": "CHAOS",
         "x": "Skip Mini Game"
     }
