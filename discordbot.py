@@ -432,12 +432,11 @@ async def send_question_queen_submit_ad():
 # the same text is correct whether this deploy is staging or prod.
 okra_lab_announcement_enabled = True
 okra_lab_announcement_text = (
-    "😱🔢 **Greg's Nightmare** just joined the Arena!\n\n"
-    "📚 10 math categories — algebra, geometry, trig, calculus, stats, and more\n"
-    "⚙️ Pick **Normal** or **Hard** difficulty\n"
-    "🖱️ Answer by **multiple choice** or by **typing it in**\n"
-    "⏱️ Race the clock on procedurally generated problems\n\n"
-    "▶️ Try `/arena game_name:\"greg's nightmare\"`\n"
+    "😱🔢 A math-focused update just landed!\n\n"
+    "🎮 **Greg's Nightmare** — a new mini-game with 10 math categories, Normal/Hard difficulty, and multiple choice or typed answers\n"
+    "🔢 In-game math trivia got smarter too — more categories, now presented as multiple choice with realistic wrong answers\n"
+    "📰 **Gerg** — a new round modifier for more in-game math questions (stacks fairly with Alex/Word/Nerd/Bondage)\n\n"
+    "▶️ Try `/arena game_name:\"greg's nightmare\"`, or type `gerg` after winning a round\n"
 )
 okra_lab_announcement_show_new_badge = True
 
@@ -1081,9 +1080,11 @@ current_question_embed = None
 current_footer_base_text = None
 pending_intro_preview_view = None  # Currently-live #newintro/#uploadintro confirmation, if any
 answer_buttons_enabled = True  # Feature flag: click-to-answer buttons on multiple-choice trivia questions
-jeopardy_boosted = False  # Set by "Alex"/"Xela" this round - signals 3-way coordination with crossword/SAT boosts
+jeopardy_boosted = False  # Set by "Alex"/"Xela" this round - signals coordination with crossword/SAT/math/mysterybox boosts
 crossword_boosted = False  # Set by "Word"/"Cross" this round
 sat_boosted = False  # Set by "Nerd" this round
+math_boosted = False  # Set by "Gerg"/"Greg" this round
+mysterybox_boosted = False  # Set by "Bondage"/"Freedom" this round
 
 ops = {
     '+': operator.add,
@@ -6201,10 +6202,10 @@ _KEYWORD_EFFECTS = {
               lambda rw_id: _set_globals(ghost_mode=1)),
     "freedom": ("🇺🇸 Freedom (no multiple choice)",
                 "🇺🇸🗽 {mention} has broken the chains. No multiple choice.", "Freedom",
-                lambda rw_id: _set_globals(num_mysterybox_clues=0)),
+                lambda rw_id: _set_globals(num_mysterybox_clues=0, mysterybox_boosted=False)),
     "bondage": ("⛓️ Bondage (more multiple choice)",
                 "⛓️🔐 {mention} has put on the cuffs. More multiple choice, less free will.", "Bondage",
-                lambda rw_id: _set_globals(num_mysterybox_clues=max(questions_per_round - num_jeopardy_clues - num_crossword_clues, 1))),
+                lambda rw_id: _set_globals(num_mysterybox_clues=max(questions_per_round - num_jeopardy_clues - num_crossword_clues, 1), mysterybox_boosted=True)),
     "alex": ("🟦 Alex (more Jeopardy)",
              "🟦✋ {mention} wants more Jeopardy questions.", "Alex",
              lambda rw_id: _set_globals(num_jeopardy_clues=5, jeopardy_boosted=True)),
@@ -6213,7 +6214,10 @@ _KEYWORD_EFFECTS = {
              lambda rw_id: _set_globals(num_jeopardy_clues=0, jeopardy_boosted=False)),
     "greg": ("📰 Greg (no math)",
              "📰✏️ {mention} hates math. What a 'Greg'.", "Greg",
-             lambda rw_id: _set_globals(num_math_questions=0)),
+             lambda rw_id: _set_globals(num_math_questions=0, math_boosted=False)),
+    "gerg": ("📰 Gerg (more math)",
+             "📰✏️ {mention} loves math. What a 'Gerg'.", "Gerg",
+             lambda rw_id: _set_globals(num_math_questions=5, math_boosted=True)),
     "cross": ("📰❌ Cross (no crossword)",
               "📰❌ {mention} has crossed off all Crossword questions.", "Cross",
               lambda rw_id: _set_globals(num_crossword_clues=0, crossword_boosted=False)),
@@ -20964,7 +20968,7 @@ def generate_crossword_image(answer, prefill=0.5):
 
 
 async def clear_round_options():
-    global since_token, time_between_questions, time_between_questions_default, question_time, question_time_default, ghost_mode, since_token, categories_to_exclude, num_crossword_clues, num_jeopardy_clues, num_mysterybox_clues, num_wof_clues, num_sat_questions, jeopardy_boosted, crossword_boosted, sat_boosted, god_mode, quickie_mode, last_question_winner, last_question_winner_id, yolo_mode, magic_number, wf_winner, num_math_questions, num_stats_questions, image_questions, nice_okra, creep_okra, marx_mode, blind_mode, seductive_okra, joke_okra, sniper_mode, blitz_mode, exact_mode, golf_mode, glyph_mode, cloak_mode, cloaked_user, haiku_okra, trailer_okra, heist_okra, horoscope_okra, rap_okra, shakespeare_okra, pirate_okra, noir_okra, hype_okra, roast_okra
+    global since_token, time_between_questions, time_between_questions_default, question_time, question_time_default, ghost_mode, since_token, categories_to_exclude, num_crossword_clues, num_jeopardy_clues, num_mysterybox_clues, num_wof_clues, num_sat_questions, jeopardy_boosted, crossword_boosted, sat_boosted, math_boosted, mysterybox_boosted, god_mode, quickie_mode, last_question_winner, last_question_winner_id, yolo_mode, magic_number, wf_winner, num_math_questions, num_stats_questions, image_questions, nice_okra, creep_okra, marx_mode, blind_mode, seductive_okra, joke_okra, sniper_mode, blitz_mode, exact_mode, golf_mode, glyph_mode, cloak_mode, cloaked_user, haiku_okra, trailer_okra, heist_okra, horoscope_okra, rap_okra, shakespeare_okra, pirate_okra, noir_okra, hype_okra, roast_okra
     time_between_questions = time_between_questions_default
     question_time = question_time_default
     ghost_mode = ghost_mode_default
@@ -20977,6 +20981,8 @@ async def clear_round_options():
     jeopardy_boosted = False
     crossword_boosted = False
     sat_boosted = False
+    math_boosted = False
+    mysterybox_boosted = False
     god_mode = god_mode_default
     quickie_mode = quickie_mode_default
     last_question_winner = None
@@ -21066,7 +21072,7 @@ async def process_round_options(round_winner, winner_points, round_winner_id, wi
 async def prompt_user_for_response(round_winner, winner_points, winner_coffees, round_winner_id, menu_text=None):
     global since_token, time_between_questions, question_time, question_time_default, ghost_mode
     global num_jeopardy_clues, num_crossword_clues, num_mysterybox_clues, num_wof_clues
-    global num_sat_questions, jeopardy_boosted, crossword_boosted, sat_boosted
+    global num_sat_questions, jeopardy_boosted, crossword_boosted, sat_boosted, math_boosted, mysterybox_boosted
     global yolo_mode, god_mode, quickie_mode, num_math_questions, num_stats_questions
     global image_questions, marx_mode, blind_mode, sniper_mode, blitz_mode, exact_mode, glyph_mode, golf_mode, cloak_mode, cloaked_user
 
@@ -21083,6 +21089,7 @@ async def prompt_user_for_response(round_winner, winner_points, winner_coffees, 
         "alex": {"requires_coffee": False, "exclude_hashtag": False},
         "xela": {"requires_coffee": False, "exclude_hashtag": False},
         "greg": {"requires_coffee": False, "exclude_hashtag": False},
+        "gerg": {"requires_coffee": False, "exclude_hashtag": False},
         "cross": {"requires_coffee": False, "exclude_hashtag": False},
         "word": {"requires_coffee": False, "exclude_hashtag": False},
         "nerd": {"requires_coffee": False, "exclude_hashtag": False},
@@ -24024,25 +24031,35 @@ async def select_trivia_questions(questions_per_round):
             "sat": []
         }
 
-        # Coordinate jeopardy/crossword/SAT clue counts when 2+ of Alex/Word/Nerd are boosted
-        # this round - the independent min(num_X, remaining) consumption below only produces
-        # the desired "5 of each" / "3 each + 1" split once these three are reconciled together,
-        # since jeopardy's passive default (3) would otherwise eat slots meant for the others.
-        boosted = [name for name, flag in
-                   [("jeopardy", jeopardy_boosted), ("crossword", crossword_boosted), ("sat", sat_boosted)]
-                   if flag]
-        effective_jeopardy_clues = num_jeopardy_clues
-        effective_crossword_clues = num_crossword_clues
-        effective_sat_questions = num_sat_questions
-        if len(boosted) == 2:
-            effective_jeopardy_clues = 5 if "jeopardy" in boosted else 0
-            effective_crossword_clues = 5 if "crossword" in boosted else 0
-            effective_sat_questions = 5 if "sat" in boosted else 0
-        elif len(boosted) == 3:
-            extra = random.choice(boosted)
-            effective_jeopardy_clues = 3 + (1 if extra == "jeopardy" else 0)
-            effective_crossword_clues = 3 + (1 if extra == "crossword" else 0)
-            effective_sat_questions = 3 + (1 if extra == "sat" else 0)
+        # Coordinate jeopardy/crossword/SAT/math/mysterybox clue counts when 2+ of
+        # Alex/Word/Nerd/Gerg/Bondage are boosted this round - the independent
+        # min(num_X, remaining) consumption below only produces a fair split once these
+        # are reconciled together, since each one's passive default would otherwise eat
+        # slots meant for the others. Splits questions_per_round evenly (base + a
+        # randomly-distributed remainder) across whichever subset is boosted; reproduces
+        # the historical 5/5 (2-way) and 3/3/4 (3-way) jeopardy/crossword/sat splits
+        # exactly when questions_per_round == 10, and now also covers 4-way/5-way
+        # combinations that include math and/or mysterybox.
+        boost_group = [
+            ("jeopardy", jeopardy_boosted), ("crossword", crossword_boosted), ("sat", sat_boosted),
+            ("math", math_boosted), ("mysterybox", mysterybox_boosted),
+        ]
+        boosted = [name for name, flag in boost_group if flag]
+        effective = {
+            "jeopardy": num_jeopardy_clues, "crossword": num_crossword_clues, "sat": num_sat_questions,
+            "math": num_math_questions, "mysterybox": num_mysterybox_clues,
+        }
+        if len(boosted) >= 2:
+            base = questions_per_round // len(boosted)
+            remainder = questions_per_round - base * len(boosted)
+            bonus = set(random.sample(boosted, remainder)) if remainder else set()
+            for name, _ in boost_group:
+                effective[name] = (base + (1 if name in bonus else 0)) if name in boosted else 0
+        effective_jeopardy_clues = effective["jeopardy"]
+        effective_crossword_clues = effective["crossword"]
+        effective_sat_questions = effective["sat"]
+        effective_math_questions = effective["math"]
+        effective_mysterybox_clues = effective["mysterybox"]
 
         sample_size = min(effective_crossword_clues, questions_per_round - len(selected_questions))
         if sample_size > 0:
@@ -24096,8 +24113,11 @@ async def select_trivia_questions(questions_per_round):
             question_ids_to_store["sat"].extend(doc["_id"] for doc in sat_questions)
 
 
-        num_math_questions_mod = random.randint(0, num_math_questions)
-        sample_size = min(num_math_questions_mod, questions_per_round - len(selected_questions))
+        if len(boosted) >= 2:
+            math_sample_target = effective_math_questions
+        else:
+            math_sample_target = random.randint(1, num_math_questions) if num_math_questions > 0 else 0
+        sample_size = min(math_sample_target, questions_per_round - len(selected_questions))
         if sample_size > 0:
             math_questions = [get_math_question() for _ in range(sample_size)]
 
@@ -24130,7 +24150,7 @@ async def select_trivia_questions(questions_per_round):
             selected_questions.extend(wof_questions)
             question_ids_to_store["wof"].extend(doc["_id"] for doc in wof_questions)
  
-        sample_size = min(num_mysterybox_clues, questions_per_round - len(selected_questions))
+        sample_size = min(effective_mysterybox_clues, questions_per_round - len(selected_questions))
         if sample_size > 0:
             mysterybox_collection = db["mysterybox_questions"]
             pipeline_mysterybox = [

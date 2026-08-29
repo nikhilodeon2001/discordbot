@@ -35,6 +35,20 @@ CATEGORIES = [
 
 CATEGORY_URLS = {c["url"] for c in CATEGORIES}
 
+# One of these is picked at random per question (not per category) -- high-saturation,
+# high-brightness colors chosen to read clearly against the black canvas background.
+_NEON_COLORS = [
+    (57, 255, 20),    # neon green
+    (255, 16, 240),   # neon magenta
+    (0, 255, 255),    # neon cyan
+    (255, 255, 0),    # neon yellow
+    (255, 95, 31),    # neon orange
+    (0, 191, 255),    # neon sky blue
+    (191, 0, 255),    # neon purple
+    (255, 7, 58),     # neon red
+    (0, 255, 128),    # neon spring green
+]
+
 
 # ---------------------------------------------------------------------------
 # Shared helpers
@@ -93,7 +107,7 @@ def _draw_centered_lines(draw, lines, font, y, width, color):
     return y
 
 
-def _render_composed_image(question_text, math_line=None, shape_fn=None, color=(255, 255, 255)):
+def _render_composed_image(question_text, math_line=None, shape_fn=None, color=(57, 255, 20)):
     """Renders the *entire* question -- instruction text plus the math content (an
     expression/dataset, or a drawn diagram) -- into one self-contained image, with
     real word-wrapping so long sentences (e.g. probability's full word problems)
@@ -130,11 +144,11 @@ def _render_composed_image(question_text, math_line=None, shape_fn=None, color=(
     img = Image.new("RGB", (width, height), color=(0, 0, 0))
     draw = ImageDraw.Draw(img)
 
-    y = _draw_centered_lines(draw, header_lines, header_font, margin, width, (255, 255, 255))
+    y = _draw_centered_lines(draw, header_lines, header_font, margin, width, color)
     y += spacing
 
     if shape_fn is not None:
-        shape_fn(draw, _get_font(28), width, shape_height, y)
+        shape_fn(draw, _get_font(28), width, shape_height, y, color)
     elif math_line:
         _draw_centered_lines(draw, body_lines, body_font, y, width, color)
 
@@ -404,33 +418,33 @@ def _check_algebra(guess, answer):
 # Geometry
 # ---------------------------------------------------------------------------
 
-def _draw_rectangle(draw, font, w, h, base, height, y_offset=0):
+def _draw_rectangle(draw, font, w, h, base, height, y_offset=0, color=(57, 255, 20)):
     x0, y0, x1, y1 = 100, 80 + y_offset, 400, 260 + y_offset
-    draw.rectangle([x0, y0, x1, y1], outline=(255, 255, 255), width=4)
-    draw.text(((x0 + x1) // 2 - 10, y1 + 10), str(base), fill=(255, 220, 0), font=font)
-    draw.text((x1 + 15, (y0 + y1) // 2 - 15), str(height), fill=(255, 220, 0), font=font)
+    draw.rectangle([x0, y0, x1, y1], outline=color, width=4)
+    draw.text(((x0 + x1) // 2 - 10, y1 + 10), str(base), fill=color, font=font)
+    draw.text((x1 + 15, (y0 + y1) // 2 - 15), str(height), fill=color, font=font)
 
 
-def _draw_circle(draw, font, w, h, radius_label, y_offset=0):
+def _draw_circle(draw, font, w, h, radius_label, y_offset=0, color=(57, 255, 20)):
     cx, cy, r = 250, 170 + y_offset, 100
-    draw.ellipse([cx - r, cy - r, cx + r, cy + r], outline=(255, 255, 255), width=4)
-    draw.line([cx, cy, cx + r, cy], fill=(255, 220, 0), width=3)
-    draw.text((cx + r // 2 - 10, cy - 35), str(radius_label), fill=(255, 220, 0), font=font)
+    draw.ellipse([cx - r, cy - r, cx + r, cy + r], outline=color, width=4)
+    draw.line([cx, cy, cx + r, cy], fill=color, width=3)
+    draw.text((cx + r // 2 - 10, cy - 35), str(radius_label), fill=color, font=font)
 
 
-def _draw_right_triangle(draw, font, w, h, leg_a, leg_b, hyp, unknown, y_offset=0):
+def _draw_right_triangle(draw, font, w, h, leg_a, leg_b, hyp, unknown, y_offset=0, color=(57, 255, 20)):
     x0, y0 = 100, 280 + y_offset
     x1, y1 = 400, 280 + y_offset
     x2, y2 = 100, 80 + y_offset
-    draw.polygon([(x0, y0), (x1, y1), (x2, y2)], outline=(255, 255, 255), width=4)
-    draw.rectangle([x0, y0 - 18, x0 + 18, y0], outline=(255, 255, 255), width=2)
+    draw.polygon([(x0, y0), (x1, y1), (x2, y2)], outline=color, width=4)
+    draw.rectangle([x0, y0 - 18, x0 + 18, y0], outline=color, width=2)
     bottom_label = "?" if unknown == "base" else str(leg_a)
     side_label = "?" if unknown == "height" else str(leg_b)
-    draw.text(((x0 + x1) // 2 - 10, y0 + 10), bottom_label, fill=(255, 220, 0), font=font)
-    draw.text((x0 - 45, (y0 + y2) // 2 - 15), side_label, fill=(255, 220, 0), font=font)
+    draw.text(((x0 + x1) // 2 - 10, y0 + 10), bottom_label, fill=color, font=font)
+    draw.text((x0 - 45, (y0 + y2) // 2 - 15), side_label, fill=color, font=font)
     if hyp is not None:
         hyp_label = "?" if unknown == "hyp" else str(hyp)
-        draw.text(((x1 + x2) // 2 + 10, (y1 + y2) // 2 - 25), hyp_label, fill=(255, 220, 0), font=font)
+        draw.text(((x1 + x2) // 2 + 10, (y1 + y2) // 2 - 25), hyp_label, fill=color, font=font)
 
 
 def _gen_geometry(difficulty):
@@ -443,7 +457,7 @@ def _gen_geometry(difficulty):
         hyp = round(math.sqrt(leg_a ** 2 + leg_b ** 2), 1)
         answer = f"{hyp:.1f}"
         wrongs = [str(leg_a + leg_b), f"{round(math.sqrt(leg_a * leg_b), 1):.1f}", f"{hyp + 1:.1f}"]
-        shape_fn = lambda d, f, w, h, yo: _draw_right_triangle(d, f, w, h, leg_a, leg_b, hyp, unknown, yo)
+        shape_fn = lambda d, f, w, h, yo, c: _draw_right_triangle(d, f, w, h, leg_a, leg_b, hyp, unknown, yo, c)
         return {
             "question_text": "Find the length of the hypotenuse (round to 1 decimal):",
             "shape_fn": shape_fn,
@@ -460,7 +474,7 @@ def _gen_geometry(difficulty):
         question_text = f"Find the {'area' if ask_area else 'perimeter'} of the rectangle:"
         wrongs = [str(2 * (base + height) if ask_area else base * height),
                   str(base + height), str(answer_val + base)]
-        shape_fn = lambda d, f, w, h, yo: _draw_rectangle(d, f, w, h, base, height, yo)
+        shape_fn = lambda d, f, w, h, yo, c: _draw_rectangle(d, f, w, h, base, height, yo, c)
     elif shape == "circle":
         r = random.randint(3, 12)
         ask_area = random.choice([True, False])
@@ -469,14 +483,14 @@ def _gen_geometry(difficulty):
         wrongs = [f"{round(2 * 3.14 * r, 1) if ask_area else round(3.14 * r * r, 1):.1f}",
                   f"{round(3.14 * (2 * r) if ask_area else 3.14 * (2 * r) * (2 * r), 1):.1f}",
                   f"{answer_val + 1:.1f}"]
-        shape_fn = lambda d, f, w, h, yo: _draw_circle(d, f, w, h, r, yo)
+        shape_fn = lambda d, f, w, h, yo, c: _draw_circle(d, f, w, h, r, yo, c)
     else:
         base = random.randint(4, 16)
         height = random.randint(4, 16)
         answer_val = round(0.5 * base * height, 1)
         question_text = "Find the area of the triangle:"
         wrongs = [str(base * height), f"{round(0.5 * (base + height), 1):.1f}", f"{answer_val + 1:.1f}"]
-        shape_fn = lambda d, f, w, h, yo: _draw_right_triangle(d, f, w, h, base, height, None, None, yo)
+        shape_fn = lambda d, f, w, h, yo, c: _draw_right_triangle(d, f, w, h, base, height, None, None, yo, c)
 
     answer = f"{answer_val:.1f}" if isinstance(answer_val, float) and not float(answer_val).is_integer() else str(int(answer_val))
     return {"question_text": question_text, "shape_fn": shape_fn, "answer": answer, "wrongs": wrongs}
@@ -499,16 +513,16 @@ _TRIG_ANGLES = [0, 30, 45, 60, 90]
 _RATIO_MAP = {"sin": "y/z", "cos": "x/z", "tan": "y/x", "cot": "x/y", "sec": "z/x", "csc": "z/y"}
 
 
-def _draw_ratio_triangle(draw, font, w, h, y_offset=0):
+def _draw_ratio_triangle(draw, font, w, h, y_offset=0, color=(57, 255, 20)):
     x0, y0 = 100, 280 + y_offset
     x1, y1 = 400, 280 + y_offset
     x2, y2 = 100, 80 + y_offset
-    draw.polygon([(x0, y0), (x1, y1), (x2, y2)], outline=(255, 255, 255), width=4)
-    draw.rectangle([x0, y0 - 18, x0 + 18, y0], outline=(255, 255, 255), width=2)
-    draw.text((x1 - 55, y1 - 45), "θ", fill=(0, 200, 255), font=font)
-    draw.text(((x0 + x1) // 2 - 5, y0 + 10), "x", fill=(255, 220, 0), font=font)
-    draw.text((x0 - 35, (y0 + y2) // 2 - 15), "y", fill=(255, 220, 0), font=font)
-    draw.text(((x1 + x2) // 2 + 10, (y1 + y2) // 2 - 25), "z", fill=(255, 220, 0), font=font)
+    draw.polygon([(x0, y0), (x1, y1), (x2, y2)], outline=color, width=4)
+    draw.rectangle([x0, y0 - 18, x0 + 18, y0], outline=color, width=2)
+    draw.text((x1 - 55, y1 - 45), "θ", fill=color, font=font)
+    draw.text(((x0 + x1) // 2 - 5, y0 + 10), "x", fill=color, font=font)
+    draw.text((x0 - 35, (y0 + y2) // 2 - 15), "y", fill=color, font=font)
+    draw.text(((x1 + x2) // 2 + 10, (y1 + y2) // 2 - 25), "z", fill=color, font=font)
 
 
 def _gen_trig_ratio():
@@ -549,19 +563,19 @@ def _gen_trig(difficulty):
         leg_b = round(values["opposite"], 1) if unknown != "opposite" else "?"
         hyp_disp = round(values["hyp"], 1) if unknown != "hyp" else "?"
 
-        def draw(d, f, w, h, yo=0):
+        def draw(d, f, w, h, yo=0, color=(57, 255, 20)):
             x0, y0 = 100, 280 + yo
             x1, y1 = 400, 280 + yo
             x2, y2 = 100, 80 + yo
-            d.polygon([(x0, y0), (x1, y1), (x2, y2)], outline=(255, 255, 255), width=4)
-            d.rectangle([x0, y0 - 18, x0 + 18, y0], outline=(255, 255, 255), width=2)
+            d.polygon([(x0, y0), (x1, y1), (x2, y2)], outline=color, width=4)
+            d.rectangle([x0, y0 - 18, x0 + 18, y0], outline=color, width=2)
             # adjacent (leg_a) runs x0->x1 and opposite (leg_b) runs x0->x2, so the
             # angle they're measured from sits at the OTHER acute vertex, (x1, y1) --
             # not next to the right-angle marker at (x0, y0).
-            d.text((x1 - 70, y1 - 45), f"{angle}°", fill=(0, 200, 255), font=f)
-            d.text(((x0 + x1) // 2 - 10, y0 + 10), str(leg_a), fill=(255, 220, 0), font=f)
-            d.text((x0 - 55, (y0 + y2) // 2 - 15), str(leg_b), fill=(255, 220, 0), font=f)
-            d.text(((x1 + x2) // 2 + 10, (y1 + y2) // 2 - 25), str(hyp_disp), fill=(255, 220, 0), font=f)
+            d.text((x1 - 70, y1 - 45), f"{angle}°", fill=color, font=f)
+            d.text(((x0 + x1) // 2 - 10, y0 + 10), str(leg_a), fill=color, font=f)
+            d.text((x0 - 55, (y0 + y2) // 2 - 15), str(leg_b), fill=color, font=f)
+            d.text(((x1 + x2) // 2 + 10, (y1 + y2) // 2 - 25), str(hyp_disp), fill=color, font=f)
 
         wrongs = [f"{round(values[given_side] * math.tan(rad), 1):.1f}",
                   f"{answer_val + 1:.1f}", f"{round(given_val * math.sin(rad), 1):.1f}"]
@@ -1083,20 +1097,6 @@ _CHECKERS = {
     "explog": _check_explog,
 }
 
-_COLORS = {
-    "algebra": (200, 162, 200),
-    "geometry": (255, 220, 0),
-    "trig": (0, 200, 255),
-    "calculus": (255, 255, 0),
-    "stats": (255, 92, 0),
-    "numbertheory": (0, 255, 150),
-    "probability": (255, 100, 180),
-    "sequences": (150, 200, 255),
-    "coordgeo": (200, 255, 100),
-    "explog": (255, 150, 60),
-}
-
-
 def generate_question(category_url, difficulty):
     """Returns a dict: question_text, image_buffer, plain_text, answer, mc_choices.
     image_buffer is the ONLY presentation of the question -- it always contains the
@@ -1109,8 +1109,9 @@ def generate_question(category_url, difficulty):
 
     shape_fn = spec.get("shape_fn")
     math_line = spec.get("display")
+    color = random.choice(_NEON_COLORS)
     image_buffer = _render_composed_image(
-        spec["question_text"], math_line=math_line, shape_fn=shape_fn, color=_COLORS[category_url]
+        spec["question_text"], math_line=math_line, shape_fn=shape_fn, color=color
     )
     plain_text = f"{spec['question_text']}\n{math_line}" if math_line else spec["question_text"]
 
