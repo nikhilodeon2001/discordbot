@@ -6270,7 +6270,7 @@ _KEYWORD_EFFECTS = {
               "\n🔐🛡️ {mention} has obscured the questions!", "Glyph",
               lambda rw_id: _set_globals(glyph_mode=True)),
     "rave": ("🪩 Rave (flashing neon images)",
-             "\n🪩🔊 {mention} found the light switch and it only does one thing now. Every question flashes as neon images.", "Rave",
+             "\n🪩🔊 {mention} just dropped the bass on trivia night. Every question is a flashing neon banger now.", "Rave",
              lambda rw_id: _set_globals(rave_mode=True)),
 }
 
@@ -26038,7 +26038,7 @@ async def reset_round_options(reset_command, winner_id):
         rave_mode = not rave_mode
         reset_success = True
         if rave_mode == True:
-            await safe_send(channel, content=f"\n🪩🔊 **{winner_id}** found the light switch and it only does one thing now. Every question flashes as neon images.\n")
+            await safe_send(channel, content=f"\n🪩🔊 **{winner_id}** just dropped the bass on trivia night. Every question is a flashing neon banger now.\n")
         else:
             await safe_send(channel, content=f"\n🪩🛑 **{winner_id}** called the noise complaint in on themselves. Rave's over.\n")
 
