@@ -11493,7 +11493,15 @@ async def ask_gregs_nightmare_challenge(winner, winner_id, num=7):
 
     user_data = {}
 
-    await safe_send(channel, content="​\n😱🔢 **Greg's Nightmare**: Math Trivia Gauntlet!\n​")
+    gifs = [
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/gregsnightmare1.gif",
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/gregsnightmare2.gif",
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/gregsnightmare3.gif",
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/gregsnightmare4.gif",
+    ]
+    gif_url = random.choice(gifs)
+
+    await safe_send(channel, content="​\n😱🔢 **Greg's Nightmare**: Math Trivia Gauntlet!\n​", embed=discord.Embed().set_image(url=gif_url))
     await asyncio.sleep(2)
 
     categories = gregs_nightmare.CATEGORIES
