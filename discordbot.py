@@ -6768,6 +6768,60 @@ def build_answer_view(trivia_answer_list, trivia_url):
     return AnswerButtonView(letters[:25])  # Discord's per-message button cap
 
 
+class MathTriviaButtonView(RestrictedView):
+    """Click-to-answer buttons for an in-game math multiple-choice question, styled like
+    the standalone Greg's Nightmare mini-game's MathAnswerView: each button shows the
+    actual answer text instead of a bare letter, so the choice list doesn't need to be
+    repeated as text in the embed. A deliberately separate class from AnswerButtonView
+    (not a flag/parameter on it) so the general multiple-choice presentation used by
+    every other trivia category is untouched by construction, not just by convention --
+    math questions are the only thing that ever constructs this class.
+
+    Internally still records the clicked *letter* as message_content (identical shape to
+    AnswerButtonView._handle_click), so the existing collected_responses grading in
+    check_correct_responses_delete()/_mc_letter_for_guess() needs no changes at all --
+    only how the button looks differs, not how a click is graded.
+    """
+
+    def __init__(self, choices):
+        # choices: list of (letter, display_text) tuples
+        super().__init__(None, timeout=None)  # cleanup is explicit, see start_trivia()'s post-grading step
+        self.answered_user_ids = set()
+        for letter, text in choices:
+            button = discord.ui.Button(label=text[:80], style=discord.ButtonStyle.primary)  # Discord's button-label cap
+            button.callback = self._make_callback(letter)
+            self.add_item(button)
+
+    def _make_callback(self, letter):
+        async def callback(interaction: discord.Interaction):
+            await self._handle_click(interaction, letter)
+        return callback
+
+    async def _handle_click(self, interaction: discord.Interaction, letter: str):
+        global collected_responses
+
+        user_id = interaction.user.id
+
+        if user_id in self.answered_user_ids:
+            await interaction.response.send_message("✅ You already answered!", ephemeral=True)
+            return
+
+        now = interaction.created_at.timestamp()
+        if question_asked_start is None or question_asked_end is None or not (question_asked_start <= now <= question_asked_end):
+            await interaction.response.send_message("⏰ That question's closed!", ephemeral=True)
+            return
+
+        self.answered_user_ids.add(user_id)
+        collected_responses.append({
+            "user_id": user_id,
+            "display_name": interaction.user.display_name,
+            "message_content": letter,
+            "response_time": now,
+            "message": None,
+        })
+        await interaction.response.send_message(f"✅ Locked in: **{letter}**", ephemeral=True)
+
+
 class HTMLTextExtractor(HTMLParser):
     def __init__(self):
         super().__init__()
@@ -22468,11 +22522,15 @@ async def ask_question(trivia_category, trivia_question, trivia_url, trivia_answ
         else:
             message_body += f"​\n​\n{number_block} [**{get_category_title(trivia_category, trivia_url, include_emoji=False)}**]({flag_url}) {get_category_emoji(trivia_category)}\n\n{greg_qdata['plain_text']}\n"
         footer_text = "🚨 One guess"
-        message_body += "\n"
-        for answer in trivia_answer_list[1:]:
-            message_body += f"{answer}\n"
-        message_body += "\n"
-        answer_view = build_answer_view(trivia_answer_list, trivia_url)
+        # Greg's Nightmare style: answer text lives on the buttons only, not repeated
+        # here as text -- MathTriviaButtonView (not the generic build_answer_view) is
+        # what actually shows it, so nothing is appended to message_body for the choices.
+        math_choices = []
+        for option_text in trivia_answer_list[1:]:
+            match = re.match(r'^\s*([A-Za-z])[.\)]\s*(.*)$', option_text)
+            if match:
+                math_choices.append((match.group(1).upper(), match.group(2).strip()))
+        answer_view = MathTriviaButtonView(math_choices[:25]) if math_choices else None
         trivia_answer_list = trivia_answer_list[:1]
 
     elif trivia_url == "algebra":
@@ -25358,19 +25416,43 @@ async def start_trivia():
                                     clicks.setdefault(ltr, []).append(r.get("display_name", "?"))
                             if current_answer_message.embeds:
                                 embed = current_answer_message.embeds[0]
+                                found_any = False
                                 if embed.description:
                                     desc_lines = embed.description.split('\n')
                                     new_lines = []
                                     for line in desc_lines:
                                         m = re.match(r'^\s*([A-Za-z])[.\)]', line)
                                         if m:
+                                            found_any = True
                                             ltr = m.group(1).upper()
                                             voters = clicks.get(ltr, [])
                                             check = " ✅" if ltr == correct_letter else " ❌"
                                             line = line + check + (f" → {', '.join(f'**{v}**' for v in voters)}" if voters else "")
                                         new_lines.append(line)
-                                    embed.description = '\n'.join(new_lines)
-                                    edit_kwargs["embed"] = embed
+                                    if found_any:
+                                        embed.description = '\n'.join(new_lines)
+                                        edit_kwargs["embed"] = embed
+
+                                if not found_any:
+                                    # Math questions (Greg's Nightmare style): the choice
+                                    # text lives only on the buttons, never printed into the
+                                    # description, so there's nothing to annotate in place --
+                                    # build the breakdown fresh and add it as a field, which
+                                    # Discord renders between the image and the footer
+                                    # (appending to description would render above the image).
+                                    breakdown_lines = []
+                                    for option_text in choices:
+                                        m = re.match(r'^\s*([A-Za-z])[.\)]\s*(.*)$', option_text)
+                                        if not m:
+                                            continue
+                                        ltr, text = m.group(1).upper(), m.group(2).strip()
+                                        voters = clicks.get(ltr, [])
+                                        check = " ✅" if ltr == correct_letter else " ❌"
+                                        voter_str = f" [{', '.join(voters)}]" if voters else " []"
+                                        breakdown_lines.append(f"{ltr}. {text}{check}{voter_str}")
+                                    if breakdown_lines:
+                                        embed.add_field(name="Results", value="\n".join(breakdown_lines), inline=False)
+                                        edit_kwargs["embed"] = embed
 
                         await current_answer_message.edit(**edit_kwargs)
                     except (discord.NotFound, discord.HTTPException, aiohttp.ClientError):
