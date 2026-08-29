@@ -6573,13 +6573,15 @@ class MathAnswerView(RestrictedView):
     """Click-to-answer buttons for one Greg's Nightmare round. Unlike AnswerButtonView (which is
     hard-wired to the main trivia loop's collected_responses/question_asked_start globals), this
     is fully self-contained: correctness is checked right in the click handler, and only a
-    correct click resolves the view's future. A wrong click just gets an ephemeral nudge and the
-    buttons stay live, so the round keeps going (for this or another player) until someone gets
-    it or time runs out -- open floor, like every other mini-game's answer window."""
+    correct click resolves the view's future. Each player gets exactly one click -- right or
+    wrong, a second click from the same user is rejected -- but the round keeps going for
+    other players (or times out) until someone gets it, matching every other mini-game's
+    one-guess-per-player answer window."""
 
     def __init__(self, choices, correct_answer, timeout):
         super().__init__(None, timeout=timeout)
         self.correct_answer = correct_answer
+        self.answered_user_ids = set()
         for choice in choices:
             button = discord.ui.Button(label=choice[:80], style=discord.ButtonStyle.primary)
             button.callback = self._make_callback(choice)
@@ -6594,10 +6596,14 @@ class MathAnswerView(RestrictedView):
         if self.future.done():
             await interaction.response.send_message("✅ Already answered!", ephemeral=True)
             return
+        if interaction.user.id in self.answered_user_ids:
+            await interaction.response.send_message("🚨 You already locked in a guess!", ephemeral=True)
+            return
+        self.answered_user_ids.add(interaction.user.id)
         if choice == self.correct_answer:
             await self._resolve(interaction, choice)
         else:
-            await interaction.response.send_message("❌ Not quite — try again!", ephemeral=True)
+            await interaction.response.send_message("❌ Not quite!", ephemeral=True)
 
 
 class ValedictorianView(RestrictedView):
@@ -11518,7 +11524,7 @@ async def ask_gregs_nightmare_challenge(winner, winner_id, num=7):
     gif_url = random.choice(gifs)
 
     await safe_send(channel, content="​\n😱🔢 **Greg's Nightmare**: Math Trivia Gauntlet!\n​", embed=discord.Embed().set_image(url=gif_url))
-    await asyncio.sleep(2)
+    await asyncio.sleep(3)
 
     categories = gregs_nightmare.CATEGORIES
     everything_option_num = len(categories) + 1
@@ -11589,6 +11595,7 @@ async def ask_gregs_nightmare_challenge(winner, winner_id, num=7):
         answer_mode = "mc"
         await safe_send(channel, "​\n⏰ Time's up! Using **everything**, Normal, Multiple Choice!\n​")
     window_closed["value"] = True
+    await asyncio.sleep(3)
 
     # Round-robin across selected categories (like ask_sports_logos_challenge's league_order)
     # so multiple picks get even coverage and never repeat back-to-back.
