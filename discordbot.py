@@ -1086,6 +1086,22 @@ sat_boosted = False  # Set by "Nerd" this round
 math_boosted = False  # Set by "Gerg"/"Greg" this round
 mysterybox_boosted = False  # Set by "Bondage"/"Freedom" this round
 
+# Round-config knobs consumed directly by select_trivia_questions() without a `global`
+# declaration there (safe, since that function never assigns to them) -- but that means
+# the name must already exist in the module namespace by the time it runs. These
+# otherwise only ever come into existence inside load_parameters()/clear_round_options(),
+# so a fresh process that reaches select_trivia_questions() before either of those has
+# run even once (e.g. round-start's load_selected_questions_from_db() fallback, on a
+# dyno boot with an empty round_questions collection) hit a real NameError here. Values
+# match each one's *_default constant so behavior is identical to post-load_parameters().
+num_jeopardy_clues = 3
+num_crossword_clues = 0
+num_mysterybox_clues = 3
+num_wof_clues = 0
+num_math_questions = 1
+num_sat_questions = 0
+num_stats_questions = 0  # retired from active use, but still read/saved by save_round_options_to_db
+
 ops = {
     '+': operator.add,
     '-': operator.sub,
@@ -25193,9 +25209,21 @@ async def start_trivia():
         # Try to load questions from previous round (in case bot restarted between rounds)
         selected_questions = await load_selected_questions_from_db()
 
-        # If no saved questions, select new ones
-        if selected_questions is None or len(selected_questions) == 0:
+        # If no saved questions, or fewer than a full round (e.g. a partially-consumed
+        # leftover round from before a restart), select a fresh full set instead.
+        if selected_questions is None or len(selected_questions) < questions_per_round:
             selected_questions = await select_trivia_questions(questions_per_round)  #Pick the initial question set
+            if not selected_questions:
+                # select_trivia_questions() swallows its own exceptions and returns []
+                # on failure -- never silently proceed into the round loop with nothing
+                # to ask (that just crashes later at an unrelated line with no clue what
+                # went wrong). One retry after an explicit load_parameters() covers a
+                # transient failure; if it still fails, raise into this function's own
+                # top-level restart cycle instead of a new, separate failure mode.
+                await load_parameters()
+                selected_questions = await select_trivia_questions(questions_per_round)
+                if not selected_questions:
+                    raise RuntimeError("select_trivia_questions() returned no questions after retry")
         else:
             await warm_category_emoji_cache(q[0] for q in selected_questions)
 
