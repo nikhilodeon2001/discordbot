@@ -22533,13 +22533,29 @@ async def ask_question(trivia_category, trivia_question, trivia_url, trivia_answ
         # multiple-choice grading machinery (build_answer_view/_mc_guess_tokens,
         # below) reads. The already-rendered image + plain_text ride along in
         # trivia_paragraph (JSON+base64) rather than being cached or regenerated here.
-        greg_payload = json.loads(trivia_paragraph)
-        image_buffer = io.BytesIO(base64.b64decode(greg_payload["image_b64"]))
-        if image_questions == True:
-            message_body += f"​\n​\n{number_block} [**{get_category_title(trivia_category, trivia_url, include_emoji=False)}**]({flag_url}) {get_category_emoji(trivia_category)}\n\n"
-            send_image_flag = True
+        greg_payload = None
+        try:
+            if trivia_paragraph:
+                greg_payload = json.loads(trivia_paragraph)
+        except (TypeError, ValueError):
+            greg_payload = None
+
+        if greg_payload is not None:
+            image_buffer = io.BytesIO(base64.b64decode(greg_payload["image_b64"]))
+            if image_questions == True:
+                message_body += f"​\n​\n{number_block} [**{get_category_title(trivia_category, trivia_url, include_emoji=False)}**]({flag_url}) {get_category_emoji(trivia_category)}\n\n"
+                send_image_flag = True
+            else:
+                message_body += f"​\n​\n{number_block} [**{get_category_title(trivia_category, trivia_url, include_emoji=False)}**]({flag_url}) {get_category_emoji(trivia_category)}\n\n{greg_payload['plain_text']}\n"
         else:
-            message_body += f"​\n​\n{number_block} [**{get_category_title(trivia_category, trivia_url, include_emoji=False)}**]({flag_url}) {get_category_emoji(trivia_category)}\n\n{greg_payload['plain_text']}\n"
+            # Defensive fallback -- trivia_paragraph should always carry the rendered
+            # image, but a missing/corrupt payload must never crash the whole trivia
+            # loop over one question. Falls back to text-only using just the
+            # instruction (the dataset/expression itself lives only in the payload,
+            # so it's unavailable here) -- the answer choices are unaffected either
+            # way, since those live in trivia_answer_list, not in the payload.
+            sentry_sdk.capture_message(f"Greg's Nightmare: missing/corrupt trivia_paragraph for {trivia_url}")
+            message_body += f"​\n​\n{number_block} [**{get_category_title(trivia_category, trivia_url, include_emoji=False)}**]({flag_url}) {get_category_emoji(trivia_category)}\n\n{trivia_question}\n"
         footer_text = "🚨 One guess"
         # Greg's Nightmare style: answer text lives on the buttons only, not repeated
         # here as text -- MathTriviaButtonView (not the generic build_answer_view) is
