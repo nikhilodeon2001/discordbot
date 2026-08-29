@@ -18860,7 +18860,11 @@ def get_math_question():
     off via _GREG_QDATA_CACHE keyed by the _id set below."""
     category = random.choice(gregs_nightmare.CATEGORIES)
     qdata = gregs_nightmare.generate_question(category["url"], "normal")
-    qid = str(random.randint(10000, 99999))
+    # uuid4, not random.randint(10000, 99999) -- a 5-digit id collides across enough
+    # rounds that two different math questions can land in the same cache slot, so the
+    # second one's qdata silently clobbers the first's (image for one question, answer
+    # choices for a completely different one once the first is displayed).
+    qid = uuid.uuid4().hex
     _GREG_QDATA_CACHE[qid] = qdata
     wrong_choices = [c for c in qdata["mc_choices"] if c != qdata["answer"]]
     return {
@@ -25445,9 +25449,12 @@ async def start_trivia():
                                     # Math questions (Greg's Nightmare style): the choice
                                     # text lives only on the buttons, never printed into the
                                     # description, so there's nothing to annotate in place --
-                                    # build the breakdown fresh and add it as a field, which
-                                    # Discord renders between the image and the footer
-                                    # (appending to description would render above the image).
+                                    # build the breakdown fresh. Discord embeds render in the
+                                    # fixed order description -> fields -> image -> footer, so
+                                    # a field (which renders BEFORE the image) can't land it
+                                    # below the image -- only the footer renders after the
+                                    # image, so that's where this goes, replacing the now-moot
+                                    # "One guess" reminder.
                                     breakdown_lines = []
                                     for option_text in choices:
                                         m = re.match(r'^\s*([A-Za-z])[.\)]\s*(.*)$', option_text)
@@ -25459,7 +25466,7 @@ async def start_trivia():
                                         voter_str = f" [{', '.join(voters)}]" if voters else " []"
                                         breakdown_lines.append(f"{ltr}. {text}{check}{voter_str}")
                                     if breakdown_lines:
-                                        embed.add_field(name="Results", value="\n".join(breakdown_lines), inline=False)
+                                        embed.set_footer(text="\n".join(breakdown_lines))
                                         edit_kwargs["embed"] = embed
 
                         await current_answer_message.edit(**edit_kwargs)
