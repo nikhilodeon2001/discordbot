@@ -107,7 +107,8 @@ def _draw_centered_lines(draw, lines, font, y, width, color):
     return y
 
 
-def _render_composed_image(question_text, math_line=None, shape_fn=None, color=(57, 255, 20)):
+def _render_composed_image(question_text, math_line=None, shape_fn=None,
+                            header_color=(57, 255, 20), content_color=(57, 255, 20)):
     """Renders the *entire* question -- instruction text plus the math content (an
     expression/dataset, or a drawn diagram) -- into one self-contained image, with
     real word-wrapping so long sentences (e.g. probability's full word problems)
@@ -144,13 +145,13 @@ def _render_composed_image(question_text, math_line=None, shape_fn=None, color=(
     img = Image.new("RGB", (width, height), color=(0, 0, 0))
     draw = ImageDraw.Draw(img)
 
-    y = _draw_centered_lines(draw, header_lines, header_font, margin, width, color)
+    y = _draw_centered_lines(draw, header_lines, header_font, margin, width, header_color)
     y += spacing
 
     if shape_fn is not None:
-        shape_fn(draw, _get_font(28), width, shape_height, y, color)
+        shape_fn(draw, _get_font(28), width, shape_height, y, content_color)
     elif math_line:
-        _draw_centered_lines(draw, body_lines, body_font, y, width, color)
+        _draw_centered_lines(draw, body_lines, body_font, y, width, content_color)
 
     buf = io.BytesIO()
     img.save(buf, format="PNG")
@@ -1109,9 +1110,16 @@ def generate_question(category_url, difficulty):
 
     shape_fn = spec.get("shape_fn")
     math_line = spec.get("display")
-    color = random.choice(_NEON_COLORS)
+    header_color = random.choice(_NEON_COLORS)
+    if math_line or shape_fn:
+        # Two distinct neon colors -- one for the instruction, one for the actual
+        # math content -- so the two visually separate instead of blending together.
+        content_color = random.choice([c for c in _NEON_COLORS if c != header_color])
+    else:
+        content_color = header_color
     image_buffer = _render_composed_image(
-        spec["question_text"], math_line=math_line, shape_fn=shape_fn, color=color
+        spec["question_text"], math_line=math_line, shape_fn=shape_fn,
+        header_color=header_color, content_color=content_color,
     )
     plain_text = f"{spec['question_text']}\n{math_line}" if math_line else spec["question_text"]
 
