@@ -1080,8 +1080,7 @@ previous_answer_message = None
 current_report_view = None
 current_question_embed = None
 current_footer_base_text = None
-current_disco_urls = None  # (black_url, white_url) for the current question's Disco flash, or None
-current_disco_secondary_embed = None  # extra flashing-text embed alongside a real photo, or None
+current_disco_secondary_embed = None  # extra flashing-GIF embed alongside a real photo, or None
 pending_intro_preview_view = None  # Currently-live #newintro/#uploadintro confirmation, if any
 answer_buttons_enabled = True  # Feature flag: click-to-answer buttons on multiple-choice trivia questions
 jeopardy_boosted = False  # Set by "Alex"/"Xela" this round - signals coordination with crossword/SAT/math/mysterybox boosts
@@ -20308,7 +20307,8 @@ def _disco_render_one(colored_lines, font, category_lines, category_font, width,
     """Draws one Disco frame (black or white background) from the shared `colored_lines` layout
     -- character-by-character (draw.multiline_text can't do per-character color), using
     draw.textlength for advance width so spaces don't collapse (textbbox gives a zero-width ink
-    box for whitespace)."""
+    box for whitespace). Returns the raw PIL Image (not a saved buffer) so the two frames can be
+    combined into one animated GIF."""
     img = Image.new('RGB', (width, height), color=background_color)
     draw = ImageDraw.Draw(img)
 
@@ -20340,19 +20340,24 @@ def _disco_render_one(colored_lines, font, category_lines, category_font, width,
             x += draw.textlength(ch, font=font)
         y += line_height
 
-    buf = io.BytesIO()
-    img.save(buf, format='PNG')
-    buf.seek(0)
-    return buf
+    return img
 
 
-def generate_disco_images(question_text, category_text=None):
-    """Renders `question_text` as two same-layout images -- one on a black background, one on
-    white -- for Disco mode's flashing effect. Every visible character gets its own neon color
-    (see _disco_assign_colors for the adjacency/cross-image rules), while the category (if given)
-    is a plain fixed-color header, not part of the per-letter effect -- mirroring
-    generate_jeopardy_image's category/clue split. Returns (black_buf, white_buf), two BytesIO
-    PNGs sharing one random draw and one word-wrap pass, so they only differ by color."""
+DISCO_GIF_FRAME_MS = 400  # ~1.25 flashes/sec once looped (black+white per cycle) -- well under
+# the ~3/sec threshold generally cited as a photosensitive-flash risk, while still reading as a
+# lively strobe. Animating client-side like this (instead of repeatedly editing the message to
+# swap a static image) was switched to specifically because Discord's per-message edit rate limit
+# throttled a from-code flash loop into a sporadic-looking flicker -- a GIF's frame timing plays
+# out in the Discord client and isn't subject to that limit at all.
+
+
+def generate_disco_gif(question_text, category_text=None):
+    """Renders `question_text` as one looping animated GIF that alternates a black-background
+    frame and a white-background frame -- Disco mode's flashing effect. Every visible character
+    gets its own neon color (see _disco_assign_colors for the adjacency/cross-image rules), while
+    the category (if given) is a plain fixed-color header, not part of the per-letter effect --
+    mirroring generate_jeopardy_image's category/clue split. Both frames share one random draw and
+    one word-wrap pass, so they only differ by color. Returns a BytesIO GIF."""
     width, height = 800, 600
     margin = 40
     max_width = width - 2 * margin
@@ -20365,31 +20370,32 @@ def generate_disco_images(question_text, category_text=None):
 
     colored_lines = _disco_assign_colors(text_lines)
 
-    black_buf = _disco_render_one(colored_lines, font, category_lines, category_font, width, height,
-                                   (0, 0, 0), (255, 255, 255), PALETTE_BLACK_DISCO, True)
-    white_buf = _disco_render_one(colored_lines, font, category_lines, category_font, width, height,
-                                   (255, 255, 255), (0, 0, 0), PALETTE_WHITE_DISCO, False)
-    return black_buf, white_buf
+    black_frame = _disco_render_one(colored_lines, font, category_lines, category_font, width, height,
+                                     (0, 0, 0), (255, 255, 255), PALETTE_BLACK_DISCO, True)
+    white_frame = _disco_render_one(colored_lines, font, category_lines, category_font, width, height,
+                                     (255, 255, 255), (0, 0, 0), PALETTE_WHITE_DISCO, False)
+
+    buf = io.BytesIO()
+    black_frame.save(buf, format='GIF', save_all=True, append_images=[white_frame],
+                      duration=DISCO_GIF_FRAME_MS, loop=0)
+    buf.seek(0)
+    return buf
 
 
-async def upload_disco_images_to_s3(black_buf, white_buf):
-    """Uploads both Disco frames to S3 and returns (black_url, white_url) -- URLs, not file
-    attachments, since the question message gets edited repeatedly (the flash loop, then the
-    reveal); see generate_disco_images' neighbor get_math_question for why a file-attachment
-    embed image breaks under repeat edits."""
-    urls = []
-    for buf in (black_buf, white_buf):
-        s3_key = f"generated-images/disco/{uuid.uuid4().hex}.png"
-        session = aioboto3.Session()
-        async with session.client("s3") as s3:
-            await s3.put_object(
-                Bucket=S3_BUCKET_NAME,
-                Key=s3_key,
-                Body=buf.getvalue(),
-                ContentType="image/png",
-            )
-        urls.append(f"https://{S3_BUCKET_NAME}.s3.{AWS_REGION}.amazonaws.com/{s3_key}")
-    return urls[0], urls[1]
+async def upload_disco_gif_to_s3(gif_buf):
+    """Uploads the Disco GIF to S3 and returns its URL -- a URL (not a file attachment) since the
+    question message gets edited repeatedly (the countdown, then the reveal); see the neighboring
+    get_math_question for why a file-attachment embed image breaks under repeat edits."""
+    s3_key = f"generated-images/disco/{uuid.uuid4().hex}.gif"
+    session = aioboto3.Session()
+    async with session.client("s3") as s3:
+        await s3.put_object(
+            Bucket=S3_BUCKET_NAME,
+            Key=s3_key,
+            Body=gif_buf.getvalue(),
+            ContentType="image/gif",
+        )
+    return f"https://{S3_BUCKET_NAME}.s3.{AWS_REGION}.amazonaws.com/{s3_key}"
 
 
 def generate_mc_image(answers):
@@ -22668,8 +22674,7 @@ def apply_glyphs(text):
 
 async def ask_question(trivia_category, trivia_question, trivia_url, trivia_answer_list, question_number, trivia_db=None, trivia_id=None, trivia_paragraph=None):
     """Ask the trivia question."""
-    global current_answer_view, current_answer_message, current_report_view, current_question_embed, current_footer_base_text, current_disco_urls, current_disco_secondary_embed
-    current_disco_urls = None
+    global current_answer_view, current_answer_message, current_report_view, current_question_embed, current_footer_base_text, current_disco_secondary_embed
     current_disco_secondary_embed = None
     # Disco forces every branch below into its "show image" arm (never the plain-text fallback)
     # regardless of Blank mode -- named distinctly from the `image_questions` global it reads
@@ -22977,19 +22982,18 @@ async def ask_question(trivia_category, trivia_question, trivia_url, trivia_answ
 
     if disco_mode:
         category_title = get_category_title(trivia_category, trivia_url, include_emoji=False)
-        disco_black_buf, disco_white_buf = generate_disco_images(trivia_question, category_title)
-        disco_black_url, disco_white_url = await upload_disco_images_to_s3(disco_black_buf, disco_white_buf)
-        current_disco_urls = (disco_black_url, disco_white_url)
+        disco_gif_buf = generate_disco_gif(trivia_question, category_title)
+        disco_gif_url = await upload_disco_gif_to_s3(disco_gif_buf)
         if is_valid_url(trivia_url):
             # Real photo (image_url/send_image_flag, set above) stays the primary image; the
             # Disco render rides along as a second embed instead of replacing it.
             current_disco_secondary_embed = discord.Embed()
-            current_disco_secondary_embed.set_image(url=disco_black_url)
+            current_disco_secondary_embed.set_image(url=disco_gif_url)
         else:
             # Overrides whatever category-specific image/text this question would otherwise have
             # gotten (the branches above already took their "show image" arm, via _show_image, so
             # message_body has no duplicate plain-text question caption to worry about).
-            image_url = disco_black_url
+            image_url = disco_gif_url
             image_buffer = None
             send_image_flag = True
 
@@ -25678,19 +25682,14 @@ async def start_trivia():
                             timer_line = f"⏳ {remaining}s"
                             new_footer = f"{current_footer_base_text}\n\n{timer_line}" if current_footer_base_text else timer_line
                             current_question_embed.set_footer(text=new_footer)
-                        if current_disco_urls is not None:
-                            # Rides the same once-per-second tick as the countdown -- a separate,
-                            # faster edit loop was tried first but Discord's per-message edit rate
-                            # limit (commonly ~5 req/5s) throttled it into a sporadic-looking flicker
-                            # instead of a smooth strobe. One flash per tick, wall-clock-synced like
-                            # `remaining` itself, stays reliably in sync with the countdown instead.
-                            toggle_idx = int(time.time() - question_asked_start) % 2
-                            flash_url = current_disco_urls[toggle_idx]
-                            if current_disco_secondary_embed is not None:
-                                current_disco_secondary_embed.set_image(url=flash_url)
-                            else:
-                                current_question_embed.set_image(url=flash_url)
                         try:
+                            # Disco's flash is a looping animated GIF (see generate_disco_gif) that
+                            # plays out client-side, not something this loop drives -- a from-code
+                            # per-tick image swap was tried first but Discord's per-message edit
+                            # rate limit throttled it into a sporadic-looking flicker. The photo+
+                            # Disco combo still needs its second embed re-included on every edit
+                            # here, though, since editing with a single `embed=` would otherwise
+                            # silently drop it.
                             if current_disco_secondary_embed is not None:
                                 await current_answer_message.edit(embeds=[current_question_embed, current_disco_secondary_embed])
                             else:
