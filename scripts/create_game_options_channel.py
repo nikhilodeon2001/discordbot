@@ -32,7 +32,7 @@ Set by replying after you win a round, or toggle mid-round with #[command] (exce
 
 📷❌ **Blank** — No image questions. Rendered-image questions show as plain text instead, and photo-based trivia questions are excluded from the round entirely.
 
-🪩✨ **Disco** — Every question flashes as two neon-colored images (black background / white background) that strobe back and forth while you answer. Overrides Blank. Photo-based trivia questions keep their real photo, with the clue text shown as its own flashing neon image alongside it.
+🪩✨ **Rave** — Every question flashes as a looping neon-colored GIF (black background / white background) that strobes back and forth while you answer. Overrides Blank. Photo-based trivia questions keep their real photo, with the clue text shown as its own flashing neon GIF alongside it. Bring glow sticks, not seizures.
 
 👻🎃 **Ghost** — All responses vanish. Every player's answer is deleted from the channel right after it's scored. Start a message with . , or ~ to keep it from being deleted.
 
