@@ -434,7 +434,7 @@ okra_lab_announcement_enabled = True
 okra_lab_announcement_text = (
     "😱🔢 A math-focused update just landed!\n\n"
     "🎮 **Greg's Nightmare** — a new mini-game with 10 math categories, Normal/Hard difficulty, and multiple choice or typed answers\n"
-    "📰 **Gerg** — a new round modifier for more in-game math questions (stacks fairly with Alex/Word/Nerd/Bondage)\n"
+    "🔢 **Gerg** — a new round modifier for more in-game math questions (stacks fairly with Alex/Word/Nerd/Bondage)\n"
     "🔢 In-game math trivia got smarter too — more categories, now presented as multiple choice with realistic wrong answers\n\n"
     "▶️ Try `/arena game_name:\"greg's nightmare\"`, or type `gerg` after winning a round\n"
 )
@@ -6212,11 +6212,11 @@ _KEYWORD_EFFECTS = {
     "xela": ("🟦❌ Xela (no Jeopardy)",
              "🟦❌ {mention} doesn't like Jeopardy. Sorry Alex.", "Xela",
              lambda rw_id: _set_globals(num_jeopardy_clues=0, jeopardy_boosted=False)),
-    "greg": ("📰 Greg (no math)",
-             "📰✏️ {mention} hates math. What a 'Greg'.", "Greg",
+    "greg": ("🔢❌ Greg (no math)",
+             "🔢❌ {mention} hates math. What a 'Greg'.", "Greg",
              lambda rw_id: _set_globals(num_math_questions=0, math_boosted=False)),
-    "gerg": ("📰 Gerg (more math)",
-             "📰✏️ {mention} loves math. What a 'Gerg'.", "Gerg",
+    "gerg": ("🔢✋ Gerg (more math)",
+             "🔢✋ {mention} loves math. What a 'Gerg'.", "Gerg",
              lambda rw_id: _set_globals(num_math_questions=5, math_boosted=True)),
     "cross": ("📰❌ Cross (no crossword)",
               "📰❌ {mention} has crossed off all Crossword questions.", "Cross",
