@@ -25512,7 +25512,7 @@ async def start_trivia():
                                         ltr, text = m.group(1).upper(), m.group(2).strip()
                                         voters = clicks.get(ltr, [])
                                         check = " ✅" if ltr == correct_letter else " ❌"
-                                        voter_str = f" [{', '.join(voters)}]" if voters else " []"
+                                        voter_str = f" → {', '.join(voters)}" if voters else ""
                                         breakdown_lines.append(f"{ltr}. {text}{check}{voter_str}")
                                     if breakdown_lines:
                                         embed.set_footer(text="\n".join(breakdown_lines))
