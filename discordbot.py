@@ -11429,7 +11429,7 @@ async def _play_math_round(view, category_url, correct_answer, timeout, target_c
         # Wrong typed/companion guess -- keep waiting out the rest of the round.
 
 
-async def ask_gregs_nightmare_challenge(winner, winner_id, num=5):
+async def ask_gregs_nightmare_challenge(winner, winner_id, num=7):
     global wf_winner
     wf_winner = True
 
@@ -11443,8 +11443,11 @@ async def ask_gregs_nightmare_challenge(winner, winner_id, num=5):
 
     prompt_lines = ["😱🔢 Pick your categories, difficulty, and answer mode!", ""]
     for i, cat in enumerate(categories, start=1):
-        prompt_lines.append(f"{i}️⃣ {cat['emoji']} {cat['display']}")
-    prompt_lines.append(f"{everything_option_num}️⃣ 🏆 Everything")
+        # Plain "N." numbering, not the 1️⃣-9️⃣ keycap emoji -- there's no single-glyph
+        # keycap for two-digit numbers, so 10/11 would render as a bare "1" next to a
+        # boxed "0"/"1" instead of one clean number (there are 10 categories + Everything).
+        prompt_lines.append(f"{i}. {cat['emoji']} {cat['display']}")
+    prompt_lines.append(f"{everything_option_num}. 🏆 Everything")
     prompt_lines.append("")
     prompt_lines.append("(Reply with category numbers plus 'normal'/'hard' and 'mc'/'text', "
                          "e.g. '1 3 hard text', or use the button below)")
@@ -11458,7 +11461,11 @@ async def ask_gregs_nightmare_challenge(winner, winner_id, num=5):
     target_channel = _active_game_channel or channel
 
     def check_setup_message(m):
-        return m.channel == target_channel and m.author.id == winner_id and any(ch.isdigit() for ch in m.content)
+        # No digit requirement (unlike Jock Talk's league picker): a message like "hard
+        # mc" with no category numbers at all is valid here too -- parse_setup treats an
+        # empty numbers list as "all categories" -- so it must not be filtered out before
+        # ever reaching that fallback.
+        return m.channel == target_channel and m.author.id == winner_id
 
     def parse_setup(content):
         numbers = [int(n) for n in re.findall(r"\d+", content) if 1 <= int(n) <= everything_option_num]
@@ -11514,9 +11521,11 @@ async def ask_gregs_nightmare_challenge(winner, winner_id, num=5):
             qdata = gregs_nightmare.generate_question(category_url, difficulty)
 
             image_file = discord.File(fp=qdata["image_buffer"], filename="question.png")
+            # No description here -- the image already contains the full question
+            # (wrapped instruction text plus the math content), so it isn't repeated
+            # as a separate caption.
             question_embed = discord.Embed(
                 title=f"{category_meta['emoji']} {category_meta['display']} — Round {round_num}/{num}",
-                description=qdata["question_text"],
             )
             question_embed.set_image(url="attachment://question.png")
             question_embed.set_footer(text="⏱️ 15 seconds!")
@@ -19230,7 +19239,7 @@ async def select_wof_questions(winner, winner_id, winner_coffees=None):
             return None
 
         elif selected_wof_category == "51":
-            await ask_gregs_nightmare_challenge(winner, winner_id, 5)
+            await ask_gregs_nightmare_challenge(winner, winner_id, 7)
             await asyncio.sleep(3)
             return None
 

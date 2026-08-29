@@ -45,36 +45,98 @@ def _get_font(size):
     return get_font("DejaVuSans.ttf", size)
 
 
-def _render_text_image(text, color=(255, 255, 255), width=600, height=150, font_size=48):
+def _wrap_lines(measure_draw, text, font, max_width):
+    """Greedy word-wrap: pack words onto a line until the next one would overflow
+    max_width, then start a new line. A single word longer than max_width on its
+    own is left as-is rather than split mid-word."""
+    words = text.split()
+    if not words:
+        return [""]
+    lines = []
+    current = words[0]
+    for word in words[1:]:
+        trial = f"{current} {word}"
+        bbox = measure_draw.textbbox((0, 0), trial, font=font)
+        if bbox[2] - bbox[0] <= max_width:
+            current = trial
+        else:
+            lines.append(current)
+            current = word
+    lines.append(current)
+    return lines
+
+
+def _fit_wrapped(measure_draw, text, max_width, start_size, min_size, max_lines):
+    """Shrink the font until the wrapped text fits within max_lines (or bottoms out
+    at min_size, in which case the last -- most-wrapped -- attempt is used as-is)."""
+    size = start_size
+    font = _get_font(size)
+    lines = _wrap_lines(measure_draw, text, font, max_width)
+    while len(lines) > max_lines and size > min_size:
+        size -= 2
+        font = _get_font(size)
+        lines = _wrap_lines(measure_draw, text, font, max_width)
+    return font, lines
+
+
+def _line_height(font):
+    bbox = font.getbbox("Ag")
+    return (bbox[3] - bbox[1]) + 12
+
+
+def _draw_centered_lines(draw, lines, font, y, width, color):
+    for line in lines:
+        bbox = draw.textbbox((0, 0), line, font=font)
+        x = (width - (bbox[2] - bbox[0])) // 2 - bbox[0]
+        draw.text((x, y), line, fill=color, font=font)
+        y += _line_height(font)
+    return y
+
+
+def _render_composed_image(question_text, math_line=None, shape_fn=None, color=(255, 255, 255)):
+    """Renders the *entire* question -- instruction text plus the math content (an
+    expression/dataset, or a drawn diagram) -- into one self-contained image, with
+    real word-wrapping so long sentences (e.g. probability's full word problems)
+    never run off the edge of the canvas. Nothing about the question is meant to
+    be shown anywhere else (no separate embed caption) -- the image is the point."""
     from PIL import Image, ImageDraw
 
-    while font_size > 20:
-        font = _get_font(font_size)
-        bbox = ImageDraw.Draw(Image.new("RGB", (1, 1))).textbbox((0, 0), text, font=font)
-        if bbox[2] - bbox[0] <= width - 40:
-            break
-        font_size -= 4
+    width = 600
+    margin = 40
+    max_width = width - 2 * margin
+    probe = ImageDraw.Draw(Image.new("RGB", (10, 10)))
+
+    # When there's secondary math content (an expression or a diagram), the
+    # instruction text plays a smaller, supporting role; when it's the only
+    # content (e.g. a probability word problem), it needs to be the headline.
+    header_start_size = 26 if (math_line or shape_fn) else 36
+    header_font, header_lines = _fit_wrapped(probe, question_text, max_width, header_start_size, 16, 5)
+    header_block_height = len(header_lines) * _line_height(header_font)
+
+    shape_height = 350
+    body_font, body_lines, body_block_height = None, [], 0
+    if shape_fn is not None:
+        content_height = shape_height
+    elif math_line:
+        body_font, body_lines = _fit_wrapped(probe, math_line, max_width, 46, 22, 3)
+        body_block_height = len(body_lines) * _line_height(body_font)
+        content_height = body_block_height
+    else:
+        content_height = 0
+
+    spacing = 25 if content_height else 0
+    height = max(150, margin + header_block_height + spacing + content_height + margin)
 
     img = Image.new("RGB", (width, height), color=(0, 0, 0))
     draw = ImageDraw.Draw(img)
-    bbox = draw.textbbox((0, 0), text, font=font)
-    tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
-    draw.text(((width - tw) // 2 - bbox[0], (height - th) // 2 - bbox[1]), text, fill=color, font=font)
 
-    buf = io.BytesIO()
-    img.save(buf, format="PNG")
-    buf.seek(0)
-    return buf
+    y = _draw_centered_lines(draw, header_lines, header_font, margin, width, (255, 255, 255))
+    y += spacing
 
-
-def _render_shape_image(draw_fn, width=500, height=350):
-    """draw_fn(draw, font, width, height) draws the diagram + labels."""
-    from PIL import Image, ImageDraw
-
-    img = Image.new("RGB", (width, height), color=(0, 0, 0))
-    draw = ImageDraw.Draw(img)
-    font = _get_font(28)
-    draw_fn(draw, font, width, height)
+    if shape_fn is not None:
+        shape_fn(draw, _get_font(28), width, shape_height, y)
+    elif math_line:
+        _draw_centered_lines(draw, body_lines, body_font, y, width, color)
 
     buf = io.BytesIO()
     img.save(buf, format="PNG")
@@ -244,24 +306,24 @@ def _check_algebra(guess, answer):
 # Geometry
 # ---------------------------------------------------------------------------
 
-def _draw_rectangle(draw, font, w, h, base, height, label_extra=None):
-    x0, y0, x1, y1 = 100, 80, 400, 260
+def _draw_rectangle(draw, font, w, h, base, height, y_offset=0):
+    x0, y0, x1, y1 = 100, 80 + y_offset, 400, 260 + y_offset
     draw.rectangle([x0, y0, x1, y1], outline=(255, 255, 255), width=4)
     draw.text(((x0 + x1) // 2 - 10, y1 + 10), str(base), fill=(255, 220, 0), font=font)
     draw.text((x1 + 15, (y0 + y1) // 2 - 15), str(height), fill=(255, 220, 0), font=font)
 
 
-def _draw_circle(draw, font, w, h, radius_label):
-    cx, cy, r = 250, 170, 100
+def _draw_circle(draw, font, w, h, radius_label, y_offset=0):
+    cx, cy, r = 250, 170 + y_offset, 100
     draw.ellipse([cx - r, cy - r, cx + r, cy + r], outline=(255, 255, 255), width=4)
     draw.line([cx, cy, cx + r, cy], fill=(255, 220, 0), width=3)
     draw.text((cx + r // 2 - 10, cy - 35), str(radius_label), fill=(255, 220, 0), font=font)
 
 
-def _draw_right_triangle(draw, font, w, h, leg_a, leg_b, hyp, unknown):
-    x0, y0 = 100, 280
-    x1, y1 = 400, 280
-    x2, y2 = 100, 80
+def _draw_right_triangle(draw, font, w, h, leg_a, leg_b, hyp, unknown, y_offset=0):
+    x0, y0 = 100, 280 + y_offset
+    x1, y1 = 400, 280 + y_offset
+    x2, y2 = 100, 80 + y_offset
     draw.polygon([(x0, y0), (x1, y1), (x2, y2)], outline=(255, 255, 255), width=4)
     draw.rectangle([x0, y0 - 18, x0 + 18, y0], outline=(255, 255, 255), width=2)
     bottom_label = "?" if unknown == "base" else str(leg_a)
@@ -283,10 +345,10 @@ def _gen_geometry(difficulty):
         hyp = round(math.sqrt(leg_a ** 2 + leg_b ** 2), 1)
         answer = f"{hyp:.1f}"
         wrongs = [str(leg_a + leg_b), f"{round(math.sqrt(leg_a * leg_b), 1):.1f}", f"{hyp + 1:.1f}"]
-        image = _render_shape_image(lambda d, f, w, h: _draw_right_triangle(d, f, w, h, leg_a, leg_b, hyp, unknown))
+        shape_fn = lambda d, f, w, h, yo: _draw_right_triangle(d, f, w, h, leg_a, leg_b, hyp, unknown, yo)
         return {
             "question_text": "Find the length of the hypotenuse (round to 1 decimal):",
-            "image": image,
+            "shape_fn": shape_fn,
             "answer": answer,
             "wrongs": wrongs,
         }
@@ -300,7 +362,7 @@ def _gen_geometry(difficulty):
         question_text = f"Find the {'area' if ask_area else 'perimeter'} of the rectangle:"
         wrongs = [str(2 * (base + height) if ask_area else base * height),
                   str(base + height), str(answer_val + base)]
-        image = _render_shape_image(lambda d, f, w, h: _draw_rectangle(d, f, w, h, base, height))
+        shape_fn = lambda d, f, w, h, yo: _draw_rectangle(d, f, w, h, base, height, yo)
     elif shape == "circle":
         r = random.randint(3, 12)
         ask_area = random.choice([True, False])
@@ -309,17 +371,17 @@ def _gen_geometry(difficulty):
         wrongs = [f"{round(2 * 3.14 * r, 1) if ask_area else round(3.14 * r * r, 1):.1f}",
                   f"{round(3.14 * (2 * r) if ask_area else 3.14 * (2 * r) * (2 * r), 1):.1f}",
                   f"{answer_val + 1:.1f}"]
-        image = _render_shape_image(lambda d, f, w, h: _draw_circle(d, f, w, h, r))
+        shape_fn = lambda d, f, w, h, yo: _draw_circle(d, f, w, h, r, yo)
     else:
         base = random.randint(4, 16)
         height = random.randint(4, 16)
         answer_val = round(0.5 * base * height, 1)
         question_text = "Find the area of the triangle:"
         wrongs = [str(base * height), f"{round(0.5 * (base + height), 1):.1f}", f"{answer_val + 1:.1f}"]
-        image = _render_shape_image(lambda d, f, w, h: _draw_right_triangle(d, f, w, h, base, height, None, None))
+        shape_fn = lambda d, f, w, h, yo: _draw_right_triangle(d, f, w, h, base, height, None, None, yo)
 
     answer = f"{answer_val:.1f}" if isinstance(answer_val, float) and not float(answer_val).is_integer() else str(int(answer_val))
-    return {"question_text": question_text, "image": image, "answer": answer, "wrongs": wrongs}
+    return {"question_text": question_text, "shape_fn": shape_fn, "answer": answer, "wrongs": wrongs}
 
 
 def _check_geometry(guess, answer):
@@ -360,23 +422,25 @@ def _gen_trig(difficulty):
         leg_b = round(values["opposite"], 1) if unknown != "opposite" else "?"
         hyp_disp = round(values["hyp"], 1) if unknown != "hyp" else "?"
 
-        def draw(d, f, w, h):
-            x0, y0 = 100, 280
-            x1, y1 = 400, 280
-            x2, y2 = 100, 80
+        def draw(d, f, w, h, yo=0):
+            x0, y0 = 100, 280 + yo
+            x1, y1 = 400, 280 + yo
+            x2, y2 = 100, 80 + yo
             d.polygon([(x0, y0), (x1, y1), (x2, y2)], outline=(255, 255, 255), width=4)
             d.rectangle([x0, y0 - 18, x0 + 18, y0], outline=(255, 255, 255), width=2)
-            d.text((x0 + 20, y0 - 45), f"{angle}°", fill=(0, 200, 255), font=f)
+            # adjacent (leg_a) runs x0->x1 and opposite (leg_b) runs x0->x2, so the
+            # angle they're measured from sits at the OTHER acute vertex, (x1, y1) --
+            # not next to the right-angle marker at (x0, y0).
+            d.text((x1 - 70, y1 - 45), f"{angle}°", fill=(0, 200, 255), font=f)
             d.text(((x0 + x1) // 2 - 10, y0 + 10), str(leg_a), fill=(255, 220, 0), font=f)
             d.text((x0 - 55, (y0 + y2) // 2 - 15), str(leg_b), fill=(255, 220, 0), font=f)
             d.text(((x1 + x2) // 2 + 10, (y1 + y2) // 2 - 25), str(hyp_disp), fill=(255, 220, 0), font=f)
 
-        image = _render_shape_image(draw)
         wrongs = [f"{round(values[given_side] * math.tan(rad), 1):.1f}",
                   f"{answer_val + 1:.1f}", f"{round(given_val * math.sin(rad), 1):.1f}"]
         return {
             "question_text": f"Given the {angle}° angle, find the unknown side (round to 1 decimal):",
-            "image": image,
+            "shape_fn": draw,
             "answer": f"{answer_val:.1f}",
             "wrongs": wrongs,
         }
@@ -880,20 +944,21 @@ _COLORS = {
 
 
 def generate_question(category_url, difficulty):
-    """Returns a dict: question_text, image_buffer, plain_text, answer, mc_choices."""
+    """Returns a dict: question_text, image_buffer, plain_text, answer, mc_choices.
+    image_buffer is the ONLY presentation of the question -- it always contains the
+    full instruction text (word-wrapped) plus whatever math content applies (an
+    expression/dataset, or a drawn diagram), so callers shouldn't also show
+    question_text as a separate caption."""
     if category_url not in _GENERATORS:
         raise ValueError(f"Unknown category: {category_url}")
     spec = _GENERATORS[category_url](difficulty)
 
-    if spec.get("image") is not None:
-        image_buffer = spec["image"]
-        plain_text = spec["question_text"]
-    elif spec.get("display"):
-        image_buffer = _render_text_image(spec["display"], color=_COLORS[category_url])
-        plain_text = f"{spec['question_text']}\n{spec['display']}"
-    else:
-        image_buffer = _render_text_image(spec["question_text"], color=_COLORS[category_url], font_size=36)
-        plain_text = spec["question_text"]
+    shape_fn = spec.get("shape_fn")
+    math_line = spec.get("display")
+    image_buffer = _render_composed_image(
+        spec["question_text"], math_line=math_line, shape_fn=shape_fn, color=_COLORS[category_url]
+    )
+    plain_text = f"{spec['question_text']}\n{math_line}" if math_line else spec["question_text"]
 
     mc_choices = _make_mc_choices(spec["answer"], spec["wrongs"])
     return {
