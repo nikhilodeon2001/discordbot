@@ -18854,7 +18854,7 @@ async def get_coffees(user_id):
         return 0
 
 
-def get_math_question():
+async def get_math_question():
     """Pulls from Greg's Nightmare's full engine (gregs_nightmare.py) -- a superset
     of the old 8 create_*_question subtypes below (which are no longer called from
     here, left in place for now) plus geometry, number theory, probability,
@@ -18880,12 +18880,33 @@ def get_math_question():
     question), the already-rendered image + plain_text ride along in the "paragraph"
     tuple slot (unused for math otherwise) all the way to ask_question() -- generated
     exactly once, nothing to cache or regenerate, so there's no path left for the two
-    to ever drift apart."""
+    to ever drift apart.
+
+    The image is uploaded to S3 and carried as a URL (not inlined as base64) -- unlike
+    every other image category, math's question message also gets edited later (the
+    countdown footer, then the reveal breakdown), and empirically, editing a message
+    whose embed image is a Discord file attachment causes the attachment to render both
+    standalone and inside the embed (confirmed by direct testing: this happens as soon
+    as a message has had any two edits touching it, regardless of which fields or order,
+    but never happens when the image is a plain external URL instead of an attachment).
+    Routing through a real URL sidesteps the whole failure class."""
     category = random.choice(gregs_nightmare.CATEGORIES)
     qdata = gregs_nightmare.generate_question(category["url"], "normal")
     wrong_choices = [c for c in qdata["mc_choices"] if c != qdata["answer"]]
+
+    s3_key = f"generated-images/math-questions/{uuid.uuid4().hex}.png"
+    session = aioboto3.Session()
+    async with session.client("s3") as s3:
+        await s3.put_object(
+            Bucket=S3_BUCKET_NAME,
+            Key=s3_key,
+            Body=qdata["image_buffer"].getvalue(),
+            ContentType="image/png",
+        )
+    image_url = f"https://{S3_BUCKET_NAME}.s3.{AWS_REGION}.amazonaws.com/{s3_key}"
+
     paragraph = json.dumps({
-        "image_b64": base64.b64encode(qdata["image_buffer"].getvalue()).decode("ascii"),
+        "image_url": image_url,
         "plain_text": qdata["plain_text"],
     })
     return {
@@ -22548,7 +22569,12 @@ async def ask_question(trivia_category, trivia_question, trivia_url, trivia_answ
         # *before* the round even starts, since that's what the existing
         # multiple-choice grading machinery (build_answer_view/_mc_guess_tokens,
         # below) reads. The already-rendered image + plain_text ride along in
-        # trivia_paragraph (JSON+base64) rather than being cached or regenerated here.
+        # trivia_paragraph (JSON, carrying an S3 URL) rather than being cached or
+        # regenerated here. The image is a URL (not a Discord file attachment) because
+        # this message also gets edited later (countdown, then reveal) -- editing a
+        # message whose embed image is a file attachment causes Discord to render the
+        # attachment both standalone and inside the embed once the message has had any
+        # two edits, in any combination; a plain external URL doesn't have this problem.
         greg_payload = None
         try:
             if trivia_paragraph:
@@ -22556,8 +22582,8 @@ async def ask_question(trivia_category, trivia_question, trivia_url, trivia_answ
         except (TypeError, ValueError):
             greg_payload = None
 
-        if greg_payload is not None:
-            image_buffer = io.BytesIO(base64.b64decode(greg_payload["image_b64"]))
+        image_url = greg_payload.get("image_url") if greg_payload is not None else None
+        if image_url:
             if image_questions == True:
                 message_body += f"​\n​\n{number_block} [**{get_category_title(trivia_category, trivia_url, include_emoji=False)}**]({flag_url}) {get_category_emoji(trivia_category)}\n\n"
                 send_image_flag = True
@@ -24229,7 +24255,7 @@ async def select_trivia_questions(questions_per_round):
             math_sample_target = random.randint(1, num_math_questions) if num_math_questions > 0 else 0
         sample_size = min(math_sample_target, questions_per_round - len(selected_questions))
         if sample_size > 0:
-            math_questions = [get_math_question() for _ in range(sample_size)]
+            math_questions = [await get_math_question() for _ in range(sample_size)]
 
             for doc in math_questions:
                 doc["db"] = "math_questions"
@@ -25464,15 +25490,7 @@ async def start_trivia():
                 if current_answer_view is not None:
                     current_answer_view.stop()
                     try:
-                        # Explicitly reaffirm the existing attachment(s) in this same edit --
-                        # this edit also swaps the entire component tree (answer buttons ->
-                        # report view), and leaving attachment continuity unspecified during a
-                        # components change is what causes Discord to lose track of "this
-                        # attachment is consumed by the embed's image," rendering the image
-                        # both as a standalone tile and inside the embed within one message.
-                        # The countdown-tick edit above only ever touches embed (never view),
-                        # which is why it never triggers this.
-                        edit_kwargs = {"view": current_report_view, "attachments": current_answer_message.attachments}
+                        edit_kwargs = {"view": current_report_view}
                         choices = trivia_answer_list[1:] if len(trivia_answer_list) > 1 else []
                         correct_letter = trivia_answer_list[0][0].upper() if trivia_answer_list else ""
                         is_letter_mc = correct_letter.isalpha() and len(correct_letter) == 1
