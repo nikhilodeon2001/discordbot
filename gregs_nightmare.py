@@ -270,8 +270,8 @@ def _fmt_coef(a, var="x"):
     return f"{a}{var}"
 
 
-def _gen_algebra(difficulty):
-    if difficulty == "hard":
+def _gen_linear(hard):
+    if hard:
         x = random.choice([i for i in range(-15, 16) if i != 0])
         a = random.choice([i for i in range(-9, 10) if i != 0])
         c = random.choice([i for i in range(-9, 10) if i != 0 and i != a])
@@ -289,15 +289,113 @@ def _gen_algebra(difficulty):
 
     answer = str(x)
     wrongs = [str(x + 1), str(x - 1), str(-x)]
+    return {"question_text": "Solve for x:", "display": display, "answer": answer, "wrongs": wrongs}
+
+
+def _factor_term(z):
+    return f"(x - {z})" if z >= 0 else f"(x + {abs(z)})"
+
+
+def _build_quadratic():
+    """A quadratic with two known integer roots z1, z2 -- ported from the in-game
+    trivia engine's zeroes/zeroes-sum/zeroes-product/factors question family
+    (discordbot.py's generate_and_render_polynomial), which Greg's Nightmare folds
+    into Algebra as additional subtypes rather than a separate category."""
+    z1 = random.choice([i for i in range(-9, 10) if i != 0])
+    z2 = random.choice([i for i in range(-9, 10) if i != 0 and i != z1])
+    b = -(z1 + z2)
+    c = z1 * z2
+    b_coef = "" if abs(b) == 1 else str(abs(b))
+    b_term = "" if b == 0 else f" {'+' if b >= 0 else '-'} {b_coef}x"
+    c_term = f" {'+' if c >= 0 else '-'} {abs(c)}"
+    display = f"x²{b_term}{c_term}"
+    return z1, z2, display
+
+
+def _gen_zeroes_sum_product():
+    z1, z2, display = _build_quadratic()
+    ask_sum = random.choice([True, False])
+    answer_val = z1 + z2 if ask_sum else z1 * z2
+    wrong_val = z1 * z2 if ask_sum else z1 + z2
+    wrongs = [str(wrong_val), str(answer_val + 1), str(-answer_val)]
     return {
-        "question_text": "Solve for x:",
+        "question_text": f"For the quadratic below, find the {'sum' if ask_sum else 'product'} of its zeroes:",
+        "display": display,
+        "answer": str(answer_val),
+        "wrongs": wrongs,
+    }
+
+
+def _gen_zeroes():
+    z1, z2, display = _build_quadratic()
+    lo, hi = sorted((z1, z2))
+    answer = f"{lo}, {hi}"
+    # The checker compares pairs as unordered sets, so a candidate distractor whose
+    # *set* of values happens to equal {lo, hi} (e.g. negating both roots of a
+    # symmetric pair like -2/2) would silently grade as correct -- filter those out.
+    candidates = [f"{lo + 1}, {hi}", f"{lo}, {hi + 1}", f"{-lo}, {-hi}", f"{lo - 1}, {hi}", f"{lo}, {hi - 1}"]
+    wrongs = []
+    seen = {frozenset((lo, hi))}
+    for candidate in candidates:
+        pair = frozenset(int(x) for x in re.findall(r"-?\d+", candidate))
+        if pair in seen:
+            continue
+        seen.add(pair)
+        wrongs.append(candidate)
+        if len(wrongs) == 3:
+            break
+    return {
+        "question_text": "Find the two zeroes of the quadratic below (either order):",
         "display": display,
         "answer": answer,
         "wrongs": wrongs,
     }
 
 
+def _gen_factors():
+    z1, z2, display = _build_quadratic()
+    answer = f"{_factor_term(z1)}{_factor_term(z2)}"
+    # Both factor orders grade as correct, so a distractor built from a root pair
+    # that's a permutation of {z1, z2} (e.g. negating a symmetric -k/k pair leaves
+    # the same set) would silently match too -- filter those out, same as _gen_zeroes.
+    candidate_pairs = [(z1 + 1, z2), (z1, z2 + 1), (-z1, -z2), (z1 - 1, z2), (z1, z2 - 1)]
+    wrongs = []
+    seen = {frozenset((z1, z2))}
+    for a, b in candidate_pairs:
+        pair = frozenset((a, b))
+        if pair in seen:
+            continue
+        seen.add(pair)
+        wrongs.append(f"{_factor_term(a)}{_factor_term(b)}")
+        if len(wrongs) == 3:
+            break
+    return {"question_text": "Factor the quadratic below:", "display": display, "answer": answer, "wrongs": wrongs}
+
+
+def _gen_algebra(difficulty):
+    if difficulty == "hard":
+        subtype = random.choice(["linear", "zeroes", "factors"])
+        if subtype == "linear":
+            return _gen_linear(hard=True)
+        return _gen_zeroes() if subtype == "zeroes" else _gen_factors()
+
+    subtype = random.choice(["linear", "zeroes_sum_product"])
+    return _gen_linear(hard=False) if subtype == "linear" else _gen_zeroes_sum_product()
+
+
 def _check_algebra(guess, answer):
+    if "," in answer:
+        # "zeroes" -- an unordered pair, e.g. "-3, 5"; order doesn't matter.
+        guess_nums = sorted(int(x) for x in re.findall(r"-?\d+", guess))
+        answer_nums = sorted(int(x) for x in re.findall(r"-?\d+", answer))
+        return len(guess_nums) >= 2 and guess_nums[:2] == answer_nums[:2]
+    if "(" in answer:
+        # "factors" -- e.g. "(x - 3)(x + 5)"; either factor order is accepted.
+        norm = lambda s: s.lower().replace(" ", "").replace("*", "")
+        parts = re.findall(r"\([^)]*\)", answer)
+        swapped = "".join(reversed(parts))
+        g = norm(guess)
+        return g == norm(answer) or g == norm(swapped)
     n = _parse_number(guess)
     return n is not None and n == float(answer)
 
@@ -395,6 +493,35 @@ def _check_geometry(guess, answer):
 
 _TRIG_ANGLES = [0, 30, 45, 60, 90]
 
+# Ported from the in-game engine's generate_trig_question: a generic right triangle
+# labeled x (adjacent), y (opposite), z (hypotenuse) with angle θ, where the answer
+# is the ratio itself (e.g. "y/z") rather than a computed value.
+_RATIO_MAP = {"sin": "y/z", "cos": "x/z", "tan": "y/x", "cot": "x/y", "sec": "z/x", "csc": "z/y"}
+
+
+def _draw_ratio_triangle(draw, font, w, h, y_offset=0):
+    x0, y0 = 100, 280 + y_offset
+    x1, y1 = 400, 280 + y_offset
+    x2, y2 = 100, 80 + y_offset
+    draw.polygon([(x0, y0), (x1, y1), (x2, y2)], outline=(255, 255, 255), width=4)
+    draw.rectangle([x0, y0 - 18, x0 + 18, y0], outline=(255, 255, 255), width=2)
+    draw.text((x1 - 55, y1 - 45), "θ", fill=(0, 200, 255), font=font)
+    draw.text(((x0 + x1) // 2 - 5, y0 + 10), "x", fill=(255, 220, 0), font=font)
+    draw.text((x0 - 35, (y0 + y2) // 2 - 15), "y", fill=(255, 220, 0), font=font)
+    draw.text(((x1 + x2) // 2 + 10, (y1 + y2) // 2 - 25), "z", fill=(255, 220, 0), font=font)
+
+
+def _gen_trig_ratio():
+    func = random.choice(list(_RATIO_MAP.keys()))
+    answer = _RATIO_MAP[func]
+    wrongs = random.sample([v for k, v in _RATIO_MAP.items() if k != func], 3)
+    return {
+        "question_text": f"What is {func}(θ) in the triangle below?",
+        "shape_fn": _draw_ratio_triangle,
+        "answer": answer,
+        "wrongs": wrongs,
+    }
+
 
 def _gen_trig(difficulty):
     if difficulty == "hard":
@@ -445,6 +572,9 @@ def _gen_trig(difficulty):
             "wrongs": wrongs,
         }
 
+    if random.choice([True, False]):
+        return _gen_trig_ratio()
+
     func = random.choice(["sin", "cos", "tan"])
     angle = random.choice([a for a in _TRIG_ANGLES if not (func == "tan" and a == 90)])
     rad = math.radians(angle)
@@ -461,6 +591,9 @@ def _gen_trig(difficulty):
 
 
 def _check_trig(guess, answer):
+    if re.fullmatch(r"[a-zA-Z]+/[a-zA-Z]+", answer.replace(" ", "")):
+        norm = lambda s: s.strip().lower().replace(" ", "").replace("(", "").replace(")", "")
+        return norm(guess) == norm(answer)
     n = _parse_number(guess)
     return _close(n, float(answer), tol=0.05 if abs(float(answer)) < 5 else 0.15)
 
@@ -643,9 +776,28 @@ def _check_stats(guess, answer):
 # Number Theory / Arithmetic
 # ---------------------------------------------------------------------------
 
+def _gen_base_conversion(hard):
+    """Ported from the in-game engine's generate_base_question (base-2/3/4 to
+    decimal); hard mode widens the base range and digit count."""
+    if hard:
+        input_base = random.choice([5, 6, 7, 8])
+        num_digits = random.choice([3, 4])
+    else:
+        input_base = random.choice([2, 3, 4])
+        num_digits = 3
+    first = random.randint(1, input_base - 1)
+    digits = str(first) + "".join(str(random.randint(0, input_base - 1)) for _ in range(num_digits - 1))
+    answer_val = int(digits, input_base)
+    question_text = f"Convert the base-{input_base} number below to decimal:"
+    wrongs = [str(int(digits)), str(answer_val + input_base), str(max(0, answer_val - 1))]
+    return {"question_text": question_text, "display": digits, "answer": str(answer_val), "wrongs": wrongs}
+
+
 def _gen_numbertheory(difficulty):
     if difficulty == "hard":
-        kind = random.choice(["gcd", "primefactors"])
+        kind = random.choice(["gcd", "primefactors", "base"])
+        if kind == "base":
+            return _gen_base_conversion(hard=True)
         if kind == "gcd":
             a = random.randint(20, 120)
             b = random.randint(20, 120)
@@ -670,7 +822,9 @@ def _gen_numbertheory(difficulty):
             question_text = f"How many distinct prime factors does {n} have?"
         return {"question_text": question_text, "display": None, "answer": str(answer_val), "wrongs": wrongs}
 
-    kind = random.choice(["percent", "gcdlcm"])
+    kind = random.choice(["percent", "gcdlcm", "base"])
+    if kind == "base":
+        return _gen_base_conversion(hard=False)
     if kind == "percent":
         p = random.choice([5, 10, 15, 20, 25, 40, 50, 60, 75, 80])
         n = random.choice([20, 40, 60, 80, 100, 120, 140, 160, 180, 200])
