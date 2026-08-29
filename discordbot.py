@@ -983,6 +983,8 @@ glyph_mode = glyph_mode_default
 cloak_mode_default = False
 cloak_mode = cloak_mode_default
 cloaked_user = None
+disco_mode_default = False
+disco_mode = disco_mode_default
 
 # Glyph mapping: ASCII letters -> Unicode lookalikes (reverse of CONFUSABLES_MAP in trivia_monitor.py)
 # Used to make questions harder to Google search by replacing normal letters with lookalikes
@@ -1078,6 +1080,8 @@ previous_answer_message = None
 current_report_view = None
 current_question_embed = None
 current_footer_base_text = None
+current_disco_urls = None  # (black_url, white_url) for the current question's Disco flash, or None
+current_disco_secondary_embed = None  # extra flashing-text embed alongside a real photo, or None
 pending_intro_preview_view = None  # Currently-live #newintro/#uploadintro confirmation, if any
 answer_buttons_enabled = True  # Feature flag: click-to-answer buttons on multiple-choice trivia questions
 jeopardy_boosted = False  # Set by "Alex"/"Xela" this round - signals coordination with crossword/SAT/math/mysterybox boosts
@@ -6267,6 +6271,9 @@ _KEYWORD_EFFECTS = {
     "glyph": ("🔐 Glyph (obscured questions)",
               "\n🔐🛡️ {mention} has obscured the questions!", "Glyph",
               lambda rw_id: _set_globals(glyph_mode=True)),
+    "disco": ("🪩 Disco (flashing neon images)",
+              "\n🪩✨ {mention} turned on the disco lights! Every question flashes as neon images now.", "Disco",
+              lambda rw_id: _set_globals(disco_mode=True)),
 }
 
 
@@ -17646,7 +17653,7 @@ async def save_round_options_to_db():
     global num_jeopardy_clues, num_mysterybox_clues, num_wof_clues
     global god_mode, quickie_mode, yolo_mode, num_math_questions, num_stats_questions
     global image_questions, marx_mode, blind_mode, sniper_mode, blitz_mode, exact_mode, golf_mode, glyph_mode
-    global cloak_mode, cloaked_user
+    global cloak_mode, cloaked_user, disco_mode
 
     try:
         # Store each variable as a document with _id as the variable name
@@ -17673,6 +17680,7 @@ async def save_round_options_to_db():
             {"_id": "round_glyph_mode", "value": int(glyph_mode)},
             {"_id": "round_cloak_mode", "value": int(cloak_mode)},
             {"_id": "round_cloaked_user", "value": cloaked_user or 0},  # Store 0 if None
+            {"_id": "round_disco_mode", "value": int(disco_mode)},
         ]
 
         for update in updates:
@@ -17694,7 +17702,7 @@ async def load_round_options_from_db():
     global num_jeopardy_clues, num_mysterybox_clues, num_wof_clues
     global god_mode, quickie_mode, yolo_mode, num_math_questions, num_stats_questions
     global image_questions, marx_mode, blind_mode, sniper_mode, blitz_mode, exact_mode, golf_mode, glyph_mode
-    global cloak_mode, cloaked_user
+    global cloak_mode, cloaked_user, disco_mode
 
     try:
         # Load each variable, with fallback to defaults
@@ -17719,6 +17727,7 @@ async def load_round_options_from_db():
         golf_mode = bool(await get_int_param(db, "round_golf_mode", int(golf_mode_default)))
         cloak_mode = bool(await get_int_param(db, "round_cloak_mode", int(cloak_mode_default)))
         glyph_mode = bool(await get_int_param(db, "round_glyph_mode", int(glyph_mode_default)))
+        disco_mode = bool(await get_int_param(db, "round_disco_mode", int(disco_mode_default)))
 
         cloaked_user_val = await get_int_param(db, "round_cloaked_user", 0)
         cloaked_user = cloaked_user_val if cloaked_user_val != 0 else None
@@ -20230,6 +20239,159 @@ def generate_jeopardy_image(question_text, category_text=None):
     return image_buffer
 
 
+# Disco mode: neon colors for the flashing black/white question images, index-aligned by hue
+# slot between the two lists (slot 0 = green family on both, slot 1 = magenta family, etc.) so a
+# character's color can be forced to differ between the black and white renders while staying the
+# "same kind of neon" -- see _disco_assign_colors.
+PALETTE_BLACK_DISCO = list(gregs_nightmare._NEON_COLORS)
+PALETTE_WHITE_DISCO = [
+    (0, 153, 64),      # green
+    (199, 21, 133),    # magenta / deep pink
+    (0, 131, 143),     # cyan -> teal
+    (184, 134, 11),    # yellow -> dark goldenrod
+    (204, 85, 0),      # orange -> burnt orange
+    (0, 90, 156),      # sky blue -> strong blue
+    (111, 0, 148),     # purple
+    (178, 24, 43),     # red -> deep red
+    (0, 128, 96),      # spring green -> darker green-teal
+]
+
+
+def _disco_wrap_lines(draw, text, font, max_width):
+    """Greedy word-wrap identical in spirit to gregs_nightmare._wrap_lines -- used so the black
+    and white Disco renders share exactly the same line breaks (only per-character color differs
+    between them)."""
+    words = text.split()
+    if not words:
+        return [""]
+    lines = []
+    current = words[0]
+    for word in words[1:]:
+        trial = f"{current} {word}"
+        bbox = draw.textbbox((0, 0), trial, font=font)
+        if bbox[2] - bbox[0] <= max_width:
+            current = trial
+        else:
+            lines.append(current)
+            current = word
+    lines.append(current)
+    return lines
+
+
+def _disco_assign_colors(text_lines):
+    """Walks every non-whitespace character across all lines once, picking a palette index for
+    the black-background render and a different one for the white-background render -- never
+    repeating a color on two side-by-side characters within either image, and never giving the
+    same character the same hue slot in both images (PALETTE_BLACK_DISCO/PALETTE_WHITE_DISCO are
+    index-aligned by hue, so black_idx != white_idx is enough to guarantee that). Returns a list
+    (one per line) of lists of (char, black_idx_or_None, white_idx_or_None); None marks whitespace,
+    which isn't colored."""
+    n = len(PALETTE_BLACK_DISCO)
+    prev_black, prev_white = None, None
+    result = []
+    for line in text_lines:
+        line_result = []
+        for ch in line:
+            if ch.isspace():
+                line_result.append((ch, None, None))
+                continue
+            black_idx = random.choice([i for i in range(n) if i != prev_black])
+            white_idx = random.choice([i for i in range(n) if i != prev_white and i != black_idx])
+            line_result.append((ch, black_idx, white_idx))
+            prev_black, prev_white = black_idx, white_idx
+        result.append(line_result)
+    return result
+
+
+def _disco_render_one(colored_lines, font, category_lines, category_font, width, height,
+                       background_color, header_color, palette, use_black_idx):
+    """Draws one Disco frame (black or white background) from the shared `colored_lines` layout
+    -- character-by-character (draw.multiline_text can't do per-character color), using
+    draw.textlength for advance width so spaces don't collapse (textbbox gives a zero-width ink
+    box for whitespace)."""
+    img = Image.new('RGB', (width, height), color=background_color)
+    draw = ImageDraw.Draw(img)
+
+    cat_line_bbox = category_font.getbbox("Ag") if category_font else None
+    cat_line_height = (cat_line_bbox[3] - cat_line_bbox[1]) + 12 if cat_line_bbox else 0
+    line_bbox = font.getbbox("Ag")
+    line_height = (line_bbox[3] - line_bbox[1]) + 12
+
+    y = 40
+    if category_lines:
+        for line in category_lines:
+            line_width = draw.textlength(line, font=category_font)
+            x = (width - line_width) / 2
+            draw.text((x, y), line, fill=header_color, font=category_font)
+            y += cat_line_height
+        y += 20
+
+    total_text_height = len(colored_lines) * line_height
+    y = max(y, (height - total_text_height) // 2)
+
+    for line in colored_lines:
+        full_text = "".join(ch for ch, _, _ in line)
+        line_width = draw.textlength(full_text, font=font)
+        x = (width - line_width) / 2
+        for ch, black_idx, white_idx in line:
+            idx = black_idx if use_black_idx else white_idx
+            color = palette[idx] if idx is not None else header_color
+            draw.text((x, y), ch, fill=color, font=font)
+            x += draw.textlength(ch, font=font)
+        y += line_height
+
+    buf = io.BytesIO()
+    img.save(buf, format='PNG')
+    buf.seek(0)
+    return buf
+
+
+def generate_disco_images(question_text, category_text=None):
+    """Renders `question_text` as two same-layout images -- one on a black background, one on
+    white -- for Disco mode's flashing effect. Every visible character gets its own neon color
+    (see _disco_assign_colors for the adjacency/cross-image rules), while the category (if given)
+    is a plain fixed-color header, not part of the per-letter effect -- mirroring
+    generate_jeopardy_image's category/clue split. Returns (black_buf, white_buf), two BytesIO
+    PNGs sharing one random draw and one word-wrap pass, so they only differ by color."""
+    width, height = 800, 600
+    margin = 40
+    max_width = width - 2 * margin
+    font = get_font("DejaVuSans.ttf", 50)
+    category_font = get_font("DejaVuSans-Bold.ttf", 36) if category_text else None
+
+    probe = ImageDraw.Draw(Image.new('RGB', (10, 10)))
+    text_lines = _disco_wrap_lines(probe, question_text, font, max_width)
+    category_lines = _disco_wrap_lines(probe, category_text, category_font, max_width) if category_text else []
+
+    colored_lines = _disco_assign_colors(text_lines)
+
+    black_buf = _disco_render_one(colored_lines, font, category_lines, category_font, width, height,
+                                   (0, 0, 0), (255, 255, 255), PALETTE_BLACK_DISCO, True)
+    white_buf = _disco_render_one(colored_lines, font, category_lines, category_font, width, height,
+                                   (255, 255, 255), (0, 0, 0), PALETTE_WHITE_DISCO, False)
+    return black_buf, white_buf
+
+
+async def upload_disco_images_to_s3(black_buf, white_buf):
+    """Uploads both Disco frames to S3 and returns (black_url, white_url) -- URLs, not file
+    attachments, since the question message gets edited repeatedly (the flash loop, then the
+    reveal); see generate_disco_images' neighbor get_math_question for why a file-attachment
+    embed image breaks under repeat edits."""
+    urls = []
+    for buf in (black_buf, white_buf):
+        s3_key = f"generated-images/disco/{uuid.uuid4().hex}.png"
+        session = aioboto3.Session()
+        async with session.client("s3") as s3:
+            await s3.put_object(
+                Bucket=S3_BUCKET_NAME,
+                Key=s3_key,
+                Body=buf.getvalue(),
+                ContentType="image/png",
+            )
+        urls.append(f"https://{S3_BUCKET_NAME}.s3.{AWS_REGION}.amazonaws.com/{s3_key}")
+    return urls[0], urls[1]
+
+
 def generate_mc_image(answers):
     # Define the background color and text properties
     background_color = (0, 0, 0)  # Black screen
@@ -21083,7 +21245,7 @@ def generate_crossword_image(answer, prefill=0.5):
 
 
 async def clear_round_options():
-    global since_token, time_between_questions, time_between_questions_default, question_time, question_time_default, ghost_mode, since_token, categories_to_exclude, num_crossword_clues, num_jeopardy_clues, num_mysterybox_clues, num_wof_clues, num_sat_questions, jeopardy_boosted, crossword_boosted, sat_boosted, math_boosted, mysterybox_boosted, god_mode, quickie_mode, last_question_winner, last_question_winner_id, yolo_mode, magic_number, wf_winner, num_math_questions, num_stats_questions, image_questions, nice_okra, creep_okra, marx_mode, blind_mode, seductive_okra, joke_okra, sniper_mode, blitz_mode, exact_mode, golf_mode, glyph_mode, cloak_mode, cloaked_user, haiku_okra, trailer_okra, heist_okra, horoscope_okra, rap_okra, shakespeare_okra, pirate_okra, noir_okra, hype_okra, roast_okra
+    global since_token, time_between_questions, time_between_questions_default, question_time, question_time_default, ghost_mode, since_token, categories_to_exclude, num_crossword_clues, num_jeopardy_clues, num_mysterybox_clues, num_wof_clues, num_sat_questions, jeopardy_boosted, crossword_boosted, sat_boosted, math_boosted, mysterybox_boosted, god_mode, quickie_mode, last_question_winner, last_question_winner_id, yolo_mode, magic_number, wf_winner, num_math_questions, num_stats_questions, image_questions, nice_okra, creep_okra, marx_mode, blind_mode, seductive_okra, joke_okra, sniper_mode, blitz_mode, exact_mode, golf_mode, glyph_mode, cloak_mode, cloaked_user, haiku_okra, trailer_okra, heist_okra, horoscope_okra, rap_okra, shakespeare_okra, pirate_okra, noir_okra, hype_okra, roast_okra, disco_mode
     time_between_questions = time_between_questions_default
     question_time = question_time_default
     ghost_mode = ghost_mode_default
@@ -21131,6 +21293,7 @@ async def clear_round_options():
     glyph_mode = glyph_mode_default
     cloak_mode = cloak_mode_default
     cloaked_user = None
+    disco_mode = disco_mode_default
 
 async def process_round_options(round_winner, winner_points, round_winner_id, winner_coffees=None):
     if round_winner is None:
@@ -21149,6 +21312,7 @@ async def process_round_options(round_winner, winner_points, round_winner_id, wi
             "🙈🚫 **Blind**: No answers shown\n"
             "🚩🔨 **Marx**: No recognizing answers\n"
             "📷❌ **Blank**: No image questions\n"
+            "🪩✨ **Disco**: Flashing neon images\n"
             "👻🎃 **Ghost**: All responses vanish\n"
             "🫥🕶️ **Cloak**: Your responses vanish\n"
             "🧢🎤 **Sniper**: One answer per player\n"
@@ -21190,7 +21354,7 @@ async def prompt_user_for_response(round_winner, winner_points, winner_coffees, 
     global num_jeopardy_clues, num_crossword_clues, num_mysterybox_clues, num_wof_clues
     global num_sat_questions, jeopardy_boosted, crossword_boosted, sat_boosted, math_boosted, mysterybox_boosted
     global yolo_mode, god_mode, quickie_mode, num_math_questions, num_stats_questions
-    global image_questions, marx_mode, blind_mode, sniper_mode, blitz_mode, exact_mode, glyph_mode, golf_mode, cloak_mode, cloaked_user
+    global image_questions, marx_mode, blind_mode, sniper_mode, blitz_mode, exact_mode, glyph_mode, golf_mode, cloak_mode, cloaked_user, disco_mode
 
     # Central configuration for keywords
     # Format: "keyword": {"requires_coffee": bool, "exclude_hashtag": bool}
@@ -21216,7 +21380,8 @@ async def prompt_user_for_response(round_winner, winner_points, winner_coffees, 
         "blitz": {"requires_coffee": False, "exclude_hashtag": True},
         "poindexter": {"requires_coffee": False, "exclude_hashtag": True},
         "golf": {"requires_coffee": False, "exclude_hashtag": False},
-        "glyph": {"requires_coffee": False, "exclude_hashtag": True}
+        "glyph": {"requires_coffee": False, "exclude_hashtag": True},
+        "disco": {"requires_coffee": False, "exclude_hashtag": True}
     }
 
     target_channel = _active_game_channel or channel
@@ -22503,7 +22668,15 @@ def apply_glyphs(text):
 
 async def ask_question(trivia_category, trivia_question, trivia_url, trivia_answer_list, question_number, trivia_db=None, trivia_id=None, trivia_paragraph=None):
     """Ask the trivia question."""
-    global current_answer_view, current_answer_message, current_report_view, current_question_embed, current_footer_base_text
+    global current_answer_view, current_answer_message, current_report_view, current_question_embed, current_footer_base_text, current_disco_urls, current_disco_secondary_embed
+    current_disco_urls = None
+    current_disco_secondary_embed = None
+    # Disco forces every branch below into its "show image" arm (never the plain-text fallback)
+    # regardless of Blank mode -- named distinctly from the `image_questions` global it reads
+    # (rather than reassigning that name) since assigning to a global's name anywhere in a
+    # function makes Python treat every read of that name in the function as local, which would
+    # break the branches above this point.
+    _show_image = True if disco_mode else image_questions
     _companion_set_puzzle_text(None)  # cleared each question; set below for text-mode puzzles
     _companion_set_footer_text(None)  # cleared each question; set from footer_text before the send
     await record_question_asked(trivia_db, trivia_id)
@@ -22557,8 +22730,13 @@ async def ask_question(trivia_category, trivia_question, trivia_url, trivia_answ
         )
         footer_text = "\ud83d\udea8 One guess: Answer is a number" if is_numeric_answer else "\ud83d\udea8 One guess"
         
-    if is_valid_url(trivia_url): 
-        message_body += f"\u200b\n\u200b\n{number_block}📷 [**{get_category_title(trivia_category, trivia_url, include_emoji=False)}**]({flag_url}) {get_category_emoji(trivia_category)}\n\n{trivia_question}\n"
+    if is_valid_url(trivia_url):
+        if disco_mode:
+            # Real photo stays as the primary image; the caption becomes its own flashing
+            # Disco image instead of plain text (added as a second embed below).
+            message_body += f"\u200b\n\u200b\n{number_block}📷 [**{get_category_title(trivia_category, trivia_url, include_emoji=False)}**]({flag_url}) {get_category_emoji(trivia_category)}\n\n"
+        else:
+            message_body += f"\u200b\n\u200b\n{number_block}📷 [**{get_category_title(trivia_category, trivia_url, include_emoji=False)}**]({flag_url}) {get_category_emoji(trivia_category)}\n\n{trivia_question}\n"
         image_url = trivia_url
         send_image_flag = True
 
@@ -22591,7 +22769,7 @@ async def ask_question(trivia_category, trivia_question, trivia_url, trivia_answ
 
         image_url = greg_payload.get("image_url") if greg_payload is not None else None
         if image_url:
-            if image_questions == True:
+            if _show_image:
                 message_body += f"​\n​\n{number_block} [**{get_category_title(trivia_category, trivia_url, include_emoji=False)}**]({flag_url}) {get_category_emoji(trivia_category)}\n\n"
                 send_image_flag = True
             else:
@@ -22619,7 +22797,7 @@ async def ask_question(trivia_category, trivia_question, trivia_url, trivia_answ
 
     elif trivia_url == "algebra":
         image_buffer, new_question, new_solution, text_problem = generate_and_render_linear_problem()
-        if image_questions == True:
+        if _show_image:
             message_body += f"\u200b\n\u200b\n{number_block} [**{get_category_title(trivia_category, trivia_url, include_emoji=False)}**]({flag_url}) {get_category_emoji(trivia_category)}\n\n{new_question}\n" 
             send_image_flag = True
         else:
@@ -22627,7 +22805,7 @@ async def ask_question(trivia_category, trivia_question, trivia_url, trivia_answ
     
     elif trivia_url == "trig":
         image_url, new_question, new_solution, img_description = generate_trig_question()
-        if image_questions == True:
+        if _show_image:
             message_body += f"\u200b\n\u200b\n{number_block} [**{get_category_title(trivia_category, trivia_url, include_emoji=False)}**]({flag_url}) {get_category_emoji(trivia_category)}\n\n{new_question}\n" 
             send_image_flag = True
         else:
@@ -22635,7 +22813,7 @@ async def ask_question(trivia_category, trivia_question, trivia_url, trivia_answ
 
     elif trivia_url == "base":
         image_buffer, new_question, new_solution, base_string = generate_base_question()
-        if image_questions == True:
+        if _show_image:
             message_body += f"\u200b\n\u200b\n{number_block} [**{get_category_title(trivia_category, trivia_url, include_emoji=False)}**]({flag_url}) {get_category_emoji(trivia_category)}\n\n{new_question}\n" 
             send_image_flag = True
         else:
@@ -22643,18 +22821,21 @@ async def ask_question(trivia_category, trivia_question, trivia_url, trivia_answ
     
     elif trivia_url == "zeroes sum":
         image_buffer, new_solution, polynomial = generate_and_render_polynomial(trivia_url)
-        if image_questions == True:
+        if _show_image:
             message_body += f"\u200b\n\u200b\n{number_block} [**{get_category_title(trivia_category, trivia_url, include_emoji=False)}**]({flag_url}) {get_category_emoji(trivia_category)}\n\n{trivia_question}\n" 
             send_image_flag = True
         else:
             message_body += f"\u200b\n\u200b\n{number_block} [**{get_category_title(trivia_category, trivia_url, include_emoji=False)}**]({flag_url}) {get_category_emoji(trivia_category)}\n\n{trivia_question}\n{polynomial}\n"
 
     elif trivia_url == "characters":
-        message_body += f"\u200b\n\u200b\n{number_block} [**{get_category_title(trivia_category, trivia_url, include_emoji=False)}**]({flag_url}) {get_category_emoji(trivia_category)}\n\nName the movie, book, or show:\n\n{trivia_question}\n"
+        if disco_mode:
+            message_body += f"\u200b\n\u200b\n{number_block} [**{get_category_title(trivia_category, trivia_url, include_emoji=False)}**]({flag_url}) {get_category_emoji(trivia_category)}\n\nName the movie, book, or show:\n"
+        else:
+            message_body += f"\u200b\n\u200b\n{number_block} [**{get_category_title(trivia_category, trivia_url, include_emoji=False)}**]({flag_url}) {get_category_emoji(trivia_category)}\n\nName the movie, book, or show:\n\n{trivia_question}\n"
 
     elif trivia_url == "zeroes product":
         image_buffer, new_solution, polynomial = generate_and_render_polynomial(trivia_url)
-        if image_questions == True:
+        if _show_image:
             message_body += f"\u200b\n\u200b\n{number_block} [**{get_category_title(trivia_category, trivia_url, include_emoji=False)}**]({flag_url}) {get_category_emoji(trivia_category)}\n\n{trivia_question}\n" 
             send_image_flag = True
         else:
@@ -22662,7 +22843,7 @@ async def ask_question(trivia_category, trivia_question, trivia_url, trivia_answ
 
     elif trivia_url == "zeroes":
         image_buffer, new_solution, polynomial = generate_and_render_polynomial(trivia_url)
-        if image_questions == True:
+        if _show_image:
             message_body += f"\u200b\n\u200b\n{number_block} [**{get_category_title(trivia_category, trivia_url, include_emoji=False)}**]({flag_url}) {get_category_emoji(trivia_category)}\n\n{trivia_question}\n" 
             send_image_flag = True
         else:
@@ -22670,7 +22851,7 @@ async def ask_question(trivia_category, trivia_question, trivia_url, trivia_answ
 
     elif trivia_url == "factors":
         image_buffer, new_solution, polynomial = generate_and_render_polynomial(trivia_url)
-        if image_questions == True:
+        if _show_image:
             message_body += f"\u200b\n\u200b\n{number_block} [**{get_category_title(trivia_category, trivia_url, include_emoji=False)}**]({flag_url}) {get_category_emoji(trivia_category)}\n\n{trivia_question}\n" 
             send_image_flag = True
         else:
@@ -22678,7 +22859,7 @@ async def ask_question(trivia_category, trivia_question, trivia_url, trivia_answ
             
     elif trivia_url == "derivative":
         image_buffer, new_solution, polynomial = generate_and_render_derivative_image()
-        if image_questions == True:
+        if _show_image:
             message_body += f"\u200b\n\u200b\n{number_block} [**{get_category_title(trivia_category, trivia_url, include_emoji=False)}**]({flag_url}) {get_category_emoji(trivia_category)}\n\n{trivia_question}\n" 
             send_image_flag = True
         else:
@@ -22686,7 +22867,7 @@ async def ask_question(trivia_category, trivia_question, trivia_url, trivia_answ
         
     elif trivia_url == "scramble":
         image_buffer, scramble = generate_scrambled_image(scramble_text(trivia_answer_list[0]))
-        if image_questions:
+        if _show_image:
             message_body += f"\u200b\n\u200b\n{number_block}🧩 [**{get_category_title(trivia_category, trivia_url, include_emoji=False)}**]({flag_url}) {get_category_emoji(trivia_category)}\n\n{trivia_question}\n"
             send_image_flag = True
         else:
@@ -22695,7 +22876,7 @@ async def ask_question(trivia_category, trivia_question, trivia_url, trivia_answ
 
     elif trivia_url == "median":
         image_buffer, new_solution, num_set = generate_median_question()
-        if image_questions == True:
+        if _show_image:
             message_body += f"\u200b\n\u200b\n{number_block}📊 [**{get_category_title(trivia_category, trivia_url, include_emoji=False)}**]({flag_url}) {get_category_emoji(trivia_category)}\n\n{trivia_question}\n"
             send_image_flag = True
         else:
@@ -22703,14 +22884,14 @@ async def ask_question(trivia_category, trivia_question, trivia_url, trivia_answ
 
     elif trivia_url == "mean":
         image_buffer, new_solution, num_set = generate_mean_question()
-        if image_questions == True:
+        if _show_image:
             message_body += f"\u200b\n\u200b\n{number_block}📊 [**{get_category_title(trivia_category, trivia_url, include_emoji=False)}**]({flag_url}) {get_category_emoji(trivia_category)}\n\n{trivia_question}\n"
             send_image_flag = True
         else:
             message_body += f"\u200b\n\u200b\n{number_block} [**{get_category_title(trivia_category, trivia_url, include_emoji=False)}**]({flag_url}) {get_category_emoji(trivia_category)}\n\n{trivia_question}\n{num_set}\n"
 
     elif trivia_url.startswith("jeopardy"):
-        if image_questions == True: 
+        if _show_image: 
             image_buffer = generate_jeopardy_image(trivia_question, get_category_title(trivia_category, trivia_url, include_emoji=False, include_prefix=False))
             message_body += f"\u200b\n\u200b\n{number_block} [**{get_category_title(trivia_category, trivia_url, include_emoji=False)}**]({flag_url}) {get_category_emoji(trivia_category)}\n\nAnd the answer is: \n"
             send_image_flag = True
@@ -22720,7 +22901,7 @@ async def ask_question(trivia_category, trivia_question, trivia_url, trivia_answ
     elif trivia_category == "Crossword":
         image_buffer, string_representation = generate_crossword_image(trivia_answer_list[0])
         footer_text = "🚨 Full word required"
-        if image_questions == True:
+        if _show_image:
             message_body += f"\u200b\n\u200b\n{number_block} [**{get_category_title(trivia_category, trivia_url, include_emoji=False)}**]({flag_url}) {get_category_emoji(trivia_category)}\n\n[{len(trivia_answer_list[0])} Letters] {trivia_question}\n"
             send_image_flag = True
         else:
@@ -22731,22 +22912,35 @@ async def ask_question(trivia_category, trivia_question, trivia_url, trivia_answ
             _companion_set_puzzle_text(string_representation)  # raw tiles for the phone (HTML shows _ literally)
         
     elif "multiple choice" in trivia_url:
+        # Disco: question text (and, for regular MC, the printed choice list) moves into the
+        # flashing image below instead of being repeated here as plain text -- choices are still
+        # answerable via the build_answer_view buttons either way, same as the Greg's Nightmare
+        # branch above.
         if trivia_answer_list[0] in {"True", "False"}:
-            message_body += f"\u200b\n\u200b\n{number_block} [**{get_category_title(trivia_category, trivia_url, include_emoji=False)}**]({flag_url}) {get_category_emoji(trivia_category)}\n\n{trivia_question}\n\n"
+            if disco_mode:
+                message_body += f"\u200b\n\u200b\n{number_block} [**{get_category_title(trivia_category, trivia_url, include_emoji=False)}**]({flag_url}) {get_category_emoji(trivia_category)}\n\n"
+            else:
+                message_body += f"\u200b\n\u200b\n{number_block} [**{get_category_title(trivia_category, trivia_url, include_emoji=False)}**]({flag_url}) {get_category_emoji(trivia_category)}\n\n{trivia_question}\n\n"
             footer_text = "🚨 One guess: True/T/False/F (or click)"
         else:
-            message_body += f"\u200b\n\u200b\n{number_block} [**{get_category_title(trivia_category, trivia_url, include_emoji=False)}**]({flag_url}) {get_category_emoji(trivia_category)}\n\n{trivia_question}\n"
             footer_text = "🚨 One guess"
-            #await safe_send(channel, message_body)
-            message_body += "\n"
-            for answer in trivia_answer_list[1:]:
-                message_body += f"{answer}\n"
-            message_body += "\n"
+            if disco_mode:
+                message_body += f"\u200b\n\u200b\n{number_block} [**{get_category_title(trivia_category, trivia_url, include_emoji=False)}**]({flag_url}) {get_category_emoji(trivia_category)}\n\n"
+            else:
+                message_body += f"\u200b\n\u200b\n{number_block} [**{get_category_title(trivia_category, trivia_url, include_emoji=False)}**]({flag_url}) {get_category_emoji(trivia_category)}\n\n{trivia_question}\n"
+                #await safe_send(channel, message_body)
+                message_body += "\n"
+                for answer in trivia_answer_list[1:]:
+                    message_body += f"{answer}\n"
+                message_body += "\n"
         answer_view = build_answer_view(trivia_answer_list, trivia_url)
         trivia_answer_list = trivia_answer_list[:1]
 
     else:
-         message_body += f"\u200b\n\u200b\n{number_block} [**{get_category_title(trivia_category, trivia_url, include_emoji=False)}**]({flag_url}) {get_category_emoji(trivia_category)}\n\n{trivia_question}\n"
+        if disco_mode:
+            message_body += f"\u200b\n\u200b\n{number_block} [**{get_category_title(trivia_category, trivia_url, include_emoji=False)}**]({flag_url}) {get_category_emoji(trivia_category)}\n\n"
+        else:
+            message_body += f"\u200b\n\u200b\n{number_block} [**{get_category_title(trivia_category, trivia_url, include_emoji=False)}**]({flag_url}) {get_category_emoji(trivia_category)}\n\n{trivia_question}\n"
 
     # Attribution for user-submitted questions
     try:
@@ -22781,13 +22975,39 @@ async def ask_question(trivia_category, trivia_question, trivia_url, trivia_answ
 
     _companion_set_footer_text(footer_text)  # question warning (e.g. one-guess) for the phone
 
+    if disco_mode:
+        category_title = get_category_title(trivia_category, trivia_url, include_emoji=False)
+        disco_black_buf, disco_white_buf = generate_disco_images(trivia_question, category_title)
+        disco_black_url, disco_white_url = await upload_disco_images_to_s3(disco_black_buf, disco_white_buf)
+        current_disco_urls = (disco_black_url, disco_white_url)
+        if is_valid_url(trivia_url):
+            # Real photo (image_url/send_image_flag, set above) stays the primary image; the
+            # Disco render rides along as a second embed instead of replacing it.
+            current_disco_secondary_embed = discord.Embed()
+            current_disco_secondary_embed.set_image(url=disco_black_url)
+        else:
+            # Overrides whatever category-specific image/text this question would otherwise have
+            # gotten (the branches above already took their "show image" arm, via _show_image, so
+            # message_body has no duplicate plain-text question caption to worry about).
+            image_url = disco_black_url
+            image_buffer = None
+            send_image_flag = True
+
     if send_image_flag:
         if image_url:
             embed = discord.Embed()
             embed.set_image(url=image_url)
             if footer_text:
                 embed.set_footer(text=footer_text)
+            # safe_send only understands a single `embed=` kwarg (it always re-injects one itself,
+            # which would collide with a plural `embeds=` passed alongside it) -- so the photo+Disco
+            # combo sends normally, then immediately edits in the second embed.
             message = await safe_send(channel, content=message_body, embed=embed, **view_kwargs)
+            if current_disco_secondary_embed is not None and message is not None:
+                try:
+                    await message.edit(embeds=[embed, current_disco_secondary_embed])
+                except (discord.NotFound, discord.HTTPException, aiohttp.ClientError):
+                    pass
         elif image_buffer:
             image_file = discord.File(fp=image_buffer, filename="image.png")
             embed = discord.Embed()
@@ -25449,6 +25669,10 @@ async def start_trivia():
                 # the button reflects the true time left and hits 0 exactly at question_asked_end —
                 # matching the phone/web pill (which uses Math.ceil) — instead of accumulating per-edit
                 # drift from a fixed-count sleep(1) loop.
+                DISCO_FLASH_INTERVAL = 0.35  # separate, faster cadence than the 1s footer tick below --
+                # Discord's per-message edit rate limit (commonly ~5 req/5s) may throttle this in
+                # practice; discord.py sleeps and retries on 429 rather than raising, so the failure
+                # mode is a slower-than-requested flicker, not a broken loop.
                 while True:
                     remaining = max(0, math.ceil(question_asked_end - time.time()))
                     if current_question_embed is not None:
@@ -25458,13 +25682,26 @@ async def start_trivia():
                             timer_line = f"⏳ {remaining}s"
                             new_footer = f"{current_footer_base_text}\n\n{timer_line}" if current_footer_base_text else timer_line
                             current_question_embed.set_footer(text=new_footer)
+                        if current_disco_urls is not None:
+                            # Wall-clock-synced, like the countdown itself -- so the flash rate doesn't
+                            # drift with per-edit latency the way a plain tick counter would.
+                            toggle_idx = int((time.time() - question_asked_start) / DISCO_FLASH_INTERVAL) % 2
+                            flash_url = current_disco_urls[toggle_idx]
+                            if current_disco_secondary_embed is not None:
+                                current_disco_secondary_embed.set_image(url=flash_url)
+                            else:
+                                current_question_embed.set_image(url=flash_url)
                         try:
-                            await current_answer_message.edit(embed=current_question_embed)
+                            if current_disco_secondary_embed is not None:
+                                await current_answer_message.edit(embeds=[current_question_embed, current_disco_secondary_embed])
+                            else:
+                                await current_answer_message.edit(embed=current_question_embed)
                         except (discord.NotFound, discord.HTTPException, aiohttp.ClientError):
                             break
                     if remaining <= 0:
                         break
-                    await asyncio.sleep(min(1.0, max(0.0, question_asked_end - time.time())))
+                    tick_interval = DISCO_FLASH_INTERVAL if current_disco_urls is not None else 1.0
+                    await asyncio.sleep(min(tick_interval, max(0.0, question_asked_end - time.time())))
                 # Grading grace: let a last-instant in-flight Discord message arrive before we snapshot
                 # collected_responses (the old slow countdown provided this buffer implicitly).
                 await asyncio.sleep(1)
@@ -25694,9 +25931,10 @@ def print_round_settings():
     print(f"🤓🔍 Exact Mode: {exact_mode}")
     print(f"⛳📉 Golf Mode: {golf_mode}")
     print(f"🔐🔍 Glyph Mode: {glyph_mode}")
+    print(f"🪩✨ Disco Mode: {disco_mode}")
 
 async def reset_round_options(reset_command, winner_id):
-    global time_between_questions, question_time, question_time_default, ghost_mode, god_mode, quickie_mode, yolo_mode, mirror_mode, echo_mode, image_questions, marx_mode, blind_mode, zen_mode, sniper_mode, blitz_mode, exact_mode, golf_mode, glyph_mode, cloak_mode, cloaked_user
+    global time_between_questions, question_time, question_time_default, ghost_mode, god_mode, quickie_mode, yolo_mode, mirror_mode, echo_mode, image_questions, marx_mode, blind_mode, zen_mode, sniper_mode, blitz_mode, exact_mode, golf_mode, glyph_mode, cloak_mode, cloaked_user, disco_mode
 
     reset_success = False
 
@@ -25797,7 +26035,15 @@ async def reset_round_options(reset_command, winner_id):
         else:
             cloaked_user = None
             await safe_send(channel, content=f"\n🌞✨ **{winner_id}** has taken off their cloak.\n")
-        
+
+    if "disco" in reset_command:
+        disco_mode = not disco_mode
+        reset_success = True
+        if disco_mode == True:
+            await safe_send(channel, content=f"\n🪩✨ **{winner_id}** turned on the disco lights! Every question flashes as neon images now.\n")
+        else:
+            await safe_send(channel, content=f"\n🪩🛑 **{winner_id}** killed the disco lights.\n")
+
     delay_match = re.search(r'\bdelay\s*(\d+)\b', reset_command)
     if delay_match:
         delay_value = max(3, min(int(delay_match.group(1)), 15))
@@ -26781,6 +27027,7 @@ def _companion_active_modes():
         (golf_mode,       golf_mode_default,       "⛳📉", "Golf"),
         (glyph_mode,      glyph_mode_default,      "🔐🛡️", "Glyph"),
         (image_questions, image_questions_default, "❌📷", "No Images"),
+        (disco_mode,      disco_mode_default,      "🪩", "Disco"),
     ]
     return [{"emoji": emoji, "label": label}
             for current, default, emoji, label in specs if bool(current) != bool(default)]
