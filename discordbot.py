@@ -431,7 +431,14 @@ async def send_question_queen_submit_ad():
 # {base_url} is substituted with companion_web.get_base_url() at post time, so
 # the same text is correct whether this deploy is staging or prod.
 okra_lab_announcement_enabled = True
-okra_lab_announcement_text = "😱🔢 **Greg's Nightmare** just joined the Arena! Pick from 10 math categories (algebra, geometry, trig, calculus, stats, and more), choose Normal or Hard, decide if you want multiple choice or type-your-own-answer, then race the clock on procedurally generated problems. Try `/arena game_name:\"greg's nightmare\"`.\n"
+okra_lab_announcement_text = (
+    "😱🔢 **Greg's Nightmare** just joined the Arena!\n\n"
+    "📚 10 math categories — algebra, geometry, trig, calculus, stats, and more\n"
+    "⚙️ Pick **Normal** or **Hard** difficulty\n"
+    "🖱️ Answer by **multiple choice** or by **typing it in**\n"
+    "⏱️ Race the clock on procedurally generated problems\n\n"
+    "▶️ Try `/arena game_name:\"greg's nightmare\"`\n"
+)
 okra_lab_announcement_show_new_badge = True
 
 
