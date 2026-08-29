@@ -25464,7 +25464,15 @@ async def start_trivia():
                 if current_answer_view is not None:
                     current_answer_view.stop()
                     try:
-                        edit_kwargs = {"view": current_report_view}
+                        # Explicitly reaffirm the existing attachment(s) in this same edit --
+                        # this edit also swaps the entire component tree (answer buttons ->
+                        # report view), and leaving attachment continuity unspecified during a
+                        # components change is what causes Discord to lose track of "this
+                        # attachment is consumed by the embed's image," rendering the image
+                        # both as a standalone tile and inside the embed within one message.
+                        # The countdown-tick edit above only ever touches embed (never view),
+                        # which is why it never triggers this.
+                        edit_kwargs = {"view": current_report_view, "attachments": current_answer_message.attachments}
                         choices = trivia_answer_list[1:] if len(trivia_answer_list) > 1 else []
                         correct_letter = trivia_answer_list[0][0].upper() if trivia_answer_list else ""
                         is_letter_mc = correct_letter.isalpha() and len(correct_letter) == 1
