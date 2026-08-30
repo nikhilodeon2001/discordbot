@@ -25808,7 +25808,7 @@ async def start_trivia():
                 # needs an explicit pause -- otherwise the message would get pushed down by the
                 # round preview before anyone had a beat to read it.
                 await safe_send(channel, content=start_message, embed=intro_embed)
-                await asyncio.sleep(3)
+                await asyncio.sleep(5)
 
             round_in_progress = True
             await round_preview(selected_questions)
