@@ -25807,6 +25807,7 @@ async def start_trivia():
                 # message existed for this case.
                 await safe_send(channel, content=start_message, embed=intro_embed)
 
+            await asyncio.sleep(3)  # Give the Okra's World message (and any Okra Lab announcement) a beat to actually be read before the round preview pushes it down.
             round_in_progress = True
             await round_preview(selected_questions)
 
