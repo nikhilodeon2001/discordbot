@@ -18919,10 +18919,22 @@ async def get_math_question():
         )
     image_url = f"https://{S3_BUCKET_NAME}.s3.{AWS_REGION}.amazonaws.com/{s3_key}"
 
-    paragraph = json.dumps({
+    payload = {
         "image_url": image_url,
         "plain_text": qdata["plain_text"],
-    })
+    }
+    # Rendered eagerly (like the normal image above) only when Rave is actually on right now --
+    # shape_fn is a closure that only exists here, at generation time, so this is the only chance
+    # to bake a diagram into the Rave frames. If the mode gets toggled on after this question was
+    # already generated (and queued a few questions ahead), ask_question() falls back to a
+    # text-only Rave render for it instead of reaching for a shape_fn that's long gone.
+    if rave_mode:
+        rave_buf = gregs_nightmare.render_rave_gif(
+            qdata["question_text"], math_line=qdata.get("math_line"), shape_fn=qdata.get("shape_fn"),
+        )
+        payload["rave_gif_url"] = await upload_rave_gif_to_s3(rave_buf)
+
+    paragraph = json.dumps(payload)
     return {
         "category": f"Mathematics: {category['display']}",
         "question": qdata["question_text"],
@@ -20399,6 +20411,56 @@ async def upload_rave_gif_to_s3(gif_buf):
     return f"https://{S3_BUCKET_NAME}.s3.{AWS_REGION}.amazonaws.com/{s3_key}"
 
 
+async def generate_rave_photo_gif(photo_url, frame_ms=RAVE_GIF_FRAME_MS):
+    """For a real photo-round question -- there's no recoloring actual photo pixels into neon, but
+    the photo can still flash: downloads it (same fetch pattern as blur_image/zoom_image),
+    pastes it unchanged onto a black canvas and a white canvas with a neon border around it, then
+    combines the two into one looping GIF. The border color alternates hue between frames like
+    everything else in Rave (see _rave_assign_colors' rule), so the photo picks up some of the
+    neon treatment without touching its own pixels. GIF's 256-color cap does visibly degrade a
+    photo's own colors (unlike the flat-color graphics elsewhere in Rave) -- confirmed acceptable
+    against a real test image before shipping this."""
+    async with aiohttp.ClientSession() as session:
+        async with session.get(photo_url) as resp:
+            if resp.status != 200:
+                raise Exception(f"Failed to download image from {photo_url}")
+            data = await resp.read()
+
+    photo = Image.open(io.BytesIO(data)).convert("RGB")
+
+    max_dim = 700
+    scale = min(1.0, max_dim / max(photo.width, photo.height))
+    if scale < 1.0:
+        photo = photo.resize((max(1, int(photo.width * scale)), max(1, int(photo.height * scale))))
+
+    border = 16
+    margin = 30
+    canvas_w = photo.width + 2 * (border + margin)
+    canvas_h = photo.height + 2 * (border + margin)
+
+    n = len(PALETTE_BLACK_RAVE)
+    black_idx = random.randrange(n)
+    white_idx = random.choice([i for i in range(n) if i != black_idx])
+
+    def build_frame(background_color, border_color):
+        canvas = Image.new('RGB', (canvas_w, canvas_h), color=background_color)
+        draw = ImageDraw.Draw(canvas)
+        draw.rectangle(
+            [margin, margin, margin + photo.width + 2 * border, margin + photo.height + 2 * border],
+            outline=border_color, width=border,
+        )
+        canvas.paste(photo, (margin + border, margin + border))
+        return canvas
+
+    black_frame = build_frame((0, 0, 0), PALETTE_BLACK_RAVE[black_idx])
+    white_frame = build_frame((255, 255, 255), PALETTE_WHITE_RAVE[white_idx])
+
+    buf = io.BytesIO()
+    black_frame.save(buf, format='GIF', save_all=True, append_images=[white_frame], duration=frame_ms, loop=0)
+    buf.seek(0)
+    return buf
+
+
 def generate_mc_image(answers):
     # Define the background color and text properties
     background_color = (0, 0, 0)  # Black screen
@@ -21249,6 +21311,58 @@ def generate_crossword_image(answer, prefill=0.5):
 
     # Return the content_uri, image width, height, and the answer
     return image_buffer, display_string
+
+
+def generate_rave_crossword_gif(answer, prefill=0.5, frame_ms=RAVE_GIF_FRAME_MS):
+    """Rave-mode twin of generate_crossword_image: same tile layout and prefill logic, but each
+    tile's outline+letter gets its own neon color instead of a flat black-on-white -- alternating
+    tile-to-tile within a frame and, for the same tile, frame-to-frame (same rule as
+    _rave_assign_colors). Runs its own independent prefill draw rather than reusing
+    generate_crossword_image's, since that image is being replaced outright, not shown alongside
+    this one. Returns a BytesIO GIF."""
+    answer_length = len(answer)
+    cell_size = 60
+    img_width = cell_size * answer_length
+    img_height = cell_size
+
+    font = get_font("DejaVuSans.ttf", 30)
+
+    if prefill >= 1.0:
+        prefill_positions = list(range(answer_length))
+    elif answer_length > 2:
+        prefill_count = math.ceil(answer_length * prefill)
+        prefill_positions = random.sample(range(answer_length), prefill_count)
+    else:
+        prefill_positions = []
+
+    n = len(PALETTE_BLACK_RAVE)
+    prev_black, prev_white = None, None
+    tile_colors = []
+    for _ in range(answer_length):
+        black_idx = random.choice([i for i in range(n) if i != prev_black])
+        white_idx = random.choice([i for i in range(n) if i != prev_white and i != black_idx])
+        tile_colors.append((black_idx, white_idx))
+        prev_black, prev_white = black_idx, white_idx
+
+    def build_frame(background_color, palette, use_black_idx):
+        img = Image.new('RGB', (img_width, img_height), color=background_color)
+        draw = ImageDraw.Draw(img)
+        for i, char in enumerate(answer):
+            x = i * cell_size
+            black_idx, white_idx = tile_colors[i]
+            color = palette[black_idx if use_black_idx else white_idx]
+            draw.rectangle([x, 0, x + cell_size, cell_size], outline=color, width=3)
+            label = char.upper() if i in prefill_positions else '_'
+            draw.text((x + 20, 10), label, fill=color, font=font)
+        return img
+
+    black_frame = build_frame((0, 0, 0), PALETTE_BLACK_RAVE, True)
+    white_frame = build_frame((255, 255, 255), PALETTE_WHITE_RAVE, False)
+
+    buf = io.BytesIO()
+    black_frame.save(buf, format='GIF', save_all=True, append_images=[white_frame], duration=frame_ms, loop=0)
+    buf.seek(0)
+    return buf
 
 
 async def clear_round_options():
@@ -22982,12 +23096,37 @@ async def ask_question(trivia_category, trivia_question, trivia_url, trivia_answ
     _companion_set_footer_text(footer_text)  # question warning (e.g. one-guess) for the phone
 
     if rave_mode:
-        category_title = get_category_title(trivia_category, trivia_url, include_emoji=False)
-        rave_gif_buf = generate_rave_gif(trivia_question, category_title)
-        rave_gif_url = await upload_rave_gif_to_s3(rave_gif_buf)
+        # Math questions get their diagram/expression pre-rendered as Rave frames back at
+        # generation time (get_math_question), since shape_fn only exists there -- reuse it
+        # instead of falling back to a text-only render that would silently drop the diagram.
+        # Scramble/Crossword get the same treatment here instead, since their puzzle content (the
+        # scrambled letters / blank tiles) is cheap enough to redraw with neon colors on demand.
+        rave_gif_url = None
+        if _is_greg_url and greg_payload is not None:
+            rave_gif_url = greg_payload.get("rave_gif_url")
+        elif trivia_url == "scramble":
+            rave_gif_buf = generate_rave_gif(scramble)
+            rave_gif_url = await upload_rave_gif_to_s3(rave_gif_buf)
+        elif trivia_category == "Crossword":
+            rave_gif_buf = generate_rave_crossword_gif(trivia_answer_list[0])
+            rave_gif_url = await upload_rave_gif_to_s3(rave_gif_buf)
+        if rave_gif_url is None:
+            category_title = get_category_title(trivia_category, trivia_url, include_emoji=False)
+            rave_gif_buf = generate_rave_gif(trivia_question, category_title)
+            rave_gif_url = await upload_rave_gif_to_s3(rave_gif_buf)
         if is_valid_url(trivia_url):
-            # Real photo (image_url/send_image_flag, set above) stays the primary image; the
-            # Rave render rides along as a second embed instead of replacing it.
+            # There's no recoloring a real photo's own pixels, but it can still flash: reframe it
+            # on an alternating neon-bordered black/white canvas instead of leaving it static.
+            # (GIF's 256-color cap does cost the photo some fidelity -- confirmed acceptable
+            # against a real test image before shipping this.) Falls back to the plain static
+            # photo if the download/re-render fails, rather than losing the question entirely.
+            try:
+                photo_gif_buf = await generate_rave_photo_gif(image_url)
+                image_url = await upload_rave_gif_to_s3(photo_gif_buf)
+            except Exception as e:
+                sentry_sdk.capture_exception(e)
+            # The clue-text Rave render rides along as a second embed alongside the (now
+            # flashing-bordered) photo instead of replacing it.
             current_rave_secondary_embed = discord.Embed()
             current_rave_secondary_embed.set_image(url=rave_gif_url)
         else:

@@ -159,6 +159,141 @@ def _render_composed_image(question_text, math_line=None, shape_fn=None,
     return buf
 
 
+# Rave mode's "readable on white" twin to _NEON_COLORS above, index-aligned by hue slot (slot 0 =
+# green family on both, slot 1 = magenta family, etc.) -- mirrored in discordbot.py's
+# PALETTE_BLACK_RAVE/PALETTE_WHITE_RAVE for every non-math category's Rave render, kept here too
+# since a math question's shape_fn diagram can only be redrawn where shape_fn still exists.
+_NEON_COLORS_WHITE = [
+    (0, 153, 64),      # green
+    (199, 21, 133),    # magenta / deep pink
+    (0, 131, 143),     # cyan -> teal
+    (184, 134, 11),    # yellow -> dark goldenrod
+    (204, 85, 0),      # orange -> burnt orange
+    (0, 90, 156),      # sky blue -> strong blue
+    (111, 0, 148),     # purple
+    (178, 24, 43),     # red -> deep red
+    (0, 128, 96),      # spring green -> darker green-teal
+]
+
+
+def _rave_wrap_and_color(measure_draw, text, font, max_width, state):
+    """Word-wraps `text` (like _wrap_lines) and assigns each character a (black_idx, white_idx)
+    palette pair -- never repeating a color on two side-by-side characters within either frame,
+    and never giving a character the same hue slot in both (_NEON_COLORS/_NEON_COLORS_WHITE are
+    index-aligned by hue, so black_idx != white_idx is enough to guarantee that). `state` is a
+    mutable [prev_black, prev_white] pair threaded across calls so the color sequence stays
+    continuous from the instruction text into the math expression below it, not just within each
+    block on its own. Returns a list of lines, each a list of (char, black_idx, white_idx)."""
+    lines = _wrap_lines(measure_draw, text, font, max_width)
+    n = len(_NEON_COLORS)
+    colored_lines = []
+    for line in lines:
+        line_result = []
+        for ch in line:
+            if ch.isspace():
+                line_result.append((ch, None, None))
+                continue
+            prev_black, prev_white = state
+            black_idx = random.choice([i for i in range(n) if i != prev_black])
+            white_idx = random.choice([i for i in range(n) if i != prev_white and i != black_idx])
+            line_result.append((ch, black_idx, white_idx))
+            state[0], state[1] = black_idx, white_idx
+        colored_lines.append(line_result)
+    return colored_lines
+
+
+def _draw_rave_lines(draw, colored_lines, font, y, width, use_black):
+    """Draws one frame's worth of a _rave_wrap_and_color result -- character-by-character (like
+    discordbot.py's _rave_render_one), using draw.textlength for advance width so spaces don't
+    collapse (textbbox gives a zero-width ink box for whitespace)."""
+    palette = _NEON_COLORS if use_black else _NEON_COLORS_WHITE
+    for line in colored_lines:
+        full_text = "".join(ch for ch, _, _ in line)
+        line_width = draw.textlength(full_text, font=font)
+        x = (width - line_width) / 2
+        for ch, black_idx, white_idx in line:
+            idx = black_idx if use_black else white_idx
+            if idx is not None:
+                draw.text((x, y), ch, fill=palette[idx], font=font)
+            x += draw.textlength(ch, font=font)
+        y += _line_height(font)
+    return y
+
+
+def render_rave_frames(question_text, math_line=None, shape_fn=None):
+    """The Rave-mode twin of _render_composed_image: same layout (instruction text, then the math
+    expression or diagram), but rendered as two same-layout frames -- one on black, one on white --
+    with every character in its own neon color instead of one flat color, and (for a diagram) one
+    alternating solid neon color per frame instead of a fixed one. Both frames share one random
+    draw and one word-wrap pass, so they only differ by color. Returns (black_img, white_img), two
+    PIL Images."""
+    from PIL import Image, ImageDraw
+
+    width = 600
+    margin = 40
+    max_width = width - 2 * margin
+    probe = ImageDraw.Draw(Image.new("RGB", (10, 10)))
+
+    header_start_size = 26 if (math_line or shape_fn) else 36
+    header_font, header_lines = _fit_wrapped(probe, question_text, max_width, header_start_size, 16, 5)
+    header_block_height = len(header_lines) * _line_height(header_font)
+
+    shape_height = 350
+    body_font, body_block_height = None, 0
+    if shape_fn is not None:
+        content_height = shape_height
+    elif math_line:
+        body_font, body_lines_probe = _fit_wrapped(probe, math_line, max_width, 46, 22, 3)
+        body_block_height = len(body_lines_probe) * _line_height(body_font)
+        content_height = body_block_height
+    else:
+        content_height = 0
+
+    spacing = 25 if content_height else 0
+    height = max(150, margin + header_block_height + spacing + content_height + margin)
+
+    state = [None, None]
+    header_colored = _rave_wrap_and_color(probe, question_text, header_font, max_width, state)
+    body_colored = None
+    if shape_fn is None and math_line:
+        body_colored = _rave_wrap_and_color(probe, math_line, body_font, max_width, state)
+
+    black_img = Image.new("RGB", (width, height), color=(0, 0, 0))
+    white_img = Image.new("RGB", (width, height), color=(255, 255, 255))
+    black_draw = ImageDraw.Draw(black_img)
+    white_draw = ImageDraw.Draw(white_img)
+
+    y_black = _draw_rave_lines(black_draw, header_colored, header_font, margin, width, True)
+    y_white = _draw_rave_lines(white_draw, header_colored, header_font, margin, width, False)
+    y_black += spacing
+    y_white += spacing
+
+    if shape_fn is not None:
+        n = len(_NEON_COLORS)
+        black_shape_idx = random.randrange(n)
+        white_shape_idx = random.choice([i for i in range(n) if i != black_shape_idx])
+        shape_font = _get_font(28)
+        shape_fn(black_draw, shape_font, width, shape_height, y_black, _NEON_COLORS[black_shape_idx])
+        shape_fn(white_draw, shape_font, width, shape_height, y_white, _NEON_COLORS_WHITE[white_shape_idx])
+    elif body_colored is not None:
+        _draw_rave_lines(black_draw, body_colored, body_font, y_black, width, True)
+        _draw_rave_lines(white_draw, body_colored, body_font, y_white, width, False)
+
+    return black_img, white_img
+
+
+def render_rave_gif(question_text, math_line=None, shape_fn=None, frame_ms=400):
+    """Renders render_rave_frames' two frames into one looping animated GIF (see
+    discordbot.py's generate_rave_gif for why a GIF instead of alternating a static image via
+    repeated message edits -- Discord's edit rate limit throttles the latter into a sporadic
+    flicker). Returns a BytesIO GIF."""
+    black_img, white_img = render_rave_frames(question_text, math_line=math_line, shape_fn=shape_fn)
+    buf = io.BytesIO()
+    black_img.save(buf, format="GIF", save_all=True, append_images=[white_img], duration=frame_ms, loop=0)
+    buf.seek(0)
+    return buf
+
+
 def _to_superscript(n):
     superscript_map = {"0": "⁰", "1": "¹", "2": "²", "3": "³", "4": "⁴", "5": "⁵",
                         "6": "⁶", "7": "⁷", "8": "⁸", "9": "⁹", "-": "⁻"}
@@ -1168,11 +1303,12 @@ _CHECKERS = {
 }
 
 def generate_question(category_url, difficulty):
-    """Returns a dict: question_text, image_buffer, plain_text, answer, mc_choices.
-    image_buffer is the ONLY presentation of the question -- it always contains the
-    full instruction text (word-wrapped) plus whatever math content applies (an
-    expression/dataset, or a drawn diagram), so callers shouldn't also show
-    question_text as a separate caption."""
+    """Returns a dict: question_text, image_buffer, plain_text, answer, mc_choices, math_line,
+    shape_fn. image_buffer is the normal-mode presentation of the question -- it always contains
+    the full instruction text (word-wrapped) plus whatever math content applies (an
+    expression/dataset, or a drawn diagram), so callers shouldn't also show question_text as a
+    separate caption. math_line/shape_fn are the raw ingredients behind that image, exposed
+    separately so a Rave-mode caller can feed them into render_rave_gif instead."""
     if category_url not in _GENERATORS:
         raise ValueError(f"Unknown category: {category_url}")
 
@@ -1200,6 +1336,12 @@ def generate_question(category_url, difficulty):
         "plain_text": plain_text,
         "answer": spec["answer"],
         "mc_choices": mc_choices,
+        # Rave mode needs these to rebuild the math content as two neon-colored frames instead of
+        # the fixed-color image_buffer above -- shape_fn only exists here, at generation time,
+        # so a caller that wants a Rave render has to grab it now (see discordbot.py's
+        # get_math_question, which does exactly that when rave_mode is on).
+        "math_line": math_line,
+        "shape_fn": shape_fn,
     }
 
 
