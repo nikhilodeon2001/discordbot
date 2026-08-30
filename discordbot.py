@@ -25803,11 +25803,13 @@ async def start_trivia():
                 await run_start_countdown(prompt_msg, updated_embed, view, view.button_ref, starter=starter)
             else:
                 # Players carried over -- same branding/announcement message, but no button/wait/
-                # countdown: the round auto-starts immediately, exactly as it did before this
-                # message existed for this case.
+                # countdown. The no_players branch above already paces itself with its own 5s
+                # "Starting in..." countdown before reaching here, so this is the only path that
+                # needs an explicit pause -- otherwise the message would get pushed down by the
+                # round preview before anyone had a beat to read it.
                 await safe_send(channel, content=start_message, embed=intro_embed)
+                await asyncio.sleep(3)
 
-            await asyncio.sleep(3)  # Give the Okra's World message (and any Okra Lab announcement) a beat to actually be read before the round preview pushes it down.
             round_in_progress = True
             await round_preview(selected_questions)
 
