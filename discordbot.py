@@ -25725,39 +25725,38 @@ async def start_trivia():
             round_responders.clear()  # Reset round responders
             round_data["questions"] = []
 
-            # Only show the start banner/image/button/countdown when nobody was playing last
-            # round and we need someone to manually kick things off -- auto-continuing
-            # straight into the next round shouldn't repeat all of that. When players carried
-            # over, the intro banner (and its image) never shows, so the image goes on the
-            # round preview embed instead.
-            preview_image_url = None
+            # The Okra's World message (branding + intro image + Okra Lab announcement) sends
+            # every round unconditionally now, identical either way -- only the "click to start"
+            # button/wait/countdown below is conditional, since that's the only thing that
+            # actually needs nobody-was-playing-last-round to make sense (auto-continuing
+            # straight into the next round shouldn't wait on anyone).
+            selected_gif_url = None
+            if random.random() < 0:  # random.random() generates a float between 0 and 1
+                magic_number = random_number = random.randint(1000, 9999)
+                print(f"Magic number is {magic_number}")
+                send_magic_image(magic_number)
+            elif image_questions == True:
+                selected_gif_url = await select_intro_image_url()
+            # Build the round-start banner (help-the-game ad + Royalty now live in the round-end message)
+            lab_block = ""
+            if okra_lab_announcement_enabled and okra_lab_announcement_text:
+                lab_message = "✨🧪 **NEW from the Okra Lab!** 🧪✨\n\n" if okra_lab_announcement_show_new_badge else ""
+                lab_message += f"{okra_lab_announcement_text.replace('{base_url}', companion_web.get_base_url())}\n"
+                await sync_okra_lab_announcement(lab_message)
+                lab_block = f"\n{lab_message}"
+
+            start_message = f"​\n​\n🥒🌐 **Okra's World**\n"
+            start_message += lab_block
+
+            #if current_longest_round_streak["user"] is not None and await get_coffees(current_longest_round_streak["user_id"]) > 0:
+            #    start_message += f"\n\n🕹️ **{current_longest_round_streak['user']}** can toggle modes mid-game"
+            #    start_message += "\n↔️ **#[command]** any time during round"
+
+            intro_embed = discord.Embed()
+            if selected_gif_url:
+                intro_embed.set_image(url=selected_gif_url)
+
             if no_players:
-                selected_gif_url = None
-                if random.random() < 0:  # random.random() generates a float between 0 and 1
-                    magic_number = random_number = random.randint(1000, 9999)
-                    print(f"Magic number is {magic_number}")
-                    send_magic_image(magic_number)
-                elif image_questions == True:
-                    selected_gif_url = await select_intro_image_url()
-                # Build the round-start banner (help-the-game ad + Royalty now live in the round-end message)
-                lab_block = ""
-                if okra_lab_announcement_enabled and okra_lab_announcement_text:
-                    lab_message = "✨🧪 **NEW from the Okra Lab!** 🧪✨\n\n" if okra_lab_announcement_show_new_badge else ""
-                    lab_message += f"{okra_lab_announcement_text.replace('{base_url}', companion_web.get_base_url())}\n"
-                    await sync_okra_lab_announcement(lab_message)
-                    lab_block = f"\n{lab_message}"
-
-                start_message = f"​\n​\n🥒🌐 **Okra's World**\n"
-                start_message += lab_block
-
-                #if current_longest_round_streak["user"] is not None and await get_coffees(current_longest_round_streak["user_id"]) > 0:
-                #    start_message += f"\n\n🕹️ **{current_longest_round_streak['user']}** can toggle modes mid-game"
-                #    start_message += "\n↔️ **#[command]** any time during round"
-
-                intro_embed = discord.Embed()
-                if selected_gif_url:
-                    intro_embed.set_image(url=selected_gif_url)
-
                 async def run_start_countdown(msg, embed, view, button, starter=None):
                     footer_lines = []
                     if starter is not None:
@@ -25802,11 +25801,14 @@ async def start_trivia():
 
                 updated_embed = prompt_msg.embeds[0] if prompt_msg.embeds else discord.Embed()
                 await run_start_countdown(prompt_msg, updated_embed, view, view.button_ref, starter=starter)
-            elif image_questions == True:
-                preview_image_url = await select_intro_image_url()
+            else:
+                # Players carried over -- same branding/announcement message, but no button/wait/
+                # countdown: the round auto-starts immediately, exactly as it did before this
+                # message existed for this case.
+                await safe_send(channel, content=start_message, embed=intro_embed)
 
             round_in_progress = True
-            await round_preview(selected_questions, image_url=preview_image_url)
+            await round_preview(selected_questions)
 
             #await round_start_messages()
             await asyncio.sleep(5)
