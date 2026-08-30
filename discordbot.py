@@ -18922,12 +18922,15 @@ async def get_math_question():
     payload = {
         "image_url": image_url,
         "plain_text": qdata["plain_text"],
+        # Carried along unconditionally (it's just a string, cheap either way) so that if Rave
+        # gets toggled on after this question was already generated and queued, ask_question()
+        # can still render the expression into a Rave GIF on demand -- only a shape_fn diagram is
+        # truly lost in that case, since that closure only exists here, at generation time.
+        "math_line": qdata.get("math_line"),
     }
-    # Rendered eagerly (like the normal image above) only when Rave is actually on right now --
-    # shape_fn is a closure that only exists here, at generation time, so this is the only chance
-    # to bake a diagram into the Rave frames. If the mode gets toggled on after this question was
-    # already generated (and queued a few questions ahead), ask_question() falls back to a
-    # text-only Rave render for it instead of reaching for a shape_fn that's long gone.
+    # The full Rave GIF (expression AND any diagram) is only rendered eagerly here when Rave is
+    # actually on right now -- shape_fn is a closure that only exists at this point, so this is
+    # the only chance to bake a diagram into it.
     if rave_mode:
         rave_buf = gregs_nightmare.render_rave_gif(
             qdata["question_text"], math_line=qdata.get("math_line"), shape_fn=qdata.get("shape_fn"),
@@ -23104,6 +23107,14 @@ async def ask_question(trivia_category, trivia_question, trivia_url, trivia_answ
         rave_gif_url = None
         if _is_greg_url and greg_payload is not None:
             rave_gif_url = greg_payload.get("rave_gif_url")
+            if rave_gif_url is None and greg_payload.get("math_line"):
+                # Rave got toggled on after this question was already generated and queued, so
+                # there was no rave_gif_url baked in -- but the expression text survived (it's
+                # cheap to carry along unconditionally), so it can still be Rave-rendered now.
+                # Only a shape_fn diagram is truly unrecoverable at this point, since that closure
+                # only existed back at generation time.
+                rave_gif_buf = gregs_nightmare.render_rave_gif(trivia_question, math_line=greg_payload["math_line"])
+                rave_gif_url = await upload_rave_gif_to_s3(rave_gif_buf)
         elif trivia_url == "scramble":
             rave_gif_buf = generate_rave_gif(scramble)
             rave_gif_url = await upload_rave_gif_to_s3(rave_gif_buf)
