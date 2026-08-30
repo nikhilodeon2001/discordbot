@@ -23203,7 +23203,8 @@ async def ask_question(trivia_category, trivia_question, trivia_url, trivia_answ
             message = await safe_send(channel, content=message_body, embed=embed, **view_kwargs)
             if current_rave_secondary_embed is not None and message is not None:
                 try:
-                    await message.edit(embeds=[embed, current_rave_secondary_embed])
+                    # Clue-text GIF first, photo second -- read the question before the reveal.
+                    await message.edit(embeds=[current_rave_secondary_embed, embed])
                 except (discord.NotFound, discord.HTTPException, aiohttp.ClientError):
                     pass
         elif image_buffer:
@@ -25885,7 +25886,8 @@ async def start_trivia():
                             # here, though, since editing with a single `embed=` would otherwise
                             # silently drop it.
                             if current_rave_secondary_embed is not None:
-                                await current_answer_message.edit(embeds=[current_question_embed, current_rave_secondary_embed])
+                                # Clue-text GIF first, photo second -- matches the initial send.
+                                await current_answer_message.edit(embeds=[current_rave_secondary_embed, current_question_embed])
                             else:
                                 await current_answer_message.edit(embed=current_question_embed)
                         except (discord.NotFound, discord.HTTPException, aiohttp.ClientError):
