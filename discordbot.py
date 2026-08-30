@@ -18868,6 +18868,37 @@ async def get_coffees(user_id):
         return 0
 
 
+# Short-lived cache of math questions' shape_fn closures, keyed by a per-question id that travels
+# through trivia_paragraph (JSON can't carry a live function, so the id is the part that actually
+# gets serialized). Lets ask_question() render the full diagram-included Rave GIF on demand even
+# when Rave gets turned on after a question was already generated and queued -- the eager render
+# in get_math_question() below is still the primary path (cheaper: it happens during the
+# background queue-fill instead of adding render+upload latency on the critical path of actually
+# showing the question), this is purely the fallback for the handful of questions caught mid-
+# toggle. Deliberately NOT the answer-bearing qdata cache that used to exist here and was removed
+# for a real correctness bug (see get_math_question's docstring) -- this cache only ever affects
+# how good the *rendering* looks, never the answer, so a miss just degrades to a plainer image
+# (falls back further to a math_line-only or fully-generic Rave render), never a mismatch. Capped
+# and FIFO-evicted so a long-running process can't leak memory from questions that get queued but
+# never actually asked (e.g. a round ending early).
+_math_shape_fn_cache = {}
+_MATH_SHAPE_FN_CACHE_MAX = 200
+
+
+def _cache_shape_fn(shape_fn):
+    if shape_fn is None:
+        return None
+    shape_id = uuid.uuid4().hex
+    _math_shape_fn_cache[shape_id] = shape_fn
+    while len(_math_shape_fn_cache) > _MATH_SHAPE_FN_CACHE_MAX:
+        _math_shape_fn_cache.pop(next(iter(_math_shape_fn_cache)))
+    return shape_id
+
+
+def _pop_shape_fn(shape_id):
+    return _math_shape_fn_cache.pop(shape_id, None) if shape_id else None
+
+
 async def get_math_question():
     """Pulls from Greg's Nightmare's full engine (gregs_nightmare.py) -- a superset
     of the old 8 create_*_question subtypes below (which are no longer called from
@@ -18919,23 +18950,29 @@ async def get_math_question():
         )
     image_url = f"https://{S3_BUCKET_NAME}.s3.{AWS_REGION}.amazonaws.com/{s3_key}"
 
+    # Cached unconditionally (not just when Rave is on) so ask_question() can recover the diagram
+    # later even if Rave gets turned on after this question was already generated -- see
+    # _cache_shape_fn's comment above for why this is safe where the old qdata cache wasn't.
+    shape_id = _cache_shape_fn(qdata.get("shape_fn"))
     payload = {
         "image_url": image_url,
         "plain_text": qdata["plain_text"],
-        # Carried along unconditionally (it's just a string, cheap either way) so that if Rave
-        # gets toggled on after this question was already generated and queued, ask_question()
-        # can still render the expression into a Rave GIF on demand -- only a shape_fn diagram is
-        # truly lost in that case, since that closure only exists here, at generation time.
+        # Carried along unconditionally too (it's just a string, cheap either way) so the
+        # expression survives independently of the shape_fn cache above.
         "math_line": qdata.get("math_line"),
+        "shape_id": shape_id,
     }
-    # The full Rave GIF (expression AND any diagram) is only rendered eagerly here when Rave is
-    # actually on right now -- shape_fn is a closure that only exists at this point, so this is
-    # the only chance to bake a diagram into it.
+    # The full Rave GIF (expression AND any diagram) is rendered eagerly here -- cheaper than
+    # rendering it lazily in ask_question(), since this runs during the background queue-fill
+    # instead of adding render+upload latency right when the question is about to be shown -- but
+    # only when Rave is actually on right now; if it's not, ask_question() renders it lazily
+    # later using shape_id/math_line above, which behaves identically either way.
     if rave_mode:
         rave_buf = gregs_nightmare.render_rave_gif(
             qdata["question_text"], math_line=qdata.get("math_line"), shape_fn=qdata.get("shape_fn"),
         )
         payload["rave_gif_url"] = await upload_rave_gif_to_s3(rave_buf)
+        _pop_shape_fn(shape_id)  # already baked into rave_gif_url, no longer needed
 
     paragraph = json.dumps(payload)
     return {
@@ -23107,14 +23144,20 @@ async def ask_question(trivia_category, trivia_question, trivia_url, trivia_answ
         rave_gif_url = None
         if _is_greg_url and greg_payload is not None:
             rave_gif_url = greg_payload.get("rave_gif_url")
-            if rave_gif_url is None and greg_payload.get("math_line"):
+            if rave_gif_url is None:
                 # Rave got toggled on after this question was already generated and queued, so
-                # there was no rave_gif_url baked in -- but the expression text survived (it's
-                # cheap to carry along unconditionally), so it can still be Rave-rendered now.
-                # Only a shape_fn diagram is truly unrecoverable at this point, since that closure
-                # only existed back at generation time.
-                rave_gif_buf = gregs_nightmare.render_rave_gif(trivia_question, math_line=greg_payload["math_line"])
-                rave_gif_url = await upload_rave_gif_to_s3(rave_gif_buf)
+                # there was no rave_gif_url baked in yet. The expression text survived regardless
+                # (math_line is carried unconditionally) and so did any diagram -- shape_fn lives
+                # in _math_shape_fn_cache, keyed by the shape_id that travelled through
+                # trivia_paragraph instead of the closure itself. Recovering both here makes this
+                # behave identically to Rave having been on the whole time; a cache miss (process
+                # restart, or the 200-entry cap) just degrades to math_line-only or, if that's
+                # also missing, the fully-generic Rave render below -- never a crash or mismatch.
+                shape_fn = _pop_shape_fn(greg_payload.get("shape_id"))
+                math_line = greg_payload.get("math_line")
+                if shape_fn is not None or math_line:
+                    rave_gif_buf = gregs_nightmare.render_rave_gif(trivia_question, math_line=math_line, shape_fn=shape_fn)
+                    rave_gif_url = await upload_rave_gif_to_s3(rave_gif_buf)
         elif trivia_url == "scramble":
             rave_gif_buf = generate_rave_gif(scramble)
             rave_gif_url = await upload_rave_gif_to_s3(rave_gif_buf)
