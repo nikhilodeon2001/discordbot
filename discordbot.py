@@ -432,11 +432,11 @@ async def send_question_queen_submit_ad():
 # the same text is correct whether this deploy is staging or prod.
 okra_lab_announcement_enabled = True
 okra_lab_announcement_text = (
-    "🦓🔬 OkrAnimal just got a PhD and it's done only asking for your name.\n\n"
-    "🐾 Before each match, pick what you want to be quizzed on — plain old **Name**, or go full taxonomist with **Kingdom, Phylum, Class, Order, Family, Genus,** and/or **Species**\n"
+    "🦓🔬 OkrAnimal enrolled in grad school — it's done letting animals coast by on their name alone.\n\n"
+    "🐾 Before each match, pick what you want to be quizzed on — plain old **Name**, go full taxonomist with **Kingdom, Phylum, Class, Order, Family, Genus,** and/or **Species**, or say **All** and get grilled on everything\n"
     "🖼️ The photo's still there every round, silently judging your guess\n"
     "🕵️ Name mode still hands you the whole family tree as a hint. Every other mode only whispers the animal's name and makes you earn the rest\n\n"
-    "▶️ Start OkrAnimal, then reply with numbers or words (like `genus species`), or just mash the button. Freeze up and we'll default you to Name — no judgment. (Some judgment.)\n"
+    "▶️ Start OkrAnimal, then reply with numbers or words (like `genus species`, or `all`), or just mash the button. Freeze up and we'll default you to Name — no judgment. (Some judgment.)\n"
 )
 okra_lab_announcement_show_new_badge = True
 
@@ -8435,12 +8435,13 @@ async def ask_animal_challenge(winner, winner_id, num=7):
 
     field_options = [(key, f"{emoji} {label}") for key, emoji, label in ANIMAL_FIELD_META]
     FIELD_KEYS = [key for key, _, _ in ANIMAL_FIELD_META]
+    field_options.append(("all", "🏆 All"))
 
     prompt_lines = ["❓🦓 What do you want to be quizzed on?", ""]
-    for i, (key, emoji, label) in enumerate(ANIMAL_FIELD_META, start=1):
-        prompt_lines.append(f"{i}. {emoji} {label}")
+    for i, (key, label) in enumerate(field_options, start=1):
+        prompt_lines.append(f"{i}. {label}")
     prompt_lines.append("")
-    prompt_lines.append("(Reply with numbers or names, e.g. '1 6 8' or 'name genus species', or use the button below)")
+    prompt_lines.append("(Reply with numbers or names, e.g. '1 6 8' or 'name genus species', or say 'all', or use the button below)")
     await safe_send(channel, "\n".join(prompt_lines))
 
     target_channel = _active_game_channel or channel
@@ -8452,14 +8453,16 @@ async def ask_animal_challenge(winner, winner_id, num=7):
         picked = set()
         for n in re.findall(r"\d+", content):
             n = int(n)
-            if 1 <= n <= len(FIELD_KEYS):
-                picked.add(FIELD_KEYS[n - 1])
+            if 1 <= n <= len(field_options):
+                picked.add(field_options[n - 1][0])
         content_lower = content.lower()
         if re.search(r"\b(common\s*name|name)\b", content_lower):
             picked.add("name")
         for key in ANIMAL_TAXONOMY_FIELDS:
             if re.search(rf"\b{key}\b", content_lower):
                 picked.add(key)
+        if re.search(r"\b(all|everything)\b", content_lower):
+            picked.add("all")
         return picked
 
     window_closed = {"value": False}
@@ -8474,8 +8477,13 @@ async def ask_animal_challenge(winner, winner_id, num=7):
                 options=[{"value": k, "label": l} for k, l in field_options], multi=True
             ),
         )
-        selected_fields = sorted(parse_animal_setup(setup_msg.content)) or ["name"]
-        selected_display = ", ".join(l for k, l in field_options if k in selected_fields)
+        picked = parse_animal_setup(setup_msg.content)
+        if "all" in picked:
+            selected_fields = FIELD_KEYS.copy()
+            selected_display = "🏆 All"
+        else:
+            selected_fields = sorted(picked) or ["name"]
+            selected_display = ", ".join(l for k, l in field_options if k in selected_fields)
         await safe_send(channel, f"\u200b\n✅ Guessing on: **{selected_display}**\n\u200b")
     except asyncio.TimeoutError:
         selected_fields = ["name"]
