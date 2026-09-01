@@ -432,7 +432,7 @@ async def send_question_queen_submit_ad():
 # the same text is correct whether this deploy is staging or prod.
 okra_lab_announcement_enabled = True
 okra_lab_announcement_text = (
-    "🦓🔬 OkrAnimal enrolled in grad school — it's done letting animals coast by on their name alone.\n\n"
+    "🦓🔬 OkrAnimal got a PhD — it's done letting animals coast by on their name alone.\n\n"
     "🐾 Before each match, pick what you want to be quizzed on — plain old **Name**, go full taxonomist with **Kingdom, Phylum, Class, Order, Family, Genus,** and/or **Species**, or say **All** and get grilled on everything\n"
     "🖼️ The photo's still there every round, silently judging your guess\n"
     "🕵️ Name mode still hands you the whole family tree as a hint. Every other mode only whispers the animal's name and makes you earn the rest\n\n"
