@@ -432,10 +432,11 @@ async def send_question_queen_submit_ad():
 # the same text is correct whether this deploy is staging or prod.
 okra_lab_announcement_enabled = True
 okra_lab_announcement_text = (
-    "🪩🔊 A new round modifier just landed, and the fire marshal is furious!\n\n"
-    "🪩 **Rave** — every question becomes a looping neon GIF that strobes between a black background and a white one while the clock runs. Overrides Blank, because subtlety left the building\n"
-    "📸 Photo-based trivia questions keep their real photo, framed in a flashing neon border — the clue text gets its own flashing GIF next to it\n\n"
-    "▶️ Type `rave` after winning a round to turn it on, or `#rave` mid-round to toggle it. Glow sticks optional, sobriety not guaranteed\n"
+    "🦓🔬 OkrAnimal just got a PhD and it's done only asking for your name.\n\n"
+    "🐾 Before each match, pick what you want to be quizzed on — plain old **Name**, or go full taxonomist with **Kingdom, Phylum, Class, Order, Family, Genus,** and/or **Species**\n"
+    "🖼️ The photo's still there every round, silently judging your guess\n"
+    "🕵️ Name mode still hands you the whole family tree as a hint. Every other mode only whispers the animal's name and makes you earn the rest\n\n"
+    "▶️ Start OkrAnimal, then reply with numbers or words (like `genus species`), or just mash the button. Freeze up and we'll default you to Name — no judgment. (Some judgment.)\n"
 )
 okra_lab_announcement_show_new_badge = True
 
