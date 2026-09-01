@@ -6611,6 +6611,67 @@ class MathAnswerView(RestrictedView):
             await interaction.response.send_message("❌ Not quite!", ephemeral=True)
 
 
+class AnimalModeSetupModal(discord.ui.Modal, title="Set Up OkrAnimal"):
+    """One-submission multi-select for ask_animal_challenge()'s field picker (which taxonomy
+    field(s) to be quizzed on this session), mirroring MathSetupModal's Label-wrapped Select
+    pattern. Submitting synthesizes a space-joined string of field keys into the same shared
+    future the typed-chat fallback path also parses."""
+
+    def __init__(self, field_options, result_future: asyncio.Future, window_closed):
+        super().__init__()
+        self._result_future = result_future
+        self._window_closed = window_closed
+        self.fields_select = discord.ui.Select(
+            options=[discord.SelectOption(label=label[:100], value=key) for key, label in field_options],
+            min_values=1,
+            max_values=len(field_options),
+        )
+        self.add_item(discord.ui.Label(text="What to guess", description="Pick one or more",
+                                        component=self.fields_select))
+
+    async def on_submit(self, interaction: discord.Interaction):
+        if self._window_closed["value"]:
+            await interaction.response.send_message(
+                "⏰ Too late — defaulted already.", ephemeral=True
+            )
+            return
+        selected = self.fields_select.values
+        await interaction.response.send_message("✅ Settings locked in.", ephemeral=True)
+        if not self._result_future.done():
+            self._result_future.set_result(ComponentChoice(" ".join(selected), interaction))
+
+
+class AnimalModeSetupView(discord.ui.View):
+    """Button that opens AnimalModeSetupModal. Plain discord.ui.View (single winner-only
+    picker, single submission) -- see MathSetupView for the same convention."""
+
+    def __init__(self, field_options, winner_id, window_closed, *, timeout):
+        super().__init__(timeout=timeout)
+        self.field_options = field_options
+        self.winner_id = winner_id
+        self.window_closed = window_closed
+        self.message = None
+        self.future = asyncio.get_running_loop().create_future()
+        button = discord.ui.Button(label="🦓 Set Up Game", style=discord.ButtonStyle.primary)
+        button.callback = self._open_modal
+        self.add_item(button)
+
+    async def _open_modal(self, interaction: discord.Interaction):
+        if interaction.user.id != self.winner_id:
+            await interaction.response.send_message("❌ You're not in this round!", ephemeral=True)
+            return
+        await interaction.response.send_modal(AnimalModeSetupModal(self.field_options, self.future, self.window_closed))
+
+    async def on_timeout(self):
+        for item in self.children:
+            item.disabled = True
+        if self.message is not None:
+            try:
+                await self.message.edit(view=self)
+            except (discord.HTTPException, discord.NotFound):
+                pass
+
+
 class ValedictorianView(RestrictedView):
     """Shared A/B/C/D button grid for one round of Valedictorian.
 
@@ -8297,6 +8358,62 @@ async def ask_border_challenge(winner, winner_id, num=5):
 
 
 
+ANIMAL_FIELD_META = [
+    ("name",    "🐾", "Name"),
+    ("kingdom", "👑", "Kingdom"),
+    ("phylum",  "🧩", "Phylum"),
+    ("class",   "🏫", "Class"),
+    ("order",   "🧾", "Order"),
+    ("family",  "👨‍👩‍👧", "Family"),
+    ("genus",   "🔬", "Genus"),
+    ("species", "🐾", "Species"),
+]
+ANIMAL_TAXONOMY_FIELDS = ["kingdom", "phylum", "class", "order", "family", "genus", "species"]
+
+
+def _build_animal_match(target_field, recent_ids, relax_recent=False):
+    match = {} if relax_recent else {"_id": {"$nin": list(recent_ids)}}
+    match[target_field] = {"$exists": True, "$nin": [None, ""]}
+    if target_field == "name":
+        # Post-migration, every niche dog-breed/mix doc has this exact canonical species
+        # string -- excluding it keeps genus="Canis" wild animals (wolves, coyote, jackals,
+        # dingo, which each kept their own distinct species string) eligible for Name mode.
+        match["species"] = {"$ne": "Canis Lupus"}
+    return match
+
+
+async def _pick_animal_doc(collection, recent_ids, target_field):
+    """Runs the sample/group/sample pipeline for one target field. Retries once with the
+    recent-id exclusion relaxed if the strict pass finds nothing (should be effectively
+    unreachable given field coverage stats, but makes the empty case a handled None instead
+    of a crash on an empty questions[0])."""
+    for relax_recent in (False, True):
+        pipeline = [
+            {"$match": _build_animal_match(target_field, recent_ids, relax_recent=relax_recent)},
+            {"$sample": {"size": 100}},
+            {"$group": {"_id": "$question", "question_doc": {"$first": "$$ROOT"}}},
+            {"$replaceRoot": {"newRoot": "$question_doc"}},
+            {"$sample": {"size": 1}},
+        ]
+        questions = [doc async for doc in collection.aggregate(pipeline)]
+        if questions:
+            return questions[0]
+    return None
+
+
+def _redact_answer(answer_value, text):
+    if not text:
+        return text
+    pattern = re.compile(re.escape(answer_value), re.IGNORECASE)
+    return pattern.sub("OKRA", text)
+
+
+def _answer_display(target_field, answer_value, q):
+    if target_field == "name":
+        return answer_value.upper()
+    return f"{answer_value.upper()} ({q.get('name', 'N/A')})"
+
+
 async def ask_animal_challenge(winner, winner_id, num=7):
     global wf_winner
     wf_winner = True
@@ -8315,6 +8432,58 @@ async def ask_animal_challenge(winner, winner_id, num=7):
     animal_main_url = "https://a-z-animals.com/animals/"
     category = "Animals"
 
+    field_options = [(key, f"{emoji} {label}") for key, emoji, label in ANIMAL_FIELD_META]
+    FIELD_KEYS = [key for key, _, _ in ANIMAL_FIELD_META]
+
+    prompt_lines = ["❓🦓 What do you want to be quizzed on?", ""]
+    for i, (key, emoji, label) in enumerate(ANIMAL_FIELD_META, start=1):
+        prompt_lines.append(f"{i}. {emoji} {label}")
+    prompt_lines.append("")
+    prompt_lines.append("(Reply with numbers or names, e.g. '1 6 8' or 'name genus species', or use the button below)")
+    await safe_send(channel, "\n".join(prompt_lines))
+
+    target_channel = _active_game_channel or channel
+
+    def check_setup_message(m):
+        return m.channel == target_channel and m.author.id == winner_id
+
+    def parse_animal_setup(content):
+        picked = set()
+        for n in re.findall(r"\d+", content):
+            n = int(n)
+            if 1 <= n <= len(FIELD_KEYS):
+                picked.add(FIELD_KEYS[n - 1])
+        content_lower = content.lower()
+        if re.search(r"\b(common\s*name|name)\b", content_lower):
+            picked.add("name")
+        for key in ANIMAL_TAXONOMY_FIELDS:
+            if re.search(rf"\b{key}\b", content_lower):
+                picked.add(key)
+        return picked
+
+    window_closed = {"value": False}
+    view = AnimalModeSetupView(field_options, winner_id, window_closed, timeout=20)
+    view.message = await safe_send(channel, "👇 Or set up with the button:", view=view)
+
+    try:
+        setup_msg = await resolve_input_race(
+            view,
+            companion_bridge.wait_for_message_or_companion(
+                check_setup_message, 20, target_channel, {winner_id}, kind="mini_game_answer",
+                options=[{"value": k, "label": l} for k, l in field_options], multi=True
+            ),
+        )
+        selected_fields = sorted(parse_animal_setup(setup_msg.content)) or ["name"]
+        selected_display = ", ".join(l for k, l in field_options if k in selected_fields)
+        await safe_send(channel, f"\u200b\n✅ Guessing on: **{selected_display}**\n\u200b")
+    except asyncio.TimeoutError:
+        selected_fields = ["name"]
+        await safe_send(channel, "\u200b\n⏰ Time's up! Defaulting to **Name**.\n\u200b")
+    window_closed["value"] = True
+
+    random.shuffle(selected_fields)  # randomize round-robin order per session
+    await asyncio.sleep(2)
+
     if num > 1:
         message = f"\u200b\n5️⃣🥇 Let's do a best of **{num}**...\n\u200b"
         await safe_send(channel, message)
@@ -8322,26 +8491,30 @@ async def ask_animal_challenge(winner, winner_id, num=7):
 
     animal_num = 1
     while animal_num <= num:
+        target_field = selected_fields[(animal_num - 1) % len(selected_fields)]
         try:
             recent_ids = await get_recent_question_ids_from_mongo("animal")
             collection = db["animal_questions"]
-            pipeline = [
-                {"$match": {"_id": {"$nin": list(recent_ids)}}},
-                {"$sample": {"size": 100}},
-                {"$group": {"_id": "$question", "question_doc": {"$first": "$$ROOT"}}},
-                {"$replaceRoot": {"newRoot": "$question_doc"}},
-                {"$sample": {"size": 1}}
-            ]
-            questions = [doc async for doc in collection.aggregate(pipeline)]
-            q = questions[0]
+            q = await _pick_animal_doc(collection, recent_ids, target_field)
+
+            if q is None:
+                for fallback_field in [f for f in selected_fields if f != target_field] + (["name"] if target_field != "name" else []):
+                    q = await _pick_animal_doc(collection, recent_ids, fallback_field)
+                    if q is not None:
+                        target_field = fallback_field
+                        break
+
+            if q is None:
+                sentry_sdk.capture_message(f"okranimal: no candidates for any field in {selected_fields}")
+                print(f"Error: no animal candidates for any of {selected_fields}")
+                animal_num += 1
+                continue
+
             print(q)
 
-            name = q["name"]
+            answer_value = q[target_field]
             image_url = q["image_url"]
             detail_url = q["animal_url"]
-            pattern = re.compile(re.escape(name), re.IGNORECASE)
-
-            fields = {k: pattern.sub("OKRA", q.get(k, "N/A")) for k in ["kingdom", "phylum", "class", "order", "family", "genus", "species"]}
 
             if q["_id"]:
                 await store_question_ids_in_mongo([q["_id"]], "animal")
@@ -8353,16 +8526,21 @@ async def ask_animal_challenge(winner, winner_id, num=7):
 
         processed_users = set()
 
+        if target_field == "name":
+            hint_lines = "".join(
+                f"{emoji} **{label}**: {_redact_answer(answer_value, q.get(key, 'N/A'))}\n"
+                for key, emoji, label in ANIMAL_FIELD_META if key in ANIMAL_TAXONOMY_FIELDS
+            )
+            header = "❓🦓 The **$@!#** is dat?!?"
+        else:
+            field_label = next(label for key, _, label in ANIMAL_FIELD_META if key == target_field)
+            hint_lines = f"🐾 **Name**: {_redact_answer(answer_value, q.get('name', 'N/A'))}\n"
+            header = f"❓🦓 What's the **{field_label}**?"
+
         prompt = (
             f"\n⚠️🚨 **Everyone's in!**\n\u200b"
-            f"\u200b\n❓🦓 The **$@!#** is dat?!?\n\n"
-            f"👑 **Kingdom**: {fields['kingdom']}\n"
-            f"🧩 **Phylum**: {fields['phylum']}\n"
-            f"🏫 **Class**: {fields['class']}\n"
-            f"🧾 **Order**: {fields['order']}\n"
-            f"👨‍👩‍👧 **Family**: {fields['family']}\n"
-            f"🔬 **Genus**: {fields['genus']}\n"
-            f"🐾 **Species**: {fields['species']}\n\u200b"
+            f"\u200b\n{header}\n\n"
+            f"{hint_lines}\u200b"
         )
 
         await safe_send(channel, content=prompt, embed=discord.Embed().set_image(url=image_url))
@@ -8390,9 +8568,9 @@ async def ask_animal_challenge(winner, winner_id, num=7):
                     continue
                 processed_users.add(key)
 
-                if fuzzy_match(content, name, category, detail_url):
+                if fuzzy_match(content, answer_value, category, detail_url):
                     await message.add_reaction("✅")
-                    await safe_send(channel, f"\u200b\n✅🎉 Correct! **<@{user_id}>** got it! **{name.upper()}**\n\n{detail_url}\n\u200b")
+                    await safe_send(channel, f"\u200b\n✅🎉 Correct! **<@{user_id}>** got it! **{_answer_display(target_field, answer_value, q)}**\n\n{detail_url}\n\u200b")
                     if user_id not in user_correct_answers:
                             user_correct_answers[user_id] = (user, 0)
                     user_correct_answers[user_id] = (user, user_correct_answers[user_id][1] + 1)
@@ -8401,7 +8579,7 @@ async def ask_animal_challenge(winner, winner_id, num=7):
                 break
 
         if not right_answer:
-            await safe_send(channel, f"\u200b\n❌😢 No one got it.\n\nAnswer: **{name.upper()}**\n\n{detail_url}\n\u200b")
+            await safe_send(channel, f"\u200b\n❌😢 No one got it.\n\nAnswer: **{_answer_display(target_field, answer_value, q)}**\n\n{detail_url}\n\u200b")
 
         await asyncio.sleep(1)
                             
@@ -11542,8 +11720,8 @@ async def ask_gregs_nightmare_challenge(winner, winner_id, num=7):
         prompt_lines.append(f"{i}. {cat['emoji']} {cat['display']}")
     prompt_lines.append(f"{everything_option_num}. 🏆 Everything")
     prompt_lines.append("")
-    prompt_lines.append("(Reply with category numbers plus 'normal'/'hard' and 'mc'/'text', "
-                         "e.g. '1 3 hard text', or use the button below)")
+    prompt_lines.append("(Reply with category numbers or names plus 'normal'/'hard' and 'mc'/'text', "
+                         "e.g. '1 3 hard text' or 'algebra geometry hard text', or use the button below)")
     await safe_send(channel, "\n".join(prompt_lines))
 
     category_options = [(i, f"{cat['emoji']} {cat['display']}") for i, cat in enumerate(categories, start=1)]
@@ -11561,8 +11739,14 @@ async def ask_gregs_nightmare_challenge(winner, winner_id, num=7):
         return m.channel == target_channel and m.author.id == winner_id
 
     def parse_setup(content):
-        numbers = [int(n) for n in re.findall(r"\d+", content) if 1 <= int(n) <= everything_option_num]
         lower = content.lower()
+        numbers = [int(n) for n in re.findall(r"\d+", lower) if 1 <= int(n) <= everything_option_num]
+        remaining = lower
+        for i, cat in sorted(enumerate(categories, start=1), key=lambda pair: -len(pair[1]["name"])):
+            pattern = r"\b" + re.escape(cat["name"]) + r"\b"
+            if re.search(pattern, remaining):
+                numbers.append(i)
+                remaining = re.sub(pattern, " ", remaining, count=1)
         difficulty = "hard" if "hard" in lower else "normal"
         answer_mode = "text" if ("text" in lower or "type" in lower) else "mc"
         return numbers, difficulty, answer_mode
