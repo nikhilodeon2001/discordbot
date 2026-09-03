@@ -442,11 +442,15 @@ okra_lab_announcement_text = (
 okra_lab_announcement_show_new_badge = True
 
 
-async def sync_okra_lab_announcement(content):
+async def sync_okra_lab_announcement(content, embed=None):
     """Post the Okra Lab feature list to the announcements channel, but only when
     this exact content has never been posted before \u2014 checked against full history,
     not just the most recent post, so reverting to an older feature list doesn't
-    trigger a duplicate announcement. Removes the need to manually copy it over."""
+    trigger a duplicate announcement. Removes the need to manually copy it over.
+
+    `embed` (optional) mirrors the intro-gif embed the same content gets in the trivia
+    channel; the de-dupe key stays text-only since the gif is randomized per round and
+    shouldn't cause an otherwise-identical announcement to repost."""
     try:
         already_posted = await db.okra_lab_announcements.find_one({"content": content})
         if already_posted:
@@ -457,7 +461,7 @@ async def sync_okra_lab_announcement(content):
         announce_channel = guild.get_channel(ANNOUNCEMENTS_CHANNEL_ID)
         if not announce_channel:
             return
-        await announce_channel.send(content)
+        await announce_channel.send(content, embed=embed)
         await db.okra_lab_announcements.insert_one({
             "content": content,
             "posted_at": datetime.datetime.utcnow(),
@@ -25933,12 +25937,16 @@ async def start_trivia():
                 send_magic_image(magic_number)
             elif image_questions == True:
                 selected_gif_url = await select_intro_image_url()
+            intro_embed = discord.Embed()
+            if selected_gif_url:
+                intro_embed.set_image(url=selected_gif_url)
+
             # Build the round-start banner (help-the-game ad + Royalty now live in the round-end message)
             lab_block = ""
             if okra_lab_announcement_enabled and okra_lab_announcement_text:
                 lab_message = "✨🧪 **NEW from the Okra Lab!** 🧪✨\n\n" if okra_lab_announcement_show_new_badge else ""
                 lab_message += f"{okra_lab_announcement_text.replace('{base_url}', companion_web.get_base_url())}\n"
-                await sync_okra_lab_announcement(lab_message)
+                await sync_okra_lab_announcement(lab_message, embed=intro_embed if selected_gif_url else None)
                 lab_block = f"\n{lab_message}"
 
             start_message = f"​\n​\n🥒🌐 **Okra's World**\n"
@@ -25947,10 +25955,6 @@ async def start_trivia():
             #if current_longest_round_streak["user"] is not None and await get_coffees(current_longest_round_streak["user_id"]) > 0:
             #    start_message += f"\n\n🕹️ **{current_longest_round_streak['user']}** can toggle modes mid-game"
             #    start_message += "\n↔️ **#[command]** any time during round"
-
-            intro_embed = discord.Embed()
-            if selected_gif_url:
-                intro_embed.set_image(url=selected_gif_url)
 
             if no_players:
                 async def run_start_countdown(msg, embed, view, button, starter=None):
