@@ -442,7 +442,7 @@ okra_lab_announcement_text = (
 okra_lab_announcement_show_new_badge = True
 
 
-async def sync_okra_lab_announcement(content, embed=None):
+async def sync_okra_lab_announcement(content, embed=None, trivia_channel_id=None):
     """Post the Okra Lab feature list to the announcements channel, but only when
     this exact content has never been posted before \u2014 checked against full history,
     not just the most recent post, so reverting to an older feature list doesn't
@@ -450,7 +450,15 @@ async def sync_okra_lab_announcement(content, embed=None):
 
     `embed` (optional) mirrors the intro-gif embed the same content gets in the trivia
     channel; the de-dupe key stays text-only since the gif is randomized per round and
-    shouldn't cause an otherwise-identical announcement to repost."""
+    shouldn't cause an otherwise-identical announcement to repost.
+
+    `trivia_channel_id` (optional) adds a "Jump to Trivia Channel" link button. This
+    isn't just a nicety -- Discord renders a message's embed image at a
+    noticeably narrower, more compact width when the message also carries button
+    components (it constrains the embed to line up with the button row), matching how
+    the same embed looks in the trivia channel (which always has a view attached). A
+    bare embed with no components renders wider, which is why this announcement's image
+    was looking bigger/wider than the trivia channel's."""
     try:
         already_posted = await db.okra_lab_announcements.find_one({"content": content})
         if already_posted:
@@ -461,7 +469,15 @@ async def sync_okra_lab_announcement(content, embed=None):
         announce_channel = guild.get_channel(ANNOUNCEMENTS_CHANNEL_ID)
         if not announce_channel:
             return
-        await announce_channel.send(content, embed=embed)
+        view = None
+        if trivia_channel_id:
+            view = discord.ui.View()
+            view.add_item(discord.ui.Button(
+                label="\u25b6\ufe0f Jump to Trivia Channel",
+                style=discord.ButtonStyle.link,
+                url=f"https://discord.com/channels/{OKRAN_GUILD_ID}/{trivia_channel_id}",
+            ))
+        await announce_channel.send(content, embed=embed, view=view)
         await db.okra_lab_announcements.insert_one({
             "content": content,
             "posted_at": datetime.datetime.utcnow(),
@@ -25946,7 +25962,7 @@ async def start_trivia():
             if okra_lab_announcement_enabled and okra_lab_announcement_text:
                 lab_message = "✨🧪 **NEW from the Okra Lab!** 🧪✨\n\n" if okra_lab_announcement_show_new_badge else ""
                 lab_message += f"{okra_lab_announcement_text.replace('{base_url}', companion_web.get_base_url())}\n"
-                await sync_okra_lab_announcement(lab_message, embed=intro_embed if selected_gif_url else None)
+                await sync_okra_lab_announcement(lab_message, embed=intro_embed if selected_gif_url else None, trivia_channel_id=channel.id)
                 lab_block = f"\n{lab_message}"
 
             start_message = f"​\n​\n🥒🌐 **Okra's World**\n"
