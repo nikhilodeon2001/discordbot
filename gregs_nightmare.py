@@ -655,7 +655,10 @@ def _draw_ratio_triangle(draw, font, w, h, y_offset=0, color=(57, 255, 20)):
     x2, y2 = 100, 80 + y_offset
     draw.polygon([(x0, y0), (x1, y1), (x2, y2)], outline=color, width=4)
     draw.rectangle([x0, y0 - 18, x0 + 18, y0], outline=color, width=2)
-    draw.text((x1 - 55, y1 - 45), "θ", fill=color, font=font)
+    # Positioned well inside the angle's wedge (not just offset from the vertex along one
+    # edge) -- the wedge here is narrow (~34 degrees), so a smaller offset sits the glyph
+    # right on top of the hypotenuse instead of clear of it.
+    draw.text((x1 - 85, y1 - 36), "θ", fill=color, font=font)
     draw.text(((x0 + x1) // 2 - 5, y0 + 10), "x", fill=color, font=font)
     draw.text((x0 - 35, (y0 + y2) // 2 - 15), "y", fill=color, font=font)
     draw.text(((x1 + x2) // 2 + 10, (y1 + y2) // 2 - 25), "z", fill=color, font=font)
