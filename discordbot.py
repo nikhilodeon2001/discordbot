@@ -433,9 +433,9 @@ async def send_question_queen_submit_ad():
 okra_lab_announcement_enabled = True
 okra_lab_announcement_text = (
     "🦓🔬 OkrAnimal got a PhD — it's done letting animals coast by on their name alone.\n\n"
-    "🐾 Before each match, pick what you want to be quizzed on — plain old **Name**, go full taxonomist with **Kingdom, Phylum, Class, Order, Family, Genus,** and/or **Species**, or say **All** and get grilled on everything\n"
-    "🖼️ The photo's still there every round, silently judging your guess\n"
-    "🕵️ Name mode still hands you the whole family tree as a hint. Every other mode only whispers the animal's name and makes you earn the rest\n"
+    "🐾 Before each match, pick what you want to be quizzed on — plain old **Name**, go full taxonomist with **Kingdom, Phylum, Class, Order, Family, Genus,** and/or **Species**, or say **All** and get grilled on everything\n\n"
+    "🖼️ The photo's still there every round, silently judging your guess\n\n"
+    "🕵️ Name mode still hands you the whole family tree as a hint. Every other mode only whispers the animal's name and makes you earn the rest\n\n"
     "🐕 Also evicted 500+ obscure dog breeds from Name mode — no more guessing whether that blurry photo is a 'Bea-Tzu' or an 'Aussiedor'\n\n"
     "▶️ Start OkrAnimal, then reply with numbers or words (like `genus species`, or `all`), or just mash the button. Freeze up and we'll default you to Name — no judgment. (Some judgment.)\n"
 )
