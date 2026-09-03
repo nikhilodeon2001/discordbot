@@ -450,11 +450,15 @@ async def sync_okra_lab_announcement(content, embed=None):
     Removes the need to manually copy it over.
 
     `embed` (optional) mirrors the intro-gif embed the same content gets in the trivia
-    channel. Note: even with byte-identical content/embed passed through here, the
-    posted image has been observed rendering wider in the announcements channel than
-    in the trivia channel -- still unexplained (not a content/embed-shape difference;
-    see conversation history / commit log for what's been ruled out already before
-    trying another theory here)."""
+    channel. Routed through safe_send() (not a raw channel.send()) deliberately: with
+    use_embed=True (its default), safe_send doesn't send `content` as plain message
+    text at all -- it folds it into embed.description alongside embed.color, producing
+    one colored description+image embed capped at Discord's standard ~432px embed
+    width. A raw channel.send(content, embed=embed) instead puts the text outside the
+    embed and leaves the embed holding only the image, which Discord renders as a much
+    wider bare media embed -- that mismatch (not the announcement text or the image
+    itself) was why this channel's copy kept looking wider than the trivia channel's,
+    even once both were passed byte-identical content/embed arguments."""
     try:
         already_posted = await db.okra_lab_announcements.find_one({"content": content})
         if already_posted:
@@ -465,7 +469,7 @@ async def sync_okra_lab_announcement(content, embed=None):
         announce_channel = guild.get_channel(ANNOUNCEMENTS_CHANNEL_ID)
         if not announce_channel:
             return
-        await announce_channel.send(content, embed=embed)
+        await safe_send(announce_channel, content=content, embed=embed)
         await db.okra_lab_announcements.insert_one({
             "content": content,
             "posted_at": datetime.datetime.utcnow(),
