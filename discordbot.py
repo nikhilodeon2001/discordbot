@@ -433,7 +433,7 @@ async def send_question_queen_submit_ad():
 okra_lab_announcement_enabled = True
 okra_lab_announcement_text = (
     "🦓🔬 OkrAnimal got a PhD — it's done letting animals coast by on their name alone.\n\n"
-    "🐾 Before each match, pick what you want to be quizzed on — plain old **Name**, go full taxonomist with **Kingdom, Phylum, Class, Order, Family, Genus,** and/or **Species**, or say **All** and get grilled on everything\n\n"
+    "🐾 Before each match, pick what you want to be quizzed on — plain old **Name**, go full taxonomist with **Phylum, Class, Order, Family, Genus,** and/or **Species**, or say **All** and get grilled on everything\n\n"
     "🖼️ The photo's still there every round, silently judging your guess\n\n"
     "🕵️ Name mode still hands you the whole family tree as a hint. Every other mode only whispers the animal's name and makes you earn the rest\n\n"
     "🐕 Also evicted 500+ obscure dog breeds from Name mode — no more guessing whether that blurry photo is a 'Bea-Tzu' or an 'Aussiedor'\n\n"
@@ -8362,7 +8362,6 @@ async def ask_border_challenge(winner, winner_id, num=5):
 
 ANIMAL_FIELD_META = [
     ("name",    "🐾", "Name"),
-    ("kingdom", "👑", "Kingdom"),
     ("phylum",  "🧩", "Phylum"),
     ("class",   "🏫", "Class"),
     ("order",   "🧾", "Order"),
@@ -8370,7 +8369,10 @@ ANIMAL_FIELD_META = [
     ("genus",   "🔬", "Genus"),
     ("species", "🐾", "Species"),
 ]
-ANIMAL_TAXONOMY_FIELDS = ["kingdom", "phylum", "class", "order", "family", "genus", "species"]
+# Kingdom is deliberately excluded -- every animal doc but one (a Venus Flytrap that snuck
+# into the collection) is "Animalia", so it's not a meaningful thing to quiz on or show as a
+# hint.
+ANIMAL_TAXONOMY_FIELDS = ["phylum", "class", "order", "family", "genus", "species"]
 
 
 def _build_animal_match(target_field, recent_ids, relax_recent=False):
