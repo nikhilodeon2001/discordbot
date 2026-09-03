@@ -442,23 +442,16 @@ okra_lab_announcement_text = (
 okra_lab_announcement_show_new_badge = True
 
 
-async def sync_okra_lab_announcement(content, embed=None, trivia_channel_id=None):
-    """Post the Okra Lab feature list to the announcements channel, but only when
-    this exact content has never been posted before \u2014 checked against full history,
-    not just the most recent post, so reverting to an older feature list doesn't
-    trigger a duplicate announcement. Removes the need to manually copy it over.
+async def sync_okra_lab_announcement(content, embed=None):
+    """Post the exact same round-start banner (branding header + Okra Lab feature list)
+    that goes to the trivia channel to the announcements channel too, but only when this
+    exact content has never been posted before \u2014 checked against full history, not just
+    the most recent post, so reverting to an older feature list doesn't trigger a
+    duplicate announcement. Removes the need to manually copy it over.
 
-    `embed` (optional) mirrors the intro-gif embed the same content gets in the trivia
-    channel; the de-dupe key stays text-only since the gif is randomized per round and
-    shouldn't cause an otherwise-identical announcement to repost.
-
-    `trivia_channel_id` (optional) adds a "Jump to Trivia Channel" link button. This
-    isn't just a nicety -- Discord renders a message's embed image at a
-    noticeably narrower, more compact width when the message also carries button
-    components (it constrains the embed to line up with the button row), matching how
-    the same embed looks in the trivia channel (which always has a view attached). A
-    bare embed with no components renders wider, which is why this announcement's image
-    was looking bigger/wider than the trivia channel's."""
+    Callers should pass the same `content`/`embed` they're about to send (or already
+    sent) to the trivia channel, unmodified -- so this channel's copy renders pixel-
+    identical to that one instead of approximating it."""
     try:
         already_posted = await db.okra_lab_announcements.find_one({"content": content})
         if already_posted:
@@ -469,15 +462,7 @@ async def sync_okra_lab_announcement(content, embed=None, trivia_channel_id=None
         announce_channel = guild.get_channel(ANNOUNCEMENTS_CHANNEL_ID)
         if not announce_channel:
             return
-        view = None
-        if trivia_channel_id:
-            view = discord.ui.View()
-            view.add_item(discord.ui.Button(
-                label="\u25b6\ufe0f Jump to Trivia Channel",
-                style=discord.ButtonStyle.link,
-                url=f"https://discord.com/channels/{OKRAN_GUILD_ID}/{trivia_channel_id}",
-            ))
-        await announce_channel.send(content, embed=embed, view=view)
+        await announce_channel.send(content, embed=embed)
         await db.okra_lab_announcements.insert_one({
             "content": content,
             "posted_at": datetime.datetime.utcnow(),
@@ -25959,14 +25944,19 @@ async def start_trivia():
 
             # Build the round-start banner (help-the-game ad + Royalty now live in the round-end message)
             lab_block = ""
-            if okra_lab_announcement_enabled and okra_lab_announcement_text:
+            has_lab_announcement = okra_lab_announcement_enabled and okra_lab_announcement_text
+            if has_lab_announcement:
                 lab_message = "✨🧪 **NEW from the Okra Lab!** 🧪✨\n\n" if okra_lab_announcement_show_new_badge else ""
                 lab_message += f"{okra_lab_announcement_text.replace('{base_url}', companion_web.get_base_url())}\n"
-                await sync_okra_lab_announcement(lab_message, embed=intro_embed if selected_gif_url else None, trivia_channel_id=channel.id)
                 lab_block = f"\n{lab_message}"
 
             start_message = f"​\n​\n🥒🌐 **Okra's World**\n"
             start_message += lab_block
+
+            if has_lab_announcement:
+                # Pass the exact same content/embed the trivia channel is about to get
+                # (below) so this channel's copy renders pixel-identical to that one.
+                await sync_okra_lab_announcement(start_message, embed=intro_embed if selected_gif_url else None)
 
             #if current_longest_round_streak["user"] is not None and await get_coffees(current_longest_round_streak["user_id"]) > 0:
             #    start_message += f"\n\n🕹️ **{current_longest_round_streak['user']}** can toggle modes mid-game"
