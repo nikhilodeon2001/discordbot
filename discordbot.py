@@ -443,15 +443,18 @@ okra_lab_announcement_show_new_badge = True
 
 
 async def sync_okra_lab_announcement(content, embed=None):
-    """Post the exact same round-start banner (branding header + Okra Lab feature list)
-    that goes to the trivia channel to the announcements channel too, but only when this
-    exact content has never been posted before \u2014 checked against full history, not just
-    the most recent post, so reverting to an older feature list doesn't trigger a
-    duplicate announcement. Removes the need to manually copy it over.
+    """Post the Okra Lab feature list (NEW badge + announcement text, no "Okra's World"
+    header) to the announcements channel, but only when this exact content has never
+    been posted before \u2014 checked against full history, not just the most recent post,
+    so reverting to an older feature list doesn't trigger a duplicate announcement.
+    Removes the need to manually copy it over.
 
-    Callers should pass the same `content`/`embed` they're about to send (or already
-    sent) to the trivia channel, unmodified -- so this channel's copy renders pixel-
-    identical to that one instead of approximating it."""
+    `embed` (optional) mirrors the intro-gif embed the same content gets in the trivia
+    channel. Note: even with byte-identical content/embed passed through here, the
+    posted image has been observed rendering wider in the announcements channel than
+    in the trivia channel -- still unexplained (not a content/embed-shape difference;
+    see conversation history / commit log for what's been ruled out already before
+    trying another theory here)."""
     try:
         already_posted = await db.okra_lab_announcements.find_one({"content": content})
         if already_posted:
@@ -25954,9 +25957,7 @@ async def start_trivia():
             start_message += lab_block
 
             if has_lab_announcement:
-                # Pass the exact same content/embed the trivia channel is about to get
-                # (below) so this channel's copy renders pixel-identical to that one.
-                await sync_okra_lab_announcement(start_message, embed=intro_embed if selected_gif_url else None)
+                await sync_okra_lab_announcement(lab_message, embed=intro_embed if selected_gif_url else None)
 
             #if current_longest_round_streak["user"] is not None and await get_coffees(current_longest_round_streak["user_id"]) > 0:
             #    start_message += f"\n\n🕹️ **{current_longest_round_streak['user']}** can toggle modes mid-game"
