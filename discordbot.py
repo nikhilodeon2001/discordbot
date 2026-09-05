@@ -9008,8 +9008,7 @@ async def ask_okras_anatomy_challenge(winner, winner_id, num=7):
             hint_lines = (f"\U0001F4CD **Region**: {q['region']}\n\U0001F39A️ **Difficulty**: {q['difficulty']}\n") if show_hints else ""
 
         location_required = _okras_anatomy_location_required(answer_value)
-        location_note = ("\n⚠️ Be specific with the # if needed. Only your first guess counts this round!\n"
-                          ) if location_required else ""
+        location_note = "\n⚠️ Only your first guess counts when a # is required.\n"
         prompt = f"\n⚠️\U0001F6A8 **Everyone's in!**\n​​\n{header}\n\n{hint_lines}{location_note}​"
         await safe_send(channel, content=prompt, embed=discord.Embed().set_image(url=image_url))
 
