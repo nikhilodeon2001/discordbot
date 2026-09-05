@@ -9587,7 +9587,8 @@ async def ask_chaos_challenge(winner, winner_id, num_of_games):
         ask_valedictorian_challenge,  # full elimination game, not a single quick round like its CHAOS siblings
         ask_okra_says_challenge,
         ask_buzz_words_challenge,
-        ask_gregs_nightmare_challenge
+        ask_gregs_nightmare_challenge,
+        ask_okras_anatomy_challenge
     ]
 
     if len(round_responders) < 2:
