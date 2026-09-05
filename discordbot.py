@@ -434,9 +434,9 @@ okra_lab_announcement_enabled = True
 okra_lab_announcement_text = (
     "🫘🔬 **Okra's Anatomy** just joined the Arena — think you know your body better than a first-year med student?\n\n"
     "🦴💪 246 real anatomy images (bones and muscles), pulled from a verified 3D anatomical model — no labels, no cheating, just name the structure\n\n"
-    "🗺️ Pick your battlefield: quiz by **Region** (Skull, Vertebral Column, Thoracic Cage, Trunk, Upper Limb, Lower Limb) or by **Difficulty** (Easy, Medium, Hard) — one or the other, not both\n\n"
-    "🎚️ Whichever one you don't pick shows up as a hint instead, so you're never totally in the dark\n\n"
-    "▶️ Play it via the numbered picker (**51**) or `/arena game_name:\"okra's anatomy\"`. Reply with numbers or names (like `1 5 6` or `skull upper limb`, or just `hard`), or mash the button.\n"
+    "🗺️ Pick your battlefield: quiz by **Region** (Skull, Vertebral Column, Thoracic Cage, Trunk, Upper Limb, Lower Limb), by **Difficulty** (Easy, Medium, Hard), or just say **All** to skip filtering entirely — Region and Difficulty don't mix, but All overrides both\n\n"
+    "🎚️ Whichever dimension you don't pick shows up as a hint each round by default — not feeling it? Add **no hints** to your setup and we'll keep you guessing blind\n\n"
+    "▶️ Play it via the numbered picker (**51**) or `/arena game_name:\"okra's anatomy\"`. Reply with numbers or names (like `1 5 6` or `skull upper limb`, or just `hard`, or `all`), or mash the button.\n"
 )
 okra_lab_announcement_show_new_badge = True
 
