@@ -26111,9 +26111,24 @@ async def start_trivia():
                     if remaining <= 0:
                         break
                     await asyncio.sleep(min(1.0, max(0.0, question_asked_end - time.time())))
-                # Grading grace: let a last-instant in-flight Discord message arrive before we snapshot
-                # collected_responses (the old slow countdown provided this buffer implicitly).
-                await asyncio.sleep(1)
+                # Grading grace: let last-instant in-flight button clicks/messages land in
+                # collected_responses before we snapshot it. Polls instead of a single fixed
+                # sleep so a burst of near-buzzer answers doesn't get cut off mid-arrival --
+                # waits for the list to stop growing, capped so unrelated chat can't stall
+                # grading indefinitely.
+                grace_deadline = time.time() + 3
+                last_len = len(collected_responses)
+                while time.time() < grace_deadline:
+                    await asyncio.sleep(0.15)
+                    new_len = len(collected_responses)
+                    if new_len == last_len:
+                        break
+                    last_len = new_len
+                # Scoring and the reveal-embed's "who picked what" annotation below both need
+                # to see the exact same set of responses -- otherwise a response that lands
+                # between the two reads shows up as correctly answered in the embed without
+                # ever having been scored. One snapshot, reused for both.
+                responses_snapshot = list(collected_responses)
                 #await safe_send(channel, "\u200b\n🛑 TIME 🛑\n\u200b")
                 
                 solution_list = []
@@ -26130,7 +26145,7 @@ async def start_trivia():
                     
                 show_standings_after = not yolo_mode or question_number == questions_per_round
                 await check_correct_responses_delete(
-                    question_ask_time, solution_list, question_number, collected_responses,
+                    question_ask_time, solution_list, question_number, responses_snapshot,
                     trivia_category, trivia_url, trivia_db=trivia_db, trivia_id=trivia_id,
                     show_standings_after=show_standings_after,
                     mc_choice_tokens=_mc_guess_tokens(trivia_answer_list, trivia_url),
@@ -26150,9 +26165,15 @@ async def start_trivia():
 
                         if is_letter_mc and choices:
                             clicks = {}
-                            for r in collected_responses:
+                            clicked_user_ids = {}
+                            for r in responses_snapshot:
                                 ltr = _mc_letter_for_guess(trivia_answer_list, r.get("message_content", ""))
                                 if ltr:
+                                    seen_ids = clicked_user_ids.setdefault(ltr, set())
+                                    user_id = r.get("user_id")
+                                    if user_id in seen_ids:
+                                        continue  # same person answered this choice twice (e.g. typed it, then clicked the button)
+                                    seen_ids.add(user_id)
                                     clicks.setdefault(ltr, []).append(r.get("display_name", "?"))
                             if current_answer_message.embeds:
                                 embed = current_answer_message.embeds[0]
@@ -26758,6 +26779,18 @@ async def on_message(message):
                     "message": message  # Save the original message object for deletion if needed
                 })
                 captured_as_answer = True
+
+                # A typed guess that's actually one of this question's choices locks the
+                # user out of the buttons too, the same way clicking a button locks out
+                # further typing -- otherwise typing the answer then clicking the matching
+                # button (or vice versa) creates two collected_responses entries for the
+                # same person (they show up twice in the reveal's "who picked what" list).
+                # Gated on being a recognizable choice (not "any message") so idle chat
+                # during the question window doesn't lock someone out of the buttons.
+                if current_answer_view is not None:
+                    mc_tokens = _mc_guess_tokens(trivia_answer_list, trivia_url)
+                    if mc_tokens is not None and answer_matching.normalize_text(message.content) in mc_tokens:
+                        current_answer_view.answered_user_ids.add(message.author.id)
 
             ESCAPE_PREFIXES = (".", ",", "~")
 
@@ -27554,6 +27587,13 @@ def companion_submit_answer(user_id, display_name, text, client="companion"):
         "source": "web",  # marks a companion/Activity answer, for the 🌐 scoreboard indicator
         "via_activity": client == "activity",  # narrower subset, for the 🧪 indicator
     })
+    # Same lock a Discord-typed guess applies (see on_message): a recognizable choice
+    # submitted here should block a subsequent Discord button click too, not just further
+    # companion submits, so the two surfaces can't produce two entries for one person.
+    if current_answer_view is not None:
+        mc_tokens = _mc_guess_tokens(trivia_answer_list, trivia_url)
+        if mc_tokens is not None and answer_matching.normalize_text(text) in mc_tokens:
+            current_answer_view.answered_user_ids.add(user_id)
     return {"ok": True}
 
 
