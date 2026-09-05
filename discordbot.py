@@ -8964,6 +8964,9 @@ async def ask_okras_anatomy_challenge(winner, winner_id, num=7):
         await safe_send(channel, f"​\n5️⃣\U0001F947 Let's do a best of **{num}**...\n​")
         await asyncio.sleep(3)
 
+    await safe_send(channel, "​\n⚠️ Only your first guess counts when a # is required.\n​")
+    await asyncio.sleep(3)
+
     collection = db["anatomy_questions"]
     round_num = 1
     while round_num <= num:
@@ -9008,8 +9011,7 @@ async def ask_okras_anatomy_challenge(winner, winner_id, num=7):
             hint_lines = (f"\U0001F4CD **Region**: {q['region']}\n\U0001F39A️ **Difficulty**: {q['difficulty']}\n") if show_hints else ""
 
         location_required = _okras_anatomy_location_required(answer_value)
-        location_note = "\n⚠️ Only your first guess counts when a # is required.\n"
-        prompt = f"\n⚠️\U0001F6A8 **Everyone's in!**\n​​\n{header}\n\n{hint_lines}{location_note}​"
+        prompt = f"\n⚠️\U0001F6A8 **Everyone's in!**\n​​\n{header}\n\n{hint_lines}​"
         await safe_send(channel, content=prompt, embed=discord.Embed().set_image(url=image_url))
 
         start_time = asyncio.get_event_loop().time()
