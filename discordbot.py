@@ -26347,6 +26347,7 @@ async def start_trivia():
 
             start_message = f"​\n​\n🥒🌐 **Okra's World**\n"
             start_message += lab_block
+            print(f"DEBUG_OKRA_WORLD_MSG repr={start_message!r}")
 
             if has_lab_announcement:
                 await sync_okra_lab_announcement(lab_message, embed=intro_embed if selected_gif_url else None)
