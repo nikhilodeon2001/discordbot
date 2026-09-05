@@ -8751,28 +8751,42 @@ async def ask_animal_challenge(winner, winner_id, num=7):
 
 
 OKRAS_ANATOMY_REGION_META = [
-    (1, "💀", "Skull"), (2, "🦴", "Vertebral Column"), (3, "🫁", "Thoracic Cage"),
-    (4, "🫃", "Trunk"), (5, "💪", "Upper Limb"), (6, "🦵", "Lower Limb"),
+    (1, "\U0001F480", "Skull"), (2, "\U0001F9B4", "Vertebral Column"), (3, "\U0001FAC1", "Thoracic Cage"),
+    (4, "\U0001FABD", "Trunk"), (5, "\U0001F4AA", "Upper Limb"), (6, "\U0001F9B5", "Lower Limb"),
 ]
-OKRAS_ANATOMY_DIFFICULTY_META = [(7, "🟢", "Easy"), (8, "🟡", "Medium"), (9, "🔴", "Hard")]
+OKRAS_ANATOMY_DIFFICULTY_META = [(7, "\U0001F7E2", "Easy"), (8, "\U0001F7E1", "Medium"), (9, "\U0001F534", "Hard")]
+OKRAS_ANATOMY_ALL_OPTION_NUM = 10
 OKRAS_ANATOMY_ALL_REGIONS = [name for _, _, name in OKRAS_ANATOMY_REGION_META]
 OKRAS_ANATOMY_ALL_DIFFICULTIES = [name for _, _, name in OKRAS_ANATOMY_DIFFICULTY_META]
+OKRAS_ANATOMY_GENERIC_WORDS_RE = re.compile(r"\b(bone|muscle|ligament|tendon)\b", re.IGNORECASE)
+
+
+def _okras_anatomy_strip_generic_words(text):
+    """Frontal bone / Rectus abdominis muscle -- these generic anatomy-type suffixes
+    shouldn't be required (or penalized) in a player's guess, so strip them from both
+    sides before comparing."""
+    return re.sub(r"\s+", " ", OKRAS_ANATOMY_GENERIC_WORDS_RE.sub("", text)).strip()
 
 
 def _build_okras_anatomy_match(mode, category_value, recent_ids, relax_recent=False):
     match = {} if relax_recent else {"_id": {"$nin": list(recent_ids)}}
-    match["region" if mode == "region" else "difficulty"] = category_value
+    if mode == "region":
+        match["region"] = category_value
+    elif mode == "difficulty":
+        match["difficulty"] = category_value
+    # mode == "all" -> no region/difficulty filter at all, draw from the whole collection
     return match
 
 
 async def _pick_okras_anatomy_doc(collection, recent_ids, mode, category_value):
-    """Runs match/sample for one target region-or-difficulty value. Retries once with the
-    recent-id exclusion relaxed if the strict pass finds nothing -- this is load-bearing
-    here (unlike animal, where it's a near-unreachable safety net): small pools like Trunk
-    (10 total docs) are expected to exhaust their un-recently-asked docs regularly, and
-    relaxing lets them gracefully degrade to "don't worry about repeats" instead of the
-    round skipping/erroring. No $group/dedup step needed the way _pick_animal_doc has:
-    every anatomy_questions doc is already a distinct, offline-verified, single-structure
+    """Runs match/sample for one target region-or-difficulty value (or the whole
+    collection, for mode="all"). Retries once with the recent-id exclusion relaxed if
+    the strict pass finds nothing -- this is load-bearing here (unlike animal, where
+    it's a near-unreachable safety net): small pools like Trunk (10 total docs) are
+    expected to exhaust their un-recently-asked docs regularly, and relaxing lets them
+    gracefully degrade to "don't worry about repeats" instead of the round
+    skipping/erroring. No $group/dedup step needed the way _pick_animal_doc has: every
+    anatomy_questions doc is already a distinct, offline-verified, single-structure
     image, unlike animal_questions (many docs share a "$question" text across
     near-duplicate subspecies entries)."""
     for relax_recent in (False, True):
@@ -8798,7 +8812,7 @@ async def ask_okras_anatomy_challenge(winner, winner_id, num=7):
         "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/okrasanatomy5.gif",
     ]
     gif_url = random.choice(gifs)
-    await safe_send(channel, content="​\n​\n🫘🔬 **Okra's Anatomy**: Name That Body Part!\n​",
+    await safe_send(channel, content="​\n​\n\U0001FAD8\U0001F52C **Okra's Anatomy**: Name That Body Part!\n​",
                      embed=discord.Embed().set_image(url=gif_url))
     await asyncio.sleep(3)
 
@@ -8806,8 +8820,9 @@ async def ask_okras_anatomy_challenge(winner, winner_id, num=7):
     category = "Anatomy"
 
     combined_options = [(n, f"{e} {name}") for n, e, name in OKRAS_ANATOMY_REGION_META + OKRAS_ANATOMY_DIFFICULTY_META]
+    combined_options.append((OKRAS_ANATOMY_ALL_OPTION_NUM, "\U0001F3C6 All"))
 
-    prompt_lines = ["🫘🔬 Pick your Regions OR a Difficulty (not both)!", "", "**Regions**"]
+    prompt_lines = ["\U0001FAD8\U0001F52C Pick your Regions OR a Difficulty (not both) -- or just say All!", "", "**Regions**"]
     for n, e, name in OKRAS_ANATOMY_REGION_META:
         prompt_lines.append(f"{n}. {e} {name}")
     prompt_lines.append("")
@@ -8815,8 +8830,11 @@ async def ask_okras_anatomy_challenge(winner, winner_id, num=7):
     for n, e, name in OKRAS_ANATOMY_DIFFICULTY_META:
         prompt_lines.append(f"{n}. {e} {name}")
     prompt_lines.append("")
+    prompt_lines.append(f"{OKRAS_ANATOMY_ALL_OPTION_NUM}. \U0001F3C6 All")
+    prompt_lines.append("")
     prompt_lines.append("(Reply with numbers or names, e.g. '1 5 6' or 'skull upper limb', or just 'hard', "
-                         "or say 'all' for every region, or use the button below)")
+                         "or say 'all' to skip filtering entirely. Add 'no hints' if you don't want the other "
+                         "dimension shown as a hint each round, or use the button below)")
     await safe_send(channel, "\n".join(prompt_lines))
 
     target_channel = _active_game_channel or channel
@@ -8826,12 +8844,17 @@ async def ask_okras_anatomy_challenge(winner, winner_id, num=7):
 
     def parse_okras_anatomy_setup(content):
         lower = content.lower()
-        if re.search(r"\b(all|everything)\b", lower):
-            return "region", OKRAS_ANATOMY_ALL_REGIONS.copy()
+        show_hints = not re.search(r"\bno\s*hints?\b|\bhints?\s*off\b|\bwithout\s*hints?\b", lower)
 
         num_to_key = {n: name for n, _, name in OKRAS_ANATOMY_REGION_META + OKRAS_ANATOMY_DIFFICULTY_META}
+        num_to_key[OKRAS_ANATOMY_ALL_OPTION_NUM] = "All"
         name_to_key = {name.lower(): name for name in OKRAS_ANATOMY_ALL_REGIONS + OKRAS_ANATOMY_ALL_DIFFICULTIES}
-        ordered = parse_ordered_multi_selection(content, num_to_key, name_to_key, 9)
+        name_to_key["all"] = "All"
+        name_to_key["everything"] = "All"
+        ordered = parse_ordered_multi_selection(content, num_to_key, name_to_key, OKRAS_ANATOMY_ALL_OPTION_NUM)
+
+        if "All" in ordered:
+            return "all", [], show_hints
 
         region_hits = [v for v in ordered if v in OKRAS_ANATOMY_ALL_REGIONS]
         difficulty_hits = [v for v in ordered if v in OKRAS_ANATOMY_ALL_DIFFICULTIES]
@@ -8843,14 +8866,14 @@ async def ask_okras_anatomy_challenge(winner, winner_id, num=7):
             difficulty_hits = []
 
         if region_hits:
-            return "region", region_hits
+            return "region", region_hits, show_hints
         if difficulty_hits:
-            return "difficulty", difficulty_hits
-        return "region", OKRAS_ANATOMY_ALL_REGIONS.copy()
+            return "difficulty", difficulty_hits, show_hints
+        return "all", [], show_hints
 
     window_closed = {"value": False}
     view = OkrasAnatomySetupView(combined_options, winner_id, window_closed, timeout=20)
-    view.message = await safe_send(channel, "👇 Or set up with the button:", view=view)
+    view.message = await safe_send(channel, "\U0001F447 Or set up with the button:", view=view)
 
     try:
         setup_msg = await resolve_input_race(
@@ -8860,20 +8883,31 @@ async def ask_okras_anatomy_challenge(winner, winner_id, num=7):
                 options=[{"value": str(n), "label": l} for n, l in combined_options], multi=True
             ),
         )
-        mode, selected = parse_okras_anatomy_setup(setup_msg.content)
-        selected_display = "🏆 All Regions" if set(selected) == set(OKRAS_ANATOMY_ALL_REGIONS) else ", ".join(selected)
-        await safe_send(channel, f"​\n✅ Mode: **{mode.title()}** | Selection: **{selected_display}**\n​")
+        mode, selected, show_hints = parse_okras_anatomy_setup(setup_msg.content)
+        if mode == "all":
+            selected_display = "\U0001F3C6 All"
+        elif mode == "region" and set(selected) == set(OKRAS_ANATOMY_ALL_REGIONS):
+            selected_display = "\U0001F3C6 All Regions"
+        else:
+            selected_display = ", ".join(selected)
+        hints_display = "On" if show_hints else "Off"
+        await safe_send(channel, f"​\n✅ Mode: **{mode.title()}** | Selection: **{selected_display}** | Hints: **{hints_display}**\n​")
     except asyncio.TimeoutError:
-        mode, selected = "region", OKRAS_ANATOMY_ALL_REGIONS.copy()
-        await safe_send(channel, "​\n⏰ Time's up! Defaulting to **all Regions**.\n​")
+        mode, selected, show_hints = "all", [], True
+        await safe_send(channel, "​\n⏰ Time's up! Defaulting to **All**, hints on.\n​")
     window_closed["value"] = True
     await asyncio.sleep(2)
 
-    # Round-robin across the user's picks, in the literal order they picked them.
-    category_order = [selected[i % len(selected)] for i in range(num)]
+    # Round-robin across the user's picks, in the literal order they picked them. Mode
+    # "all" has no real category dimension to cycle through -- every round just draws
+    # from the whole collection, so a single None placeholder repeated is enough.
+    if mode == "all":
+        category_order = [None] * num
+    else:
+        category_order = [selected[i % len(selected)] for i in range(num)]
 
     if num > 1:
-        await safe_send(channel, f"​\n5️⃣🥇 Let's do a best of **{num}**...\n​")
+        await safe_send(channel, f"​\n5️⃣\U0001F947 Let's do a best of **{num}**...\n​")
         await asyncio.sleep(3)
 
     collection = db["anatomy_questions"]
@@ -8892,8 +8926,8 @@ async def ask_okras_anatomy_challenge(winner, winner_id, num=7):
                         break
 
             if q is None:
-                sentry_sdk.capture_message(f"okras_anatomy: no candidates for any of {selected} ({mode})")
-                print(f"Error: no anatomy candidates for any of {selected} ({mode})")
+                sentry_sdk.capture_message(f"okras_anatomy: no candidates for any of {selected or ['all']} ({mode})")
+                print(f"Error: no anatomy candidates for any of {selected or ['all']} ({mode})")
                 round_num += 1
                 continue
 
@@ -8907,16 +8941,19 @@ async def ask_okras_anatomy_challenge(winner, winner_id, num=7):
 
         answer_value = q["body_part_name"]
         image_url = q["image_url"]
-        type_emoji = "🦴" if q["anatomy_type"] == "Bone" else "💪"
+        type_emoji = "\U0001F9B4" if q["anatomy_type"] == "Bone" else "\U0001F4AA"
 
         if mode == "region":
             header = f"❓{type_emoji} Name this **{q['anatomy_type']}** — {q['region']}!"
-            hint_lines = f"🎚️ **Difficulty**: {q['difficulty']}\n"
-        else:
+            hint_lines = f"\U0001F39A️ **Difficulty**: {q['difficulty']}\n" if show_hints else ""
+        elif mode == "difficulty":
             header = f"❓{type_emoji} Name this **{q['anatomy_type']}** — {q['difficulty']}!"
-            hint_lines = f"📍 **Region**: {q['region']}\n"
+            hint_lines = f"\U0001F4CD **Region**: {q['region']}\n" if show_hints else ""
+        else:
+            header = f"❓{type_emoji} Name this **{q['anatomy_type']}**!"
+            hint_lines = (f"\U0001F4CD **Region**: {q['region']}\n\U0001F39A️ **Difficulty**: {q['difficulty']}\n") if show_hints else ""
 
-        prompt = f"\n⚠️🚨 **Everyone's in!**\n​​\n{header}\n\n{hint_lines}​"
+        prompt = f"\n⚠️\U0001F6A8 **Everyone's in!**\n​​\n{header}\n\n{hint_lines}​"
         await safe_send(channel, content=prompt, embed=discord.Embed().set_image(url=image_url))
 
         start_time = asyncio.get_event_loop().time()
@@ -8942,9 +8979,9 @@ async def ask_okras_anatomy_challenge(winner, winner_id, num=7):
                     continue
                 processed_users.add(key)
 
-                if fuzzy_match(content, answer_value, category, ""):
+                if fuzzy_match(_okras_anatomy_strip_generic_words(content), _okras_anatomy_strip_generic_words(answer_value), category, ""):
                     await message.add_reaction("✅")
-                    await safe_send(channel, f"​\n✅🎉 Correct! **<@{user_id}>** got it! **{answer_value.upper()}**\n​")
+                    await safe_send(channel, f"​\n✅\U0001F389 Correct! **<@{user_id}>** got it! **{answer_value.upper()}**\n​")
                     if user_id not in user_correct_answers:
                         user_correct_answers[user_id] = (user, 0)
                     user_correct_answers[user_id] = (user, user_correct_answers[user_id][1] + 1)
@@ -8953,7 +8990,7 @@ async def ask_okras_anatomy_challenge(winner, winner_id, num=7):
                 break
 
         if not right_answer:
-            await safe_send(channel, f"​\n❌😢 No one got it.\n\nAnswer: **{answer_value.upper()}**\n​")
+            await safe_send(channel, f"​\n❌\U0001F622 No one got it.\n\nAnswer: **{answer_value.upper()}**\n​")
 
         await asyncio.sleep(1)
 
@@ -8975,9 +9012,9 @@ async def ask_okras_anatomy_challenge(winner, winner_id, num=7):
 
         if sorted_users:
             if round_num > num:
-                message += "​\n🏁🏆 Final Standings\n​"
+                message += "​\n\U0001F3C1\U0001F3C6 Final Standings\n​"
             else:
-                message += "​\n📊🏆 Current Standings\n​"
+                message += "​\n\U0001F4CA\U0001F3C6 Current Standings\n​"
 
         for counter, (uid, (name, score)) in enumerate(sorted_users, start=1):
             message += f"{counter}. **{name}**: {score}\n"
@@ -8996,14 +9033,14 @@ async def ask_okras_anatomy_challenge(winner, winner_id, num=7):
 
         if len(top_winners) == 1:
             okras_anatomy_winner_id, winner_name = top_winners[0]
-            message = f"​\n🎉🥇 The winner is **{winner_name}**!\n​"
+            message = f"​\n\U0001F389\U0001F947 The winner is **{winner_name}**!\n​"
         else:
-            message = f"​\n🤝 It's a tie! **Winners:**\n​"
+            message = f"​\n\U0001F91D It's a tie! **Winners:**\n​"
             for uid, name in top_winners:
                 message += f"• **{name}** ({top_score} pts)\n"
             message += "​"
     else:
-        message = f"​\n👎😢 **No right answers**. I'm ashamed to call you Okrans.\n​"
+        message = f"​\n\U0001F44E\U0001F622 **No right answers**. I'm ashamed to call you Okrans.\n​"
     await safe_send(channel, message)
 
     wf_winner = True
