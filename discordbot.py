@@ -6734,6 +6734,16 @@ class OkrasAnatomySetupModal(discord.ui.Modal, title="Set Up Okra's Anatomy"):
         )
         self.add_item(discord.ui.Label(text="Region(s) OR Difficulty", description="Pick from one group only",
                                         component=self.select))
+        self.hints_select = discord.ui.Select(
+            options=[
+                discord.SelectOption(label="✅ Hints on", value="on", default=True),
+                discord.SelectOption(label="🚫 Hints off", value="off"),
+            ],
+            min_values=1,
+            max_values=1,
+        )
+        self.add_item(discord.ui.Label(text="Hints", description="Show the other dimension as a hint each round?",
+                                        component=self.hints_select))
 
     async def on_submit(self, interaction: discord.Interaction):
         if self._window_closed["value"]:
@@ -6741,7 +6751,9 @@ class OkrasAnatomySetupModal(discord.ui.Modal, title="Set Up Okra's Anatomy"):
                 "⏰ Too late — defaulted already.", ephemeral=True
             )
             return
-        selected = self.select.values
+        selected = list(self.select.values)
+        if self.hints_select.values[0] == "off":
+            selected.append("no hints")
         await interaction.response.send_message("✅ Settings locked in.", ephemeral=True)
         if not self._result_future.done():
             self._result_future.set_result(ComponentChoice(" ".join(selected), interaction))
@@ -8768,6 +8780,48 @@ def _okras_anatomy_strip_generic_words(text):
     return re.sub(r"\s+", " ", OKRAS_ANATOMY_GENERIC_WORDS_RE.sub("", text)).strip()
 
 
+_OKRAS_ANATOMY_NUMBER_SUFFIX_RE = re.compile(r"^(.*?)\s+([A-Z]\d+|\d+)$")
+_OKRAS_ANATOMY_RELAXED_STEMS = {"metacarpal", "metatarsal"}
+
+
+def _okras_anatomy_number_suffix(answer_value):
+    """("Thoracic vertebra T10") -> ("Thoracic vertebra", "T10"); None if answer_value
+    has no trailing numbered/coded suffix."""
+    m = _OKRAS_ANATOMY_NUMBER_SUFFIX_RE.match(_okras_anatomy_strip_generic_words(answer_value))
+    return (m.group(1), m.group(2)) if m else None
+
+
+def _okras_anatomy_location_required(answer_value):
+    """True for Rib / Cervical-Thoracic-Lumbar vertebra -- renders show the bone in
+    place within the full ribcage/spine, so the specific location is determinable and
+    required. False for metacarpal/metatarsal (shown in isolation -- which of the 5 it
+    is isn't visually determinable) and all non-numbered body parts."""
+    parsed = _okras_anatomy_number_suffix(answer_value)
+    return bool(parsed) and parsed[0].lower() not in _OKRAS_ANATOMY_RELAXED_STEMS
+
+
+def _okras_anatomy_check_answer(content, answer_value, category):
+    content_clean = _okras_anatomy_strip_generic_words(content)
+    parsed = _okras_anatomy_number_suffix(answer_value)
+    if not parsed:
+        return fuzzy_match(content_clean, _okras_anatomy_strip_generic_words(answer_value), category, "")
+
+    stem, suffix = parsed
+    if stem.lower() in _OKRAS_ANATOMY_RELAXED_STEMS:
+        return fuzzy_match(content_clean, stem, category, "")
+
+    # Rib/vertebra -- ONLY these two exact forms count: "Rib N" for ribs (the stem word
+    # plus the exact number), or, for vertebrae, any answer containing the exact code
+    # (T10/C5/L3) alone or alongside the stem words. A bare "rib" or "vertebra" with no
+    # number, or the wrong number/code, is rejected.
+    content_tokens = re.findall(r"[a-z0-9]+", content_clean.lower())
+    if suffix.lower() not in content_tokens:
+        return False
+    if re.match(r"^[A-Z]\d+$", suffix):
+        return True  # vertebra code alone (or with stem words) is a complete answer
+    return fuzzy_match(content_clean, f"{stem} {suffix}", category, "")
+
+
 def _build_okras_anatomy_match(mode, category_value, recent_ids, relax_recent=False):
     match = {} if relax_recent else {"_id": {"$nin": list(recent_ids)}}
     if mode == "region":
@@ -8953,12 +9007,16 @@ async def ask_okras_anatomy_challenge(winner, winner_id, num=7):
             header = f"❓{type_emoji} Name this **{q['anatomy_type']}**!"
             hint_lines = (f"\U0001F4CD **Region**: {q['region']}\n\U0001F39A️ **Difficulty**: {q['difficulty']}\n") if show_hints else ""
 
-        prompt = f"\n⚠️\U0001F6A8 **Everyone's in!**\n​​\n{header}\n\n{hint_lines}​"
+        location_required = _okras_anatomy_location_required(answer_value)
+        location_note = ("\n⚠️ Be specific with the # if needed. Only your first guess counts this round!\n"
+                          ) if location_required else ""
+        prompt = f"\n⚠️\U0001F6A8 **Everyone's in!**\n​​\n{header}\n\n{hint_lines}{location_note}​"
         await safe_send(channel, content=prompt, embed=discord.Embed().set_image(url=image_url))
 
         start_time = asyncio.get_event_loop().time()
         right_answer = False
         processed_users = set()
+        one_shot_used = set()
         target_channel = _active_game_channel or channel
 
         def check(m):
@@ -8973,13 +9031,19 @@ async def ask_okras_anatomy_challenge(winner, winner_id, num=7):
                 content = message.content.strip()
                 user = message.author.display_name
                 user_id = message.author.id
+
+                if location_required:
+                    if user_id in one_shot_used:
+                        continue
+                    one_shot_used.add(user_id)
+
                 key = (message.author.id, content.lower())
 
                 if key in processed_users:
                     continue
                 processed_users.add(key)
 
-                if fuzzy_match(_okras_anatomy_strip_generic_words(content), _okras_anatomy_strip_generic_words(answer_value), category, ""):
+                if _okras_anatomy_check_answer(content, answer_value, category):
                     await message.add_reaction("✅")
                     await safe_send(channel, f"​\n✅\U0001F389 Correct! **<@{user_id}>** got it! **{answer_value.upper()}**\n​")
                     if user_id not in user_correct_answers:
