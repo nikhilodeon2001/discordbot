@@ -26347,10 +26347,15 @@ async def start_trivia():
 
             start_message = f"​\n​\n🥒🌐 **Okra's World**\n"
             start_message += lab_block
-            print(f"DEBUG_OKRA_WORLD_MSG repr={start_message!r}")
 
             if has_lab_announcement:
-                await sync_okra_lab_announcement(lab_message, embed=intro_embed if selected_gif_url else None)
+                # Pass a COPY of intro_embed, not the shared object -- safe_send() only
+                # sets embed.description when it's not already set, so mutating the same
+                # embed here would "claim" that field before the main-channel safe_send()
+                # below ever runs, permanently blocking the Okra's World header from ever
+                # being applied to it.
+                announcement_embed = intro_embed.copy() if selected_gif_url else None
+                await sync_okra_lab_announcement(lab_message, embed=announcement_embed)
 
             #if current_longest_round_streak["user"] is not None and await get_coffees(current_longest_round_streak["user_id"]) > 0:
             #    start_message += f"\n\n🕹️ **{current_longest_round_streak['user']}** can toggle modes mid-game"
