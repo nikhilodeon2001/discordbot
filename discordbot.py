@@ -432,12 +432,11 @@ async def send_question_queen_submit_ad():
 # the same text is correct whether this deploy is staging or prod.
 okra_lab_announcement_enabled = True
 okra_lab_announcement_text = (
-    "🦓🔬 OkrAnimal got a PhD — it's done letting animals coast by on their name alone.\n\n"
-    "🐾 Before each match, pick what you want to be quizzed on — plain old **Name**, go full taxonomist with **Phylum, Class, Order, Family, Genus,** and/or **Species**, or say **All** and get grilled on everything\n\n"
-    "🖼️ The photo's still there every round, silently judging your guess\n\n"
-    "🕵️ Name mode still hands you the whole family tree as a hint. Every other mode only whispers the animal's name and makes you earn the rest\n\n"
-    "🐕 Also evicted 500+ obscure dog breeds from Name mode — no more guessing whether that blurry photo is a 'Bea-Tzu' or an 'Aussiedor'\n\n"
-    "▶️ Start OkrAnimal, then reply with numbers or words (like `genus species`, or `all`), or just mash the button. Freeze up and we'll default you to Name — no judgment. (Some judgment.)\n"
+    "🫘🔬 **Okra's Anatomy** just joined the Arena — think you know your body better than a first-year med student?\n\n"
+    "🦴💪 246 real anatomy images (bones and muscles), pulled from a verified 3D anatomical model — no labels, no cheating, just name the structure\n\n"
+    "🗺️ Pick your battlefield: quiz by **Region** (Skull, Vertebral Column, Thoracic Cage, Trunk, Upper Limb, Lower Limb) or by **Difficulty** (Easy, Medium, Hard) — one or the other, not both\n\n"
+    "🎚️ Whichever one you don't pick shows up as a hint instead, so you're never totally in the dark\n\n"
+    "▶️ Play it via the numbered picker (**51**) or `/arena game_name:\"okra's anatomy\"`. Reply with numbers or names (like `1 5 6` or `skull upper limb`, or just `hard`), or mash the button.\n"
 )
 okra_lab_announcement_show_new_badge = True
 
@@ -937,7 +936,7 @@ _flag_locks = {}  # user_id -> asyncio.Lock (rate-limit TOCTOU guard for compani
 _submitter_attribution_cache = OrderedDict()  # (db_name, _id) -> attribution string; bounded LRU
 _SUBMITTER_CACHE_MAX = 256
 
-id_limits = {"general": 2000, "mysterybox": 2000, "crossword": 5000, "jeopardy": 5000, "wof": 1500, "list": 20, "feud": 1000, "posters": 2000, "movie_scenes": 5000, "missing_link": 2500, "people": 2500, "ranker_list": 4000, "animal": 2000, "riddle": 2500, "dictionary": 5000, "flags": 150, "update_blurb": 150, "lyric": 500, "polyglottery": 80, "book": 80, "element": 100, "jigsaw": 5000, "border": 100, "faceoff": 5000, "president": 80, "wordle": 1400, "myopic": 5000, "fusion": 5000, "microscopic": 5000, "chess": 5000, "stock": 800, "currency": 100, "search": 10, "billboard": 40, "soundfx": 500, "audio_music":100, "audio_question": 2000, "sports_logos": 20, "fun_fact": 75, "sat": 10000, "sat_math": 2000, "sat_verbal": 5000, "sat_science": 2000, "sat_grammar": 3000, "sat_english": 1000, "spellingbee_one_bee": 700, "spellingbee_two_bee": 1800, "spellingbee_three_bee": 700, "spellingbee_championship": 40}
+id_limits = {"general": 2000, "mysterybox": 2000, "crossword": 5000, "jeopardy": 5000, "wof": 1500, "list": 20, "feud": 1000, "posters": 2000, "movie_scenes": 5000, "missing_link": 2500, "people": 2500, "ranker_list": 4000, "animal": 2000, "riddle": 2500, "dictionary": 5000, "flags": 150, "update_blurb": 150, "lyric": 500, "polyglottery": 80, "book": 80, "element": 100, "jigsaw": 5000, "border": 100, "faceoff": 5000, "president": 80, "wordle": 1400, "myopic": 5000, "fusion": 5000, "microscopic": 5000, "chess": 5000, "stock": 800, "currency": 100, "search": 10, "billboard": 40, "soundfx": 500, "audio_music":100, "audio_question": 2000, "sports_logos": 20, "fun_fact": 75, "sat": 10000, "sat_math": 2000, "sat_verbal": 5000, "sat_science": 2000, "sat_grammar": 3000, "sat_english": 1000, "spellingbee_one_bee": 700, "spellingbee_two_bee": 1800, "spellingbee_three_bee": 700, "spellingbee_championship": 40, "okras_anatomy": 120}
 max_retries = 3
 delay_between_retries = 3
 first_place_bonus = 0
@@ -5865,6 +5864,38 @@ async def resolve_input_race(view: "RestrictedView", chat_wait_coro):
         raise asyncio.TimeoutError()
 
 
+def parse_ordered_multi_selection(content, num_to_key, name_to_key, max_num):
+    """Extracts a category selection from free-typed text, preserving the order the user
+    typed things in (by string position), deduplicated (first occurrence wins).
+
+    num_to_key: {1: "Skull", 2: "Vertebral Column", ...} -- numbered menu options.
+    name_to_key: {"skull": "Skull", "geometry": "Geometry", ...} -- typed-name aliases,
+    lowercase keys.
+
+    Numbers and names are matched in the same pass and interleaved by their actual
+    position in the raw text, so "3 geometry 1" and "geometry 3 1" produce different,
+    correct orderings -- unlike a naive `sorted(set(numbers))`, which always produces the
+    same ascending order regardless of what the user typed, or building `picked` as a
+    `set()` from the start, which loses the order information before it can even be
+    sorted."""
+    lower = content.lower()
+    matches = []  # (start_index, key)
+    for m in re.finditer(r"\d+", lower):
+        n = int(m.group())
+        if 1 <= n <= max_num and n in num_to_key:
+            matches.append((m.start(), num_to_key[n]))
+    for name, key in sorted(name_to_key.items(), key=lambda kv: -len(kv[0])):
+        for m in re.finditer(rf"\b{re.escape(name)}\b", lower):
+            matches.append((m.start(), key))
+    matches.sort(key=lambda t: t[0])
+    ordered, seen = [], set()
+    for _, key in matches:
+        if key not in seen:
+            seen.add(key)
+            ordered.append(key)
+    return ordered
+
+
 def build_option_button_view(options, allowed_user_ids, *, timeout=60, style=discord.ButtonStyle.primary,
                               disabled_values=None):
     """Small-fixed-set button row (<=25 options, <=5 per row) -- the button-based counterpart
@@ -6675,6 +6706,67 @@ class AnimalModeSetupView(discord.ui.View):
             await interaction.response.send_message("❌ You're not in this round!", ephemeral=True)
             return
         await interaction.response.send_modal(AnimalModeSetupModal(self.field_options, self.future, self.window_closed))
+
+    async def on_timeout(self):
+        for item in self.children:
+            item.disabled = True
+        if self.message is not None:
+            try:
+                await self.message.edit(view=self)
+            except (discord.HTTPException, discord.NotFound):
+                pass
+
+
+class OkrasAnatomySetupModal(discord.ui.Modal, title="Set Up Okra's Anatomy"):
+    """One-submission multi-select for ask_okras_anatomy_challenge()'s Region/Difficulty
+    picker, mirroring AnimalModeSetupModal's Label-wrapped Select pattern. Submitting
+    synthesizes a space-joined string of option numbers into the same shared future the
+    typed-chat fallback path also parses."""
+
+    def __init__(self, combined_options, result_future: asyncio.Future, window_closed):
+        super().__init__()
+        self._result_future = result_future
+        self._window_closed = window_closed
+        self.select = discord.ui.Select(
+            options=[discord.SelectOption(label=label[:100], value=str(num)) for num, label in combined_options],
+            min_values=1,
+            max_values=len(combined_options),
+        )
+        self.add_item(discord.ui.Label(text="Region(s) OR Difficulty", description="Pick from one group only",
+                                        component=self.select))
+
+    async def on_submit(self, interaction: discord.Interaction):
+        if self._window_closed["value"]:
+            await interaction.response.send_message(
+                "⏰ Too late — defaulted already.", ephemeral=True
+            )
+            return
+        selected = self.select.values
+        await interaction.response.send_message("✅ Settings locked in.", ephemeral=True)
+        if not self._result_future.done():
+            self._result_future.set_result(ComponentChoice(" ".join(selected), interaction))
+
+
+class OkrasAnatomySetupView(discord.ui.View):
+    """Button that opens OkrasAnatomySetupModal. Plain discord.ui.View (single winner-only
+    picker, single submission) -- see AnimalModeSetupView for the same convention."""
+
+    def __init__(self, combined_options, winner_id, window_closed, *, timeout):
+        super().__init__(timeout=timeout)
+        self.combined_options = combined_options
+        self.winner_id = winner_id
+        self.window_closed = window_closed
+        self.message = None
+        self.future = asyncio.get_running_loop().create_future()
+        button = discord.ui.Button(label="🫘 Set Up Game", style=discord.ButtonStyle.primary)
+        button.callback = self._open_modal
+        self.add_item(button)
+
+    async def _open_modal(self, interaction: discord.Interaction):
+        if interaction.user.id != self.winner_id:
+            await interaction.response.send_message("❌ You're not in this round!", ephemeral=True)
+            return
+        await interaction.response.send_modal(OkrasAnatomySetupModal(self.combined_options, self.future, self.window_closed))
 
     async def on_timeout(self):
         for item in self.children:
@@ -8465,20 +8557,11 @@ async def ask_animal_challenge(winner, winner_id, num=7):
         return m.channel == target_channel and m.author.id == winner_id
 
     def parse_animal_setup(content):
-        picked = set()
-        for n in re.findall(r"\d+", content):
-            n = int(n)
-            if 1 <= n <= len(field_options):
-                picked.add(field_options[n - 1][0])
-        content_lower = content.lower()
-        if re.search(r"\b(common\s*name|name)\b", content_lower):
-            picked.add("name")
+        num_to_key = {i: key for i, (key, _) in enumerate(field_options, start=1)}
+        name_to_key = {"common name": "name", "name": "name", "all": "all", "everything": "all"}
         for key in ANIMAL_TAXONOMY_FIELDS:
-            if re.search(rf"\b{key}\b", content_lower):
-                picked.add(key)
-        if re.search(r"\b(all|everything)\b", content_lower):
-            picked.add("all")
-        return picked
+            name_to_key[key] = key
+        return parse_ordered_multi_selection(content, num_to_key, name_to_key, len(field_options))
 
     window_closed = {"value": False}
     view = AnimalModeSetupView(field_options, winner_id, window_closed, timeout=20)
@@ -8497,7 +8580,7 @@ async def ask_animal_challenge(winner, winner_id, num=7):
             selected_fields = FIELD_KEYS.copy()
             selected_display = "🏆 All"
         else:
-            selected_fields = sorted(picked) or ["name"]
+            selected_fields = picked or ["name"]
             selected_display = ", ".join(l for k, l in field_options if k in selected_fields)
         await safe_send(channel, f"\u200b\n✅ Guessing on: **{selected_display}**\n\u200b")
     except asyncio.TimeoutError:
@@ -8505,7 +8588,6 @@ async def ask_animal_challenge(winner, winner_id, num=7):
         await safe_send(channel, "\u200b\n⏰ Time's up! Defaulting to **Name**.\n\u200b")
     window_closed["value"] = True
 
-    random.shuffle(selected_fields)  # randomize round-robin order per session
     await asyncio.sleep(2)
 
     if num > 1:
@@ -8666,6 +8748,268 @@ async def ask_animal_challenge(winner, winner_id, num=7):
     await asyncio.sleep(3)
 
     return animal_winner_id
+
+
+OKRAS_ANATOMY_REGION_META = [
+    (1, "💀", "Skull"), (2, "🦴", "Vertebral Column"), (3, "🫁", "Thoracic Cage"),
+    (4, "🫃", "Trunk"), (5, "💪", "Upper Limb"), (6, "🦵", "Lower Limb"),
+]
+OKRAS_ANATOMY_DIFFICULTY_META = [(7, "🟢", "Easy"), (8, "🟡", "Medium"), (9, "🔴", "Hard")]
+OKRAS_ANATOMY_ALL_REGIONS = [name for _, _, name in OKRAS_ANATOMY_REGION_META]
+OKRAS_ANATOMY_ALL_DIFFICULTIES = [name for _, _, name in OKRAS_ANATOMY_DIFFICULTY_META]
+
+
+def _build_okras_anatomy_match(mode, category_value, recent_ids, relax_recent=False):
+    match = {} if relax_recent else {"_id": {"$nin": list(recent_ids)}}
+    match["region" if mode == "region" else "difficulty"] = category_value
+    return match
+
+
+async def _pick_okras_anatomy_doc(collection, recent_ids, mode, category_value):
+    """Runs match/sample for one target region-or-difficulty value. Retries once with the
+    recent-id exclusion relaxed if the strict pass finds nothing -- this is load-bearing
+    here (unlike animal, where it's a near-unreachable safety net): small pools like Trunk
+    (10 total docs) are expected to exhaust their un-recently-asked docs regularly, and
+    relaxing lets them gracefully degrade to "don't worry about repeats" instead of the
+    round skipping/erroring. No $group/dedup step needed the way _pick_animal_doc has:
+    every anatomy_questions doc is already a distinct, offline-verified, single-structure
+    image, unlike animal_questions (many docs share a "$question" text across
+    near-duplicate subspecies entries)."""
+    for relax_recent in (False, True):
+        pipeline = [
+            {"$match": _build_okras_anatomy_match(mode, category_value, recent_ids, relax_recent=relax_recent)},
+            {"$sample": {"size": 1}},
+        ]
+        docs = [doc async for doc in collection.aggregate(pipeline)]
+        if docs:
+            return docs[0]
+    return None
+
+
+async def ask_okras_anatomy_challenge(winner, winner_id, num=7):
+    global wf_winner
+    wf_winner = True
+
+    gifs = [
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/okrasanatomy1.gif",
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/okrasanatomy2.gif",
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/okrasanatomy3.gif",
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/okrasanatomy4.gif",
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/okrasanatomy5.gif",
+    ]
+    gif_url = random.choice(gifs)
+    await safe_send(channel, content="​\n​\n🫘🔬 **Okra's Anatomy**: Name That Body Part!\n​",
+                     embed=discord.Embed().set_image(url=gif_url))
+    await asyncio.sleep(3)
+
+    user_correct_answers = {}
+    category = "Anatomy"
+
+    combined_options = [(n, f"{e} {name}") for n, e, name in OKRAS_ANATOMY_REGION_META + OKRAS_ANATOMY_DIFFICULTY_META]
+
+    prompt_lines = ["🫘🔬 Pick your Regions OR a Difficulty (not both)!", "", "**Regions**"]
+    for n, e, name in OKRAS_ANATOMY_REGION_META:
+        prompt_lines.append(f"{n}. {e} {name}")
+    prompt_lines.append("")
+    prompt_lines.append("**Difficulty**")
+    for n, e, name in OKRAS_ANATOMY_DIFFICULTY_META:
+        prompt_lines.append(f"{n}. {e} {name}")
+    prompt_lines.append("")
+    prompt_lines.append("(Reply with numbers or names, e.g. '1 5 6' or 'skull upper limb', or just 'hard', "
+                         "or say 'all' for every region, or use the button below)")
+    await safe_send(channel, "\n".join(prompt_lines))
+
+    target_channel = _active_game_channel or channel
+
+    def check_setup_message(m):
+        return m.channel == target_channel and m.author.id == winner_id
+
+    def parse_okras_anatomy_setup(content):
+        lower = content.lower()
+        if re.search(r"\b(all|everything)\b", lower):
+            return "region", OKRAS_ANATOMY_ALL_REGIONS.copy()
+
+        num_to_key = {n: name for n, _, name in OKRAS_ANATOMY_REGION_META + OKRAS_ANATOMY_DIFFICULTY_META}
+        name_to_key = {name.lower(): name for name in OKRAS_ANATOMY_ALL_REGIONS + OKRAS_ANATOMY_ALL_DIFFICULTIES}
+        ordered = parse_ordered_multi_selection(content, num_to_key, name_to_key, 9)
+
+        region_hits = [v for v in ordered if v in OKRAS_ANATOMY_ALL_REGIONS]
+        difficulty_hits = [v for v in ordered if v in OKRAS_ANATOMY_ALL_DIFFICULTIES]
+
+        if region_hits and difficulty_hits:
+            # Mutually exclusive by design -- Region wins on mixed input, matching every
+            # other setup parser in this codebase's deterministic-tie-break convention
+            # (never reject-and-reprompt).
+            difficulty_hits = []
+
+        if region_hits:
+            return "region", region_hits
+        if difficulty_hits:
+            return "difficulty", difficulty_hits
+        return "region", OKRAS_ANATOMY_ALL_REGIONS.copy()
+
+    window_closed = {"value": False}
+    view = OkrasAnatomySetupView(combined_options, winner_id, window_closed, timeout=20)
+    view.message = await safe_send(channel, "👇 Or set up with the button:", view=view)
+
+    try:
+        setup_msg = await resolve_input_race(
+            view,
+            companion_bridge.wait_for_message_or_companion(
+                check_setup_message, 20, target_channel, {winner_id}, kind="mini_game_answer",
+                options=[{"value": str(n), "label": l} for n, l in combined_options], multi=True
+            ),
+        )
+        mode, selected = parse_okras_anatomy_setup(setup_msg.content)
+        selected_display = "🏆 All Regions" if set(selected) == set(OKRAS_ANATOMY_ALL_REGIONS) else ", ".join(selected)
+        await safe_send(channel, f"​\n✅ Mode: **{mode.title()}** | Selection: **{selected_display}**\n​")
+    except asyncio.TimeoutError:
+        mode, selected = "region", OKRAS_ANATOMY_ALL_REGIONS.copy()
+        await safe_send(channel, "​\n⏰ Time's up! Defaulting to **all Regions**.\n​")
+    window_closed["value"] = True
+    await asyncio.sleep(2)
+
+    # Round-robin across the user's picks, in the literal order they picked them.
+    category_order = [selected[i % len(selected)] for i in range(num)]
+
+    if num > 1:
+        await safe_send(channel, f"​\n5️⃣🥇 Let's do a best of **{num}**...\n​")
+        await asyncio.sleep(3)
+
+    collection = db["anatomy_questions"]
+    round_num = 1
+    while round_num <= num:
+        category_value = category_order[round_num - 1]
+        try:
+            recent_ids = await get_recent_question_ids_from_mongo("okras_anatomy")
+            q = await _pick_okras_anatomy_doc(collection, recent_ids, mode, category_value)
+
+            if q is None:
+                for fallback_value in [v for v in selected if v != category_value]:
+                    q = await _pick_okras_anatomy_doc(collection, recent_ids, mode, fallback_value)
+                    if q is not None:
+                        category_value = fallback_value
+                        break
+
+            if q is None:
+                sentry_sdk.capture_message(f"okras_anatomy: no candidates for any of {selected} ({mode})")
+                print(f"Error: no anatomy candidates for any of {selected} ({mode})")
+                round_num += 1
+                continue
+
+            if q["_id"]:
+                await store_question_ids_in_mongo([q["_id"]], "okras_anatomy")
+
+        except Exception as e:
+            sentry_sdk.capture_exception(e)
+            print(f"Error selecting anatomy question:\n{traceback.format_exc()}")
+            return
+
+        answer_value = q["body_part_name"]
+        image_url = q["image_url"]
+        type_emoji = "🦴" if q["anatomy_type"] == "Bone" else "💪"
+
+        if mode == "region":
+            header = f"❓{type_emoji} Name this **{q['anatomy_type']}** — {q['region']}!"
+            hint_lines = f"🎚️ **Difficulty**: {q['difficulty']}\n"
+        else:
+            header = f"❓{type_emoji} Name this **{q['anatomy_type']}** — {q['difficulty']}!"
+            hint_lines = f"📍 **Region**: {q['region']}\n"
+
+        prompt = f"\n⚠️🚨 **Everyone's in!**\n​​\n{header}\n\n{hint_lines}​"
+        await safe_send(channel, content=prompt, embed=discord.Embed().set_image(url=image_url))
+
+        start_time = asyncio.get_event_loop().time()
+        right_answer = False
+        processed_users = set()
+        target_channel = _active_game_channel or channel
+
+        def check(m):
+            return m.channel == target_channel and m.author != get_bot().user
+
+        while asyncio.get_event_loop().time() - start_time < 15 and not right_answer:
+            try:
+                remaining = 15 - (asyncio.get_event_loop().time() - start_time)
+                message = await companion_bridge.wait_for_message_or_companion(
+                    check, remaining, target_channel, None, kind="mini_game_answer"
+                )
+                content = message.content.strip()
+                user = message.author.display_name
+                user_id = message.author.id
+                key = (message.author.id, content.lower())
+
+                if key in processed_users:
+                    continue
+                processed_users.add(key)
+
+                if fuzzy_match(content, answer_value, category, ""):
+                    await message.add_reaction("✅")
+                    await safe_send(channel, f"​\n✅🎉 Correct! **<@{user_id}>** got it! **{answer_value.upper()}**\n​")
+                    if user_id not in user_correct_answers:
+                        user_correct_answers[user_id] = (user, 0)
+                    user_correct_answers[user_id] = (user, user_correct_answers[user_id][1] + 1)
+                    right_answer = True
+            except asyncio.TimeoutError:
+                break
+
+        if not right_answer:
+            await safe_send(channel, f"​\n❌😢 No one got it.\n\nAnswer: **{answer_value.upper()}**\n​")
+
+        await asyncio.sleep(1)
+
+        round_num += 1
+
+        message = ""
+        sorted_users = sorted(user_correct_answers.items(), key=lambda x: x[1][1], reverse=True)
+
+        if num == 1:
+            if sorted_users:
+                top_score = sorted_users[0][1][1]
+                top_winners = [uid for uid, (name, score) in sorted_users if score == top_score]
+                if len(top_winners) == 1:
+                    return top_winners[0]
+                else:
+                    return None  # Tie
+            else:
+                return None
+
+        if sorted_users:
+            if round_num > num:
+                message += "​\n🏁🏆 Final Standings\n​"
+            else:
+                message += "​\n📊🏆 Current Standings\n​"
+
+        for counter, (uid, (name, score)) in enumerate(sorted_users, start=1):
+            message += f"{counter}. **{name}**: {score}\n"
+            message += "​"
+
+        if message:
+            await safe_send(channel, message)
+
+        await asyncio.sleep(3)
+
+    await asyncio.sleep(2)
+    okras_anatomy_winner_id = None
+    if sorted_users:
+        top_score = sorted_users[0][1][1]
+        top_winners = [(uid, name) for uid, (name, score) in sorted_users if score == top_score]
+
+        if len(top_winners) == 1:
+            okras_anatomy_winner_id, winner_name = top_winners[0]
+            message = f"​\n🎉🥇 The winner is **{winner_name}**!\n​"
+        else:
+            message = f"​\n🤝 It's a tie! **Winners:**\n​"
+            for uid, name in top_winners:
+                message += f"• **{name}** ({top_score} pts)\n"
+            message += "​"
+    else:
+        message = f"​\n👎😢 **No right answers**. I'm ashamed to call you Okrans.\n​"
+    await safe_send(channel, message)
+
+    wf_winner = True
+    await asyncio.sleep(2)
+
+    return okras_anatomy_winner_id
 
 
 async def ask_ranker_people_challenge(winner, winner_id, num=5):
@@ -11129,10 +11473,13 @@ async def ask_sports_logos_challenge(winner, winner_id, num=5):
             selected_leagues = all_leagues.copy()
             await safe_send(channel, "\u200b\n\U0001f31f **Everything** selected!\n\u200b")
         else:
-            # Remove duplicates and map to league names (plain names for DB queries)
-            selected_leagues = [league_map[n] for n in sorted(set(numbers)) if n in league_map]
+            # Remove duplicates while preserving the order the user typed them in (plain
+            # names for DB queries) -- numbers is already in typed order via re.findall,
+            # dict.fromkeys() dedupes without re-sorting it the way sorted(set(...)) would.
+            ordered_numbers = list(dict.fromkeys(numbers))
+            selected_leagues = [league_map[n] for n in ordered_numbers if n in league_map]
             # Use display map with emojis for user-facing message
-            league_display = ", ".join([league_display_map[n] for n in sorted(set(numbers)) if n in league_display_map])
+            league_display = ", ".join([league_display_map[n] for n in ordered_numbers if n in league_display_map])
             await safe_send(channel, f"\u200b\n\u2705 Selected leagues: **{league_display}**\n\u200b")
     except asyncio.TimeoutError:
         # Default to everything on timeout
@@ -11764,13 +12111,9 @@ async def ask_gregs_nightmare_challenge(winner, winner_id, num=7):
 
     def parse_setup(content):
         lower = content.lower()
-        numbers = [int(n) for n in re.findall(r"\d+", lower) if 1 <= int(n) <= everything_option_num]
-        remaining = lower
-        for i, cat in sorted(enumerate(categories, start=1), key=lambda pair: -len(pair[1]["name"])):
-            pattern = r"\b" + re.escape(cat["name"]) + r"\b"
-            if re.search(pattern, remaining):
-                numbers.append(i)
-                remaining = re.sub(pattern, " ", remaining, count=1)
+        num_to_key = {i: i for i in range(1, everything_option_num + 1)}
+        name_to_key = {cat["name"].lower(): i for i, cat in enumerate(categories, start=1)}
+        numbers = parse_ordered_multi_selection(content, num_to_key, name_to_key, everything_option_num)
         difficulty = "hard" if "hard" in lower else "normal"
         answer_mode = "text" if ("text" in lower or "type" in lower) else "mc"
         return numbers, difficulty, answer_mode
@@ -11791,7 +12134,7 @@ async def ask_gregs_nightmare_challenge(winner, winner_id, num=7):
         if not numbers or everything_option_num in numbers:
             selected_urls = all_urls.copy()
         else:
-            selected_urls = [url_by_num[n] for n in sorted(set(numbers)) if n in url_by_num]
+            selected_urls = [url_by_num[n] for n in numbers if n in url_by_num]
             if not selected_urls:
                 selected_urls = all_urls.copy()
         selected_display = ", ".join(
@@ -19416,6 +19759,8 @@ async def select_wof_questions(winner, winner_id, winner_coffees=None):
         message += f"{counter}.\u200b 🎓📚 Valedictorian (2+ players)\n"
         counter = counter + 1
         message += f"{counter}.\u200b 🐝🔤 Buzz Words 🎧\n"
+        counter = counter + 1
+        message += f"{counter}.\u200b 🫘🔬 Okra's Anatomy\n"
         message += f"67.\u200b 😱🔢 Greg's Nightmare\n"
         message += f"99.\u200b 🌀🤯 CHAOS\n"
         
@@ -19648,6 +19993,11 @@ async def select_wof_questions(winner, winner_id, winner_coffees=None):
 
         elif selected_wof_category == "50":
             await ask_buzz_words_challenge(winner, winner_id, 5)
+            await asyncio.sleep(3)
+            return None
+
+        elif selected_wof_category == "51":
+            await ask_okras_anatomy_challenge(winner, winner_id, 7)
             await asyncio.sleep(3)
             return None
 
@@ -19948,11 +20298,12 @@ async def ask_wof_number(winner, winner_id, cached_coffees=None, menu_text=None,
         "48": "The Genie",
         "49": "Valedictorian",
         "50": "Buzz Words",
+        "51": "Okra's Anatomy",
         "67": "Greg's Nightmare",
         "99": "CHAOS"
     }
     multiplayer_required = {"40", "47", "49"}  # OkRACE, Okra Says, Valedictorian -- these auto-win/abort instead of really playing with 1 player
-    all_options = {str(i) for i in range(51)} | {"00", "x", "99", "67"}
+    all_options = {str(i) for i in range(52)} | {"00", "x", "99", "67"}
 
     # The ~46 minigames (5-50) aren't offered via button/select at all -- 51+ choices would
     # need the group->item cascade from build_option_select_view's `groups`, and a 2-page
@@ -19998,7 +20349,7 @@ async def ask_wof_number(winner, winner_id, cached_coffees=None, menu_text=None,
             if content == "00":
                 await message.add_reaction("\U0001f44d")
                 set_a = [str(i) for i in range(5)]
-                set_b = [str(i) for i in range(5, 51)] + ["67"]
+                set_b = [str(i) for i in range(5, 52)] + ["67"]
                 if len(round_responders) < 2:
                     set_b = [g for g in set_b if g not in multiplayer_required]
                 set_b = [g for g in set_b if g not in RANDOM_EXCLUDED_NUMBERS]
@@ -26900,6 +27251,7 @@ def get_minigame_name(number):
         "48": "The Genie",
         "49": "Valedictorian",
         "50": "Buzz Words",
+        "51": "Okra's Anatomy",
         "67": "Greg's Nightmare",
         "99": "CHAOS",
         "x": "Skip Mini Game"

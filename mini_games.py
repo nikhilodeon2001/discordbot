@@ -20,7 +20,8 @@ GAME_NAMES = [
     "wordle war", "list battle", "ranker lists", "musiq", "myopic mystery", "microscopic mystery",
     "fusion challenge", "tally", "xxxx", "checkmate", "wall street", "spotlight",
     "hear here", "who says", "lets talk", "feud blitz", "okrace",
-    "jock talk", "30 for 30", "okra says", "valedictorian", "buzz words", "greg's nightmare"
+    "jock talk", "30 for 30", "okra says", "valedictorian", "buzz words", "greg's nightmare",
+    "okra's anatomy"
 ]
 
 # Excluded from random selection only — still fully playable by explicit name via /arena <name>
@@ -84,7 +85,8 @@ def _get_game_function(game_name: str):
         ask_okra_says_challenge,
         ask_valedictorian_challenge,
         ask_buzz_words_challenge,
-        ask_gregs_nightmare_challenge
+        ask_gregs_nightmare_challenge,
+        ask_okras_anatomy_challenge
     )
 
     game_function_map = {
@@ -128,7 +130,8 @@ def _get_game_function(game_name: str):
         "okra says": ask_okra_says_challenge,
         "valedictorian": ask_valedictorian_challenge,
         "buzz words": ask_buzz_words_challenge,
-        "greg's nightmare": ask_gregs_nightmare_challenge
+        "greg's nightmare": ask_gregs_nightmare_challenge,
+        "okra's anatomy": ask_okras_anatomy_challenge
     }
 
     return game_function_map.get(game_name.lower())
