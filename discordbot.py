@@ -26341,18 +26341,15 @@ async def start_trivia():
             lab_block = ""
             has_lab_announcement = okra_lab_announcement_enabled and okra_lab_announcement_text
             if has_lab_announcement:
-                # The live trivia channel's round-start message never shows the "NEW" badge --
-                # that's reserved for the one-time announcements-channel post below. The live
-                # channel just gets the plain announcement text under the Okra's World header.
-                announcement_text = f"{okra_lab_announcement_text.replace('{base_url}', companion_web.get_base_url())}\n"
-                lab_block = f"\n{announcement_text}"
+                lab_message = "✨🧪 **NEW from the Okra Lab!** 🧪✨\n\n" if okra_lab_announcement_show_new_badge else ""
+                lab_message += f"{okra_lab_announcement_text.replace('{base_url}', companion_web.get_base_url())}\n"
+                lab_block = f"\n{lab_message}"
 
             start_message = f"​\n​\n🥒🌐 **Okra's World**\n"
             start_message += lab_block
 
             if has_lab_announcement:
-                badge = "✨🧪 **NEW from the Okra Lab!** 🧪✨\n\n" if okra_lab_announcement_show_new_badge else ""
-                await sync_okra_lab_announcement(f"{badge}{announcement_text}", embed=intro_embed if selected_gif_url else None)
+                await sync_okra_lab_announcement(lab_message, embed=intro_embed if selected_gif_url else None)
 
             #if current_longest_round_streak["user"] is not None and await get_coffees(current_longest_round_streak["user_id"]) > 0:
             #    start_message += f"\n\n🕹️ **{current_longest_round_streak['user']}** can toggle modes mid-game"
