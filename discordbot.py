@@ -27805,6 +27805,12 @@ async def _alert_scoring_mismatch(user_ids, responses_snapshot, trivia_category,
         )
         embed.add_field(name="Question", value=f"[{trivia_category}] {trivia_question}"[:1024], inline=False)
         embed.add_field(name="Correct answer", value=str(trivia_answer_list[0])[:1024] if trivia_answer_list else "?", inline=False)
+        # Full choice list (not just the correct one) -- checking for this, since every real
+        # occurrence so far has been a Greg's Nightmare math MC question: _build_mc_answers'
+        # choices.index(correct_answer) finds the *first* match in the shuffled list, so a
+        # duplicate/collided distractor value would make it label the wrong shuffled position
+        # as correct, independent of anything already ruled out in match_answer/the accepted gate.
+        embed.add_field(name="All choices (raw)", value=("```\n" + repr(trivia_answer_list)[:1000] + "\n```") if trivia_answer_list else "?", inline=False)
         if jump_url:
             embed.add_field(name="Jump to question", value=f"[View in chat]({jump_url})", inline=False)
         detail_lines = []
