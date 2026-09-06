@@ -24253,6 +24253,12 @@ async def check_correct_responses_delete(question_ask_time, trivia_answer_list, 
     # Dictionary to track first numerical response from each user if answer is a number
     user_first_response = {}
 
+    # Diagnostic trace (see _alert_scoring_mismatch): the exact accepted/matching decision
+    # for each sender's first single_answer response this question, so a "shown correct in
+    # the reveal, credited nothing" mismatch can be diagnosed from real branch-level data
+    # instead of re-deriving it by hand from the final scoreboard.
+    response_trace = {}
+
     # Process collected responses
     first_correct_found = False
     for response in collected_responses:
@@ -24298,19 +24304,27 @@ async def check_correct_responses_delete(question_ask_time, trivia_answer_list, 
             if sender_id in user_first_response:
                 continue  # Skip if we've already recorded a numeric response for this user
         
+            trace_entry = {"message_content": message_content}
             if message_content.startswith("#"):
                 accepted = False
+                trace_entry["branch"] = "hash_prefix"
             elif sniper_mode:
                 accepted = True
+                trace_entry["branch"] = "sniper_mode"
             elif mc_choice_tokens is not None:
                 # Multiple choice / True-False: accept only this question's actual
                 # choices (letters or full choice text), not a fixed a/b/c/d/true/false
                 # whitelist that would also swallow "true"/"b" on a math question.
-                accepted = answer_matching.normalize_text(message_content) in mc_choice_tokens
+                normalized_guess = answer_matching.normalize_text(message_content)
+                accepted = normalized_guess in mc_choice_tokens
+                trace_entry["branch"] = "mc_choice_tokens"
+                trace_entry["normalized_guess"] = normalized_guess
+                trace_entry["mc_choice_tokens"] = sorted(mc_choice_tokens)
             elif trivia_url in _MATH_URLS:
                 # Math single-answer question: shape depends on the specific type
                 # (e.g. "y/z" for trig, "3 -2" for zeroes, "2x+3" for derivative).
                 accepted = _math_guess_ok(trivia_url, message_content)
+                trace_entry["branch"] = "math_url_fallback"
             else:
                 # Generic single-answer question (number or single character).
                 accepted = (
@@ -24318,6 +24332,10 @@ async def check_correct_responses_delete(question_ask_time, trivia_answer_list, 
                     message_content[0].isdigit() or
                     len(message_content) == 1
                 )
+                trace_entry["branch"] = "generic_fallback"
+            trace_entry["accepted"] = accepted
+            if sender_id not in response_trace:
+                response_trace[sender_id] = trace_entry
             if accepted:
                 user_first_response[sender_id] = message_content
             else:
@@ -24338,7 +24356,14 @@ async def check_correct_responses_delete(question_ask_time, trivia_answer_list, 
             })
                                 
         # Check if the user's response is in the list of correct answers
-        if any(fuzzy_match(message_content, answer, trivia_category, trivia_url) for answer in trivia_answer_list):            
+        fuzzy_match_per_answer = [
+            (answer, fuzzy_match(message_content, answer, trivia_category, trivia_url))
+            for answer in trivia_answer_list
+        ]
+        if sender_id in response_trace:
+            response_trace[sender_id]["trivia_answer_list_seen"] = list(trivia_answer_list)
+            response_trace[sender_id]["fuzzy_match_per_answer"] = fuzzy_match_per_answer
+        if any(matched for _, matched in fuzzy_match_per_answer):
             if timestamp and question_ask_time:
                 # Convert timestamp to seconds
                 response_time = timestamp - question_ask_time
@@ -24633,7 +24658,7 @@ async def check_correct_responses_delete(question_ask_time, trivia_answer_list, 
     flush_submission_queue()
     await flush_offquestion_chat_buffer()
     await record_question_outcome(trivia_db, trivia_id, had_correct_answer, has_responses)
-    return points_gained_this_question
+    return points_gained_this_question, response_trace
 
 
 async def update_answer_streaks(user, user_id):
@@ -26605,12 +26630,14 @@ async def start_trivia():
                     solution_list = [new_solution]        
                     
                 show_standings_after = not yolo_mode or question_number == questions_per_round
-                points_gained_this_question = await check_correct_responses_delete(
+                points_gained_this_question, response_trace = await check_correct_responses_delete(
                     question_ask_time, solution_list, question_number, responses_snapshot,
                     trivia_category, trivia_url, trivia_db=trivia_db, trivia_id=trivia_id,
                     show_standings_after=show_standings_after,
                     mc_choice_tokens=_mc_guess_tokens(trivia_answer_list, trivia_url),
-                ) or {}
+                )
+                points_gained_this_question = points_gained_this_question or {}
+                response_trace = response_trace or {}
                 try:
                     companion_web.publish_state(build_companion_reveal_state(solution_list), game="main")
                 except Exception as e:
@@ -26659,7 +26686,7 @@ async def start_trivia():
                                 await _alert_scoring_mismatch(
                                     missed_credit_ids, responses_snapshot, trivia_category, trivia_question,
                                     trivia_answer_list, current_answer_message,
-                                    question_asked_start, question_asked_end,
+                                    question_asked_start, question_asked_end, response_trace,
                                 )
 
                             if current_answer_message.embeds:
@@ -27748,13 +27775,20 @@ def _mc_letter_for_guess(answer_list, message_content):
 
 async def _alert_scoring_mismatch(user_ids, responses_snapshot, trivia_category, trivia_question,
                                    trivia_answer_list, current_answer_message,
-                                   question_asked_start, question_asked_end):
+                                   question_asked_start, question_asked_end, response_trace=None):
     """Someone's guess resolves to the same choice letter the reveal embed marks correct (via
     _mc_letter_for_guess, the same check the "who picked what" annotation uses) but they aren't
     in points_gained_this_question -- i.e. the reveal shows them as right and they got nothing.
     Posts raw diagnostic data to INTRO_IMAGE_ADMIN_CHANNEL_ID (reused here as a scoring-diagnostics
     channel; it's already split staging/prod) so a recurrence can be diagnosed from real data
-    instead of guessing at timing again."""
+    instead of guessing at timing again.
+
+    response_trace (from check_correct_responses_delete's return value) carries the actual
+    accepted/fuzzy_match branch-by-branch decision for this sender's first response -- included
+    because raw content + timing alone (the original version of this alert) proved insufficient
+    to explain real occurrences: isolated testing of the same content against the same correct
+    answer via match_answer() returned True, so the exclusion has to be happening somewhere in
+    the accepted-gate/single-answer-lock logic that only a live trace can pin down."""
     alert_channel = get_bot().get_channel(INTRO_IMAGE_ADMIN_CHANNEL_ID)
     if alert_channel is None:
         return
@@ -27790,6 +27824,24 @@ async def _alert_scoring_mismatch(user_ids, responses_snapshot, trivia_category,
         detail_lines.append(f"question_window=[{question_asked_start}, {question_asked_end}]")
         detail_lines.append(f"responses_in_scoring_snapshot={snapshot_len} responses_live_now={live_len}")
         embed.add_field(name="Diagnostic data", value="```\n" + "\n".join(detail_lines)[:1000] + "\n```", inline=False)
+
+        trace = (response_trace or {}).get(user_id)
+        if trace:
+            trace_lines = [
+                f"message_content={trace.get('message_content')!r}",
+                f"accepted_branch={trace.get('branch')} accepted={trace.get('accepted')}",
+            ]
+            if "normalized_guess" in trace:
+                trace_lines.append(f"normalized_guess={trace.get('normalized_guess')!r}")
+            if "mc_choice_tokens" in trace:
+                trace_lines.append(f"mc_choice_tokens={trace.get('mc_choice_tokens')!r}")
+            if "trivia_answer_list_seen" in trace:
+                trace_lines.append(f"trivia_answer_list_seen={trace.get('trivia_answer_list_seen')!r}")
+            if "fuzzy_match_per_answer" in trace:
+                trace_lines.append(f"fuzzy_match_per_answer={trace.get('fuzzy_match_per_answer')!r}")
+            embed.add_field(name="Grading trace", value="```\n" + "\n".join(trace_lines)[:1000] + "\n```", inline=False)
+        else:
+            embed.add_field(name="Grading trace", value="```\nno trace captured (not a single_answer response, or excluded before the accepted-gate ran)\n```", inline=False)
         try:
             await safe_send(alert_channel, embed=embed)
         except Exception as e:
