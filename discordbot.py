@@ -24633,7 +24633,7 @@ async def check_correct_responses_delete(question_ask_time, trivia_answer_list, 
     flush_submission_queue()
     await flush_offquestion_chat_buffer()
     await record_question_outcome(trivia_db, trivia_id, had_correct_answer, has_responses)
-    return None
+    return points_gained_this_question
 
 
 async def update_answer_streaks(user, user_id):
@@ -26605,12 +26605,12 @@ async def start_trivia():
                     solution_list = [new_solution]        
                     
                 show_standings_after = not yolo_mode or question_number == questions_per_round
-                await check_correct_responses_delete(
+                points_gained_this_question = await check_correct_responses_delete(
                     question_ask_time, solution_list, question_number, responses_snapshot,
                     trivia_category, trivia_url, trivia_db=trivia_db, trivia_id=trivia_id,
                     show_standings_after=show_standings_after,
                     mc_choice_tokens=_mc_guess_tokens(trivia_answer_list, trivia_url),
-                )
+                ) or {}
                 try:
                     companion_web.publish_state(build_companion_reveal_state(solution_list), game="main")
                 except Exception as e:
@@ -26636,6 +26636,32 @@ async def start_trivia():
                                         continue  # same person answered this choice twice (e.g. typed it, then clicked the button)
                                     seen_ids.add(user_id)
                                     clicks.setdefault(ltr, []).append(r.get("display_name", "?"))
+
+                            # Diagnostic tripwire: flag anyone whose FIRST response this question
+                            # (the only one the single-answer-wins rule actually counts) resolves
+                            # to the correct letter, but who isn't in points_gained_this_question --
+                            # i.e. their one real guess was right and they got nothing. Deliberately
+                            # keyed off each user's first response, not clicked_user_ids (which can
+                            # list one person under multiple letters if they answered more than
+                            # once) -- a wrong-then-right second guess is correctly uncredited by
+                            # design and shouldn't trip this alert.
+                            first_response_by_user = {}
+                            for r in responses_snapshot:
+                                uid = r.get("user_id")
+                                if uid is not None and uid not in first_response_by_user:
+                                    first_response_by_user[uid] = r
+                            missed_credit_ids = {
+                                uid for uid, r in first_response_by_user.items()
+                                if uid not in points_gained_this_question
+                                and _mc_letter_for_guess(trivia_answer_list, r.get("message_content", "")) == correct_letter
+                            }
+                            if missed_credit_ids:
+                                await _alert_scoring_mismatch(
+                                    missed_credit_ids, responses_snapshot, trivia_category, trivia_question,
+                                    trivia_answer_list, current_answer_message,
+                                    question_asked_start, question_asked_end,
+                                )
+
                             if current_answer_message.embeds:
                                 embed = current_answer_message.embeds[0]
                                 found_any = False
@@ -27718,6 +27744,56 @@ def _mc_letter_for_guess(answer_list, message_content):
         if letter and text and normalized in (text, text.replace(" ", "")):
             return letter.upper()
     return None
+
+
+async def _alert_scoring_mismatch(user_ids, responses_snapshot, trivia_category, trivia_question,
+                                   trivia_answer_list, current_answer_message,
+                                   question_asked_start, question_asked_end):
+    """Someone's guess resolves to the same choice letter the reveal embed marks correct (via
+    _mc_letter_for_guess, the same check the "who picked what" annotation uses) but they aren't
+    in points_gained_this_question -- i.e. the reveal shows them as right and they got nothing.
+    Posts raw diagnostic data to INTRO_IMAGE_ADMIN_CHANNEL_ID (reused here as a scoring-diagnostics
+    channel; it's already split staging/prod) so a recurrence can be diagnosed from real data
+    instead of guessing at timing again."""
+    alert_channel = get_bot().get_channel(INTRO_IMAGE_ADMIN_CHANNEL_ID)
+    if alert_channel is None:
+        return
+    jump_url = current_answer_message.jump_url if current_answer_message else None
+    live_len = len(collected_responses)
+    snapshot_len = len(responses_snapshot)
+    for user_id in user_ids:
+        matches = [r for r in responses_snapshot if r.get("user_id") == user_id]
+        display_name = matches[0].get("display_name", "?") if matches else str(user_id)
+        embed = discord.Embed(
+            title="⚠️ Scoring mismatch detected",
+            description=f"**{display_name}** appears in the reveal as answering correctly but wasn't credited with points.",
+            color=discord.Color.red(),
+        )
+        embed.add_field(name="Question", value=f"[{trivia_category}] {trivia_question}"[:1024], inline=False)
+        embed.add_field(name="Correct answer", value=str(trivia_answer_list[0])[:1024] if trivia_answer_list else "?", inline=False)
+        if jump_url:
+            embed.add_field(name="Jump to question", value=f"[View in chat]({jump_url})", inline=False)
+        detail_lines = []
+        for r in matches:
+            if r.get("message") is not None:
+                source = "typed"
+            elif r.get("source") == "web":
+                source = "activity" if r.get("via_activity") else "companion"
+            else:
+                source = "button"
+            rt = r.get("response_time")
+            margin = (question_asked_end - rt) if (rt is not None and question_asked_end is not None) else None
+            detail_lines.append(
+                f"content={r.get('message_content')!r} source={source} response_time={rt} "
+                f"seconds_before_deadline={margin}"
+            )
+        detail_lines.append(f"question_window=[{question_asked_start}, {question_asked_end}]")
+        detail_lines.append(f"responses_in_scoring_snapshot={snapshot_len} responses_live_now={live_len}")
+        embed.add_field(name="Diagnostic data", value="```\n" + "\n".join(detail_lines)[:1000] + "\n```", inline=False)
+        try:
+            await safe_send(alert_channel, embed=embed)
+        except Exception as e:
+            print(f"Failed to send scoring-mismatch alert: {e}")
 
 
 # ---------------------------------------------------------------------------
