@@ -26577,11 +26577,12 @@ async def start_trivia():
                 # waits for the list to stop growing, capped so unrelated chat can't stall
                 # grading indefinitely.
                 grace_deadline = time.time() + 3
+                min_wait_until = time.time() + 1  # always wait at least as long as the old fixed sleep did
                 last_len = len(collected_responses)
                 while time.time() < grace_deadline:
                     await asyncio.sleep(0.15)
                     new_len = len(collected_responses)
-                    if new_len == last_len:
+                    if new_len == last_len and time.time() >= min_wait_until:
                         break
                     last_len = new_len
                 # Scoring and the reveal-embed's "who picked what" annotation below both need
