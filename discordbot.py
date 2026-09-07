@@ -433,10 +433,11 @@ async def send_question_queen_submit_ad():
 okra_lab_announcement_enabled = True
 okra_lab_announcement_text = (
     "🌍🗺️ **Geokraphy** just joined the Arena — think you can out-guess a cartographer?\n\n"
-    "🖼️ 250 countries and territories, each round pulling from up to 3 images (filled-in maps, globe locators, and national flags)\n\n"
+    "🖼️ 250 countries and territories, each round randomly picking from that country's available pictures (a filled-in map, a globe locator, and/or a national flag) for visual variety\n\n"
     "🎯 Pick your battlefield: quiz by **Region** (Africa, Asia, Europe, Americas, Oceania) or by **Difficulty** (Basic, Intermediate, Expert), or just say **All** to skip filtering entirely — Region and Difficulty don't mix, but All overrides both\n\n"
     "🧩 Then pick your **question types** à la carte from 9 options (Identify, Capital, Flag, Continent, Currency, Language, Neighbors, ISO Code, Borders) — rounds cycle through your picks in the exact order you list them\n\n"
-    "▶️ Play it via the numbered picker (**28**) or `/arena game_name:\"geokraphy\"`. Reply with numbers or names (like `2 5 8` or `capital currency iso`), or say `all` for everything.\n"
+    "▶️ Play it via the numbered picker (**28**) or `/arena game_name:\"geokraphy\"`. Reply with numbers or names (like `2 5 8` or `capital currency iso`), or say `all` for everything.\n\n"
+    "🔁 This replaces **Borderline** in the Arena — the same neighbors-only guessing round lives on as the **Borders** question type above.\n"
 )
 okra_lab_announcement_show_new_badge = True
 
@@ -8590,7 +8591,7 @@ def _geokraphy_round_content(question_type, doc):
         return "🧭 **Name ONE country that borders this country!**", _geokraphy_pick_image(doc), neighbours
     if question_type == "ISO Code":
         return "🔤 **What's this country's ISO code (2 or 3 letters)?**", _geokraphy_pick_image(doc), [doc["alpha2"], doc["alpha3"]]
-    # Borders -- text-only clue, no image, matches Borderline's "Okrap" (neighbours-only) mode
+    # Borders -- text-only clue, no image, matches Borderline's "Okrap" (neighbors-only) mode
     prompt = f"🚧 **Name the country!**\n\n**Neighbors**: {doc['neighbours']}"
     return prompt, None, [country]
 
