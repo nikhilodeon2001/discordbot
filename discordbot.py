@@ -8713,6 +8713,12 @@ async def ask_geokraphy_challenge(winner, winner_id, num=7):
             return
 
         prompt, image_url, answers = _geokraphy_round_content(question_type, doc)
+        # For types where the answer is a fact ABOUT the country (not the country itself),
+        # show which country it was too -- just stating "WINDHOEK" with no context isn't useful.
+        if question_type in ("Identify", "Flag", "Borders"):
+            answer_display = answers[0].upper()
+        else:
+            answer_display = f"{answers[0].upper()} ({doc['country']})"
         header = f"​\n⚠️🚨 **Everyone's in!**\n​\n❓ **Round {round_num}**/{num} -- {question_type}\n\n{prompt}\n​"
         if image_url and "flagsnet" in image_url:
             # Same flag GIF assets Flag Fest uses -- need the white-background fix for
@@ -8754,7 +8760,7 @@ async def ask_geokraphy_challenge(winner, winner_id, num=7):
 
                 if _geokraphy_check_answer(content, question_type, answers):
                     await message.add_reaction("✅")
-                    await safe_send(channel, f"​\n✅🎉 **<@{user_id}>** got it! **{answers[0].upper()}**\n​")
+                    await safe_send(channel, f"​\n✅🎉 **<@{user_id}>** got it! **{answer_display}**\n​")
                     if user_id not in user_data:
                         user_data[user_id] = (user, 0)
                     user_data[user_id] = (user, user_data[user_id][1] + 1)
@@ -8763,7 +8769,7 @@ async def ask_geokraphy_challenge(winner, winner_id, num=7):
                 break
 
         if not right_answer:
-            await safe_send(channel, f"​\n❌😢 No one got it.\n\nAnswer: **{answers[0].upper()}**\n​")
+            await safe_send(channel, f"​\n❌😢 No one got it.\n\nAnswer: **{answer_display}**\n​")
 
         await asyncio.sleep(1)
         round_num += 1
