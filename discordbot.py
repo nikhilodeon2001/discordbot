@@ -432,11 +432,11 @@ async def send_question_queen_submit_ad():
 # the same text is correct whether this deploy is staging or prod.
 okra_lab_announcement_enabled = True
 okra_lab_announcement_text = (
-    "🫘🔬 **Okra's Anatomy** just joined the Arena — think you know your body better than a first-year med student?\n\n"
-    "🦴💪 246 real anatomy images (bones and muscles), pulled from a verified 3D anatomical model — no labels, no cheating, just name the structure\n\n"
-    "🗺️ Pick your battlefield: quiz by **Region** (Skull, Vertebral Column, Thoracic Cage, Trunk, Upper Limb, Lower Limb), by **Difficulty** (Easy, Medium, Hard), or just say **All** to skip filtering entirely — Region and Difficulty don't mix, but All overrides both\n\n"
-    "🎚️ Whichever dimension you don't pick shows up as a hint each round by default — not feeling it? Add **no hints** to your setup and we'll keep you guessing blind\n\n"
-    "▶️ Play it via the numbered picker (**51**) or `/arena game_name:\"okra's anatomy\"`. Reply with numbers or names (like `1 5 6` or `skull upper limb`, or just `hard`, or `all`), or mash the button.\n"
+    "🌍🗺️ **Geokraphy** just joined the Arena — think you can out-guess a cartographer?\n\n"
+    "🖼️ 250 countries and territories, each round pulling from up to 3 images (filled-in maps, globe locators, and national flags)\n\n"
+    "🎯 Pick your battlefield: quiz by **Region** (Africa, Asia, Europe, Americas, Oceania) or by **Difficulty** (Basic, Intermediate, Expert), or just say **All** to skip filtering entirely — Region and Difficulty don't mix, but All overrides both\n\n"
+    "🧩 Then pick your **question types** à la carte from 9 options (Identify, Capital, Flag, Continent, Currency, Language, Neighbors, ISO Code, Borders) — rounds cycle through your picks in the exact order you list them\n\n"
+    "▶️ Play it via the numbered picker (**28**) or `/arena game_name:\"geokraphy\"`. Reply with numbers or names (like `2 5 8` or `capital currency iso`), or say `all` for everything.\n"
 )
 okra_lab_announcement_show_new_badge = True
 
@@ -936,7 +936,7 @@ _flag_locks = {}  # user_id -> asyncio.Lock (rate-limit TOCTOU guard for compani
 _submitter_attribution_cache = OrderedDict()  # (db_name, _id) -> attribution string; bounded LRU
 _SUBMITTER_CACHE_MAX = 256
 
-id_limits = {"general": 2000, "mysterybox": 2000, "crossword": 5000, "jeopardy": 5000, "wof": 1500, "list": 20, "feud": 1000, "posters": 2000, "movie_scenes": 5000, "missing_link": 2500, "people": 2500, "ranker_list": 4000, "animal": 2000, "riddle": 2500, "dictionary": 5000, "flags": 150, "update_blurb": 150, "lyric": 500, "polyglottery": 80, "book": 80, "element": 100, "jigsaw": 5000, "border": 100, "faceoff": 5000, "president": 80, "wordle": 1400, "myopic": 5000, "fusion": 5000, "microscopic": 5000, "chess": 5000, "stock": 800, "currency": 100, "search": 10, "billboard": 40, "soundfx": 500, "audio_music":100, "audio_question": 2000, "sports_logos": 20, "fun_fact": 75, "sat": 10000, "sat_math": 2000, "sat_verbal": 5000, "sat_science": 2000, "sat_grammar": 3000, "sat_english": 1000, "spellingbee_one_bee": 700, "spellingbee_two_bee": 1800, "spellingbee_three_bee": 700, "spellingbee_championship": 40, "okras_anatomy": 120}
+id_limits = {"general": 2000, "mysterybox": 2000, "crossword": 5000, "jeopardy": 5000, "wof": 1500, "list": 20, "feud": 1000, "posters": 2000, "movie_scenes": 5000, "missing_link": 2500, "people": 2500, "ranker_list": 4000, "animal": 2000, "riddle": 2500, "dictionary": 5000, "flags": 150, "update_blurb": 150, "lyric": 500, "polyglottery": 80, "book": 80, "element": 100, "jigsaw": 5000, "border": 100, "faceoff": 5000, "president": 80, "wordle": 1400, "myopic": 5000, "fusion": 5000, "microscopic": 5000, "chess": 5000, "stock": 800, "currency": 100, "search": 10, "billboard": 40, "soundfx": 500, "audio_music":100, "audio_question": 2000, "sports_logos": 20, "fun_fact": 75, "sat": 10000, "sat_math": 2000, "sat_verbal": 5000, "sat_science": 2000, "sat_grammar": 3000, "sat_english": 1000, "spellingbee_one_bee": 700, "spellingbee_two_bee": 1800, "spellingbee_three_bee": 700, "spellingbee_championship": 40, "okras_anatomy": 120, "geokraphy": 100}
 max_retries = 3
 delay_between_retries = 3
 first_place_bonus = 0
@@ -8475,6 +8475,328 @@ async def ask_border_challenge(winner, winner_id, num=5):
     return border_winner_id
 
 
+GEOKRAPHY_REGION_META = [(1, "🌍", "Africa"), (2, "🌏", "Asia"), (3, "🌍", "Europe"), (4, "🌎", "Americas"), (5, "🌏", "Oceania")]
+GEOKRAPHY_TIER_META = [(6, "🟢", "Basic"), (7, "🟡", "Intermediate"), (8, "🔴", "Expert")]
+GEOKRAPHY_REGION_TIER_ALL_NUM = 9
+GEOKRAPHY_ALL_REGIONS = [name for _, _, name in GEOKRAPHY_REGION_META]
+GEOKRAPHY_ALL_TIERS = [name for _, _, name in GEOKRAPHY_TIER_META]
+GEOKRAPHY_REGION_CONTINENT_CODES = {"Africa": ["AF"], "Asia": ["AS"], "Europe": ["EU"], "Americas": ["NA", "SA"], "Oceania": ["OC"]}
+
+GEOKRAPHY_TYPE_META = [
+    (1, "🗺️", "Identify"), (2, "🏛️", "Capital"), (3, "🏳️", "Flag"), (4, "🌐", "Continent"),
+    (5, "💰", "Currency"), (6, "🗣️", "Language"), (7, "🧭", "Neighbors"), (8, "🔤", "ISO Code"),
+    (9, "🚧", "Borders"),
+]
+GEOKRAPHY_TYPE_ALL_NUM = 10
+GEOKRAPHY_ALL_TYPES = [name for _, _, name in GEOKRAPHY_TYPE_META]
+
+GEOKRAPHY_CONTINENT_NAME = {"AF": "Africa", "AS": "Asia", "EU": "Europe", "NA": "North America", "SA": "South America", "OC": "Oceania"}
+
+
+def parse_geokraphy_region_or_tier(content):
+    """Region and Difficulty tier are mutually exclusive -- same tie-break convention as
+    Okra's Anatomy's Region-vs-Difficulty picker: if the reply matches both, Region wins."""
+    num_to_key = {n: name for n, _, name in GEOKRAPHY_REGION_META + GEOKRAPHY_TIER_META}
+    num_to_key[GEOKRAPHY_REGION_TIER_ALL_NUM] = "All"
+    name_to_key = {name.lower(): name for name in GEOKRAPHY_ALL_REGIONS + GEOKRAPHY_ALL_TIERS}
+    name_to_key["all"] = "All"
+    name_to_key["everything"] = "All"
+    ordered = parse_ordered_multi_selection(content, num_to_key, name_to_key, GEOKRAPHY_REGION_TIER_ALL_NUM)
+
+    if "All" in ordered:
+        return "all", None
+    region_hits = [v for v in ordered if v in GEOKRAPHY_ALL_REGIONS]
+    tier_hits = [v for v in ordered if v in GEOKRAPHY_ALL_TIERS]
+    if region_hits:
+        return "region", region_hits[0]
+    if tier_hits:
+        return "tier", tier_hits[0]
+    return "all", None
+
+
+def parse_geokraphy_types(content):
+    """A la carte, multi-select, order-preserving -- rounds later cycle through whatever
+    comes back here in the exact order submitted, same round-robin idea as Okra's Anatomy's
+    region/difficulty cycling."""
+    num_to_key = {n: name for n, _, name in GEOKRAPHY_TYPE_META}
+    num_to_key[GEOKRAPHY_TYPE_ALL_NUM] = "All"
+    name_to_key = {name.lower(): name for name in GEOKRAPHY_ALL_TYPES}
+    name_to_key["all"] = "All"
+    name_to_key["everything"] = "All"
+    name_to_key["iso"] = "ISO Code"
+    name_to_key["iso code"] = "ISO Code"
+    name_to_key["border"] = "Borders"
+    ordered = parse_ordered_multi_selection(content, num_to_key, name_to_key, GEOKRAPHY_TYPE_ALL_NUM)
+    if "All" in ordered or not ordered:
+        return list(GEOKRAPHY_ALL_TYPES)
+    return ordered
+
+
+def _geokraphy_base_match(question_type):
+    """Playability + per-type requirements. Every type needs the core facts; Flag needs a
+    flag_url specifically, Borders needs no image at all, everything else needs at least one
+    of image_urls/flag_url to show as that round's picture."""
+    match = {
+        "capital": {"$nin": [None, ""]},
+        "population": {"$nin": [None, ""]},
+        "continent": {"$nin": [None, "", "AN"]},
+        "currency": {"$nin": [None, ""]},
+        "primary_language": {"$nin": [None, ""]},
+        "neighbours": {"$regex": r"\S"},
+        "alpha2": {"$nin": [None, ""]},
+        "alpha3": {"$nin": [None, ""]},
+    }
+    if question_type == "Flag":
+        match["flag_url"] = {"$nin": [None, ""]}
+    elif question_type != "Borders":
+        match["$or"] = [{"image_urls.0": {"$exists": True}}, {"flag_url": {"$nin": [None, ""]}}]
+    return match
+
+
+async def _pick_geokraphy_doc(collection, recent_ids, base_match, relax_recent=False):
+    match = dict(base_match)
+    if not relax_recent:
+        match["_id"] = {"$nin": list(recent_ids)}
+    pipeline = [{"$match": match}, {"$sample": {"size": 1}}]
+    docs = [doc async for doc in collection.aggregate(pipeline)]
+    return docs[0] if docs else None
+
+
+def _geokraphy_pick_image(doc):
+    images = list(doc.get("image_urls") or [])
+    if doc.get("flag_url"):
+        images.append(doc["flag_url"])
+    return random.choice(images)
+
+
+def _geokraphy_round_content(question_type, doc):
+    """Returns (prompt, image_url_or_None, [acceptable answers])."""
+    country = doc["country"]
+    if question_type == "Identify":
+        return "🗺️ **Identify the country shown below!**", _geokraphy_pick_image(doc), [country]
+    if question_type == "Capital":
+        return "🏛️ **What's the capital of this country?**", _geokraphy_pick_image(doc), [doc["capital"]]
+    if question_type == "Flag":
+        return "🏳️ **Which country does this flag belong to?**", doc["flag_url"], [country]
+    if question_type == "Continent":
+        continent_name = GEOKRAPHY_CONTINENT_NAME.get(doc["continent"], doc["continent"])
+        return "🌐 **Which continent is this country on?**", _geokraphy_pick_image(doc), [continent_name]
+    if question_type == "Currency":
+        return "💰 **What currency does this country use?**", _geokraphy_pick_image(doc), [doc["currency"]]
+    if question_type == "Language":
+        return "🗣️ **What's the most commonly spoken language in this country?**", _geokraphy_pick_image(doc), [doc["primary_language"]]
+    if question_type == "Neighbors":
+        neighbours = [n.strip() for n in doc["neighbours"].split(",") if n.strip()]
+        return "🧭 **Name ONE country that borders this country!**", _geokraphy_pick_image(doc), neighbours
+    if question_type == "ISO Code":
+        return "🔤 **What's this country's ISO code (2 or 3 letters)?**", _geokraphy_pick_image(doc), [doc["alpha2"], doc["alpha3"]]
+    # Borders -- text-only clue, no image, matches Borderline's "Okrap" (neighbours-only) mode
+    prompt = f"🚧 **Name the country!**\n\n**Neighbors**: {doc['neighbours']}"
+    return prompt, None, [country]
+
+
+def _geokraphy_check_answer(content, question_type, answers):
+    if question_type == "Currency":
+        raw = answers[0]
+        name_part = raw.split("(")[0].strip()
+        code_match = re.search(r"\(([^)]+)\)", raw)
+        options = [name_part] + ([code_match.group(1)] if code_match else [])
+        return any(fuzzy_match(content, opt, "Geography", "") for opt in options)
+    return any(fuzzy_match(content, opt, "Geography", "") for opt in answers if opt)
+
+
+async def ask_geokraphy_challenge(winner, winner_id, num=7):
+    global wf_winner
+    wf_winner = True
+
+    gifs = [
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/border1.gif",
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/border2.gif",
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/border3.gif",
+    ]
+    gif_url = random.choice(gifs)
+    await safe_send(channel, content="​\n​\n🌍🗺️ **Geokraphy**: World Trivia Challenge!\n​",
+                     embed=discord.Embed().set_image(url=gif_url))
+    await asyncio.sleep(3)
+
+    target_channel = _active_game_channel or channel
+
+    def check_setup_message(m):
+        return m.channel == target_channel and m.author.id == winner_id
+
+    # --- Setup prompt 1: Region OR Difficulty tier (mutually exclusive) ---
+    prompt_lines = ["🌍 Pick a **Region** OR a **Difficulty** tier (not both) -- or just say All!", "", "**Region**"]
+    for n, e, name in GEOKRAPHY_REGION_META:
+        prompt_lines.append(f"{n}. {e} {name}")
+    prompt_lines.append("")
+    prompt_lines.append("**Difficulty**")
+    for n, e, name in GEOKRAPHY_TIER_META:
+        prompt_lines.append(f"{n}. {e} {name}")
+    prompt_lines.append("")
+    prompt_lines.append(f"{GEOKRAPHY_REGION_TIER_ALL_NUM}. 🏆 All")
+    prompt_lines.append("")
+    prompt_lines.append("(Reply with a number or name, e.g. '3' or 'europe', or 'expert', or 'all')")
+    await safe_send(channel, "\n".join(prompt_lines))
+
+    try:
+        setup_msg = await companion_bridge.wait_for_message_or_companion(
+            check_setup_message, magic_time + 10, target_channel, {winner_id}, kind="mini_game_answer",
+        )
+        region_tier_mode, region_tier_value = parse_geokraphy_region_or_tier(setup_msg.content)
+        await setup_msg.add_reaction("✅")
+    except asyncio.TimeoutError:
+        region_tier_mode, region_tier_value = "all", None
+        await safe_send(channel, "​\n⏰ Time's up! Defaulting to **All** regions/difficulty.\n​")
+
+    region_tier_display = region_tier_value if region_tier_mode != "all" else "All"
+    await safe_send(channel, f"​\n✅ {region_tier_mode.title()}: **{region_tier_display}**\n​")
+    await asyncio.sleep(1)
+
+    # --- Setup prompt 2: Question types, a la carte, multi-select, order preserved ---
+    prompt_lines = ["🎯 Pick your **question types** (or just say All!)", ""]
+    for n, e, name in GEOKRAPHY_TYPE_META:
+        prompt_lines.append(f"{n}. {e} {name}")
+    prompt_lines.append("")
+    prompt_lines.append(f"{GEOKRAPHY_TYPE_ALL_NUM}. 🏆 All")
+    prompt_lines.append("")
+    prompt_lines.append("(Reply with numbers or names, e.g. '2 5 8' or 'capital currency iso' -- "
+                         "rounds cycle through your picks in the order you list them)")
+    await safe_send(channel, "\n".join(prompt_lines))
+
+    try:
+        setup_msg = await companion_bridge.wait_for_message_or_companion(
+            check_setup_message, magic_time + 10, target_channel, {winner_id}, kind="mini_game_answer",
+        )
+        selected_types = parse_geokraphy_types(setup_msg.content)
+        await setup_msg.add_reaction("✅")
+    except asyncio.TimeoutError:
+        selected_types = list(GEOKRAPHY_ALL_TYPES)
+        await safe_send(channel, "​\n⏰ Time's up! Defaulting to **All** question types.\n​")
+
+    await safe_send(channel, f"​\n✅ Question types: **{', '.join(selected_types)}**\n​")
+    await asyncio.sleep(2)
+
+    category_order = [selected_types[i % len(selected_types)] for i in range(num)]
+
+    if num > 1:
+        await safe_send(channel, f"​\n5️⃣🥇 Let's do a best of **{num}**...\n​")
+        await asyncio.sleep(3)
+
+    collection = db["border_questions"]
+    user_data = {}
+    sorted_users = []
+    round_num = 1
+    while round_num <= num:
+        question_type = category_order[round_num - 1]
+        base_match = _geokraphy_base_match(question_type)
+        if region_tier_mode == "region":
+            base_match["continent"] = {"$in": GEOKRAPHY_REGION_CONTINENT_CODES[region_tier_value]}
+        elif region_tier_mode == "tier":
+            base_match["difficulty_tier"] = region_tier_value.lower()
+
+        try:
+            recent_ids = await get_recent_question_ids_from_mongo("geokraphy")
+            doc = await _pick_geokraphy_doc(collection, recent_ids, base_match)
+            if doc is None:
+                doc = await _pick_geokraphy_doc(collection, recent_ids, base_match, relax_recent=True)
+            if doc is None:
+                sentry_sdk.capture_message(f"geokraphy: no candidates for type={question_type}, region_tier={region_tier_mode}:{region_tier_value}")
+                print(f"Error: no geokraphy candidates for {question_type} / {region_tier_mode}:{region_tier_value}")
+                round_num += 1
+                continue
+            if doc["_id"]:
+                await store_question_ids_in_mongo([doc["_id"]], "geokraphy")
+        except Exception as e:
+            sentry_sdk.capture_exception(e)
+            print(f"Error selecting geokraphy question:\n{traceback.format_exc()}")
+            return
+
+        prompt, image_url, answers = _geokraphy_round_content(question_type, doc)
+        header = f"​\n⚠️🚨 **Everyone's in!**\n​\n❓ **Round {round_num}**/{num} -- {question_type}\n\n{prompt}\n​"
+        if image_url and "flagsnet" in image_url:
+            # Same flag GIF assets Flag Fest uses -- need the white-background fix for
+            # transparency in dark mode, same as ask_flags_challenge does.
+            flag_buffer = await add_white_background_to_flag(image_url)
+            if flag_buffer:
+                flag_file = discord.File(flag_buffer, filename="flag.png")
+                embed = discord.Embed()
+                embed.set_image(url="attachment://flag.png")
+                await safe_send(channel, content=header, embed=embed, file=flag_file)
+            else:
+                await safe_send(channel, content=header, embed=discord.Embed().set_image(url=image_url))
+        elif image_url:
+            await safe_send(channel, content=header, embed=discord.Embed().set_image(url=image_url))
+        else:
+            await safe_send(channel, content=header)
+
+        start_time = asyncio.get_event_loop().time()
+        right_answer = False
+        processed_users = set()
+        target_channel = _active_game_channel or channel
+
+        def check(m):
+            return m.channel == target_channel and m.author != get_bot().user
+
+        while asyncio.get_event_loop().time() - start_time < 20 and not right_answer:
+            try:
+                timeout = 20 - (asyncio.get_event_loop().time() - start_time)
+                message = await companion_bridge.wait_for_message_or_companion(
+                    check, timeout, target_channel, None, kind="mini_game_answer"
+                )
+                content = message.content.strip()
+                user = message.author.display_name
+                user_id = message.author.id
+                key = (user_id, content.lower())
+                if key in processed_users:
+                    continue
+                processed_users.add(key)
+
+                if _geokraphy_check_answer(content, question_type, answers):
+                    await message.add_reaction("✅")
+                    await safe_send(channel, f"​\n✅🎉 **<@{user_id}>** got it! **{answers[0].upper()}**\n​")
+                    if user_id not in user_data:
+                        user_data[user_id] = (user, 0)
+                    user_data[user_id] = (user, user_data[user_id][1] + 1)
+                    right_answer = True
+            except asyncio.TimeoutError:
+                break
+
+        if not right_answer:
+            await safe_send(channel, f"​\n❌😢 No one got it.\n\nAnswer: **{answers[0].upper()}**\n​")
+
+        await asyncio.sleep(1)
+        round_num += 1
+
+        sorted_users = sorted(user_data.items(), key=lambda x: x[1][1], reverse=True)
+        if round_num <= num and sorted_users:
+            message = "​\n📊🏆 Current Standings\n​"
+            for counter, (user_id, (display_name, count)) in enumerate(sorted_users, start=1):
+                message += f"{counter}. **{display_name}**: {count}\n​"
+            await safe_send(channel, message)
+            await asyncio.sleep(3)
+
+    await asyncio.sleep(1)
+    geokraphy_winner_id = None
+    if sorted_users:
+        top_score = sorted_users[0][1][1]
+        top_winners = [(uid, name) for uid, (name, score) in sorted_users if score == top_score]
+        if len(top_winners) == 1:
+            geokraphy_winner_id, display_name = top_winners[0]
+            message = f"​\n🎉🥇 The winner is **{display_name}**!\n​"
+        else:
+            message = "​\n🤝 It's a tie! **Winners:**\n​"
+            for uid, name in top_winners:
+                message += f"• **{name}** ({top_score} pts)\n"
+            message += "​"
+    else:
+        message = "​\n👎😢 **No right answers**. I'm ashamed to call you Okrans.\n​"
+
+    await safe_send(channel, message)
+    wf_winner = True
+    await asyncio.sleep(3)
+
+    return geokraphy_winner_id
+
 
 ANIMAL_FIELD_META = [
     ("name",    "🐾", "Name"),
@@ -9565,7 +9887,7 @@ async def ask_chaos_challenge(winner, winner_id, num_of_games):
         ask_math_challenge,
         ask_element_challenge,
         ask_jigsaw_challenge,
-        ask_border_challenge,
+        ask_geokraphy_challenge,
         ask_faceoff_challenge,
         ask_president_challenge,
         ask_wordle_challenge,
@@ -19817,7 +20139,7 @@ async def select_wof_questions(winner, winner_id, winner_coffees=None):
         counter = counter + 1
         message += f"{counter}.\u200b 🧩🌀 Jigsawed\n"
         counter = counter + 1
-        message += f"{counter}.\u200b 🗺️❓ Borderline\n"
+        message += f"{counter}.\u200b 🌍🗺️ Geokraphy\n"
         counter = counter + 1
         message += f"{counter}.\u200b 🙃🙂 Face/Off\n"
         counter = counter + 1
@@ -19985,7 +20307,7 @@ async def select_wof_questions(winner, winner_id, winner_coffees=None):
             return None
 
         elif selected_wof_category == "28":
-            await ask_border_challenge(winner, winner_id)
+            await ask_geokraphy_challenge(winner, winner_id, 7)
             await asyncio.sleep(3)
             return None
         
@@ -20378,7 +20700,7 @@ async def ask_wof_number(winner, winner_id, cached_coffees=None, menu_text=None,
         "25": "Sign Language",
         "26": "Elementary",
         "27": "Jigsawed",
-        "28": "Borderline",
+        "28": "Geokraphy",
         "29": "Face/Off",
         "30": "Rushmore",
         "31": "Wordle War",
@@ -27391,7 +27713,7 @@ def get_minigame_name(number):
         "25": "Sign Language",
         "26": "Elementary",
         "27": "Jigsawed",
-        "28": "Borderline",
+        "28": "Geokraphy",
         "29": "Face/Off",
         "30": "Rushmore",
         "31": "Wordle War",
