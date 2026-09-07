@@ -25735,7 +25735,7 @@ async def select_trivia_questions(questions_per_round):
                 for pool_name, pool in enabled_pools.items()
             }
             for pool_name, pool in enabled_pools.items():
-                pool_match = {"_id": {"$nin": list(new_pool_recent_ids[pool_name])}, "category": {"$nin": categories_to_exclude}}
+                pool_match = {"_id": {"$nin": list(new_pool_recent_ids[pool_name])}, "category": {"$nin": categories_to_exclude}, **pool.get("extra_match", {})}
                 if image_questions == False:
                     pool_match["$or"] = [{"url": {"$not": {"$regex": excluded_url_substring}}}]
                 pipeline_trivia.append({
@@ -25758,12 +25758,21 @@ async def select_trivia_questions(questions_per_round):
                 match = pool_by_collection.get(doc["db"])
                 if match is None:
                     question_ids_to_store["general"].append(doc["_id"])
+                    selected_questions.append(doc)
                     continue
                 pool_name, pool = match
-                doc.update(pool["adapter"](doc))
+                try:
+                    doc.update(pool["adapter"](doc))
+                # An adapter can legitimately raise on a document its pool's own
+                # extra_match filter should have excluded (e.g. a data-quality edge case
+                # the filter doesn't yet cover) -- skip just that one document rather than
+                # losing the whole round to it, which the bare `except Exception` at the
+                # bottom of this function would otherwise do (empty return for everyone).
+                except Exception as adapter_error:
+                    sentry_sdk.capture_exception(adapter_error)
+                    continue
                 question_ids_to_store.setdefault(pool_name, []).append(doc["_id"])
-
-            selected_questions.extend(trivia_questions)
+                selected_questions.append(doc)
 
         
         # Shuffle the combined list of selected questions

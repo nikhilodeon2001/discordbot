@@ -172,9 +172,15 @@ async def get_trivia_question(db, collections=None):
     # Get recent IDs to avoid
     recent_ids = await get_recent_question_ids_from_mongo(question_type)
 
-    # Fetch random question from selected collection
+    # Fetch random question from selected collection -- extra_match applies a pool's own
+    # data-quality/type filter (e.g. element_questions has non-"single"-shaped docs mixed in)
+    # exactly like select_trivia_questions() applies it for the classic loop.
+    match = {"_id": {"$nin": list(recent_ids)}}
+    pool = pool_by_collection.get(collection_name)
+    if pool:
+        match.update(pool.get("extra_match", {}))
     pipeline = [
-        {"$match": {"_id": {"$nin": list(recent_ids)}}},
+        {"$match": match},
         {"$sample": {"size": 1}}
     ]
     questions = await db[collection_name].aggregate(pipeline).to_list(1)
@@ -187,7 +193,13 @@ async def get_trivia_question(db, collections=None):
 
     pool = pool_by_collection.get(collection_name)
     if pool:
-        doc.update(pool["adapter"](doc))
+        try:
+            doc.update(pool["adapter"](doc))
+        except Exception:
+            # A pool's extra_match filter should already exclude documents its adapter can't
+            # handle -- if one still slips through, treat it like "no question available"
+            # (the caller already retries after a short delay) rather than propagating.
+            return None
 
     return doc
 

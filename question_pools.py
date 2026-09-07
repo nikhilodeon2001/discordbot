@@ -38,6 +38,19 @@ def pick_variant(variants):
     return random.choices(names, weights=weights, k=1)[0]
 
 
+def _restrict(variants, allowed_keys):
+    """Subset of `variants` to just the enabled ones in `allowed_keys` -- used where a
+    specific document's data only supports some of a pool's configured variants (e.g. a
+    geokraphy doc with no flag_url can't offer the "flag" image variant). If that
+    intersection is empty (the only variants this document's data supports all happen to be
+    disabled in config), falls back to picking uniformly among `allowed_keys` regardless of
+    `enabled` -- a per-document data gap should never crash question selection outright."""
+    restricted = {k: v for k, v in variants.items() if k in allowed_keys and v.get("enabled", True)}
+    if restricted:
+        return restricted
+    return {k: {"enabled": True, "weight": 1} for k in allowed_keys}
+
+
 def render_sports_logos(doc):
     """sports_logos_questions: {league, image_url, team_location_college, team_nickname,
     team_alternative_name}. Mirrors ask_sports_logos_challenge's own modes 1-3 exactly
@@ -121,10 +134,23 @@ def render_geokraphy(doc):
     discordbot.py's own _geokraphy_round_content() -- that function always pairs one specific
     image with one specific question per branch, which doesn't allow e.g. a flag shown while
     asking for the capital. "text_clue" (no image, neighbor list as the clue) always implies
-    question="country" -- that's its only mechanic, matching Borderline's old "Okrap" mode."""
+    question="country" -- that's its only mechanic, matching Borderline's old "Okrap" mode.
+
+    Confirmed against real staging data that these fields are inconsistently populated
+    (neighbours empty for ~35% of docs -- island nations etc. -- flag_url for ~17%, and
+    smaller gaps in capital/currency/primary_language) -- every variant choice below is
+    restricted to what this specific document can actually support before picking, so a
+    data gap in one document never breaks question selection for the round."""
     pool_cfg = QUESTION_POOLS["geokraphy"]
     country = doc["country"]
-    image_variant = pick_variant(pool_cfg["image_variants"])
+    has_neighbours = bool((doc.get("neighbours") or "").strip())
+
+    possible_images = [k for k, supported in [
+        ("flag", bool(doc.get("flag_url"))),
+        ("map", bool(doc.get("image_urls"))),
+        ("text_clue", has_neighbours),
+    ] if supported]  # extra_match guarantees at least one of these three
+    image_variant = pick_variant(_restrict(pool_cfg["image_variants"], possible_images))
 
     if image_variant == "text_clue":
         return {
@@ -134,13 +160,19 @@ def render_geokraphy(doc):
             "answers": [country],
         }
 
-    if image_variant == "flag":
-        image_url = doc.get("flag_url", "")
-    else:  # map/landmark
-        landmark_images = list(doc.get("image_urls") or [])
-        image_url = random.choice(landmark_images) if landmark_images else doc.get("flag_url", "")
+    image_url = doc["flag_url"] if image_variant == "flag" else random.choice(doc["image_urls"])
 
-    question_variant = pick_variant(pool_cfg["question_variants"])
+    possible_questions = ["country"]  # always present, per extra_match's own base $match
+    if doc.get("capital"):
+        possible_questions.append("capital")
+    if doc.get("currency"):
+        possible_questions.append("currency")
+    if doc.get("primary_language"):
+        possible_questions.append("language")
+    if has_neighbours:
+        possible_questions.append("neighbor")
+    question_variant = pick_variant(_restrict(pool_cfg["question_variants"], possible_questions))
+
     if question_variant == "country":
         prompt, answers = "🗺️ Which country is this?", [country]
     elif question_variant == "capital":
@@ -181,6 +213,11 @@ QUESTION_POOLS = {
     "element": {
         "collection": "element_questions", "id_limit_key": "element",
         "adapter": render_element, "enabled": True, "weight": 1,
+        # Confirmed against real staging data: element_questions also holds "multiple" and
+        # "multiple-single-answer" question_type docs (element_group/answers-shaped, no
+        # name/symbol fields at all) alongside the "single" docs this adapter expects --
+        # ~14% of the collection on staging. Matches ask_element_challenge's own filter.
+        "extra_match": {"hypothetical": "No", "question_type": "single"},
         "variants": {
             "name_from_symbol": {"enabled": True, "weight": 1},  # symbol shown -> name element
             "symbol_from_name": {"enabled": True, "weight": 1},  # name shown -> give the symbol
@@ -189,6 +226,16 @@ QUESTION_POOLS = {
     "geokraphy": {
         "collection": "border_questions", "id_limit_key": "geokraphy",
         "adapter": render_geokraphy, "enabled": True, "weight": 1,
+        # Confirmed against real staging data: neighbours is empty for ~35% of docs (island
+        # nations etc.), flag_url for ~17% -- this guarantees every sampled doc has at least
+        # ONE usable image-or-clue source; render_geokraphy still has to dynamically exclude
+        # whichever specific variants a given doc can't support beyond that (e.g. a doc with
+        # a flag but no neighbours can't offer "text_clue" or "neighbor").
+        "extra_match": {"$or": [
+            {"flag_url": {"$nin": [None, ""]}},
+            {"image_urls.0": {"$exists": True}},
+            {"neighbours": {"$nin": [None, ""]}},
+        ]},
         # Two independent axes: which image is shown, and what's actually being asked.
         # "text_clue" always forces question="country" (see render_geokraphy) -- it doesn't
         # cross with the question axis below.
