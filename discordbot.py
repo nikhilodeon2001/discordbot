@@ -20015,7 +20015,7 @@ async def get_math_question():
 
     paragraph = json.dumps(payload)
     return {
-        "category": f"Mathematics: {category['display']}",
+        "category": category['display'],
         "question": qdata["question_text"],
         "url": f"{category['url']} multiple choice",
         "answers": _build_mc_answers(qdata["answer"], wrong_choices),
@@ -24110,7 +24110,7 @@ async def ask_question(trivia_category, trivia_question, trivia_url, trivia_answ
 
     elif trivia_url.startswith("jeopardy"):
         if _show_image: 
-            image_buffer = generate_jeopardy_image(trivia_question, get_category_title(trivia_category, trivia_url, include_emoji=False, include_prefix=False, answer=trivia_answer))
+            image_buffer = generate_jeopardy_image(trivia_question, get_category_title(trivia_category, trivia_url, include_emoji=False, answer=trivia_answer))
             message_body += f"\u200b\n\u200b\n{number_block} [**{get_category_title(trivia_category, trivia_url, include_emoji=False, answer=trivia_answer)}**]({flag_url}) {get_category_emoji(trivia_category, trivia_answer)}\n\nAnd the answer is: \n"
             send_image_flag = True
         else:
@@ -25763,8 +25763,7 @@ async def select_trivia_questions(questions_per_round):
 
             for doc in sat_questions:
                 doc["db"] = "sat_questions"
-                if doc.get("subcategory"):
-                    doc["category"] = f"{doc['category']}: {doc['subcategory']}"
+                doc["category"] = f"SAT {doc.get('subcategory') or doc['category']}"
 
             selected_questions.extend(sat_questions)
             question_ids_to_store["sat"].extend(doc["_id"] for doc in sat_questions)
@@ -26461,7 +26460,7 @@ def _letter_emoji(letter):
     return chr(0x1F1E6 + (ord(letter.upper()) - ord('A')))
 
 
-def get_category_title(trivia_category, trivia_url, max_len=40, include_emoji=True, include_prefix=True, answer=None):
+def get_category_title(trivia_category, trivia_url, max_len=40, include_emoji=True, answer=None):
     # Crossword's stored category is the bare literal "Crossword" (relied on elsewhere for
     # exact-match branching/grading -- never changed), but that's not shown to players:
     # both the text and the emoji pair are derived from the answer's first letter instead of
@@ -26471,24 +26470,20 @@ def get_category_title(trivia_category, trivia_url, max_len=40, include_emoji=Tr
     emojis = get_category_emoji(trivia_category, answer)
 
     if trivia_url.lower().startswith("jeopardy"):
-        label_prefix = "Jeopardy: " if include_prefix else ""
         category_text = _jeopardy_title_case(trivia_category)
     elif is_crossword_with_answer:
-        label_prefix = ""
         category_text = f"Starts with '{answer[0].upper()}'"
     else:
-        label_prefix = ""
         category_text = trivia_category
 
-    # Truncate only the category text against the remaining budget -- the "Jeopardy: "
-    # label and the emoji suffix always stay intact so the emoji is never cut off.
-    available = max_len - len(label_prefix)
-    if len(category_text) > available:
-        category_text = category_text[:available - 1] + "…"
+    # Truncate only the category text against the remaining budget -- the emoji suffix
+    # always stays intact so it's never cut off.
+    if len(category_text) > max_len:
+        category_text = category_text[:max_len - 1] + "…"
 
     if not include_emoji:
-        return f"{label_prefix}{category_text}"
-    return f"{label_prefix}{category_text} {emojis}"
+        return category_text
+    return f"{category_text} {emojis}"
 
 
 async def get_player_selected_question(questions, round_winner, winner_id):

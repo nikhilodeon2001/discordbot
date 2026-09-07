@@ -73,7 +73,7 @@ def render_sports_logos(doc):
         answers = [a for a in [location, nickname, alt_name, full_name] if a]
 
     return {
-        "category": f"Sports Logos: {league}" if league else "Sports Logos",
+        "category": f"{league} Logos" if league else "Sports Logos",
         "question": question,
         "url": doc["image_url"],
         "answers": answers,
@@ -96,14 +96,14 @@ def render_president(doc):
         if doc.get("year_start_2"):
             years += [str(y) for y in range(int(doc["year_start_2"]), int(doc["year_end_2"]) + 1)]
         return {
-            "category": "Presidents",
+            "category": "President Terms",
             "question": f"📅 Name a **YEAR** during President {name}'s time in office.",
             "url": url,
             "answers": years,
         }
 
     return {
-        "category": "Presidents",
+        "category": "President Portraits",
         "question": "🦅🇺🇸 Who is this President?",
         "url": url,
         "answers": [name],
@@ -122,10 +122,12 @@ def render_element(doc):
 
     if variant == "name_from_symbol":
         question, answers = f"Which element has the symbol **{symbol}**?", [name]
+        category = "Element Symbols"
     else:  # symbol_from_name
         question, answers = f"What is the chemical symbol for **{name}**?", [symbol]
+        category = "Element Names"
 
-    return {"category": "Elements", "question": question, "url": "", "answers": answers}
+    return {"category": category, "question": question, "url": "", "answers": answers}
 
 
 def render_geokraphy(doc):
@@ -154,12 +156,13 @@ def render_geokraphy(doc):
 
     if image_variant == "text_clue":
         return {
-            "category": "Geography",
+            "category": "Geographic Borders",
             "question": f"🚧 Name the country!\n\n**Neighbors**: {doc['neighbours']}",
             "url": "",
             "answers": [country],
         }
 
+    category = "Flags" if image_variant == "flag" else "Landmarks"
     image_url = doc["flag_url"] if image_variant == "flag" else random.choice(doc["image_urls"])
 
     possible_questions = ["country"]  # always present, per extra_match's own base $match
@@ -189,7 +192,7 @@ def render_geokraphy(doc):
         prompt = "🧭 Name ONE country that borders this country!"
         answers = [n.strip() for n in doc["neighbours"].split(",") if n.strip()]
 
-    return {"category": "Geography", "question": prompt, "url": image_url, "answers": answers}
+    return {"category": category, "question": prompt, "url": image_url, "answers": answers}
 
 
 QUESTION_POOLS = {
