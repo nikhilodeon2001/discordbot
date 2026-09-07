@@ -8495,8 +8495,10 @@ GEOKRAPHY_CONTINENT_NAME = {"AF": "Africa", "AS": "Asia", "EU": "Europe", "NA": 
 
 
 def parse_geokraphy_region_or_tier(content):
-    """Region and Difficulty tier are mutually exclusive -- same tie-break convention as
-    Okra's Anatomy's Region-vs-Difficulty picker: if the reply matches both, Region wins."""
+    """Region and Difficulty tier are mutually exclusive as CATEGORIES -- same tie-break
+    convention as Okra's Anatomy's Region-vs-Difficulty picker: if the reply matches both,
+    Region wins. Within one category, multiple picks are allowed and OR'd together (e.g.
+    "1 4 3" -> Africa, Americas, and Europe all eligible), not just the first match."""
     num_to_key = {n: name for n, _, name in GEOKRAPHY_REGION_META + GEOKRAPHY_TIER_META}
     num_to_key[GEOKRAPHY_REGION_TIER_ALL_NUM] = "All"
     name_to_key = {name.lower(): name for name in GEOKRAPHY_ALL_REGIONS + GEOKRAPHY_ALL_TIERS}
@@ -8509,9 +8511,9 @@ def parse_geokraphy_region_or_tier(content):
     region_hits = [v for v in ordered if v in GEOKRAPHY_ALL_REGIONS]
     tier_hits = [v for v in ordered if v in GEOKRAPHY_ALL_TIERS]
     if region_hits:
-        return "region", region_hits[0]
+        return "region", region_hits
     if tier_hits:
-        return "tier", tier_hits[0]
+        return "tier", tier_hits
     return "all", None
 
 
@@ -8626,7 +8628,7 @@ async def ask_geokraphy_challenge(winner, winner_id, num=7):
         return m.channel == target_channel and m.author.id == winner_id
 
     # --- Setup prompt 1: Region OR Difficulty tier (mutually exclusive) ---
-    prompt_lines = ["🌍 Pick a **Region** OR a **Difficulty** tier (not both) -- or just say All!", "", "**Region**"]
+    prompt_lines = ["🌍 Pick one or more **Regions** OR **Difficulty** tiers (not both types mixed) -- or just say All!", "", "**Region**"]
     for n, e, name in GEOKRAPHY_REGION_META:
         prompt_lines.append(f"{n}. {e} {name}")
     prompt_lines.append("")
@@ -8636,7 +8638,7 @@ async def ask_geokraphy_challenge(winner, winner_id, num=7):
     prompt_lines.append("")
     prompt_lines.append(f"{GEOKRAPHY_REGION_TIER_ALL_NUM}. 🏆 All")
     prompt_lines.append("")
-    prompt_lines.append("(Reply with a number or name, e.g. '3' or 'europe', or 'expert', or 'all')")
+    prompt_lines.append("(Reply with numbers or names, e.g. '3' or 'europe', or '1 4 3' or 'africa americas europe', or 'expert', or 'all')")
     await safe_send(channel, "\n".join(prompt_lines))
 
     try:
@@ -8649,7 +8651,7 @@ async def ask_geokraphy_challenge(winner, winner_id, num=7):
         region_tier_mode, region_tier_value = "all", None
         await safe_send(channel, "​\n⏰ Time's up! Defaulting to **All** regions/difficulty.\n​")
 
-    region_tier_display = region_tier_value if region_tier_mode != "all" else "All"
+    region_tier_display = ", ".join(region_tier_value) if region_tier_mode != "all" else "All"
     await safe_send(channel, f"​\n✅ {region_tier_mode.title()}: **{region_tier_display}**\n​")
     await asyncio.sleep(1)
 
@@ -8691,9 +8693,10 @@ async def ask_geokraphy_challenge(winner, winner_id, num=7):
         question_type = category_order[round_num - 1]
         base_match = _geokraphy_base_match(question_type)
         if region_tier_mode == "region":
-            base_match["continent"] = {"$in": GEOKRAPHY_REGION_CONTINENT_CODES[region_tier_value]}
+            codes = [c for r in region_tier_value for c in GEOKRAPHY_REGION_CONTINENT_CODES[r]]
+            base_match["continent"] = {"$in": codes}
         elif region_tier_mode == "tier":
-            base_match["difficulty_tier"] = region_tier_value.lower()
+            base_match["difficulty_tier"] = {"$in": [t.lower() for t in region_tier_value]}
 
         try:
             recent_ids = await get_recent_question_ids_from_mongo("geokraphy")
