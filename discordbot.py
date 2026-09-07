@@ -81,6 +81,13 @@ import difflib
 from metaphone import doublemetaphone
 import answer_matching
 import gregs_nightmare
+# evaluate_expression/generate_math_puzzle now live in gregs_nightmare.py (that's where every
+# other math-puzzle generator lives, and where the "Missing Signs" Greg's Nightmare category,
+# _gen_missing_signs, needs generate_math_puzzle for its own generation). Re-exported under
+# their original names so ask_math_challenge (the separate, still-named "Sign Language"
+# mini-game) doesn't need to change.
+from gregs_nightmare import evaluate_expression, generate_math_puzzle
+import question_pools
 import discord
 from discord.ext import commands
 from discord import app_commands
@@ -1117,13 +1124,6 @@ num_wof_clues = 0
 num_math_questions = 1
 num_sat_questions = 0
 num_stats_questions = 0  # retired from active use, but still read/saved by save_round_options_to_db
-
-ops = {
-    '+': operator.add,
-    '-': operator.sub,
-    '*': operator.mul,
-    '/': lambda a, b: a / b if b != 0 else None
-}
 
 superscript_map = {
     "0": "⁰", "1": "¹", "2": "²", "3": "³", "4": "⁴",
@@ -4340,52 +4340,6 @@ def generate_text_image(question_text, red_value_bk, green_value_bk, blue_value_
 
     return image_buffer
 
-
-def evaluate_expression(numbers, operators_seq):
-    """Evaluate an expression given numbers and a tuple of operators."""
-    expression = str(numbers[0])
-    for i in range(len(operators_seq)):
-        expression += f" {operators_seq[i]} {numbers[i + 1]}"
-    try:
-        result = eval(expression)
-        return result if result == int(result) else None
-    except ZeroDivisionError:
-        return None
-    except Exception:
-        return None
-
-
-def generate_math_puzzle(n):
-    """Generate a puzzle with exactly ONE valid operator combo that results in an integer."""
-    while True:
-        nums = [random.randint(1, 10) for _ in range(n + 1)]
-        op_combos = list(product(ops.keys(), repeat=n))
-        valid_solutions = []
-
-        for operator_seq in op_combos:
-            result = evaluate_expression(nums, operator_seq)
-            if result is not None:
-                valid_solutions.append((operator_seq, int(result)))
-
-        # Group results by value
-        result_to_ops = {}
-        for op_seq, res in valid_solutions:
-            if res not in result_to_ops:
-                result_to_ops[res] = []
-            result_to_ops[res].append(op_seq)
-
-        # Find results with exactly one valid operator sequence
-        unique_results = [(res, op_seqs[0]) for res, op_seqs in result_to_ops.items() if len(op_seqs) == 1]
-
-        if unique_results:
-            selected_result, selected_ops = random.choice(unique_results)
-            math_string = " ⬜ ".join(str(num) for num in nums) + f" = {selected_result}"
-            operator_string = "".join(selected_ops)
-
-            return {
-                "math_string": math_string,
-                "answer_string": operator_string
-            }
 
 
 async def ask_math_challenge(winner, winner_id, num=5):
@@ -25747,52 +25701,69 @@ async def select_trivia_questions(questions_per_round):
         sample_size = max(questions_per_round - len(selected_questions), 0)
         if sample_size > 0:
             trivia_collection = db["trivia_questions"]
+            excluded_url_substring = "http"
+            base_cap = question_pools.PER_POOL_SAMPLE_CAP
 
+            # Minigame-exclusive pools folded in here (question_pools.QUESTION_POOLS) are
+            # sampled directly from their own collection, never copied into trivia_questions --
+            # see question_pools.py's module docstring for why. Each enabled pool's
+            # sub-pipeline (trivia_questions included) is first $sample-d down to a shared cap
+            # (scaled by that pool's own "weight") before the union, so a small pool isn't
+            # statistically drowned out by trivia_questions' much larger size -- nothing to
+            # configure per pool beyond the registry's enabled/weight knobs.
+            trivia_match = {"_id": {"$nin": list(recent_question_ids["general"])}, "category": {"$nin": categories_to_exclude}}
             if image_questions == False:
-                # Define a list of substrings to exclude in URLs
-                excluded_url_substring = "http"
-                pipeline_trivia = [
-                    {
-                        "$match": {
-                            "_id": {"$nin": list(recent_question_ids["general"])},
-                            "category": {"$nin": categories_to_exclude},
-                            "$or": [
-                                {"url": {"$not": {"$regex": excluded_url_substring}}} 
-                            ]
-                        }
-                    },
-                    {
-                        "$group": {
-                            "_id": "$category",
-                            "questions": {"$push": "$$ROOT"}  # Push full document to each category group
-                        }
-                    },
-                    {"$unwind": "$questions"},  # Unwind the limited question list for each category back into individual documents
-                    {"$replaceRoot": {"newRoot": "$questions"}},  # Flatten to original document structure
-                    {"$sample": {"size": sample_size}}  # Sample from the resulting limited set
-                ]
-                
-            else:
-                pipeline_trivia = [
-                    {"$match": {"_id": {"$nin": list(recent_question_ids["general"])}, "category": {"$nin": categories_to_exclude}}},
-                    {
-                        "$group": {
-                            "_id": "$category",
-                            "questions": {"$push": "$$ROOT"}  # Push full document to each category group
-                        }
-                    },
-                    {"$unwind": "$questions"},  # Unwind the limited question list for each category back into individual documents
-                    {"$replaceRoot": {"newRoot": "$questions"}},  # Flatten to original document structure
-                    {"$sample": {"size": sample_size}}  # Sample from the resulting limited set
-                ]
+                trivia_match["$or"] = [{"url": {"$not": {"$regex": excluded_url_substring}}}]
+
+            pipeline_trivia = [
+                {"$match": trivia_match},
+                {
+                    "$group": {
+                        "_id": "$category",
+                        "questions": {"$push": "$$ROOT"}  # Push full document to each category group
+                    }
+                },
+                {"$unwind": "$questions"},  # Unwind the limited question list for each category back into individual documents
+                {"$replaceRoot": {"newRoot": "$questions"}},  # Flatten to original document structure
+                {"$sample": {"size": base_cap}},
+                {"$addFields": {"db": "trivia_questions"}},
+            ]
+
+            enabled_pools = {name: pool for name, pool in question_pools.QUESTION_POOLS.items() if pool.get("enabled", True)}
+            new_pool_recent_ids = {
+                pool_name: await get_recent_question_ids_from_mongo(pool["id_limit_key"])
+                for pool_name, pool in enabled_pools.items()
+            }
+            for pool_name, pool in enabled_pools.items():
+                pool_match = {"_id": {"$nin": list(new_pool_recent_ids[pool_name])}, "category": {"$nin": categories_to_exclude}}
+                if image_questions == False:
+                    pool_match["$or"] = [{"url": {"$not": {"$regex": excluded_url_substring}}}]
+                pipeline_trivia.append({
+                    "$unionWith": {
+                        "coll": pool["collection"],
+                        "pipeline": [
+                            {"$match": pool_match},
+                            {"$sample": {"size": round(base_cap * pool.get("weight", 1))}},
+                            {"$addFields": {"db": pool["collection"]}},
+                        ],
+                    }
+                })
+
+            pipeline_trivia.append({"$sample": {"size": sample_size}})
 
             trivia_questions = await trivia_collection.aggregate(pipeline_trivia).to_list(length=sample_size)
 
+            pool_by_collection = {pool["collection"]: (name, pool) for name, pool in enabled_pools.items()}
             for doc in trivia_questions:
-                doc["db"] = "trivia_questions"
-                
+                match = pool_by_collection.get(doc["db"])
+                if match is None:
+                    question_ids_to_store["general"].append(doc["_id"])
+                    continue
+                pool_name, pool = match
+                doc.update(pool["adapter"](doc))
+                question_ids_to_store.setdefault(pool_name, []).append(doc["_id"])
+
             selected_questions.extend(trivia_questions)
-            question_ids_to_store["general"].extend(doc["_id"] for doc in trivia_questions)
 
         
         # Shuffle the combined list of selected questions

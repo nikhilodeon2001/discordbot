@@ -13,11 +13,16 @@ import sys
 
 from pymongo import MongoClient
 
+import question_pools
+
 MONGO_URI = os.environ.get("MONGO_URI") or os.getenv("mongo_db_string")
 
 # Collections the live game actually pulls questions from (see select_trivia_questions()
-# and get_random_trivia_question() in discordbot.py). math_questions/stats_questions are
-# generated at runtime, not stored, so they're excluded.
+# and get_random_trivia_question() in discordbot.py). math_questions/stats_questions/
+# sign_language are generated at runtime, not stored, so they're excluded. The
+# question_pools.QUESTION_POOLS collections are the minigame-exclusive pools folded into
+# the main rotation -- kept in sync with select_trivia_questions()/get_trivia_question()
+# automatically since this reads the same registry rather than a separately hand-listed copy.
 QUESTION_COLLECTIONS = [
     "trivia_questions",
     "crossword_questions",
@@ -25,7 +30,7 @@ QUESTION_COLLECTIONS = [
     "sat_questions",
     "wof_questions",
     "mysterybox_questions",
-]
+] + [pool["collection"] for pool in question_pools.QUESTION_POOLS.values()]
 
 
 def main():

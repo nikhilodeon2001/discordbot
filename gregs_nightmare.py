@@ -16,8 +16,10 @@ exponents) -- nothing requires a symbol keyboard (no √, ∫, θ, π glyphs).
 
 import io
 import math
+import operator
 import random
 import re
+from itertools import product
 
 
 CATEGORIES = [
@@ -31,9 +33,73 @@ CATEGORIES = [
     {"name": "sequences", "url": "sequences", "emoji": "🔁", "display": "Sequences"},
     {"name": "coordinate geometry", "url": "coordgeo", "emoji": "📍", "display": "Coordinate Geometry"},
     {"name": "exponents", "url": "explog", "emoji": "⚡", "display": "Exponents & Logs"},
+    {"name": "missing signs", "url": "missing_signs", "emoji": "➕➖", "display": "Missing Signs"},
 ]
 
 CATEGORY_URLS = {c["url"] for c in CATEGORIES}
+
+# Used by generate_math_puzzle (the "Missing Signs" category, and the standalone Sign
+# Language mini-game in discordbot.py's ask_math_challenge, which imports it from here).
+ops = {
+    '+': operator.add,
+    '-': operator.sub,
+    '*': operator.mul,
+    '/': lambda a, b: a / b if b != 0 else None
+}
+
+
+def evaluate_expression(numbers, operators_seq):
+    """Evaluate an expression given numbers and a tuple of operators."""
+    expression = str(numbers[0])
+    for i in range(len(operators_seq)):
+        expression += f" {operators_seq[i]} {numbers[i + 1]}"
+    try:
+        result = eval(expression)
+        return result if result == int(result) else None
+    except ZeroDivisionError:
+        return None
+    except Exception:
+        return None
+
+
+def generate_math_puzzle(n):
+    """Generate a puzzle with exactly ONE valid operator combo that results in an integer.
+
+    `all_combos` (every operator sequence tried, correct one included) rides along so the
+    "Missing Signs" Greg's Nightmare category can build multiple-choice distractors from it
+    directly -- any combo other than the correct one is a legitimate wrong answer by
+    construction, since the correct one is chosen specifically for being the *only* sequence
+    that reaches the target integer."""
+    while True:
+        nums = [random.randint(1, 10) for _ in range(n + 1)]
+        op_combos = list(product(ops.keys(), repeat=n))
+        valid_solutions = []
+
+        for operator_seq in op_combos:
+            result = evaluate_expression(nums, operator_seq)
+            if result is not None:
+                valid_solutions.append((operator_seq, int(result)))
+
+        # Group results by value
+        result_to_ops = {}
+        for op_seq, res in valid_solutions:
+            if res not in result_to_ops:
+                result_to_ops[res] = []
+            result_to_ops[res].append(op_seq)
+
+        # Find results with exactly one valid operator sequence
+        unique_results = [(res, op_seqs[0]) for res, op_seqs in result_to_ops.items() if len(op_seqs) == 1]
+
+        if unique_results:
+            selected_result, selected_ops = random.choice(unique_results)
+            math_string = " ⬜ ".join(str(num) for num in nums) + f" = {selected_result}"
+            operator_string = "".join(selected_ops)
+
+            return {
+                "math_string": math_string,
+                "answer_string": operator_string,
+                "all_combos": op_combos,
+            }
 
 # One of these is picked at random per question (not per category) -- high-saturation,
 # high-brightness colors chosen to read clearly against the black canvas background.
@@ -1276,6 +1342,34 @@ def _check_explog(guess, answer):
 
 
 # ---------------------------------------------------------------------------
+# Missing Signs -- fill in the missing +/-/*// signs to make an equation true. Named
+# distinctly from discordbot.py's standalone "Sign Language" mini-game (ask_math_challenge,
+# which this category's generator shares generate_math_puzzle() with) since that mini-game
+# keeps its own name -- this is just this category's name within Greg's Nightmare.
+# No entry in _CHECKERS: the default exact-match fallback in check_answer() is exactly
+# right for a short operator-symbol string, no numeric parsing or format equivalence needed.
+# ---------------------------------------------------------------------------
+
+def _gen_missing_signs(difficulty):
+    n = random.choice([2, 3])
+    puzzle = generate_math_puzzle(n)
+    correct = puzzle["answer_string"]
+    # ASCII placeholder instead of the standalone mini-game's "⬜" emoji -- this module's own
+    # rule (see its docstring) is that nothing rendered needs a symbol keyboard or a font with
+    # emoji coverage, and _render_composed_image draws with a plain TTF font, not Discord's
+    # own client-side emoji rendering.
+    display = puzzle["math_string"].replace("⬜", "_")
+    other_combos = ["".join(seq) for seq in puzzle["all_combos"] if "".join(seq) != correct]
+    wrongs = random.sample(other_combos, min(3, len(other_combos)))
+    return {
+        "question_text": "Fill in the missing signs (+ − × ÷) to make this equation true:",
+        "display": display,
+        "answer": correct,
+        "wrongs": wrongs,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Dispatch
 # ---------------------------------------------------------------------------
 
@@ -1290,6 +1384,7 @@ _GENERATORS = {
     "sequences": _gen_sequences,
     "coordgeo": _gen_coordgeo,
     "explog": _gen_explog,
+    "missing_signs": _gen_missing_signs,
 }
 
 _CHECKERS = {

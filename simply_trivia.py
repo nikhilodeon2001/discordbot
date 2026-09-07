@@ -123,22 +123,38 @@ questions_count = 0  # Counter for questions asked since bot started
 
 async def get_trivia_question(db, collections=None):
     """
-    Fetch random question from specified collection(s), avoiding recent repeats
+    Fetch random question from specified collection(s), avoiding recent repeats.
+
+    Also draws from question_pools.QUESTION_POOLS (the minigame-exclusive pools folded into
+    the main rotation) when no explicit `collections` override is given -- the exact same
+    collections Continuous Trivia's select_trivia_questions() samples, never copied, so a
+    correction applied via either loop (or the /arena minigame that also reads the same
+    collection) lands on the one real document. Picking uniformly among collections (one doc
+    fetched at a time here, unlike the classic loop's per-round batch) already gives each pool
+    a comparable shot at being asked next; a pool's "weight" is honored by repeating its
+    collection name in the list proportionally, rather than a separate weighted-choice path.
 
     Args:
         db: MongoDB database instance
-        collections: List of collection names to fetch from (defaults to ["trivia_questions"])
+        collections: List of collection names to fetch from (defaults to trivia_questions
+            plus every enabled pool in question_pools.QUESTION_POOLS)
 
     Returns:
         Question document or None if no questions available
     """
     # Import from discordbot
     from discordbot import get_recent_question_ids_from_mongo
+    import question_pools
     import random
 
-    # Default to trivia_questions if not specified
+    enabled_pools = {name: pool for name, pool in question_pools.QUESTION_POOLS.items() if pool.get("enabled", True)}
+    pool_by_collection = {pool["collection"]: pool for pool in enabled_pools.values()}
+
+    # Default to trivia_questions plus every enabled pool if not specified
     if collections is None:
         collections = ["trivia_questions"]
+        for pool in enabled_pools.values():
+            collections += [pool["collection"]] * max(round(pool.get("weight", 1)), 1)
 
     # Randomly select a collection from the list
     collection_name = random.choice(collections)
@@ -149,6 +165,8 @@ async def get_trivia_question(db, collections=None):
         "jeopardy_questions": "jeopardy",
         "crossword_questions": "crossword"
     }
+    for pool in enabled_pools.values():
+        collection_to_type[pool["collection"]] = pool["id_limit_key"]
     question_type = collection_to_type.get(collection_name, "general")
 
     # Get recent IDs to avoid
@@ -161,10 +179,17 @@ async def get_trivia_question(db, collections=None):
     ]
     questions = await db[collection_name].aggregate(pipeline).to_list(1)
 
-    if questions:
-        questions[0]["db"] = collection_name  # Track which collection it came from
-        return questions[0]
-    return None
+    if not questions:
+        return None
+
+    doc = questions[0]
+    doc["db"] = collection_name  # Track which collection it came from
+
+    pool = pool_by_collection.get(collection_name)
+    if pool:
+        doc.update(pool["adapter"](doc))
+
+    return doc
 
 
 async def load_simply_previous_question(db):
