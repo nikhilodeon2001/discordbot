@@ -1645,6 +1645,10 @@ async def ask_jigsaw_challenge(winner, winner_id, num=5):
                 {"$sample": {"size": 1}}
             ]
             questions = [doc async for doc in collection.aggregate(pipeline)]
+            if not questions:
+                # "Recently asked" exclusion emptied the pool -- retry unrestricted rather
+                # than fail the round, matching _sample_recent_text's fallback pattern.
+                questions = [doc async for doc in collection.aggregate(pipeline[1:])]
             q = questions[0]
 
             qid = q["_id"]
@@ -1855,6 +1859,10 @@ async def ask_faceoff_challenge(winner, winner_id, num=5):
                 {"$sample": {"size": 1}}
             ]
             docs = [doc async for doc in collection.aggregate(pipeline)]
+            if not docs:
+                # "Recently asked" exclusion emptied the pool -- retry unrestricted rather
+                # than fail the round, matching _sample_recent_text's fallback pattern.
+                docs = [doc async for doc in collection.aggregate(pipeline[1:])]
             q = docs[0]
 
             qid = q["_id"]
@@ -3440,6 +3448,12 @@ async def ask_element_challenge(winner, winner_id, num=5):
             ]
 
             element_questions = [doc async for doc in element_collection.aggregate(pipeline_element)]
+            if not element_questions:
+                # "Recently asked" exclusion emptied the pool -- retry without it (keeping
+                # the "hypothetical" filter) rather than fail the round, matching
+                # _sample_recent_text's fallback pattern.
+                fallback_pipeline = [{"$match": {"hypothetical": "No"}}] + pipeline_element[1:]
+                element_questions = [doc async for doc in element_collection.aggregate(fallback_pipeline)]
             element_question = element_questions[0]
             element_question_type = element_question["question_type"]
 
@@ -3788,6 +3802,12 @@ async def ask_polyglottery_challenge(winner, winner_id, num=5):
                 {"$sample": {"size": 1}}
             ]
             questions = [doc async for doc in collection.aggregate(pipeline)]
+            if not questions:
+                # "Recently asked" exclusion emptied the pool -- retry without it (keeping
+                # the "enabled" filter) rather than fail the round, matching
+                # _sample_recent_text's fallback pattern.
+                fallback_pipeline = [{"$match": {"enabled": "1"}}] + pipeline[1:]
+                questions = [doc async for doc in collection.aggregate(fallback_pipeline)]
             q = questions[0]
 
             lang_code = q["language_code"]
@@ -3946,6 +3966,10 @@ async def ask_dictionary_challenge(winner, winner_id, num=5):
                 {"$sample": {"size": 1}}
             ]
             questions = [doc async for doc in collection.aggregate(pipeline)]
+            if not questions:
+                # "Recently asked" exclusion emptied the pool -- retry unrestricted rather
+                # than fail the round, matching _sample_recent_text's fallback pattern.
+                questions = [doc async for doc in collection.aggregate(pipeline[1:])]
             q = questions[0]
 
             word = q["word"]
@@ -7106,6 +7130,12 @@ async def ask_book_challenge(winner, winner_id, num=5):
                 {"$sample": {"size": 1}}
             ]
             questions = [doc async for doc in collection.aggregate(pipeline)]
+            if not questions:
+                # "Recently asked" exclusion emptied the pool -- retry without it (keeping
+                # the "enabled" filter) rather than fail the round, matching
+                # _sample_recent_text's fallback pattern.
+                fallback_pipeline = [{"$match": {"enabled": "1"}}] + pipeline[1:]
+                questions = [doc async for doc in collection.aggregate(fallback_pipeline)]
             q = questions[0]
 
             title = q["title"]
@@ -7275,6 +7305,10 @@ async def ask_riddle_challenge(winner, winner_id, num=5):
                 {"$sample": {"size": 1}}
             ]
             questions = [doc async for doc in collection.aggregate(pipeline)]
+            if not questions:
+                # "Recently asked" exclusion emptied the pool -- retry unrestricted rather
+                # than fail the round, matching _sample_recent_text's fallback pattern.
+                questions = [doc async for doc in collection.aggregate(pipeline[1:])]
             q = questions[0]
 
             riddle_text = q["question"]
@@ -8086,6 +8120,10 @@ async def ask_stock_challenge(winner, winner_id, num=5):
                 {"$sample": {"size": 1}}
             ]
             questions = [doc async for doc in collection.aggregate(pipeline)]
+            if not questions:
+                # "Recently asked" exclusion emptied the pool -- retry unrestricted rather
+                # than fail the round, matching _sample_recent_text's fallback pattern.
+                questions = [doc async for doc in collection.aggregate(pipeline[1:])]
             q = questions[0]
 
             stock_symbol = q["symbol"]
@@ -8300,6 +8338,12 @@ async def ask_border_challenge(winner, winner_id, num=5):
             ]
 
             border_questions = [doc async for doc in border_collection.aggregate(pipeline_border)]
+            if not border_questions:
+                # "Recently asked" exclusion emptied the pool -- retry without it (keeping
+                # the "has neighbours" filter) rather than fail the round, matching
+                # _sample_recent_text's fallback pattern.
+                fallback_pipeline = [{"$match": {"neighbours": {"$regex": r"\S"}}}] + pipeline_border[1:]
+                border_questions = [doc async for doc in border_collection.aggregate(fallback_pipeline)]
             border_question = border_questions[0]
 
             border_neighbors = border_question["neighbours"]
@@ -9438,6 +9482,10 @@ async def ask_ranker_people_challenge(winner, winner_id, num=5):
                 {"$sample": {"size": 1}}
             ]
             questions = [doc async for doc in collection.aggregate(pipeline)]
+            if not questions:
+                # "Recently asked" exclusion emptied the pool -- retry unrestricted rather
+                # than fail the round, matching _sample_recent_text's fallback pattern.
+                questions = [doc async for doc in collection.aggregate(pipeline[1:])]
             question = questions[0]
 
             answers = question["answers"]
@@ -9674,6 +9722,12 @@ async def ask_flags_challenge(winner, winner_id, num=5):
                 {"$sample": {"size": 1}}
             ]
             questions = [doc async for doc in collection.aggregate(pipeline)]
+            if not questions:
+                # "Recently asked" exclusion emptied the pool -- retry without it (keeping
+                # the flag_detail filter, if any) rather than fail the round, matching
+                # _sample_recent_text's fallback pattern.
+                fallback_match = {k: v for k, v in match_filter.items() if k != "_id"}
+                questions = [doc async for doc in collection.aggregate([{"$match": fallback_match}] + pipeline[1:])]
             q = questions[0]
 
             answer = q["answer"]
@@ -11605,6 +11659,10 @@ async def ask_president_challenge(winner, winner_id, num=5):
                 {"$sample": {"size": 1}}
             ]
             questions = [doc async for doc in collection.aggregate(pipeline)]
+            if not questions:
+                # "Recently asked" exclusion emptied the pool -- retry unrestricted rather
+                # than fail the round, matching _sample_recent_text's fallback pattern.
+                questions = [doc async for doc in collection.aggregate(pipeline[1:])]
             q = questions[0]
 
             qid = q["_id"]
@@ -12677,6 +12735,10 @@ async def ask_poster_challenge(winner, winner_id, num=5):
                 {"$sample": {"size": 1}}
             ]
             posters_questions = [doc async for doc in posters_collection.aggregate(pipeline_posters)]
+            if not posters_questions:
+                # "Recently asked" exclusion emptied the pool -- retry unrestricted rather
+                # than fail the round, matching _sample_recent_text's fallback pattern.
+                posters_questions = [doc async for doc in posters_collection.aggregate(pipeline_posters[1:])]
             posters_question = posters_questions[0]
             posters_category = posters_question["category"]
             posters_answers = posters_question["answers"]
@@ -12942,6 +13004,10 @@ async def ask_wordle_challenge(winner, winner_id, num=1):
                 {"$sample": {"size": 1}}
             ]
             questions = [doc async for doc in wordle_collection.aggregate(pipeline)]
+            if not questions:
+                # "Recently asked" exclusion emptied the pool -- retry unrestricted rather
+                # than fail the round, matching _sample_recent_text's fallback pattern.
+                questions = [doc async for doc in wordle_collection.aggregate(pipeline[1:])]
             q = questions[0]
             word = q["word"]
             wordle_word_length = len(word)
@@ -13508,6 +13574,10 @@ async def ask_chess_challenge(winner, winner_id, num=5):
                 {"$sample": {"size": 1}}
             ]
             questions = [doc async for doc in chess_collection.aggregate(pipeline)]
+            if not questions:
+                # "Recently asked" exclusion emptied the pool -- retry unrestricted rather
+                # than fail the round, matching _sample_recent_text's fallback pattern.
+                questions = [doc async for doc in chess_collection.aggregate(pipeline[1:])]
             q = questions[0]
             starting_board = q["FEN"]
             best_move = q["Moves"]
@@ -13886,6 +13956,12 @@ async def ask_microscopic_challenge(winner, winner_id, num=3):
             ]
 
             microscopic_questions = list(await microscopic_collection.aggregate(pipeline_microscopic).to_list(length=None))
+            if not microscopic_questions:
+                # "Recently asked" exclusion emptied the pool -- retry without it (keeping
+                # the "caltech" filter) rather than fail the round, matching
+                # _sample_recent_text's fallback pattern.
+                fallback_pipeline = [{"$match": {"question": "caltech"}}] + pipeline_microscopic[1:]
+                microscopic_questions = list(await microscopic_collection.aggregate(fallback_pipeline).to_list(length=None))
             microscopic_question = microscopic_questions[0]
             microscopic_image_url = microscopic_question["url"]
             microscopic_answers = microscopic_question["answers"]
@@ -15140,6 +15216,12 @@ async def ask_myopic_challenge(winner, winner_id, num=3):
                 {"$sample": {"size": 1}}
             ]
             q_list = [doc async for doc in collection.aggregate(pipeline)]
+            if not q_list:
+                # "Recently asked" exclusion emptied the pool -- retry without it (keeping
+                # the "caltech" filter) rather than fail the round, matching
+                # _sample_recent_text's fallback pattern.
+                fallback_pipeline = [{"$match": {"question": "caltech"}}] + pipeline[1:]
+                q_list = [doc async for doc in collection.aggregate(fallback_pipeline)]
             q = q_list[0]
             url = q["url"]
             answers = q["answers"]
@@ -15390,6 +15472,10 @@ async def ask_missing_link(winner, winner_id, num=5):
                 {"$sample": {"size": 1}}
             ]
             questions = [doc async for doc in collection.aggregate(pipeline)]
+            if not questions:
+                # "Recently asked" exclusion emptied the pool -- retry unrestricted rather
+                # than fail the round, matching _sample_recent_text's fallback pattern.
+                questions = [doc async for doc in collection.aggregate(pipeline[1:])]
             question = questions[0]
 
             category = question["category"]
@@ -15563,6 +15649,10 @@ async def ask_movie_scenes_challenge(winner, winner_id, num=5):
                 {"$sample": {"size": 1}}
             ]
             questions = [doc async for doc in collection.aggregate(pipeline)]
+            if not questions:
+                # "Recently asked" exclusion emptied the pool -- retry unrestricted rather
+                # than fail the round, matching _sample_recent_text's fallback pattern.
+                questions = [doc async for doc in collection.aggregate(pipeline[1:])]
             question = questions[0]
 
             category = question["category"]
@@ -16384,6 +16474,11 @@ async def ask_ranker_list_question(winner, winner_id, num=5):
             {"$sample": {"size": 5}}
         ]
         questions = [doc async for doc in collection.aggregate(pipeline)]
+        if not questions:
+            # "Recently asked" exclusion emptied the pool -- retry unrestricted rather than
+            # leave `questions` empty (an empty menu here index-crashes below at
+            # `questions[selected]`, which sits outside this try block).
+            questions = [doc async for doc in collection.aggregate(pipeline[1:])]
     except Exception as e:
         sentry_sdk.capture_exception(e)
         print(f"Error selecting Ranker list questions:\n{traceback.format_exc()}")
@@ -16518,6 +16613,10 @@ async def ask_list_question(winner, winner_id, num=5):
         ]
 
         list_questions = [doc async for doc in list_collection.aggregate(pipeline_list)]
+        if not list_questions:
+            # "Recently asked" exclusion emptied the pool -- retry unrestricted rather than
+            # fail the round, matching _sample_recent_text's existing fallback pattern.
+            list_questions = [doc async for doc in list_collection.aggregate(pipeline_list[1:])]
         list_question = list_questions[0]
     except Exception as e:
         sentry_sdk.capture_exception(e)
