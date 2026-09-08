@@ -267,3 +267,29 @@ QUESTION_POOLS = {
         },
     },
 }
+
+# Collections that were already blended into the main rotation before QUESTION_POOLS
+# existed (select_trivia_questions() samples these directly too) -- not registered above
+# since they have no adapter/variants, but recent-id tracking still needs to resolve their
+# collection name back to the right id_limits key, same as every QUESTION_POOLS entry.
+_LEGACY_COLLECTION_TO_ID_LIMIT_KEY = {
+    "trivia_questions": "general",
+    "jeopardy_questions": "jeopardy",
+    "crossword_questions": "crossword",
+    "mysterybox_questions": "mysterybox",
+    "wof_questions": "wof",
+}
+
+
+def id_limit_key_for_collection(collection_name, default="general"):
+    """The id_limits (discordbot.py) tracking key for a given collection name -- single
+    source of truth for both reading recent-ids before sampling and writing them after a
+    pick, so the two can't drift out of sync the way simply_trivia.py's hardcoded "general"
+    write did (it kept writing there even after get_trivia_question() started sampling from
+    the new pools too, so their own picks were never recorded under their own key)."""
+    if collection_name in _LEGACY_COLLECTION_TO_ID_LIMIT_KEY:
+        return _LEGACY_COLLECTION_TO_ID_LIMIT_KEY[collection_name]
+    for pool in QUESTION_POOLS.values():
+        if pool["collection"] == collection_name:
+            return pool["id_limit_key"]
+    return default

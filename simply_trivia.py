@@ -123,21 +123,25 @@ questions_count = 0  # Counter for questions asked since bot started
 
 async def get_trivia_question(db, collections=None):
     """
-    Fetch random question from specified collection(s), avoiding recent repeats.
+    Fetch a question, avoiding recent repeats.
 
-    Also draws from question_pools.QUESTION_POOLS (the minigame-exclusive pools folded into
-    the main rotation) when no explicit `collections` override is given -- the exact same
-    collections Continuous Trivia's select_trivia_questions() samples, never copied, so a
-    correction applied via either loop (or the /arena minigame that also reads the same
-    collection) lands on the one real document. Picking uniformly among collections (one doc
-    fetched at a time here, unlike the classic loop's per-round batch) already gives each pool
-    a comparable shot at being asked next; a pool's "weight" is honored by repeating its
-    collection name in the list proportionally, rather than a separate weighted-choice path.
+    With no explicit `collections` override, draws from trivia_questions plus every enabled
+    pool in question_pools.QUESTION_POOLS -- the exact same collections Continuous Trivia's
+    select_trivia_questions() samples, never copied, so a correction applied via either loop
+    (or the /arena minigame that also reads the same collection) lands on the one real
+    document. This mirrors select_trivia_questions()'s own leveling mechanism exactly: each
+    pool's sub-pipeline is first $sample-d down to a shared cap (question_pools.
+    PER_POOL_SAMPLE_CAP, scaled by that pool's "weight") before one final $sample draws the
+    actual pick -- picking a *collection* name uniformly first (the previous approach here)
+    would give a 94-document pool the same odds as the 51,000-document trivia_questions
+    collection, which is what caused small pools to dominate selection and repeat almost
+    immediately in practice.
 
     Args:
         db: MongoDB database instance
-        collections: List of collection names to fetch from (defaults to trivia_questions
-            plus every enabled pool in question_pools.QUESTION_POOLS)
+        collections: List of collection names to fetch from -- if given, falls back to the
+            older one-collection-at-a-time random-choice behavior (unweighted by document
+            count) for compatibility with any caller that still passes an explicit list.
 
     Returns:
         Question document or None if no questions available
@@ -150,48 +154,65 @@ async def get_trivia_question(db, collections=None):
     enabled_pools = {name: pool for name, pool in question_pools.QUESTION_POOLS.items() if pool.get("enabled", True)}
     pool_by_collection = {pool["collection"]: pool for pool in enabled_pools.values()}
 
-    # Default to trivia_questions plus every enabled pool if not specified
-    if collections is None:
-        collections = ["trivia_questions"]
-        for pool in enabled_pools.values():
-            collections += [pool["collection"]] * max(round(pool.get("weight", 1)), 1)
+    if collections is not None:
+        # Explicit override path -- unweighted, matches the old behavior exactly.
+        collection_name = random.choice(collections)
+        question_type = question_pools.id_limit_key_for_collection(collection_name)
+        recent_ids = await get_recent_question_ids_from_mongo(question_type)
+        match = {"_id": {"$nin": list(recent_ids)}}
+        pool = pool_by_collection.get(collection_name)
+        if pool:
+            match.update(pool.get("extra_match", {}))
+        questions = await db[collection_name].aggregate([
+            {"$match": match},
+            {"$sample": {"size": 1}},
+        ]).to_list(1)
+        if not questions:
+            return None
+        doc = questions[0]
+        doc["db"] = collection_name
+        if pool:
+            try:
+                doc.update(pool["adapter"](doc))
+            except Exception:
+                return None
+        return doc
 
-    # Randomly select a collection from the list
-    collection_name = random.choice(collections)
-
-    # Map collection names to their question type for recent ID tracking
-    collection_to_type = {
-        "trivia_questions": "general",
-        "jeopardy_questions": "jeopardy",
-        "crossword_questions": "crossword"
-    }
-    for pool in enabled_pools.values():
-        collection_to_type[pool["collection"]] = pool["id_limit_key"]
-    question_type = collection_to_type.get(collection_name, "general")
-
-    # Get recent IDs to avoid
-    recent_ids = await get_recent_question_ids_from_mongo(question_type)
-
-    # Fetch random question from selected collection -- extra_match applies a pool's own
-    # data-quality/type filter (e.g. element_questions has non-"single"-shaped docs mixed in)
-    # exactly like select_trivia_questions() applies it for the classic loop.
-    match = {"_id": {"$nin": list(recent_ids)}}
-    pool = pool_by_collection.get(collection_name)
-    if pool:
-        match.update(pool.get("extra_match", {}))
+    # Default path: proportional, capped $unionWith sampling -- same mechanism as
+    # select_trivia_questions() in discordbot.py, adapted to draw one document instead of a
+    # round's worth.
+    base_cap = question_pools.PER_POOL_SAMPLE_CAP
+    recent_general_ids = await get_recent_question_ids_from_mongo("general")
     pipeline = [
-        {"$match": match},
-        {"$sample": {"size": 1}}
+        {"$match": {"_id": {"$nin": list(recent_general_ids)}}},
+        {"$sample": {"size": base_cap}},
+        {"$addFields": {"db": "trivia_questions"}},
     ]
-    questions = await db[collection_name].aggregate(pipeline).to_list(1)
+    pool_recent_ids = {
+        name: await get_recent_question_ids_from_mongo(pool["id_limit_key"])
+        for name, pool in enabled_pools.items()
+    }
+    for name, pool in enabled_pools.items():
+        pool_match = {"_id": {"$nin": list(pool_recent_ids[name])}, **pool.get("extra_match", {})}
+        pipeline.append({
+            "$unionWith": {
+                "coll": pool["collection"],
+                "pipeline": [
+                    {"$match": pool_match},
+                    {"$sample": {"size": round(base_cap * pool.get("weight", 1))}},
+                    {"$addFields": {"db": pool["collection"]}},
+                ],
+            }
+        })
+    pipeline.append({"$sample": {"size": 1}})
 
+    questions = await db["trivia_questions"].aggregate(pipeline).to_list(1)
     if not questions:
         return None
 
-    doc = questions[0]
-    doc["db"] = collection_name  # Track which collection it came from
+    doc = questions[0]  # doc["db"] already set by the $addFields above
 
-    pool = pool_by_collection.get(collection_name)
+    pool = pool_by_collection.get(doc["db"])
     if pool:
         try:
             doc.update(pool["adapter"](doc))
@@ -948,9 +969,14 @@ async def start_simply_trivia(bot, db, channel_id, fuzzy_match_func, count_flags
             except Exception as e:
                 print(f"companion publish (simply, reveal) failed: {e}")
 
-            # Store question ID to avoid repeating
+            # Store question ID to avoid repeating -- tracking key must match whichever
+            # collection this question actually came from (question["db"]), not a hardcoded
+            # "general", or picks from the new pools become invisible to their own
+            # repeat-avoidance check.
             if question.get("_id"):
-                await store_question_ids_in_mongo([question["_id"]], "general")
+                import question_pools
+                tracking_key = question_pools.id_limit_key_for_collection(question.get("db"))
+                await store_question_ids_in_mongo([question["_id"]], tracking_key)
 
             # Increment question counter and check if leaderboard update needed
             global questions_count
