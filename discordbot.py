@@ -27053,6 +27053,14 @@ async def start_trivia():
                 # Grading grace: let a last-instant in-flight Discord message arrive before we snapshot
                 # collected_responses (the old slow countdown provided this buffer implicitly).
                 await asyncio.sleep(1)
+                # check_correct_responses_delete does several of its own awaits after reading its
+                # response list (embed builds, Mongo writes, image generation) before control
+                # returns here -- a response that lands in collected_responses during one of those
+                # would be invisible to grading (which already read the list) but visible to the
+                # reveal-annotation code below if it re-read the live list fresh, showing someone
+                # as having correctly answered while scoring credited them nothing. One snapshot,
+                # reused for both, so what's scored and what's displayed can never disagree.
+                responses_snapshot = list(collected_responses)
                 #await safe_send(channel, "\u200b\n🛑 TIME 🛑\n\u200b")
                 
                 solution_list = []
@@ -27069,7 +27077,7 @@ async def start_trivia():
                     
                 show_standings_after = not yolo_mode or question_number == questions_per_round
                 points_gained_this_question, response_trace = await check_correct_responses_delete(
-                    question_ask_time, solution_list, question_number, collected_responses,
+                    question_ask_time, solution_list, question_number, responses_snapshot,
                     trivia_category, trivia_url, trivia_db=trivia_db, trivia_id=trivia_id,
                     show_standings_after=show_standings_after,
                     mc_choice_tokens=_mc_guess_tokens(trivia_answer_list, trivia_url),
@@ -27092,7 +27100,7 @@ async def start_trivia():
                         if is_letter_mc and choices:
                             clicks = {}
                             clicked_user_ids = {}
-                            for r in collected_responses:
+                            for r in responses_snapshot:
                                 ltr = _mc_letter_for_guess(trivia_answer_list, r.get("message_content", ""))
                                 if ltr:
                                     seen_ids = clicked_user_ids.setdefault(ltr, set())
@@ -27111,7 +27119,7 @@ async def start_trivia():
                             # once) -- a wrong-then-right second guess is correctly uncredited by
                             # design and shouldn't trip this alert.
                             first_response_by_user = {}
-                            for r in collected_responses:
+                            for r in responses_snapshot:
                                 uid = r.get("user_id")
                                 if uid is not None and uid not in first_response_by_user:
                                     first_response_by_user[uid] = r
@@ -27122,7 +27130,7 @@ async def start_trivia():
                             }
                             if missed_credit_ids:
                                 await _alert_scoring_mismatch(
-                                    missed_credit_ids, collected_responses, trivia_category, trivia_question,
+                                    missed_credit_ids, responses_snapshot, trivia_category, trivia_question,
                                     trivia_answer_list, current_answer_message,
                                     question_asked_start, question_asked_end, response_trace,
                                 )
@@ -28211,7 +28219,7 @@ def _mc_letter_for_guess(answer_list, message_content):
     return None
 
 
-async def _alert_scoring_mismatch(user_ids, collected_responses, trivia_category, trivia_question,
+async def _alert_scoring_mismatch(user_ids, responses_snapshot, trivia_category, trivia_question,
                                    trivia_answer_list, current_answer_message,
                                    question_asked_start, question_asked_end, response_trace=None):
     """Someone's guess resolves to the same choice letter the reveal embed marks correct (via
@@ -28231,9 +28239,10 @@ async def _alert_scoring_mismatch(user_ids, collected_responses, trivia_category
     if alert_channel is None:
         return
     jump_url = current_answer_message.jump_url if current_answer_message else None
-    responses_count = len(collected_responses)
+    snapshot_len = len(responses_snapshot)
+    live_len = len(collected_responses)
     for user_id in user_ids:
-        matches = [r for r in collected_responses if r.get("user_id") == user_id]
+        matches = [r for r in responses_snapshot if r.get("user_id") == user_id]
         display_name = matches[0].get("display_name", "?") if matches else str(user_id)
         embed = discord.Embed(
             title="⚠️ Scoring mismatch detected",
@@ -28265,7 +28274,7 @@ async def _alert_scoring_mismatch(user_ids, collected_responses, trivia_category
                 f"seconds_before_deadline={margin}"
             )
         detail_lines.append(f"question_window=[{question_asked_start}, {question_asked_end}]")
-        detail_lines.append(f"responses_this_question={responses_count}")
+        detail_lines.append(f"responses_in_scoring_snapshot={snapshot_len} responses_live_now={live_len}")
         embed.add_field(name="Diagnostic data", value="```\n" + "\n".join(detail_lines)[:1000] + "\n```", inline=False)
 
         trace = (response_trace or {}).get(user_id)
