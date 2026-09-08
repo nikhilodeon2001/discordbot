@@ -20846,6 +20846,7 @@ async def ask_wof_number(winner, winner_id, cached_coffees=None, menu_text=None,
                 # Store frequency data for random selection
                 await store_minigame_frequency(selected_question, "random", "discord")
 
+                await message.add_reaction(get_minigame_emoji(selected_question))
                 await safe_send(channel, f"\n\U0001f381 **<@{responder_id}>**, let\'s do {selected_question}.\n")
                 return selected_question
 
@@ -20873,7 +20874,7 @@ async def ask_wof_number(winner, winner_id, cached_coffees=None, menu_text=None,
             # Store frequency data for user selection
             await store_minigame_frequency(selected_question, "user", "discord")
 
-            await message.add_reaction("\u2705")
+            await message.add_reaction(get_minigame_emoji(selected_question))
             await safe_send(channel, f"\n\U0001f4aa\U0001f6e1\ufe0f I got you **<@{responder_id}>**. **{selected_question}** it is.\n\u200b")
             await asyncio.sleep(2)
             return selected_question
@@ -27866,6 +27867,64 @@ def get_minigame_name(number):
         "x": "Skip Mini Game"
     }
     return game_map.get(str(number), "Unknown")
+
+
+def get_minigame_emoji(number):
+    """Map mini game number to a relevant emoji for reacting to its selection"""
+    emoji_map = {
+        "0": "\U0001f3a1", "1": "\U0001f3a1", "2": "\U0001f3a1", "3": "\U0001f3a1", "4": "\U0001f3a1",  # 🎡 Wheel of Fortune
+        "5": "\U0001f30e",  # 🌐 Wikipedia Roulette
+        "6": "\U0001f4d6",  # 📖 Dictionary Roulette
+        "7": "\U0001f4da",  # 📚 Thesaurus Roulette
+        "8": "\U0001f952",  # 🥒 Where's Okra?
+        "9": "\U0001f399️",  # 🎙️ FeUd (Single Player)
+        "10": "⚡",  # ⚡ FeUd Blitz
+        "11": "\U0001f4cb",  # 📋 List Battle
+        "12": "\U0001f5bc️",  # 🖼️ Poster Blitz
+        "13": "\U0001f3ac",  # 🎬 Movie Mayhem
+        "14": "\U0001f517",  # 🔗 Missing Link
+        "15": "\U0001f31f",  # 🌟 Famous Peeps
+        "16": "\U0001f3c6",  # 🏆 Ranker Lists
+        "17": "\U0001f441️",  # 👁️ Magic EyeD
+        "18": "\U0001f43e",  # 🐾 OkrAnimal
+        "19": "❓",  # ❓ The Riddler
+        "20": "\U0001f913",  # 🤓 Word Nerd
+        "21": "\U0001f6a9",  # 🚩 Flag Fest
+        "22": "\U0001f3b5",  # 🎵 LyrIQ
+        "23": "\U0001f5e3️",  # 🗣️ PolygLottery
+        "24": "✍️",  # ✍️ Prose & Cons
+        "25": "\U0001f91f",  # 🤟 Sign Language
+        "26": "⚗️",  # ⚗️ Elementary
+        "27": "\U0001f9e9",  # 🧩 Jigsawed
+        "28": "\U0001f30d",  # 🌍 Geokraphy
+        "29": "\U0001f3ad",  # 🎭 Face/Off
+        "30": "\U0001f3d4️",  # 🏔️ Rushmore
+        "31": "\U0001f7e9",  # 🟩 Wordle War
+        "32": "\U0001f3b6",  # 🎶 MusIQ
+        "33": "\U0001f50e",  # 🔎 Myopic Mystery
+        "34": "\U0001f52c",  # 🔬 Microscopic
+        "35": "\U0001f300",  # 🌀 Fusion
+        "36": "\U0001f522",  # 🔢 Tally
+        "37": "♟️",  # ♟️ Checkmate
+        "38": "\U0001f4c8",  # 📈 Wall Street
+        "39": "❔",  # ❔ XXXX
+        "40": "\U0001f3c1",  # 🏁 OkRACE
+        "41": "\U0001f526",  # 🔦 Spotlight
+        "42": "\U0001f442",  # 👂 Hear Here
+        "43": "\U0001f4ac",  # 💬 Who Says?
+        "44": "\U0001f5e8️",  # 🗨️ Let's Talk
+        "45": "\U0001f3c8",  # 🏈 Jock Talk
+        "46": "\U0001f4fa",  # 📺 30 for 30
+        "47": "\U0001f952",  # 🥒 Okra Says
+        "48": "\U0001f9de",  # 🧞 The Genie
+        "49": "\U0001f393",  # 🎓 Valedictorian
+        "50": "\U0001f41d",  # 🐝 Buzz Words
+        "51": "\U0001fa7a",  # 🩺 Okra's Anatomy
+        "67": "\U0001f631",  # 😱 Greg's Nightmare
+        "99": "\U0001f4a5",  # 💥 CHAOS
+    }
+    return emoji_map.get(str(number), "❌")
+
 
 async def store_minigame_frequency(number, selection_type, bot_source="discord", minigame_name=None):
     """Store minigame selection frequency in MongoDB using counter-based documents"""
