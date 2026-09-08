@@ -176,21 +176,32 @@ def render_geokraphy(doc):
         possible_questions.append("neighbor")
     question_variant = pick_variant(_restrict(pool_cfg["question_variants"], possible_questions))
 
+    # For every type below except "country", the answer is a FACT ABOUT the country, not
+    # the country itself -- the reveal would otherwise show a bare fact with no context
+    # (confirmed a real gap: e.g. "Answer: Euro" tells you nothing if you couldn't place the
+    # flag). Mirrors the standalone geokraphy minigame's own fix for this exact problem
+    # (discordbot.py, commit b5e2e13): answers[0] gets " (Country)" appended for display,
+    # while the bare value(s) stay in the list too so a plain guess of "Euro" still matches
+    # -- grading checks every entry in the list, not just [0].
     if question_variant == "country":
         prompt, answers = "🗺️ Which country is this?", [country]
     elif question_variant == "capital":
-        prompt, answers = "🏛️ What's the capital of this country?", [doc["capital"]]
+        prompt = "🏛️ What's the capital of this country?"
+        answers = [f"{doc['capital']} ({country})", doc["capital"]]
     elif question_variant == "currency":
         raw = doc["currency"]
         name_part = raw.split("(")[0].strip()
         code_match = re.search(r"\(([^)]+)\)", raw)
-        answers = [name_part] + ([code_match.group(1)] if code_match else [])
+        bare_answers = [name_part] + ([code_match.group(1)] if code_match else [])
+        answers = [f"{name_part} ({country})"] + bare_answers
         prompt = "💰 What currency does this country use?"
     elif question_variant == "language":
-        prompt, answers = "🗣️ What's the most commonly spoken language in this country?", [doc["primary_language"]]
+        prompt = "🗣️ What's the most commonly spoken language in this country?"
+        answers = [f"{doc['primary_language']} ({country})", doc["primary_language"]]
     else:  # neighbor
         prompt = "🧭 Name ONE country that borders this country!"
-        answers = [n.strip() for n in doc["neighbours"].split(",") if n.strip()]
+        bare_answers = [n.strip() for n in doc["neighbours"].split(",") if n.strip()]
+        answers = [f"{bare_answers[0]} ({country})"] + bare_answers
 
     return {"category": category, "question": prompt, "url": image_url, "answers": answers}
 
