@@ -30839,20 +30839,49 @@ async def _send_submission_decision_dm(guild, submitter_id, *, decision, notify,
         return f" ⚠️ DM failed: {dm_err}"
 
 
-async def _dm_flaggers(guild, flaggers, *, notify, notify_text=None, intro_text=None, before=None, after=None):
-    """DM all flaggers who have a stored user_id. `flaggers` is a list of audit-style entries
-    ({"user_id", "message_content", ...}). `before`/`after` are flagged-question-shaped dicts
-    (have 'question'/'answers' keys); if `after` is None, only the `before` block is shown.
+def _merge_flag_recipients(audit_entries, flag_record):
+    """Recipients for a flag-resolution DM, deduped by user_id.
+
+    The question document's `audit` array is preferred because each entry carries that
+    flagger's own report text -- but it gets $unset by the first Apply/Edit/Clear on the
+    question, and since a question flagged twice leaves two live review messages sharing a
+    single flag_notifications record, resolving the second one would otherwise find nobody
+    to DM. flag_notifications.flaggers is never unset, so it backfills whoever the audit
+    array has already lost. Entries with no user_id (no-login web flags) are undeliverable.
+    """
+    recipients = {}
+    for entry in list(audit_entries or []) + list((flag_record or {}).get("flaggers", [])):
+        uid = entry.get("user_id")
+        if not uid or uid in recipients:
+            continue
+        recipients[uid] = entry
+    return list(recipients.values())
+
+
+async def _dm_flaggers(guild, flaggers, *, notify, notify_text=None, intro_text=None,
+                       before=None, after=None, flag_record=None):
+    """DM every flagger we can identify. `flaggers` is a list of audit-style entries
+    ({"user_id", "message_content", ...}) and `flag_record` the flag_notifications doc used
+    to backfill them (see _merge_flag_recipients). `before`/`after` are flagged-question-shaped
+    dicts (have 'question'/'answers' keys); if `after` is None, only the `before` block is shown.
+
+    Returns a status suffix for the moderator's ephemeral reply -- same contract as
+    _send_submission_decision_dm, so a silent no-op can't masquerade as a delivered DM.
+    Never raises: one flagger's failure doesn't stop the rest.
     """
     if not notify or not guild:
-        return
-    for entry in flaggers or []:
-        uid = entry.get("user_id")
-        if not uid:
-            continue
+        return ""
+    recipients = _merge_flag_recipients(flaggers, flag_record)
+    if not recipients:
+        return " ⚠️ No identifiable flagger to DM (anonymous web flag)."
+    sent = 0
+    failures = []
+    for entry in recipients:
+        uid = entry["user_id"]
         try:
             member = await guild.fetch_member(uid)
             if not member:
+                failures.append("not in server")
                 continue
             flag_comment = entry.get("message_content", "")
             parts = []
@@ -30865,15 +30894,27 @@ async def _dm_flaggers(guild, flaggers, *, notify, notify_text=None, intro_text=
                 parts.append("**Updated to:**\n" + _format_flagged_fields(after))
             else:
                 parts.append(_format_flagged_fields(before))
-            parts.append(f"**Your report:** {flag_comment}")
+            if flag_comment:
+                parts.append(f"**Your report:** {flag_comment}")
             _, edit_count = await get_user_contribution_counts(uid)
             parts.append(
                 f"📊 You have **{edit_count}** edit credit(s) in the last 7 days.\n"
                 "👑 The top editor each week (min 5) earns a Question Queen crown — unlocking all /perks!"
             )
             await member.send("\n\n".join(parts))
-        except (discord.Forbidden, Exception):
-            pass
+            sent += 1
+        except discord.Forbidden:
+            failures.append("DMs disabled")
+        except discord.NotFound:
+            failures.append("not in server")
+        except Exception as dm_err:
+            sentry_sdk.capture_exception(dm_err)
+            failures.append(str(dm_err))
+    if sent and not failures:
+        return " DM sent." if sent == 1 else f" DMed {sent} flaggers."
+    if sent:
+        return f" DMed {sent} flagger(s), {len(failures)} failed ({'; '.join(failures)})."
+    return f" ⚠️ DM failed ({'; '.join(failures)})."
 
 
 def _build_flagged_resolution_embed(flag_record, doc_for_audit, *, title, color, action_field=None, footer_text):
@@ -30921,9 +30962,12 @@ class ApplyFlaggedModal(discord.ui.Modal, title="Apply Claude Changes"):
 
     async def on_submit(self, interaction: discord.Interaction):
         col, doc_id = self.collection_name, self.doc_id
+        # Deferred up front: the Mongo writes, credit bookkeeping and flagger DMs below can
+        # together outlast Discord's 3s modal ack window, and the confirmation is sent last.
+        await interaction.response.defer(ephemeral=True)
         try:
             if col in {"math_questions", "stats_questions"}:
-                await interaction.response.send_message(
+                await interaction.followup.send(
                     "❌ This question type is generated fresh each round and has no saved record to update — use Clear Audit instead.",
                     ephemeral=True,
                 )
@@ -30940,29 +30984,37 @@ class ApplyFlaggedModal(discord.ui.Modal, title="Apply Claude Changes"):
             )
             if proposed:
                 await record_edit_credits(col, doc_id, doc.get("audit", []))
-                await sync_crown_roles()
             notify_text = (self.notify.value or "").strip() or None
             after_doc = {**doc, **proposed}
-            await _dm_flaggers(
+            flag_record = await db.flag_notifications.find_one({"doc_id": doc_id, "collection_name": col})
+            dm_status = await _dm_flaggers(
                 interaction.guild, doc.get("audit", []),
                 notify=self.notify_label.component.value, notify_text=notify_text,
                 intro_text="✅ A question you flagged has been reviewed and updated.",
-                before=doc, after=after_doc,
+                before=doc, after=after_doc, flag_record=flag_record,
             )
-            flag_record = await db.flag_notifications.find_one({"doc_id": doc_id, "collection_name": col})
+            if proposed:
+                # Best-effort, and only after the DM: a role-sync failure must never be the
+                # reason a flagger goes unnotified.
+                try:
+                    await sync_crown_roles()
+                except Exception as crown_err:
+                    sentry_sdk.capture_exception(crown_err)
             action_field = ("✅ Applied", f"**{after_doc.get('category','')}**: {after_doc.get('question','')}") if proposed else None
             embed = _build_flagged_resolution_embed(
                 flag_record, doc,
                 title="🚩 Question Flagged", color=discord.Color.green(),
                 action_field=action_field, footer_text=f"✅ Applied by {interaction.user.display_name}",
             )
-            await interaction.response.send_message("✅ Applied changes and cleared audit.", ephemeral=True)
+            await interaction.followup.send(f"✅ Applied changes and cleared audit.{dm_status}", ephemeral=True)
             if interaction.message:
                 await interaction.message.edit(embed=embed, view=None)
         except Exception as e:
             sentry_sdk.capture_exception(e)
-            if not interaction.response.is_done():
-                await interaction.response.send_message(f"❌ Apply failed: {e}", ephemeral=True)
+            try:
+                await interaction.followup.send(f"❌ Apply failed: {e}", ephemeral=True)
+            except Exception:
+                pass
 
 
 class ClearFlaggedModal(discord.ui.Modal, title="Clear Audit"):
@@ -30989,6 +31041,8 @@ class ClearFlaggedModal(discord.ui.Modal, title="Clear Audit"):
 
     async def on_submit(self, interaction: discord.Interaction):
         col, doc_id = self.collection_name, self.doc_id
+        # See ApplyFlaggedModal.on_submit -- deferred so the work below can't blow the ack window.
+        await interaction.response.defer(ephemeral=True)
         try:
             doc = None
             if col not in {"math_questions", "stats_questions"}:
@@ -31000,33 +31054,42 @@ class ClearFlaggedModal(discord.ui.Modal, title="Clear Audit"):
                 {"doc_id": doc_id, "collection_name": col}, {"$set": {"resolved": True}}
             )
 
-            flaggers = doc.get("audit", []) if doc else (flag_record or {}).get("flaggers", [])
+            # Audit entries first (they carry each flagger's report text); _dm_flaggers backfills
+            # from flag_record for anyone the audit array has already lost to an earlier resolution.
+            audit_entries = doc.get("audit", []) if doc else []
             context = doc if doc else (flag_record or {}).get("question_snapshot", {})
+            credit_entries = _merge_flag_recipients(audit_entries, flag_record)
 
-            award_credit = self.credit_label.component.value and bool(flaggers)
+            award_credit = self.credit_label.component.value and bool(credit_entries)
             if award_credit:
-                await record_edit_credits(col, doc_id, flaggers)
-                await sync_crown_roles()
+                await record_edit_credits(col, doc_id, credit_entries)
 
             notify_text = (self.notify.value or "").strip() or None
-            await _dm_flaggers(
-                interaction.guild, flaggers,
+            dm_status = await _dm_flaggers(
+                interaction.guild, audit_entries,
                 notify=self.notify_label.component.value, notify_text=notify_text,
-                intro_text="⚠️ Your flag was reviewed!", before=context,
+                intro_text="⚠️ Your flag was reviewed!", before=context, flag_record=flag_record,
             )
+            if award_credit:
+                try:
+                    await sync_crown_roles()
+                except Exception as crown_err:
+                    sentry_sdk.capture_exception(crown_err)
             action_field = ("🏅 Credit", "Awarded to flagger(s)") if award_credit else None
             embed = _build_flagged_resolution_embed(
                 flag_record, doc,
                 title="🚩 Question Flagged", color=discord.Color.greyple(),
                 action_field=action_field, footer_text=f"🧹 Audit cleared by {interaction.user.display_name}",
             )
-            await interaction.response.send_message("🧹 Audit cleared.", ephemeral=True)
+            await interaction.followup.send(f"🧹 Audit cleared.{dm_status}", ephemeral=True)
             if interaction.message:
                 await interaction.message.edit(embed=embed, view=None)
         except Exception as e:
             sentry_sdk.capture_exception(e)
-            if not interaction.response.is_done():
-                await interaction.response.send_message(f"❌ Clear failed: {e}", ephemeral=True)
+            try:
+                await interaction.followup.send(f"❌ Clear failed: {e}", ephemeral=True)
+            except Exception:
+                pass
 
 
 class EditFlaggedQuestionModal(discord.ui.Modal, title="Edit & Apply Question Fix"):
@@ -31069,6 +31132,8 @@ class EditFlaggedQuestionModal(discord.ui.Modal, title="Edit & Apply Question Fi
             "question": self.question_input.value.strip(),
             "answers": answers,
         }
+        # See ApplyFlaggedModal.on_submit -- deferred so the work below can't blow the ack window.
+        await interaction.response.defer(ephemeral=True)
         try:
             doc_before = await db[col].find_one(_id_filter(doc_id))
             await db[col].update_one(
@@ -31078,30 +31143,36 @@ class EditFlaggedQuestionModal(discord.ui.Modal, title="Edit & Apply Question Fi
             await db.flag_notifications.update_one(
                 {"doc_id": doc_id, "collection_name": col}, {"$set": {"resolved": True}}
             )
-            await record_edit_credits(col, doc_id, doc_before.get("audit", []) if doc_before else [])
-            await sync_crown_roles()
-            notify_text = (self.notify.value or "").strip() or None
-            if doc_before:
-                await _dm_flaggers(
-                    interaction.guild, doc_before.get("audit", []),
-                    notify=self.notify_label.component.value, notify_text=notify_text,
-                    intro_text="✅ A question you flagged has been reviewed and updated.",
-                    before=doc_before, after=fields,
-                )
             flag_record = await db.flag_notifications.find_one({"doc_id": doc_id, "collection_name": col})
+            audit_entries = doc_before.get("audit", []) if doc_before else []
+            await record_edit_credits(col, doc_id, _merge_flag_recipients(audit_entries, flag_record))
+            notify_text = (self.notify.value or "").strip() or None
+            dm_status = await _dm_flaggers(
+                interaction.guild, audit_entries,
+                notify=self.notify_label.component.value, notify_text=notify_text,
+                intro_text="✅ A question you flagged has been reviewed and updated.",
+                before=doc_before if doc_before else (flag_record or {}).get("question_snapshot", {}),
+                after=fields, flag_record=flag_record,
+            )
+            try:
+                await sync_crown_roles()
+            except Exception as crown_err:
+                sentry_sdk.capture_exception(crown_err)
             embed = _build_flagged_resolution_embed(
                 flag_record, doc_before,
                 title="🚩 Question Flagged", color=discord.Color.green(),
                 action_field=("✏️ Edited & Applied", f"**{fields['category']}**: {fields['question']}"),
                 footer_text=f"✅ Edited & applied by {interaction.user.display_name}",
             )
-            await interaction.response.send_message("✅ Applied edits and cleared audit.", ephemeral=True)
+            await interaction.followup.send(f"✅ Applied edits and cleared audit.{dm_status}", ephemeral=True)
             if interaction.message:
                 await interaction.message.edit(embed=embed, view=None)
         except Exception as e:
             sentry_sdk.capture_exception(e)
-            if not interaction.response.is_done():
-                await interaction.response.send_message(f"❌ Edit failed: {e}", ephemeral=True)
+            try:
+                await interaction.followup.send(f"❌ Edit failed: {e}", ephemeral=True)
+            except Exception:
+                pass
 
 
 async def _build_flagged_review_embed(col, doc_id, result):
