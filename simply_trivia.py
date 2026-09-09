@@ -365,7 +365,10 @@ class SimplyTriviaFlagReasonModal(discord.ui.Modal, title="Flag Question"):
                 question_for_audit,
                 f"[SIMPLY_TRIVIA - {self.question_type.upper()}] {reason_text}",
                 self.display_name,
-                self.flag_message
+                self.flag_message,
+                # Without this the audit entry has no user_id, so the flagger can never be
+                # DMed when a moderator resolves the flag -- see discordbot._dm_flaggers.
+                user_id=interaction.user.id,
             )
 
             # Delete the embed message after successful submission
