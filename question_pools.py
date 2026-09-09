@@ -209,7 +209,11 @@ def render_geokraphy(doc):
 QUESTION_POOLS = {
     "sports_logos": {
         "collection": "sports_logos_questions", "id_limit_key": "sports_logos",
-        "adapter": render_sports_logos, "enabled": True, "weight": 1,
+        "adapter": render_sports_logos, "enabled": True, "weight": 0.5,
+        # College (NCAA) and MLS logos turned off entirely; the remaining leagues (NFL, NBA,
+        # MLB, NHL, EPL) are halved via weight -- see pool_leg_sample_size() for why weight
+        # needed a real fix to actually affect a pool already smaller than PER_POOL_SAMPLE_CAP.
+        "extra_match": {"league": {"$nin": ["NCAA", "MLS"]}},
         "variants": {
             "location": {"enabled": True, "weight": 1},  # "Which city/location is this team from?"
             "mascot":   {"enabled": True, "weight": 1},  # "What's this team's mascot/nickname?"
@@ -239,7 +243,7 @@ QUESTION_POOLS = {
     },
     "geokraphy": {
         "collection": "border_questions", "id_limit_key": "geokraphy",
-        "adapter": render_geokraphy, "enabled": True, "weight": 1,
+        "adapter": render_geokraphy, "enabled": True, "weight": 0.5,
         # Confirmed against real staging data: neighbours is empty for ~35% of docs (island
         # nations etc.), flag_url for ~17% -- this guarantees every sampled doc has at least
         # ONE usable image-or-clue source; render_geokraphy still has to dynamically exclude
@@ -279,6 +283,27 @@ _LEGACY_COLLECTION_TO_ID_LIMIT_KEY = {
     "mysterybox_questions": "mysterybox",
     "wof_questions": "wof",
 }
+
+
+async def pool_leg_sample_size(db, pool, pool_match, base_cap=PER_POOL_SAMPLE_CAP):
+    """How many of a pool's own matching documents should enter a $unionWith leg.
+
+    Weight scales relative to the pool's OWN real matched size, not the shared cap. Every
+    minigame pool so far has a real size well under `base_cap` (sports_logos_questions is
+    434 docs against a 2000 cap), so the old `round(base_cap * weight)` formula was a no-op
+    for weight < 1: even a weight of 0.5 still targets 1000, which is still bigger than the
+    whole pool, so the $sample just returns everything regardless -- confirmed while trying
+    to actually halve sports_logos_questions' representation and finding weight had no
+    effect. Counting the real match first fixes that: weight=1 keeps the old cap-only
+    behavior (whole pool enters, up to base_cap), weight=0.5 roughly halves this pool's odds
+    of being the one finally drawn, weight=2 doubles them (still bounded by base_cap so a
+    pool that grows huge can't blow up the union's size).
+    """
+    weight = pool.get("weight", 1)
+    if weight <= 0:
+        return 0
+    match_count = await db[pool["collection"]].count_documents(pool_match)
+    return min(base_cap, round(match_count * weight))
 
 
 def id_limit_key_for_collection(collection_name, default="general"):

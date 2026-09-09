@@ -194,12 +194,15 @@ async def get_trivia_question(db, collections=None):
     }
     for name, pool in enabled_pools.items():
         pool_match = {"_id": {"$nin": list(pool_recent_ids[name])}, **pool.get("extra_match", {})}
+        leg_size = await question_pools.pool_leg_sample_size(db, pool, pool_match, base_cap)
+        if leg_size <= 0:
+            continue
         pipeline.append({
             "$unionWith": {
                 "coll": pool["collection"],
                 "pipeline": [
                     {"$match": pool_match},
-                    {"$sample": {"size": round(base_cap * pool.get("weight", 1))}},
+                    {"$sample": {"size": leg_size}},
                     {"$addFields": {"db": pool["collection"]}},
                 ],
             }

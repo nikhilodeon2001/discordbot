@@ -25860,12 +25860,15 @@ async def select_trivia_questions(questions_per_round):
                 pool_match = {"_id": {"$nin": list(new_pool_recent_ids[pool_name])}, "category": {"$nin": categories_to_exclude}, **pool.get("extra_match", {})}
                 if image_questions == False:
                     pool_match["$or"] = [{"url": {"$not": {"$regex": excluded_url_substring}}}]
+                leg_size = await question_pools.pool_leg_sample_size(db, pool, pool_match, base_cap)
+                if leg_size <= 0:
+                    continue
                 pipeline_trivia.append({
                     "$unionWith": {
                         "coll": pool["collection"],
                         "pipeline": [
                             {"$match": pool_match},
-                            {"$sample": {"size": round(base_cap * pool.get("weight", 1))}},
+                            {"$sample": {"size": leg_size}},
                             {"$addFields": {"db": pool["collection"]}},
                         ],
                     }
