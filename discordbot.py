@@ -80,6 +80,7 @@ import asyncio
 import difflib
 from metaphone import doublemetaphone
 import answer_matching
+import feud_llm_matching
 import gregs_nightmare
 # evaluate_expression/generate_math_puzzle now live in gregs_nightmare.py (that's where every
 # other math-puzzle generator lives, and where the "Missing Signs" Greg's Nightmare category,
@@ -1005,6 +1006,21 @@ cloak_mode = cloak_mode_default
 cloaked_user = None
 rave_mode_default = False
 rave_mode = rave_mode_default
+
+# --- Feud LLM answer matching ---
+# Feud's board holds survey responses, so players say the same thing in different words
+# ("pop" for "Soda"). Lexical matching structurally cannot bridge that, so Feud grades
+# through a model instead -- see feud_llm_matching.py. Feud-only: no other game's call
+# site changes, and fuzzy_match itself is untouched.
+#
+# Unlike USE_LEGACY_FUZZY_MATCH, this is a live toggle: `!feudmatch off` in the admin
+# channel reverts to today's exact behaviour without a deploy. Hydrated at startup from
+# parameters_discord so it survives dyno restarts (see load_feud_match_setting).
+# Deliberately has NO player-facing surface -- no round-option keyword, no companion
+# legend row, no announcement.
+feud_llm_matching_default = True
+feud_llm_matching_enabled = feud_llm_matching_default
+_feud_grade_cache = feud_llm_matching.FeudGradeCache()
 
 # Glyph mapping: ASCII letters -> Unicode lookalikes (reverse of CONFUSABLES_MAP in trivia_monitor.py)
 # Used to make questions harder to Google search by replacing normal letters with lookalikes
@@ -15780,6 +15796,61 @@ async def ask_movie_scenes_challenge(winner, winner_id, num=5):
 
 
 
+async def _feud_wait_for_guess(check, timeout, target_channel, allowed_ids,
+                               reveal_answer, board_full):
+    """wait_for_message_or_companion, but also wakes as soon as the board is full.
+
+    Grading now happens in background tasks, so the board can be completed while this
+    coroutine is parked waiting for the next message. Without this race the round would
+    sit there until the 20s window expired, leaving dead air after the last answer landed.
+
+    Returns None if the board filled first, otherwise the message. Raises
+    asyncio.TimeoutError exactly like the plain call, so the caller's existing handler
+    still ends the round on time.
+    """
+    wait_task = asyncio.ensure_future(companion_bridge.wait_for_message_or_companion(
+        check, timeout, target_channel, allowed_ids, kind="mini_game_answer",
+        reveal_answer=reveal_answer))
+    full_task = asyncio.ensure_future(board_full.wait())
+    try:
+        done, pending = await asyncio.wait({wait_task, full_task},
+                                           return_when=asyncio.FIRST_COMPLETED)
+    except BaseException:
+        wait_task.cancel()
+        full_task.cancel()
+        raise
+    for task in pending:
+        task.cancel()   # wait_for_message_or_companion clears its prompt in a finally
+    if wait_task in done:
+        return wait_task.result()   # re-raises TimeoutError on expiry, as before
+    return None
+
+
+async def _feud_react_ok(response):
+    """Best-effort ✅. Grading runs in a task now, so a failure here (deleted message,
+    ghost mode, a CompanionMessage's webhook echo) must not surface as an unhandled
+    task exception."""
+    try:
+        await response.add_reaction("✅")
+    except Exception as e:
+        print(f"⚠️ feud: could not react to a correct guess: {e}")
+
+
+async def _feud_log_decision(record):
+    """Fire-and-forget decision log for feud_match_log.
+
+    Records the model's verdict alongside what the pre-LLM matcher would have said, so
+    scripts/feud_match_report.py can surface the disagreements. Logging must never affect
+    the game, so every failure is swallowed after being reported to Sentry.
+    """
+    try:
+        record["ts"] = datetime.datetime.utcnow()
+        await db.feud_match_log.insert_one(record)
+    except Exception as e:
+        sentry_sdk.capture_exception(e)
+        print(f"⚠️ feud: decision log write failed: {e}")
+
+
 async def ask_feud_question(winner, mode, winner_id):
 
     feud_gifs = [
@@ -15895,39 +15966,181 @@ async def ask_feud_question(winner, mode, winner_id):
         feud_allowed_ids = {winner_id} if mode == "solo" else None
         feud_reveal_answer = True
 
+        # Poindexter demands exact answers, so it forces the pre-LLM path. Resolved once
+        # per round, not per guess, so a mid-round toggle can't split a single round's
+        # grading between two engines.
+        use_llm = feud_llm_matching_enabled and not exact_mode
+
+        # Grading runs OFF the message-listening path. wait_for_message_or_companion
+        # registers a fresh one-shot listener per call and cancels it on return, so any
+        # message arriving while we're not parked in that await is lost. Today the gap is
+        # a microsecond of string matching; a ~1s API round-trip inline would blow it wide
+        # open in cooperative mode, where the whole channel types at once -- and it would
+        # also shorten the round, since end_time is fixed before the loop. So LLM grading
+        # is dispatched as a task and we go straight back to listening. pending_grades is
+        # drained before the board is revealed so nothing is lost at the buzzer.
+        pending_grades = set()
+        board_full = asyncio.Event()
+
+        def credit(answer, response):
+            """Award one board slot. Returns False if it was already claimed -- which is
+            the guard for two in-flight grades landing on the same answer."""
+            nonlocal correct_guesses
+            if answer in user_progress:
+                return False
+            user_progress.append(answer)
+            correct_guesses += 1
+            user_correct_answers.setdefault(
+                response.author.id,
+                {"name": response.author.display_name, "count": 0})
+            user_correct_answers[response.author.id]["count"] += 1
+            if len(user_progress) == num_answers:
+                board_full.set()
+            return True
+
+        def legacy_verdict(guess, answers):
+            """What the pre-LLM matcher would say. Also used for the decision log."""
+            for answer in answers:
+                if fuzzy_match(guess, answer, "", ""):
+                    return answer
+            return None
+
+        async def grade_with_llm(response, guess, open_answers):
+            """Ask the model which open slot this guess means, then award credit.
+
+            Must never raise: ask_feud_question wraps its whole round loop in
+            `except asyncio.TimeoutError`, so an escaping timeout would silently end the
+            round early rather than skipping one guess.
+            """
+            cache_key = (feud_question_id, feud_llm_matching.normalize_guess(guess))
+            usage = {}
+            fell_back = False
+
+            entry = _feud_grade_cache.get(cache_key)
+            if entry is not feud_llm_matching.MISS:
+                # Either a settled verdict, or an identical guess already in flight --
+                # ten people typing "pop" at once share one call.
+                try:
+                    answer = await entry if isinstance(entry, asyncio.Future) else entry
+                except Exception:
+                    return
+                if answer and credit(answer, response):
+                    await _feud_react_ok(response)
+                return
+
+            future = asyncio.get_event_loop().create_future()
+            _feud_grade_cache.put(cache_key, future)
+            answer = None
+            try:
+                try:
+                    answer = await feud_llm_matching.grade_guess(
+                        openai_client, feud_prompt, open_answers, guess, usage_sink=usage)
+                except feud_llm_matching.FeudGradeError as e:
+                    # The API broke; that must not read as "wrong answer". Fall back to
+                    # the pre-LLM matcher and drop the cache entry so the next guess
+                    # retries rather than inheriting a degraded verdict.
+                    sentry_sdk.capture_exception(e)
+                    print(f"⚠️ feud: LLM grading failed ({e}); falling back to fuzzy_match")
+                    answer, fell_back = legacy_verdict(guess, open_answers), True
+                    _feud_grade_cache.discard(cache_key)
+                except Exception as e:
+                    sentry_sdk.capture_exception(e)
+                    print(f"⚠️ feud: unexpected grading error ({e}); falling back")
+                    answer, fell_back = legacy_verdict(guess, open_answers), True
+                    _feud_grade_cache.discard(cache_key)
+                else:
+                    _feud_grade_cache.put(cache_key, answer)
+            finally:
+                # Guaranteed, even on cancellation: another guess with the same text may
+                # be awaiting this future, and an unresolved one would hang the
+                # end-of-round drain.
+                if not future.done():
+                    future.set_result(answer)
+                # If the placeholder future is still what's cached, nothing above replaced
+                # or removed it -- i.e. we were cancelled. Drop it, or every later repeat
+                # of this guess would inherit a verdict we never actually got.
+                if _feud_grade_cache.get(cache_key) is future:
+                    _feud_grade_cache.discard(cache_key)
+
+            if answer and credit(answer, response):
+                await _feud_react_ok(response)
+
+            if not fell_back:
+                legacy_answer = legacy_verdict(guess, open_answers)
+                await _feud_log_decision({
+                    "question_id": feud_question_id,
+                    "question": feud_prompt,
+                    "guess": guess,
+                    "board": list(feud_answers),
+                    "open_answers": list(open_answers),
+                    "llm_answer": answer,
+                    "legacy_answer": legacy_answer,
+                    "agreed": answer == legacy_answer,
+                    "mode": mode,
+                    **usage,
+                })
+
         try:
             end_time = asyncio.get_event_loop().time() + guess_time
 
-            while asyncio.get_event_loop().time() < end_time and not answered_correctly:
+            while asyncio.get_event_loop().time() < end_time and not board_full.is_set():
                 timeout = end_time - asyncio.get_event_loop().time()
 
-                response = await companion_bridge.wait_for_message_or_companion(
-                    check, timeout, target_channel, feud_allowed_ids, kind="mini_game_answer",
-                    reveal_answer=feud_reveal_answer
-                )
+                response = await _feud_wait_for_guess(
+                    check, timeout, target_channel, feud_allowed_ids,
+                    feud_reveal_answer, board_full)
+                if response is None:
+                    break   # board completed by an in-flight grade
 
-                matched_any = False
-                for answer in feud_answers:
-                    if answer in user_progress:
-                        continue
+                open_answers = [a for a in feud_answers if a not in user_progress]
+                if not open_answers:
+                    break
 
-                    if fuzzy_match(response.content, answer, "", ""):
-                        user_progress.append(answer)
-                        correct_guesses += 1
-                        matched_any = True
+                if not use_llm:
+                    # Pre-LLM behaviour, preserved exactly: raw content, every open
+                    # answer tested, one guess may claim more than one slot.
+                    matched_any = False
+                    for answer in open_answers:
+                        if fuzzy_match(response.content, answer, "", ""):
+                            matched_any = credit(answer, response) or matched_any
+                    if matched_any:
+                        await response.add_reaction("✅")
+                    continue
 
-                        user_correct_answers.setdefault(response.author.id, {"name": response.author.display_name, "count": 0})
-                        user_correct_answers[response.author.id]["count"] += 1
+                guess = (response.content or "").strip()
+                if not guess:
+                    continue
 
-                        if len(user_progress) == num_answers:
-                            answered_correctly = True
+                # Free, instant, high-precision first pass. Deliberately
+                # answer_matching.BALANCED rather than fuzzy_match: the live matcher is
+                # legacy_fuzzy_match (USE_LEGACY_FUZZY_MATCH is True), whose first-5-char,
+                # unguarded-substring and character-set-Jaccard rules produce false
+                # positives -- and on a Feud board a false positive burns a slot the team
+                # can never get back. Anything this doesn't settle goes to the model.
+                fast_hit = next(
+                    (a for a in open_answers
+                     if answer_matching.match_answer(
+                         guess, a, config=answer_matching.BALANCED)),
+                    None)
+                if fast_hit is not None:
+                    if credit(fast_hit, response):
+                        await response.add_reaction("✅")
+                    continue
 
-                if matched_any:
-                    await response.add_reaction("✅")
+                task = asyncio.ensure_future(
+                    grade_with_llm(response, guess, open_answers))
+                pending_grades.add(task)
+                task.add_done_callback(pending_grades.discard)
 
         except asyncio.TimeoutError:
             pass
 
+        # Let in-flight grades land before the board is shown, so a guess made in the
+        # final second still counts.
+        if pending_grades:
+            await asyncio.gather(*list(pending_grades), return_exceptions=True)
+
+        answered_correctly = board_full.is_set()
         xs += 1
         
         await safe_send(channel, content="\u200b\n🎤📊 **Survey says...**\n\u200b")
@@ -18682,6 +18895,59 @@ async def get_int_param(db, param_id, default_value):
     except Exception as e:
         sentry_sdk.capture_exception(e)
         return default_value
+
+
+async def load_feud_match_setting():
+    """Hydrate the Feud LLM-matching toggle from Mongo at startup.
+
+    Stored un-prefixed (not `round_*`) on purpose: round options reset every round, and
+    this must persist across rounds and dyno restarts until someone deliberately flips it.
+    """
+    global feud_llm_matching_enabled
+    feud_llm_matching_enabled = bool(await get_int_param(
+        db, "feud_llm_matching", int(feud_llm_matching_default)))
+    print(f"🧠 Feud LLM matching: {'on' if feud_llm_matching_enabled else 'off'} "
+          f"({feud_llm_matching.FEUD_MATCH_MODEL})")
+
+
+async def handle_feud_match_command(message: discord.Message) -> bool:
+    """Owner-only `!feudmatch [on|off|status]` for the admin channel. Returns True if the
+    message was a recognized command (caller should stop further on_message processing).
+
+    This is the live revert path for Feud grading: `off` restores the exact pre-LLM
+    behaviour instantly, with no deploy.
+    """
+    global feud_llm_matching_enabled
+    parts = message.content.strip().lower().split()
+    if not parts or parts[0] != "!feudmatch":
+        return False
+
+    arg = parts[1] if len(parts) > 1 else "status"
+
+    if arg in ("on", "off"):
+        feud_llm_matching_enabled = (arg == "on")
+        try:
+            await db.parameters_discord.update_one(
+                {"_id": "feud_llm_matching"},
+                {"$set": {"value": int(feud_llm_matching_enabled)}},
+                upsert=True,
+            )
+        except Exception as e:
+            sentry_sdk.capture_exception(e)
+            await safe_send(message.channel,
+                            content=f"⚠️ Set in memory but failed to persist: {e}")
+            return True
+    elif arg != "status":
+        await safe_send(message.channel, content="Usage: `!feudmatch [on|off|status]`")
+        return True
+
+    if feud_llm_matching_enabled:
+        state = (f"🧠 **on** — Feud grades via {feud_llm_matching.FEUD_MATCH_MODEL} "
+                 f"(falls back to fuzzy_match on error)")
+    else:
+        state = "📖 **off** — Feud grades via fuzzy_match only (pre-LLM behaviour)"
+    await safe_send(message.channel, content=f"Feud answer matching: {state}")
+    return True
 
 
 async def save_round_options_to_db():
@@ -27625,6 +27891,10 @@ async def on_message(message):
         if await handle_intro_image_admin_command(message):
             return
 
+    if message.channel.id == ADMIN_CHANNEL_ID and message.author.id == okrag_id:
+        if await handle_feud_match_command(message):
+            return
+
     if "okra" in message.content.strip().lower() and emoji_mode == True and message.author.id != get_bot().user.id:
         if emoji_mode == True:
             await message.add_reaction("🥒")
@@ -31869,6 +32139,7 @@ async def on_ready():
     db =  await connect_to_mongodb()
     await load_parameters()
     await load_round_options_from_db()
+    await load_feud_match_setting()
 
     try:
         doc = await db.parameters_discord.find_one({"_id": "had_active_players_before_restart"})
