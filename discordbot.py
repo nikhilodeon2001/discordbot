@@ -21514,7 +21514,12 @@ async def ask_wof_number(winner, winner_id, cached_coffees=None, menu_text=None,
         "99": "CHAOS"
     }
     multiplayer_required = {"40", "47", "49"}  # OkRACE, Okra Says, Valedictorian -- these auto-win/abort instead of really playing with 1 player
-    all_options = {str(i) for i in range(52)} | {"00", "x", "99", "67"}
+    # range(53): 0-52 inclusive -- covers every named minigame number up through 52
+    # (Where's Okra). A bare range(N) is the count of named numbers, not the highest
+    # one, so this needs re-checking against `unlocks` whenever a new number is added
+    # above -- it silently rejects anything past its bound with a bare X reaction,
+    # never reaching the dispatch chain below.
+    all_options = {str(i) for i in range(53)} | {"00", "x", "99", "67"}
 
     # The ~46 minigames (5-50) aren't offered via button/select at all -- 51+ choices would
     # need the group->item cascade from build_option_select_view's `groups`, and a 2-page
@@ -21560,7 +21565,9 @@ async def ask_wof_number(winner, winner_id, cached_coffees=None, menu_text=None,
             if content == "00":
                 await message.add_reaction("\U0001f44d")
                 set_a = [str(i) for i in range(5)]
-                set_b = [str(i) for i in range(5, 52)] + ["67"]
+                # range(5, 53): 5-52 inclusive -- same off-by-one hazard as
+                # all_options above, kept in sync with it by hand.
+                set_b = [str(i) for i in range(5, 53)] + ["67"]
                 if len(round_responders) < 2:
                     set_b = [g for g in set_b if g not in multiplayer_required]
                 set_b = [g for g in set_b if g not in RANDOM_EXCLUDED_NUMBERS]
