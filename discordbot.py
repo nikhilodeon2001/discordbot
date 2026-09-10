@@ -21207,7 +21207,7 @@ async def select_wof_questions(winner, winner_id, winner_coffees=None):
             return None
 
         elif selected_wof_category == "52":
-            await ask_wheres_okra_challenge(winner, winner_id, 3)
+            await ask_wheres_okra_challenge(winner, winner_id, 1)
             await asyncio.sleep(3)
             return None
 
