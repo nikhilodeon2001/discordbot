@@ -83,6 +83,7 @@ The core loop runs trivia, Jeopardy, and crossword questions in a dedicated chan
 | `jocktalk` | Sports | Sports logo identification |
 | `30for30` | Speed | 30-question rapid-fire rounds |
 | `okrasays` | Interactive | Simon Says variant |
+| `where's okra` | Image | Hidden-object puzzle — find the okra chef hidden in a crowded AI-generated scene |
 | `random` | Meta | Randomly picks any game |
 | `chaos` | Meta | Different random game each round |
 
