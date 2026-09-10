@@ -476,6 +476,18 @@ var FLAG_REASONS = [
   ['too_niche', 'Too Niche'], ['other', 'Other'],
 ];
 
+// Boot watchdog. Nothing on the startup path has a timeout: the vendored SDK's ready() and
+// authorize() wait on an RPC handshake that simply never settles if the Discord client never
+// answers (empty/wrong CLIENT_ID, stale URL Mapping), and boot()'s fetch has no AbortController.
+// Without this, any such failure looks identical to a healthy page that is still loading -- the
+// server-rendered "Loading..." above just stays up forever with nothing in the UI to explain it.
+// Started at parse time so it also covers a boot() that throws before its own try/catch.
+var bootTimer = setTimeout(function () {
+  var el = document.getElementById('app');
+  if (el) el.innerHTML = '<div class="idle bad">Activity didn\\'t start. Close and reopen it.</div>';
+}, 15000);
+function clearBootTimer() { if (bootTimer) { clearTimeout(bootTimer); bootTimer = null; } }
+
 function esc(s) { return String(s).replace(/[&<>"']/g, function (c) {
   return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
 
@@ -729,11 +741,13 @@ async function submitFlag() {
 }
 
 function renderLoggedOut() {
+  clearBootTimer();
   document.getElementById('app').innerHTML =
     '<div class="idle"><span class="big">Not signed in</span>Close and reopen the activity to sign in again.</div>';
 }
 
 function render(state) {
+  clearBootTimer();
   const app = document.getElementById('app');
   lastState = state;
   if (state.authenticated === false) { renderLoggedOut(); return; }
@@ -905,9 +919,10 @@ async function boot() {
     });
     const tokenJson = await tokenResp.json();
     if (!tokenJson.ok) {
+      clearBootTimer();
       document.getElementById('app').innerHTML = tokenJson.reason === 'not_a_member'
         ? '<div class="idle"><span class="big">Join the server to play</span>' +
-          '<a class="login" href="' + esc(tokenJson.invite || '#') + '" target="_blank">Join Okra's World</a></div>'
+          '<a class="login" href="' + esc(tokenJson.invite || '#') + '" target="_blank">Join Okra\\'s World</a></div>'
         : '<div class="idle bad">Could not sign in (' + esc(tokenJson.reason || 'error') + ').</div>';
       return;
     }
@@ -915,6 +930,7 @@ async function boot() {
     TOKEN = tokenJson.session;
     loadCurrent();
   } catch (e) {
+    clearBootTimer();
     document.getElementById('app').innerHTML = '<div class="idle bad">Activity failed to start. Reopen it to retry.</div>';
   }
 }
