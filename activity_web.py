@@ -398,6 +398,13 @@ _ACTIVITY_HTML = """<!doctype html>
   .q { font-size:1.2rem; font-weight:650; line-height:1.34; margin-bottom:18px; letter-spacing:-.01em; }
   .qimage { display:block; width:100%; max-height:38vh; object-fit:contain; border-radius:12px;
     margin:0 0 16px; background:rgba(127,127,127,.06); }
+  .spotwrap { position:relative; margin:0 0 12px; touch-action:manipulation; }
+  .spotimg { display:block; width:100%; border-radius:12px; cursor:crosshair;
+    background:rgba(127,127,127,.06); }
+  .spotmark { position:absolute; width:26px; height:26px; margin:-13px 0 0 -13px;
+    border:3px solid var(--red); border-radius:50%; pointer-events:none;
+    box-shadow:0 0 0 2px rgba(0,0,0,.45); }
+  .spothint { font-size:.86rem; color:var(--muted); margin:0 0 10px; text-align:center; }
   .puzzle { font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:1.3rem;
     letter-spacing:.16em; text-align:center; margin:2px 0 18px; color:var(--fg); overflow-x:auto; }
   input[type=text] { width:100%; padding:15px 16px; font-size:1.05rem; border-radius:14px;
@@ -662,6 +669,37 @@ function submitText() {
   if (inp && inp.value.trim()) submit(inp.value.trim());
 }
 
+// --- Where's Okra tap surface --------------------------------------------------------
+var spotterKey = null;    // image_url of the puzzle currently shown
+var spotterMark = null;   // [x, y] of the last tap, kept across re-renders
+
+function placeSpotterMark(x, y) {
+  const wrap = document.querySelector('.spotwrap');
+  const img = document.querySelector('.spotimg');
+  if (!wrap || !img) return;
+  var mark = wrap.querySelector('.spotmark');
+  if (!mark) { mark = document.createElement('div'); mark.className = 'spotmark'; wrap.appendChild(mark); }
+  mark.style.left = (x * img.clientWidth) + 'px';
+  mark.style.top = (y * img.clientHeight) + 'px';
+}
+
+function spotterTap(img, clientX, clientY) {
+  // getBoundingClientRect, not naturalWidth: the image is scaled to the panel width, and
+  // the server's target box is normalised against the rendered frame either way.
+  const r = img.getBoundingClientRect();
+  if (!r.width || !r.height) return;
+  const x = (clientX - r.left) / r.width;
+  const y = (clientY - r.top) / r.height;
+  if (x < 0 || x > 1 || y < 0 || y > 1) return;
+  spotterMark = [x, y];
+  placeSpotterMark(x, y);
+  // /api/action, NOT /api/answer: a mini-game guess resolves a companion_bridge prompt,
+  // whereas /api/answer appends to the main round's collected_responses and would be
+  // graded against the live trivia question instead of the puzzle.
+  // Deliberately no hot/cold feedback -- the page is never told where the mascot is.
+  submitAction('click:' + x.toFixed(4) + ',' + y.toFixed(4), 'status');
+}
+
 function openFlagModal() {
   if (flagSubmitting || document.getElementById('flagBackdrop')) return;
   const state = lastState || {};
@@ -775,6 +813,21 @@ function render(state) {
       imgHtml(state) +
       resultBanner + answerLine + '<div class="actionrow">' + flagHtml(state) + '</div>' + mine +
       scoreboardHtml(state) + legendHtml(state) + roundHtml(state);
+    if (countdownTimer) { clearInterval(countdownTimer); countdownTimer = null; }
+    return;
+  }
+
+  if (state.spotter && state.image_url) {
+    // Where's Okra. The image carries no grid overlay (that is the chat surface); here the
+    // player taps the mascot directly and the tap's normalised coordinates are graded
+    // server-side. The target box is never sent to this page.
+    if (state.image_url !== spotterKey) { spotterKey = state.image_url; spotterMark = null; }
+    app.innerHTML = '<div class="qhead"><span class="cat">Where\'s Okra</span></div>' +
+      '<div class="spothint">Tap the okra chef. Wrong taps cost you nothing.</div>' +
+      '<div class="spotwrap"><img class="spotimg" src="' + esc(P + state.image_url) +
+      '" alt="Hidden object puzzle"></div>' +
+      '<div id="status" class="status"></div>' + scoreboardHtml(state);
+    if (spotterMark) placeSpotterMark(spotterMark[0], spotterMark[1]);
     if (countdownTimer) { clearInterval(countdownTimer); countdownTimer = null; }
     return;
   }
@@ -950,6 +1003,14 @@ document.addEventListener('click', function (e) {
   else if (action === 'close-flag') closeFlagModal();
   else if (action === 'submit-flag') submitFlag();
   else if (action === 'submit-action-input') submitActionInput();
+});
+
+// The puzzle image needs the click's coordinates, so it can't ride the data-action
+// dispatcher above (which only reports which element was hit). Same delegation trick
+// though: one listener on document, surviving every innerHTML rebuild.
+document.addEventListener('click', function (e) {
+  const img = e.target.closest && e.target.closest('.spotimg');
+  if (img) spotterTap(img, e.clientX, e.clientY);
 });
 
 document.addEventListener('keydown', function (e) {

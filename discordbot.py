@@ -89,6 +89,7 @@ import gregs_nightmare
 # mini-game) doesn't need to change.
 from gregs_nightmare import evaluate_expression, generate_math_puzzle
 import question_pools
+import wheres_okra
 import discord
 from discord.ext import commands
 from discord import app_commands
@@ -155,7 +156,7 @@ s3_client = boto3.client(
 )
 
 # Static game asset files - no longer tracked in git, fetched from S3 on demand
-GAME_ASSET_FILES = ["okra.png", "periodic_table.svg", "wordlist.txt", "4letterwords.csv", "5letterwords.csv"]
+GAME_ASSET_FILES = ["okra.png", "okra_chef.png", "periodic_table.svg", "wordlist.txt", "4letterwords.csv", "5letterwords.csv"]
 GAME_ASSETS_S3_PREFIX = "private_assets/"
 PRIVATE_ASSETS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "private-assets")
 
@@ -730,6 +731,10 @@ museum_backfill_post_times = [
     if value.strip()
 ]
 museum_backfill_task = None
+hidden_okra_topup_enabled = os.getenv("HIDDEN_OKRA_TOPUP_ENABLED", "false").lower() == "true"
+hidden_okra_pool_min = int(os.getenv("HIDDEN_OKRA_POOL_MIN", "12"))
+hidden_okra_topup_batch = int(os.getenv("HIDDEN_OKRA_TOPUP_BATCH", "2"))
+hidden_okra_topup_task = None
 
 
 if prod_or_stage == "stage":
@@ -945,7 +950,7 @@ _flag_locks = {}  # user_id -> asyncio.Lock (rate-limit TOCTOU guard for compani
 _submitter_attribution_cache = OrderedDict()  # (db_name, _id) -> attribution string; bounded LRU
 _SUBMITTER_CACHE_MAX = 256
 
-id_limits = {"general": 5000, "mysterybox": 5000, "crossword": 5000, "jeopardy": 5000, "wof": 5000, "list": 34, "feud": 4948, "posters": 5000, "movie_scenes": 5000, "missing_link": 5000, "people": 2948, "ranker_list": 5000, "animal": 2777, "riddle": 5000, "dictionary": 5000, "flags": 849, "update_blurb": 300, "lyric": 500, "polyglottery": 193, "book": 114, "element": 138, "jigsaw": 5000, "border": 250, "faceoff": 5000, "president": 94, "wordle": 1496, "myopic": 5000, "fusion": 5000, "microscopic": 5000, "chess": 5000, "stock": 854, "currency": 100, "search": 762, "billboard": 51, "soundfx": 5000, "audio_music": 5000, "audio_question": 2000, "sports_logos": 434, "fun_fact": 98, "sat": 5000, "sat_math": 2596, "sat_verbal": 5000, "sat_science": 2461, "sat_grammar": 3040, "sat_english": 1443, "spellingbee_one_bee": 795, "spellingbee_two_bee": 2008, "spellingbee_three_bee": 818, "spellingbee_championship": 60, "okras_anatomy": 246, "geokraphy": 249}
+id_limits = {"general": 5000, "mysterybox": 5000, "crossword": 5000, "jeopardy": 5000, "wof": 5000, "list": 34, "feud": 4948, "posters": 5000, "movie_scenes": 5000, "missing_link": 5000, "people": 2948, "ranker_list": 5000, "animal": 2777, "riddle": 5000, "dictionary": 5000, "flags": 849, "update_blurb": 300, "lyric": 500, "polyglottery": 193, "book": 114, "element": 138, "jigsaw": 5000, "border": 250, "faceoff": 5000, "president": 94, "wordle": 1496, "myopic": 5000, "fusion": 5000, "microscopic": 5000, "chess": 5000, "stock": 854, "currency": 100, "search": 762, "billboard": 51, "soundfx": 5000, "audio_music": 5000, "audio_question": 2000, "sports_logos": 434, "fun_fact": 98, "sat": 5000, "sat_math": 2596, "sat_verbal": 5000, "sat_science": 2461, "sat_grammar": 3040, "sat_english": 1443, "spellingbee_one_bee": 795, "spellingbee_two_bee": 2008, "spellingbee_three_bee": 818, "spellingbee_championship": 60, "okras_anatomy": 246, "geokraphy": 249, "wheres_okra": 500}
 max_retries = 3
 delay_between_retries = 3
 first_place_bonus = 0
@@ -9882,6 +9887,450 @@ async def ask_flags_challenge(winner, winner_id, num=5):
     await asyncio.sleep(3)
 
     return flag_winner_id
+
+
+# --- Where's Okra (hidden-object puzzles) ---------------------------------------------
+# Puzzle generation and grading live in wheres_okra.py; everything here is Discord glue.
+# Puzzles are pre-generated into hidden_okra_puzzles by
+# scripts/generate_hidden_okra_puzzles.py -- never generated inside a round, which would
+# stall it for a minute or more and cost money per play.
+
+WHERES_OKRA_GRID_MARGIN = 52          # gutter for the row/column labels
+WHERES_OKRA_LABEL_BG = (22, 24, 30)
+WHERES_OKRA_LABEL_FG = (238, 240, 245)
+
+
+def _wheres_okra_render(image_bytes, cols, rows, target=None):
+    """Draw the labelled guessing grid over a puzzle, as a PNG buffer.
+
+    Labels live in a gutter added around the image rather than on top of it, so a busy
+    scene never hides the very coordinates players need to type. Grid lines are drawn as a
+    dark stroke under a light one, which stays readable over both a night market and a
+    snowfield without darkening the puzzle enough to hide the mascot.
+
+    When `target` is given the located box is ringed -- that is the post-round reveal, so
+    drawing the answer is the entire point. Nothing here ever runs before the reveal.
+    """
+    base = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+    width, height = base.size
+    margin = WHERES_OKRA_GRID_MARGIN
+
+    canvas = Image.new("RGB", (width + margin, height + margin), WHERES_OKRA_LABEL_BG)
+    canvas.paste(base, (margin, margin))
+
+    overlay = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
+    draw = ImageDraw.Draw(overlay)
+
+    for c in range(1, cols):
+        x = margin + width * c / cols
+        draw.line([(x, margin), (x, margin + height)], fill=(0, 0, 0, 90), width=3)
+        draw.line([(x, margin), (x, margin + height)], fill=(255, 255, 255, 120), width=1)
+    for r in range(1, rows):
+        y = margin + height * r / rows
+        draw.line([(margin, y), (margin + width, y)], fill=(0, 0, 0, 90), width=3)
+        draw.line([(margin, y), (margin + width, y)], fill=(255, 255, 255, 120), width=1)
+
+    box = wheres_okra.normalize_target(target) if target else None
+    if box:
+        x_min, y_min, x_max, y_max = box
+        pad_x = max((x_max - x_min) * 0.6, 0.02)
+        pad_y = max((y_max - y_min) * 0.6, 0.02)
+        ellipse = [
+            margin + max(0.0, x_min - pad_x) * width,
+            margin + max(0.0, y_min - pad_y) * height,
+            margin + min(1.0, x_max + pad_x) * width,
+            margin + min(1.0, y_max + pad_y) * height,
+        ]
+        draw.ellipse(ellipse, outline=(0, 0, 0, 220), width=9)
+        draw.ellipse(ellipse, outline=(255, 64, 64, 255), width=5)
+
+    canvas = Image.alpha_composite(canvas.convert("RGBA"), overlay).convert("RGB")
+
+    label = ImageDraw.Draw(canvas)
+    font = get_font("DejaVuSans.ttf", 22 if max(cols, rows) <= 10 else 18)
+    for c in range(cols):
+        text = wheres_okra.column_label(c)
+        text_w, text_h = _text_size(label, text, font)
+        cx = margin + width * (c + 0.5) / cols
+        label.text((cx - text_w / 2, (margin - text_h) / 2), text,
+                   fill=WHERES_OKRA_LABEL_FG, font=font)
+    for r in range(rows):
+        text = str(r + 1)
+        text_w, text_h = _text_size(label, text, font)
+        cy = margin + height * (r + 0.5) / rows
+        label.text(((margin - text_w) / 2, cy - text_h / 2), text,
+                   fill=WHERES_OKRA_LABEL_FG, font=font)
+
+    buffer = io.BytesIO()
+    canvas.save(buffer, format="PNG")
+    buffer.seek(0)
+    return buffer
+
+
+async def _wheres_okra_react(message, emoji):
+    """Add a reaction, swallowing the usual Discord failures.
+
+    Only ever launched with ensure_future, so an escaping exception would surface as an
+    unretrieved-task warning rather than anything actionable -- and a wrong guess whose
+    message was deleted mid-round is not worth a log line.
+    """
+    try:
+        await message.add_reaction(emoji)
+    except (discord.HTTPException, discord.Forbidden, discord.NotFound):
+        pass
+
+
+def _wheres_okra_fetch(image_url):
+    """Blocking fetch of a puzzle PNG from S3. Always called via run_in_executor."""
+    response = requests.get(image_url, timeout=20)
+    if response.status_code != 200:
+        raise RuntimeError(f"puzzle fetch failed: HTTP {response.status_code}")
+    return response.content
+
+
+async def _wheres_okra_draw_puzzle(difficulty):
+    """Pull one unplayed puzzle for `difficulty`, newest exclusions first.
+
+    Same $nin-recent-ids + $sample shape every other mini-game uses, including the
+    fallback that drops the exclusion when it has emptied the pool -- with a small pool a
+    fresh install would otherwise find nothing on the second play.
+    """
+    recent_ids = await get_recent_question_ids_from_mongo("wheres_okra")
+    collection = db["hidden_okra_puzzles"]
+    match_filter = {"difficulty": difficulty, "_id": {"$nin": list(recent_ids)}}
+    pipeline = [{"$match": match_filter}, {"$sample": {"size": 1}}]
+
+    puzzles = [doc async for doc in collection.aggregate(pipeline)]
+    if not puzzles:
+        puzzles = [doc async for doc in collection.aggregate(
+            [{"$match": {"difficulty": difficulty}}, {"$sample": {"size": 1}}])]
+    if not puzzles:
+        return None
+
+    puzzle = puzzles[0]
+    if puzzle.get("_id"):
+        await store_question_ids_in_mongo([puzzle["_id"]], "wheres_okra")
+    return puzzle
+
+
+async def ask_wheres_okra_challenge(winner, winner_id, num=3):
+    global wf_winner
+    wf_winner = True
+
+    await safe_send(
+        channel,
+        content="​\n​\n\U0001f50d\U0001f952 **Where's Okra**: Find the Chef\n​")
+    await asyncio.sleep(2)
+
+    # --- difficulty pick (round winner only) ------------------------------------------
+    difficulty = "hard"
+    labels = {"easy": "\U0001f7e2 Easy", "medium": "\U0001f7e1 Medium",
+              "hard": "\U0001f7e0 Hard", "brutal": "\U0001f534 Brutal"}
+    button_options = [{"value": name, "label": labels[name]}
+                      for name in wheres_okra.DIFFICULTY_ORDER]
+    view = build_option_button_view(button_options, {winner_id}, timeout=magic_time + 5)
+
+    prompt = (f"​\n\U0001f579️ **<@{winner_id}>**, pick a difficulty:\n\n"
+              f"\U0001f7e2 **Easy** — he's hiding, but not hard.\n"
+              f"\U0001f7e1 **Medium** — smaller, partly covered.\n"
+              f"\U0001f7e0 **Hard** — background-sized and camouflaged.\n"
+              f"\U0001f534 **Brutal** — tiny. Good luck.\n​")
+    view.message = await safe_send(channel, prompt, view=view)
+
+    target_channel = _active_game_channel or channel
+
+    def check_difficulty(m):
+        return (m.author.id == winner_id and m.channel == target_channel
+                and m.author != get_bot().user)
+
+    try:
+        msg = await resolve_input_race(
+            view,
+            companion_bridge.wait_for_message_or_companion(
+                check_difficulty, magic_time + 5, target_channel, {winner_id},
+                kind="mini_game_answer", options=button_options),
+        )
+        picked = msg.content.strip().lower()
+        for name in wheres_okra.DIFFICULTY_ORDER:
+            if picked == name or picked == name[0]:
+                difficulty = name
+                break
+    except asyncio.TimeoutError:
+        pass
+
+    spec = wheres_okra.DIFFICULTIES[difficulty]
+    cols, rows = spec["grid"]
+    guess_time = spec["guess_time"]
+
+    await safe_send(channel,
+                    f"​\n\U0001f4a5 **{difficulty.upper()}** it is.\n​")
+    await asyncio.sleep(2)
+
+    if num > 1:
+        await safe_send(channel, f"​\n5️⃣\U0001f947 Best of **{num}**...\n​")
+        await asyncio.sleep(3)
+
+    user_correct_answers = {}
+    sorted_users = []
+    loop = asyncio.get_running_loop()
+
+    round_num = 1
+    while round_num <= num:
+        try:
+            puzzle = await _wheres_okra_draw_puzzle(difficulty)
+        except Exception as e:
+            sentry_sdk.capture_exception(e)
+            print(f"Error selecting Where's Okra puzzle:\n{traceback.format_exc()}")
+            return None
+
+        if not puzzle:
+            await safe_send(
+                channel,
+                f"​\n⚠️ No **{difficulty}** puzzles are seeded yet.\n\n"
+                f"Run `scripts/generate_hidden_okra_puzzles.py` to fill the pool.\n​")
+            return None
+
+        target = puzzle["target"]
+
+        try:
+            image_bytes = await loop.run_in_executor(
+                None, _wheres_okra_fetch, puzzle["image_url"])
+            buffer = await loop.run_in_executor(
+                None, _wheres_okra_render, image_bytes, cols, rows, None)
+        except Exception as e:
+            sentry_sdk.capture_exception(e)
+            print(f"Error rendering Where's Okra puzzle:\n{traceback.format_exc()}")
+            await safe_send(channel, "​\n⚠️ That puzzle wouldn't load. Skipping it.\n​")
+            round_num += 1
+            continue
+
+        embed = discord.Embed()
+        embed.set_image(url="attachment://wheres_okra.png")
+        await safe_send(
+            channel,
+            content=(f"​\n\U0001f50d **Round {round_num}**: find the okra chef!\n\n"
+                     f"\U0001f5fa️ Type a grid square like **{wheres_okra.column_label(cols // 2)}{rows // 2}** "
+                     f"— first one on him wins.\n"
+                     f"⏱️ You have **{guess_time}** seconds.\n​"),
+            embed=embed,
+            file=discord.File(buffer, filename="wheres_okra.png"))
+
+        start_time = asyncio.get_event_loop().time()
+        found_by = None          # id of whoever found him, or None -- never a loop leftover
+        processed = set()
+
+        def check(m):
+            return m.channel == target_channel and m.author != get_bot().user
+
+        while asyncio.get_event_loop().time() - start_time < guess_time and found_by is None:
+            try:
+                remaining = guess_time - (asyncio.get_event_loop().time() - start_time)
+                message = await companion_bridge.wait_for_message_or_companion(
+                    check, remaining, target_channel, None,
+                    kind="wheres_okra_click", reveal_answer=False,
+                    # The Activity gets the raw S3 image (no grid burned in) so a tap's
+                    # normalised coordinates are relative to the same frame the stored
+                    # target box was measured against. `target` is deliberately NOT here.
+                    extra={"spotter": True, "image_url": puzzle["image_url"],
+                           "cols": cols, "rows": rows})
+            except asyncio.TimeoutError:
+                break
+
+            content = message.content.strip()
+            user_id = message.author.id
+
+            # A tap carries far finer coordinates than the grid allows, so it counts only
+            # from the Activity/companion (a CompanionMessage). Accepting "click:x,y"
+            # typed into chat would let anyone sweep the image and brute-force the target.
+            allow_click = isinstance(message, companion_bridge.CompanionMessage)
+            kind, correct = wheres_okra.grade_submission(
+                content, target, cols, rows, allow_click=allow_click)
+
+            if kind is None:
+                continue  # ordinary chat in an open-floor channel, not a guess
+
+            key = (user_id, content.lower())
+            if key in processed:
+                continue
+            processed.add(key)
+
+            if correct:
+                found_by = user_id
+                await message.add_reaction("✅")
+                name = message.author.display_name
+                if user_id not in user_correct_answers:
+                    user_correct_answers[user_id] = (name, 0)
+                user_correct_answers[user_id] = (name, user_correct_answers[user_id][1] + 1)
+            else:
+                # Fire-and-forget: awaiting here would unpark the guess loop, and any
+                # message arriving while it is not parked in wait_for_message_or_companion
+                # is dropped outright (see the note on that function).
+                asyncio.ensure_future(_wheres_okra_react(message, "❌"))
+
+        try:
+            reveal = await loop.run_in_executor(
+                None, _wheres_okra_render, image_bytes, cols, rows, target)
+            reveal_embed = discord.Embed()
+            reveal_embed.set_image(url="attachment://wheres_okra_reveal.png")
+            cell = wheres_okra.target_grid_label(target, cols, rows)
+            if found_by is not None:
+                header = (f"​\n✅\U0001f389 **<@{found_by}>** found him in **{cell}**!\n​")
+            else:
+                header = (f"​\n❌\U0001f622 Nobody found him.\n\n"
+                          f"He was in **{cell}** the whole time.\n​")
+            await safe_send(channel, content=header, embed=reveal_embed,
+                            file=discord.File(reveal, filename="wheres_okra_reveal.png"))
+        except Exception as e:
+            sentry_sdk.capture_exception(e)
+            print(f"Error revealing Where's Okra puzzle:\n{traceback.format_exc()}")
+
+        await asyncio.sleep(1)
+        round_num += 1
+
+        sorted_users = sorted(user_correct_answers.items(),
+                              key=lambda x: x[1][1], reverse=True)
+
+        if num == 1:
+            if sorted_users:
+                top_score = sorted_users[0][1][1]
+                top_winners = [uid for uid, (name, score) in sorted_users
+                               if score == top_score]
+                return top_winners[0] if len(top_winners) == 1 else None
+            return None
+
+        standings = ""
+        if sorted_users:
+            standings += ("​\n\U0001f3c1\U0001f3c6 Final Standings\n​"
+                          if round_num > num
+                          else "​\n\U0001f4ca\U0001f3c6 Current Standings\n​")
+            for counter, (uid, (name, score)) in enumerate(sorted_users, start=1):
+                standings += f"{counter}. **{name}**: {score}\n"
+            standings += "​"
+        if standings:
+            await safe_send(channel, standings)
+
+        await asyncio.sleep(3)
+
+    await asyncio.sleep(2)
+    okra_winner_id = None
+    if sorted_users:
+        top_score = sorted_users[0][1][1]
+        top_winners = [(uid, name) for uid, (name, score) in sorted_users
+                       if score == top_score]
+        if len(top_winners) == 1:
+            okra_winner_id, winner_name = top_winners[0]
+            message = f"​\n\U0001f389\U0001f947 The winner is **{winner_name}**!\n​"
+        else:
+            message = "​\n\U0001f91d It's a tie! **Winners:**\n​"
+            for uid, name in top_winners:
+                message += f"• **{name}** ({top_score} pts)\n"
+            message += "​"
+    else:
+        message = ("​\n\U0001f44e\U0001f622 **Nobody found him once.** "
+                   "He's still out there.\n​")
+
+    await safe_send(channel, message)
+    wf_winner = True
+    await asyncio.sleep(3)
+    return okra_winner_id
+
+
+async def _wheres_okra_topup_once():
+    """Top the Where's Okra pool back up to hidden_okra_pool_min for whichever difficulty is
+    shortest. Returns how many puzzles were added.
+
+    Never called from inside a round: generation takes 30-90s per puzzle and would stall the
+    game. The pool is normally filled ahead of time by
+    scripts/generate_hidden_okra_puzzles.py; this loop only exists so a server that plays
+    the game heavily doesn't quietly run dry between manual runs.
+    """
+    if anthropic_client is None:
+        return 0
+    collection = db["hidden_okra_puzzles"]
+    counts = {}
+    for name in wheres_okra.DIFFICULTY_ORDER:
+        counts[name] = await collection.count_documents({"difficulty": name})
+
+    shortest = min(counts, key=lambda name: counts[name])
+    if counts[shortest] >= hidden_okra_pool_min:
+        return 0
+
+    mascot = private_asset_path("okra_chef.png")
+    if not os.path.exists(mascot):
+        print("⚠️ Where's Okra top-up: okra_chef.png is not available locally")
+        return 0
+    with open(mascot, "rb") as handle:
+        mascot_bytes = handle.read()
+
+    async def edit_fn(reference_bytes, prompt):
+        return await _edit_image_bytes(reference_bytes, prompt, "openai",
+                                       wheres_okra.IMAGE_MODEL, wheres_okra.IMAGE_QUALITY)
+
+    async def generate_fn(prompt):
+        return await _generate_image_bytes(prompt, "openai", wheres_okra.IMAGE_MODEL,
+                                           wheres_okra.IMAGE_QUALITY)
+
+    rng = wheres_okra.make_rng()
+    added = 0
+    for _ in range(hidden_okra_topup_batch):
+        theme = wheres_okra.pick_theme(rng)
+        region = wheres_okra.pick_region(rng)
+        try:
+            image_bytes, result, meta = await wheres_okra.build_validated_puzzle(
+                edit_fn=edit_fn, generate_fn=generate_fn, vision_client=anthropic_client,
+                mascot_bytes=mascot_bytes, theme=theme, difficulty=shortest, region=region)
+        except wheres_okra.PuzzleGenerationError as e:
+            print(f"⚠️ Where's Okra top-up ({shortest}): {e}")
+            continue
+
+        puzzle_id = str(uuid.uuid4())
+        s3_key = f"hidden_okra/{shortest}/{puzzle_id}.png"
+        session = aioboto3.Session()
+        async with session.client("s3") as s3c:
+            await s3c.put_object(Bucket=S3_BUCKET_NAME, Key=s3_key, Body=image_bytes,
+                                 ContentType="image/png")
+        box = wheres_okra.normalize_target(result.target)
+        await db["hidden_okra_puzzles"].insert_one({
+            "_id": puzzle_id,
+            "image_url": f"https://{S3_BUCKET_NAME}.s3.us-east-2.amazonaws.com/{s3_key}",
+            "s3_key": s3_key,
+            "difficulty": shortest,
+            "theme": theme,
+            "region": region,
+            "target": {"xMin": box[0], "yMin": box[1], "xMax": box[2], "yMax": box[3]},
+            "confidence": result.confidence,
+            "visibility": result.visibility,
+            "too_obvious": result.too_obvious,
+            "malformed": result.malformed,
+            "area": wheres_okra.bbox_area(box),
+            "generated_at": datetime.datetime.utcnow(),
+            "attempts": meta["attempts"],
+            "used_reference": meta["used_reference"],
+            "image_model": meta["image_model"],
+            "image_quality": meta["image_quality"],
+            "vision_model": meta["vision_model"],
+            "verify_model": meta["verify_model"],
+            "verify_confidence": meta["verify_confidence"],
+            "prompt": meta["prompt"],
+            "source": "topup",
+        })
+        added += 1
+        print(f"🔍 Where's Okra top-up: added a {shortest} puzzle ({puzzle_id})")
+    return added
+
+
+async def run_wheres_okra_topup_loop():
+    """Hourly check. Deliberately slow and small-batched: each puzzle is a paid image
+    generation plus two vision calls, so a tight loop here is a way to spend real money by
+    accident."""
+    await asyncio.sleep(300)  # let startup settle before spending anything
+    while True:
+        try:
+            await _wheres_okra_topup_once()
+        except Exception as e:
+            sentry_sdk.capture_exception(e)
+            print(f"⚠️ Where's Okra top-up loop: {e}")
+        await asyncio.sleep(3600)
 
 
 async def ask_chaos_challenge(winner, winner_id, num_of_games):
@@ -20428,7 +20877,7 @@ async def select_wof_questions(winner, winner_id, winner_coffees=None):
         counter = counter + 1
         message += f"{counter}.\u200b 📖🎲 Thesaurus Roulette\n"
         counter = counter + 1
-        message += f"{counter}.\u200b 🌍❔ Where's Okra?\n"
+        message += f"{counter}.\u200b 🌎🕵️ Okra San Diego\n"
         counter = counter + 1
         message += f"{counter}.\u200b ⚔️🧍 FeUd (Single Player)\n"
         counter = counter + 1
@@ -20515,6 +20964,8 @@ async def select_wof_questions(winner, winner_id, winner_coffees=None):
         message += f"{counter}.\u200b 🐝🔤 Buzz Words 🎧\n"
         counter = counter + 1
         message += f"{counter}.\u200b 🫘🔬 Okra's Anatomy\n"
+        counter = counter + 1
+        message += f"{counter}.\u200b 🔍🥒 Where's Okra\n"
         message += f"67.\u200b 😱🔢 Greg's Nightmare\n"
         message += f"99.\u200b 🌀🤯 CHAOS\n"
         
@@ -20752,6 +21203,11 @@ async def select_wof_questions(winner, winner_id, winner_coffees=None):
 
         elif selected_wof_category == "51":
             await ask_okras_anatomy_challenge(winner, winner_id, 7)
+            await asyncio.sleep(3)
+            return None
+
+        elif selected_wof_category == "52":
+            await ask_wheres_okra_challenge(winner, winner_id, 3)
             await asyncio.sleep(3)
             return None
 
@@ -21009,7 +21465,7 @@ async def ask_wof_number(winner, winner_id, cached_coffees=None, menu_text=None,
         "5": "Wikipedia Roulette",
         "6": "Dictionary Roulette",
         "7": "Thesaurus Roulette",
-        "8": "Where\'s Okra?",
+        "8": "Okra San Diego",
         "9": "FeUd (Single Player)",
         "10": "FeUd Blitz",
         "11": "List Battle",
@@ -21053,6 +21509,7 @@ async def ask_wof_number(winner, winner_id, cached_coffees=None, menu_text=None,
         "49": "Valedictorian",
         "50": "Buzz Words",
         "51": "Okra's Anatomy",
+        "52": "Where's Okra",
         "67": "Greg's Nightmare",
         "99": "CHAOS"
     }
@@ -28091,7 +28548,7 @@ def get_minigame_name(number):
         "5": "Wikipedia Roulette",
         "6": "Dictionary Roulette",
         "7": "Thesaurus Roulette",
-        "8": "Where's Okra?",
+        "8": "Okra San Diego",
         "9": "FeUd (Single Player)",
         "10": "FeUd Blitz",
         "11": "List Battle",
@@ -28135,6 +28592,7 @@ def get_minigame_name(number):
         "49": "Valedictorian",
         "50": "Buzz Words",
         "51": "Okra's Anatomy",
+        "52": "Where's Okra",
         "67": "Greg's Nightmare",
         "99": "CHAOS",
         "x": "Skip Mini Game"
@@ -28149,7 +28607,7 @@ def get_minigame_emoji(number):
         "5": "\U0001f30e",  # 🌐 Wikipedia Roulette
         "6": "\U0001f4d6",  # 📖 Dictionary Roulette
         "7": "\U0001f4da",  # 📚 Thesaurus Roulette
-        "8": "\U0001f952",  # 🥒 Where's Okra?
+        "8": "\U0001f30e",  # 🌎 Okra San Diego
         "9": "\U0001f399️",  # 🎙️ FeUd (Single Player)
         "10": "⚡",  # ⚡ FeUd Blitz
         "11": "\U0001f4cb",  # 📋 List Battle
@@ -28193,6 +28651,7 @@ def get_minigame_emoji(number):
         "49": "\U0001f393",  # 🎓 Valedictorian
         "50": "\U0001f41d",  # 🐝 Buzz Words
         "51": "\U0001fa7a",  # 🩺 Okra's Anatomy
+        "52": "\U0001f50d",  # 🔍 Where's Okra
         "67": "\U0001f631",  # 😱 Greg's Nightmare
         "99": "\U0001f4a5",  # 💥 CHAOS
     }
@@ -28722,7 +29181,7 @@ def build_companion_state(user_id=None):
     # time as is_open.
     prompt = _companion_prompt_payload("main", user_id)
     if not is_open:
-        return {
+        idle = {
             "phase": "idle",
             "prompt": prompt,
             # Carried between questions (not just while one's open) so a spectator display (the
@@ -28735,6 +29194,18 @@ def build_companion_state(user_id=None):
             "scoreboard": _companion_scoreboard(),
             "streak": _companion_streak(),
         }
+        # Where's Okra's tap surface. The mini-game runs between questions, so it can only
+        # ever appear here in the idle branch -- never alongside a live question's own
+        # image_url. image_url is lifted to the top level because that is the single key
+        # activity_web.proxy_images rewrites, which is what lets the Activity load an S3
+        # image without its own URL mapping. The target box is never included: the page is
+        # told where to draw the puzzle, never where the answer is.
+        extra = (prompt or {}).get("extra") or {}
+        if extra.get("spotter") and extra.get("image_url"):
+            idle["spotter"] = True
+            idle["image_url"] = extra["image_url"]
+            idle["grid"] = {"cols": extra.get("cols"), "rows": extra.get("rows")}
+        return idle
     trivia_url = cq.get("trivia_url", "")
     answer_list = cq.get("trivia_answer_list", []) or []
     image_url = _companion_image_url(trivia_url)
@@ -28789,7 +29260,17 @@ def build_companion_arena_state(user_id=None):
         return {"phase": "idle", "prompt": None}
     prompt = _companion_prompt_payload("arena", user_id)
     if prompt is not None:
-        return {"phase": "prompt", "game_name": arena_game_name, "prompt": prompt}
+        state = {"phase": "prompt", "game_name": arena_game_name, "prompt": prompt}
+        # Where's Okra hands the puzzle image up through the prompt's `extra` payload.
+        # image_url is lifted to the top level on purpose: that is the one key
+        # activity_web.proxy_images rewrites, so the Activity gets it via the signed /img
+        # proxy without S3 needing its own URL mapping. The target box is never included.
+        extra = prompt.get("extra") or {}
+        if extra.get("spotter") and extra.get("image_url"):
+            state["spotter"] = True
+            state["image_url"] = extra["image_url"]
+            state["grid"] = {"cols": extra.get("cols"), "rows": extra.get("rows")}
+        return state
     return {
         "phase": "spectating",
         "game_name": arena_game_name,
@@ -32205,6 +32686,7 @@ async def toggle_avatar_blacklist_menu(interaction: discord.Interaction, member:
 @bot.event
 async def on_ready():
     global channel, db, museum_backfill_task, offquestion_chat_flush_task, offquestion_chat_compaction_task
+    global hidden_okra_topup_task
     global resume_no_players_override, simply_trivia_task
     print(f"✅ Logged in as {bot.user}")
     db =  await connect_to_mongodb()
@@ -32272,6 +32754,10 @@ async def on_ready():
     if museum_backfill_enabled and (museum_backfill_task is None or museum_backfill_task.done()):
         museum_backfill_task = asyncio.create_task(run_museum_archive_backfill_loop())
         print("🏛️ Museum archive backfill loop started")
+
+    if hidden_okra_topup_enabled and (hidden_okra_topup_task is None or hidden_okra_topup_task.done()):
+        hidden_okra_topup_task = asyncio.create_task(run_wheres_okra_topup_loop())
+        print("🔍 Where's Okra pool top-up loop started")
 
     if offquestion_chat_capture_enabled and (offquestion_chat_flush_task is None or offquestion_chat_flush_task.done()):
         offquestion_chat_flush_task = asyncio.create_task(run_offquestion_chat_flush_loop())

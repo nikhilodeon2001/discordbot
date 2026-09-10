@@ -130,7 +130,7 @@ class CompanionMessage:
 
 class Prompt:
     def __init__(self, prompt_id, channel, scope, allowed_user_ids, kind, prompt_text, reveal_answer=True,
-                 options=None, multi=False):
+                 options=None, multi=False, extra=None):
         self.id = prompt_id
         self.channel = channel
         self.scope = scope
@@ -152,6 +152,13 @@ class Prompt:
         # `text` field submit_companion_input() already accepts, so no new resolution path.
         self.options = options
         self.multi = multi
+        # Free-form, non-secret payload the companion/Activity needs to render this
+        # prompt -- currently Where's Okra's puzzle image and grid size. Rides the
+        # prompt rather than a discordbot global because mini-games execute against
+        # the inert duplicate copy of discordbot (see this module's docstring), so a
+        # global set inside one would never be visible to the real bot. NEVER put an
+        # answer in here: describe_prompt() ships it straight to every viewer.
+        self.extra = extra
         # Whether the webhook echo shows the literal submitted text. True for post-round-menu/
         # WoF-selection prompts (a public one-shot pick, no different from typing it in Discord)
         # and for "first correct answer wins the round" mini-games (Discord-typed guesses are
@@ -174,14 +181,15 @@ def _scope_for_channel(channel):
     return "main"
 
 
-def register_prompt(channel, allowed_user_ids, kind, prompt_text=None, reveal_answer=True, options=None, multi=False):
+def register_prompt(channel, allowed_user_ids, kind, prompt_text=None, reveal_answer=True, options=None, multi=False,
+                    extra=None):
     """`allowed_user_ids=None` registers an "open floor" prompt -- any authenticated companion
     user may submit (matching a Discord check() with no author-id restriction). Otherwise pass
     the concrete set of ids check() already restricts to. See Prompt.options for `options`/
     `multi`."""
     prompt_id = next(_prompt_id_counter)
     prompt = Prompt(prompt_id, channel, _scope_for_channel(channel), allowed_user_ids, kind, prompt_text,
-                     reveal_answer, options=options, multi=multi)
+                     reveal_answer, options=options, multi=multi, extra=extra)
     _prompts[prompt_id] = prompt
     for uid in prompt.allowed_user_ids:
         _prompts_by_user.setdefault(uid, set()).add(prompt_id)
@@ -221,6 +229,7 @@ def describe_prompt(prompt, user_id=None):
         "allowed_user_ids": sorted(prompt.allowed_user_ids),
         "options": prompt.options,
         "multi": prompt.multi,
+        "extra": prompt.extra,
     }
 
 
@@ -327,7 +336,7 @@ def _notify_prompt_change(scope):
 
 
 async def wait_for_message_or_companion(check, timeout, channel, allowed_user_ids, kind, prompt_text=None,
-                                         reveal_answer=True, options=None, multi=False):
+                                         reveal_answer=True, options=None, multi=False, extra=None):
     """Drop-in replacement for `get_bot().wait_for("message", timeout=timeout, check=check)`
     that also accepts a matching companion (web) submission. Returns a real discord.Message
     when Discord wins the race, or a CompanionMessage when the companion app does. Raises
@@ -337,7 +346,7 @@ async def wait_for_message_or_companion(check, timeout, channel, allowed_user_id
     `options`/`multi`: see Prompt.options -- pass the same option list a Discord-side
     RestrictedView (discordbot.py) was built from so the companion renders matching buttons."""
     prompt = register_prompt(channel, allowed_user_ids, kind, prompt_text, reveal_answer=reveal_answer,
-                              options=options, multi=multi)
+                              options=options, multi=multi, extra=extra)
     _notify_prompt_change(prompt.scope)
     msg_task = asyncio.ensure_future(_get_bot().wait_for("message", check=check))
     comp_task = asyncio.ensure_future(prompt.future)
