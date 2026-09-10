@@ -290,13 +290,26 @@ def _safe_next(request):
     return "/"
 
 
+# Machine-called endpoints: served directly on whichever host they arrive on, never redirected.
+# A redirect buys nothing here (nobody bookmarks an API call) and costs a round-trip at best.
+# At worst it breaks the caller outright -- see the middleware below.
+_LEGACY_REDIRECT_EXEMPT = ("/api/", "/internal/", "/img", "/assets/", "/activity/sdk.js", "/healthz")
+
+
 @web.middleware
 async def _legacy_domain_redirect_middleware(request, handler):
     """play.triviasphere.com moved to play.okrasworld.com; redirect old links/bookmarks
-    rather than letting them silently keep resolving to the same backend."""
+    rather than letting them silently keep resolving to the same backend.
+
+    Pages only. The Discord Activity's URL Mapping pointed at the legacy host for a while, so
+    every API call arrived here and got redirected -- and a 301 does not preserve the method,
+    so POSTs reached the new host as bodyless GETs and every POST-only route answered 405.
+    That is why the Activity died on its token exchange. 308 preserves the method, and skipping
+    API paths entirely means a stale mapping degrades to a wasted hop instead of a broken app.
+    """
     _, host = _request_origin(request)
-    if host == branding.COMPANION_LEGACY_HOST:
-        raise web.HTTPMovedPermanently(f"https://{branding.COMPANION_NEW_HOST}{request.path_qs}")
+    if host == branding.COMPANION_LEGACY_HOST and not request.path.startswith(_LEGACY_REDIRECT_EXEMPT):
+        raise web.HTTPPermanentRedirect(f"https://{branding.COMPANION_NEW_HOST}{request.path_qs}")
     return await handler(request)
 
 
@@ -305,10 +318,11 @@ async def _https_enforcement_middleware(request, handler):
     """Redirect plain-HTTP requests to HTTPS before any route (esp. /login) can build an
     http:// OAuth redirect_uri, which Discord rejects since only the https:// variant is
     registered per domain. X-Forwarded-Proto is only set by Heroku's router, so its absence
-    (local dev) leaves requests untouched."""
+    (local dev) leaves requests untouched. 308 rather than 301 for the same method-preservation
+    reason as the legacy-domain middleware above."""
     if request.headers.get("X-Forwarded-Proto") == "http":
         _, host = _request_origin(request)
-        resp = web.HTTPMovedPermanently(f"https://{host}{request.rel_url}")
+        resp = web.HTTPPermanentRedirect(f"https://{host}{request.rel_url}")
         resp.headers["Strict-Transport-Security"] = "max-age=63072000; includeSubDomains"
         raise resp
     return await handler(request)
