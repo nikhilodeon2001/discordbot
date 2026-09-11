@@ -19433,7 +19433,9 @@ async def build_okra_image_prompt_grok(base_idea):
 async def generate_round_summary_image(round_data, winner, winner_id, winner_coffees=None,
                                          category_already_shown=False, category_result=None):
     """Returns True if an image was successfully posted (or there was nothing to do), False on
-    generation failure, None if the theme picker timed out (credit stays banked, nothing posted)."""
+    generation failure, None if the winner ran out of time -- either picking a theme, or (for
+    category "4") typing their custom prompt with nothing collected -- credit stays banked,
+    nothing posted."""
     if skip_summary == True:
         message = "\nBe sure to drink your Okratine.\n"
         await safe_send(channel, message)
@@ -20086,6 +20088,12 @@ async def ask_category(winner, categories, winner_coffees, winner_id, skip_messa
 
             if message_content == '4' and winner_coffees > 0:
                 additional_prompt = await request_prompt(winner, winner_id)
+                if additional_prompt is None:
+                    # Ran out of time typing the custom prompt with nothing collected --
+                    # propagate the same (None, "") signal a theme-picker timeout produces,
+                    # so generate_round_summary_image banks the credit instead of drawing
+                    # a default/degenerate "Draw an okra themed picture of ." image.
+                    return None, ""
 
             return message_content, additional_prompt
 
@@ -20094,11 +20102,22 @@ async def ask_category(winner, categories, winner_coffees, winner_id, skip_messa
 
 
 async def request_prompt(winner, winner_id):
+    """Collects up to 10 words of free text from `winner_id` as their custom Okra Museum
+    prompt. Returns the final prompt string if at least one word was collected (possibly
+    trimmed to the word/char limit), or None if the window closed with nothing collected --
+    callers must treat None the same as a theme-picker timeout (bank the credit, generate
+    nothing), not as a valid empty prompt."""
     global magic_time
 
     collected_words = []
     trimmed = False
     start_time = asyncio.get_event_loop().time()
+
+    # Doubled from the shared `magic_time + 5` window used elsewhere (e.g. the theme
+    # picker itself) -- typing a custom prompt needs more time than picking a button, but
+    # `magic_time` is a global reused by many unrelated timing points, so it's doubled
+    # here locally rather than changed everywhere.
+    prompt_collection_window = (magic_time + 5) * 2
    
     message = f"\u200b\n🖼️🔟 **<@{winner_id}>**, Fill in the blank. *10 words max* and **be good**.\n\u200b"
     message += f"\n*Draw an okra themed picture of...*\n\u200b"
@@ -20110,7 +20129,7 @@ async def request_prompt(winner, winner_id):
         return m.channel == target_channel and m.author != get_bot().user and m.author.id == winner_id
 
     try:
-        while len(collected_words) < 10 and asyncio.get_event_loop().time() - start_time < (magic_time + 5):
+        while len(collected_words) < 10 and asyncio.get_event_loop().time() - start_time < prompt_collection_window:
             try:
                 response = await companion_bridge.wait_for_message_or_companion(
                     check, magic_time, target_channel, {winner_id}, kind="mini_game_answer"
@@ -20137,7 +20156,7 @@ async def request_prompt(winner, winner_id):
 
     if not collected_words:
         await safe_send(channel, "Nothing. Okra time.")
-        return ""
+        return None
 
     final_prompt, char_trimmed = answer_matching.limit_words(' '.join(collected_words), 10, 90)
     trim_note = "✂️ *(trimmed to the 10-word limit)* " if (trimmed or char_trimmed) else ""
@@ -24717,6 +24736,15 @@ def trig_checker(response, answer):
 # Requires a code deploy to flip -- not a live/runtime toggle.
 USE_LEGACY_FUZZY_MATCH = True
 
+# Flip to False to revert to pre-giveaway-guard behavior: category/question words
+# are no longer excluded from the substring/first-5-chars/first-word (and, in
+# answer_matching.py, surname/any-key-word/substring) leniency heuristics, i.e.
+# today's matching becomes exactly what it was before that guard existed.
+# Applies to both legacy_fuzzy_match and answer_matching.py, whichever
+# USE_LEGACY_FUZZY_MATCH selects. Requires a code deploy to flip -- not a
+# live/runtime toggle.
+GIVEAWAY_WORD_GUARD_ENABLED = True
+
 
 def legacy_fuzzy_match(user_answer, correct_answer, category, url, _skip_alias_check=False, ignore_exact_mode=False, question_text=""):
     """The pre-rebuild answer-matching heuristics (unguarded substring, char-level Jaccard,
@@ -24859,7 +24887,7 @@ def legacy_fuzzy_match(user_answer, correct_answer, category, url, _skip_alias_c
     # the leniency heuristics below so a guess can't win by parroting a word
     # the prompt already handed the user for free (e.g. "time" for "ragtime"
     # when the category is '"Time" For A Change').
-    giveaway_words = _giveaway_words(category, question_text)
+    giveaway_words = _giveaway_words(category, question_text) if GIVEAWAY_WORD_GUARD_ENABLED else set()
     user_is_giveaway_word = any(
         _is_giveaway_word(w, giveaway_words)
         for w in (user_answer, no_spaces_user, no_filler_user, no_filler_spaces_user)
@@ -24920,6 +24948,7 @@ def fuzzy_match(user_answer, correct_answer, category, url, _skip_alias_check=Fa
     return answer_matching.match_answer(
         user_answer, correct_answer, category=category, url=url,
         config=config, skip_alias=_skip_alias_check, question_text=question_text,
+        enable_giveaway_guard=GIVEAWAY_WORD_GUARD_ENABLED,
     )
 
 
