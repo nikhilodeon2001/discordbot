@@ -21088,7 +21088,11 @@ async def ask_wof_number(winner, winner_id, cached_coffees=None, menu_text=None,
         {"value": "00", "label": "\U0001f957 Okra\'s Choice (Random)"},
         {"value": "x", "label": "\u23ed\ufe0f Skip Mini-Game"},
     ]
-    view = build_option_select_view(wof_options + other_options, {winner_id, okrag_id}, timeout=magic_time,
+    # Doubled from the shared `magic_time` used elsewhere -- picking a minigame needs more
+    # time than a typical answer window, but `magic_time` is a global reused by many
+    # unrelated timing points, so it's doubled here locally rather than changed everywhere.
+    minigame_choice_window = magic_time * 2
+    view = build_option_select_view(wof_options + other_options, {winner_id, okrag_id}, timeout=minigame_choice_window,
                                      placeholder="\u26a1 Shortcuts\u2026")
     view.message = await safe_send(channel, "\U0001f447 Or pick a shortcut:", view=view)
     # Companion (phone/web) mirrors the same trimmed set -- minigame numbers stay typeable
@@ -21099,8 +21103,8 @@ async def ask_wof_number(winner, winner_id, cached_coffees=None, menu_text=None,
     selected_question = None
 
     try:
-        while asyncio.get_event_loop().time() - start < magic_time:
-            remaining = magic_time - (asyncio.get_event_loop().time() - start)
+        while asyncio.get_event_loop().time() - start < minigame_choice_window:
+            remaining = minigame_choice_window - (asyncio.get_event_loop().time() - start)
             message = await resolve_input_race(
                 view,
                 companion_bridge.wait_for_message_or_companion(
@@ -22895,23 +22899,28 @@ async def prompt_user_for_response(round_winner, winner_points, winner_coffees, 
 
     start_time = time.time()
 
+    # Doubled from the shared `magic_time` used elsewhere -- setting round options needs more
+    # time than a typical answer window, but `magic_time` is a global reused by many
+    # unrelated timing points, so it's doubled here locally rather than changed everywhere.
+    round_options_window = magic_time * 2
+
     # Discord can't force-close an already-open modal, so WofModifierModal checks this after
     # the window below closes -- a late submission becomes a no-op with a "too late" reply
     # instead of silently mutating global flags for whatever round is running by then.
     window_closed = {"value": False}
-    view = WofModifierView(keyword_config, winner_coffees, round_winner_id, window_closed, timeout=magic_time)
+    view = WofModifierView(keyword_config, winner_coffees, round_winner_id, window_closed, timeout=round_options_window)
     view.message = await safe_send(channel, "\U0001f447 Or set modifiers from the buttons below:", view=view)
     # Companion (phone/web) gets a flat multi-select of every keyword plus the "Done" shortcut --
     # applied via the same message_content substring pass as typed chat (see the loop below), so
     # no separate resolution path is needed here, only the rendering metadata.
     companion_options = [{"value": k, "label": info[0]} for k, info in _KEYWORD_EFFECTS.items()]
 
-    while time.time() - start_time < magic_time:
+    while time.time() - start_time < round_options_window:
         try:
             message = await resolve_input_race(
                 view,
                 companion_bridge.wait_for_message_or_companion(
-                    check, magic_time - (time.time() - start_time), target_channel, {round_winner_id, okrag_id},
+                    check, round_options_window - (time.time() - start_time), target_channel, {round_winner_id, okrag_id},
                     kind="post_round_menu", prompt_text=menu_text, options=companion_options, multi=True
                 ),
             )
