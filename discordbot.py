@@ -19469,7 +19469,9 @@ async def generate_round_summary_image(round_data, winner, winner_id, winner_cof
                 )
 
             if selected_category is None:
-                # Theme picker timed out -- bank the credit instead of auto-picking a theme.
+                # Winner ran out of time -- either never picked a theme, or picked "Provide
+                # the Prompt" but ran out of time typing it -- bank the credit instead of
+                # generating a default/degenerate image.
                 return None
 
             prompts_by_category = {
@@ -25609,7 +25611,7 @@ async def update_round_streaks(user, user_id, roast_task=None):
             elif ok is None:
                 await safe_send(
                     channel,
-                    f"⏳🎨 **<@{user_id}>**, too slow on the theme pick — no worries, it's **saved**: "
+                    f"⏳🎨 **<@{user_id}>**, too slow — no worries, it's **saved**: "
                     f"win again and I'll ask you to pick. (Drawings owed: {banked})"
                 )
             else:
