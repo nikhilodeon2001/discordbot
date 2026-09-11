@@ -62,6 +62,22 @@ VERIFY_MAX_TOKENS = 1000
 IMAGE_MODEL = "gpt-image-1"
 IMAGE_QUALITY = "high"
 
+# Hybrid pipeline (see build_validated_puzzle_hybrid): the background is generated with no
+# mascot mentioned at all, then the mascot is drawn into a masked region at a position WE
+# choose. Real generated samples showed the original single-call pipeline's failures
+# (mascot centred, full-height, unmissable -- see the samples that motivated this) traced
+# to one call being asked to solve placement, rendering, and style-matching all at once for
+# a heavily-described character. Splitting the work means the background call never has to
+# reason about hiding anything, and the insertion call only has to solve a narrow problem
+# (draw this character HERE, in this style) rather than an open one. BACKGROUND_IMAGE_MODEL
+# is cheaper than IMAGE_MODEL specifically because that narrower problem is where the
+# saving is safe to take -- an empty, mascot-free crowd scene is a much easier ask than a
+# scene built around hiding one specific described character.
+BACKGROUND_IMAGE_MODEL = "gpt-image-1-mini"
+BACKGROUND_IMAGE_QUALITY = "medium"
+INSERTION_IMAGE_MODEL = "gpt-image-1"
+INSERTION_IMAGE_QUALITY = "high"
+
 
 # ---------------------------------------------------------------------------
 # Difficulty
@@ -189,6 +205,56 @@ def pick_theme(rng, exclude=None):
     return rng.choice(choices)
 
 
+# okra.png is roughly 338x595 (height/width ~= 1.76). Varied a little per puzzle in
+# pick_target_box so generated boxes aren't all identically shaped.
+_MASCOT_ASPECT_RATIO_RANGE = (1.5, 2.1)
+
+
+def pick_target_box(difficulty, region_index, rng, aspect_ratio=None):
+    """Hybrid pipeline only (see build_validated_puzzle_hybrid): choose a concrete target
+    bounding box ourselves, rather than asking a generator to place the mascot and
+    discovering where it went afterward. Returns (xMin, yMin, xMax, yMax) in normalised
+    coordinates, sized within `difficulty`'s area band and centred somewhere inside the
+    3x3 grid cell named by `region_index`.
+
+    `region_index` indexes REGIONS, which is defined in row-major 3x3 order (index 0 =
+    upper-left, 4 = centre, 8 = lower-right) -- this function relies on that ordering to
+    convert an index into (col, row); reordering REGIONS would silently break it.
+    """
+    spec = DIFFICULTIES[difficulty]
+    lo, hi = spec["area"]
+    area = rng.uniform(lo, hi)
+    ratio = aspect_ratio if aspect_ratio is not None else rng.uniform(*_MASCOT_ASPECT_RATIO_RANGE)
+    width = (area / ratio) ** 0.5
+    height = area / width
+    # Guard against a pathological area/ratio combination producing a box that can't fit
+    # in the frame at all -- shouldn't happen given the difficulty table's bands, but a
+    # clamp here is cheap insurance against ever emitting an unusable box.
+    width = min(width, 0.9)
+    height = min(height, 0.9)
+
+    col, row = region_index % 3, region_index // 3
+    cell_x0, cell_x1 = col / 3, (col + 1) / 3
+    cell_y0, cell_y1 = row / 3, (row + 1) / 3
+
+    def _centre_in(lo_edge, hi_edge, size):
+        # Centre the box somewhere inside [lo_edge, hi_edge], inset by half its own size so
+        # the box itself doesn't spill past the cell boundary. If the box is wider/taller
+        # than the whole cell, fall back to the cell's midpoint rather than a degenerate
+        # empty range.
+        c_lo, c_hi = lo_edge + size / 2, hi_edge - size / 2
+        if c_hi <= c_lo:
+            return (lo_edge + hi_edge) / 2
+        return rng.uniform(c_lo, c_hi)
+
+    cx = _centre_in(cell_x0, cell_x1, width)
+    cy = _centre_in(cell_y0, cell_y1, height)
+
+    x_min = max(0.0, min(1.0 - width, cx - width / 2))
+    y_min = max(0.0, min(1.0 - height, cy - height / 2))
+    return (x_min, y_min, x_min + width, y_min + height)
+
+
 # ---------------------------------------------------------------------------
 # Stage 1 -- the generation prompt
 # ---------------------------------------------------------------------------
@@ -211,6 +277,31 @@ _IDENTITY_CLAUSE = (
     "hat, large expressive eyes, a smiling mouth beneath a dark mustache, white gloves, and "
     "one hand raised in a gesture. Exactly ONE such okra character appears in the entire "
     "image. No other okra, and no other chef-hatted vegetable, anywhere in the scene."
+)
+
+# Observed failure mode (real generated samples, not a hypothetical): a model handed a
+# detailed physical description of one named character reliably makes that character the
+# visual hero of the composition -- dead center, full height, unobstructed, regardless of
+# the region/occlusion instructions elsewhere in the prompt. This clause exists only to
+# fight that pull, and says the same constraint three different concrete ways (composition
+# role, exact placement, relative scale against a real reference point) because a single
+# statement of it was reliably overridden by the amount of physical detail above.
+_PROMINENCE_CLAUSE = (
+    "Despite the detailed description above, this character is NOT the subject of the "
+    "illustration and must not be treated as one. It is a minor background figure, drawn "
+    "with exactly as much compositional weight as any other single background figure -- "
+    "no more. Specifically:\n"
+    "- Composition: it must NOT be centered in the frame, must NOT be the visual focal "
+    "point, and must NOT be the first thing a viewer's eye lands on. Multiple other "
+    "characters, objects, or activities must be equally or more visually prominent.\n"
+    "- Placement: it must be positioned off-center, tucked into a cluster of other "
+    "characters or objects the way a real background figure would be -- never alone in "
+    "open space, never on a clear sightline to the center of the image.\n"
+    "- Scale: it must be no taller and no larger than the ordinary human or humanoid "
+    "figures standing at the same depth in the scene. If a nearby person's head reaches a "
+    "certain height in the frame, this character's head reaches about the same height, not "
+    "higher. It should look like something a viewer only notices after deliberately "
+    "searching for it, not something presented to them."
 )
 
 _NEGATIVE_CLAUSE = (
@@ -241,12 +332,15 @@ def build_puzzle_prompt(theme, difficulty, region):
         f"view, even ambient lighting, no single focal point.\n\n"
         f"{_INTEGRATION_CLAUSE}\n\n"
         f"{_IDENTITY_CLAUSE}\n\n"
-        f"Place the okra character in {region}, drawn at {spec['scale']} relative to the "
-        f"rest of the scene. Approximately {int(occ_lo * 100)}-{int(occ_hi * 100)}% of the "
-        f"character is hidden behind objects or other characters in front of it. Visual "
-        f"camouflage: {spec['camouflage']}. Enough of the hat, face and raised glove must "
-        f"stay visible for an attentive person to recognise the character once they look "
-        f"directly at it.\n\n"
+        f"{_PROMINENCE_CLAUSE}\n\n"
+        f"Position the character specifically in {region} of the frame -- well away from "
+        f"the exact center, not on the image's main sightline -- drawn at {spec['scale']} "
+        f"relative to the rest of the scene (see the scale rule above: no larger than a "
+        f"nearby background person). Approximately {int(occ_lo * 100)}-{int(occ_hi * 100)}% "
+        f"of the character is hidden behind objects or other characters in front of it. "
+        f"Visual camouflage: {spec['camouflage']}. Enough of the hat, face and raised glove "
+        f"must stay visible for an attentive person to recognise the character once they "
+        f"look directly at it.\n\n"
         f"{_NEGATIVE_CLAUSE}"
     )
 
@@ -262,6 +356,91 @@ def describe_mascot_for_text_prompt():
         "with a tall white chef's hat, large white eyes with dark pupils, a wide smile "
         "under a dark curled mustache, white cartoon gloves, and one gloved hand raised"
     )
+
+
+# ---------------------------------------------------------------------------
+# Hybrid pipeline prompts -- see build_validated_puzzle_hybrid
+# ---------------------------------------------------------------------------
+
+def build_background_prompt(theme, difficulty):
+    """Stage 1a of the hybrid pipeline: a scene with NO mascot mentioned anywhere. The
+    single-call pipeline's failures all traced back to one call being asked to solve
+    placement, rendering, and style-matching simultaneously for a specific, heavily
+    described character (see the module docstring). This prompt never describes okra at
+    all, so nothing here biases the model toward making any one thing the visual focus --
+    that problem is deliberately deferred to the much narrower insertion call."""
+    spec = DIFFICULTIES[difficulty]
+    return (
+        f"A single-scene hidden-object puzzle illustration of {theme}, drawn in a "
+        f"consistent flat cartoon style with clean uniform linework, in the manner of a "
+        f"'find the character' children's puzzle book. The scene is {spec['density']}: it "
+        f"is packed with many small characters going about separate little activities, "
+        f"plus animals, vehicles, market stalls, signage, banners, crates, tools, food, "
+        f"luggage and scattered props. Every character is drawn at the same level of "
+        f"detail and with the same line weight as every other character. Wide establishing "
+        f"view, even ambient lighting, no single focal point -- the entire frame should be "
+        f"busy and full of small detail, with no large empty or sparse regions, since a "
+        f"character will later be added somewhere in it."
+    )
+
+
+def build_insertion_prompt(difficulty):
+    """Stage 1b: what to draw into the masked region of an already-generated background.
+    WHERE and roughly HOW BIG are already fixed by the mask (see build_mask_bytes), so this
+    prompt only has to solve identity and integration -- a much narrower task than the
+    single-call pipeline's, which had to solve composition too."""
+    spec = DIFFICULTIES[difficulty]
+    occ_lo, occ_hi = spec["occlusion"]
+    return (
+        "Draw a character into the masked region of this existing illustration. Match the "
+        "surrounding artwork's exact illustration style, line quality, line weight, "
+        "shading, texture, lighting direction and colour saturation -- it must look like "
+        "the same illustrator drew it as part of the original scene, not like something "
+        f"added afterward. The character is {describe_mascot_for_text_prompt()}.\n\n"
+        "It must read as one ordinary element of the scene: not outlined, not haloed, not "
+        "sitting on a clean or empty background, and not drawn with sharper linework or "
+        "higher contrast than the characters and objects already around it. Fill the "
+        "masked region naturally -- if there are already nearby objects or characters at "
+        "the edge of the masked area, let them overlap slightly into it, exactly as if the "
+        "new character were standing behind or among them.\n\n"
+        f"Approximately {int(occ_lo * 100)}-{int(occ_hi * 100)}% of the character should "
+        f"end up hidden behind nearby objects or characters, if anything suitable is "
+        f"already close by; otherwise draw it fully visible within the masked region. "
+        f"Visual camouflage: {spec['camouflage']}. Enough of the hat, face and raised "
+        f"glove must stay visible for an attentive person to recognise the character once "
+        f"they look directly at it. Draw exactly one such character -- do not add a second "
+        f"one anywhere else in the image."
+    )
+
+
+def build_mask_bytes(image_size, target_box, margin=0.5):
+    """Build an RGBA edit mask: OPAQUE (alpha=255) everywhere except a padded region around
+    `target_box`, which is fully TRANSPARENT (alpha=0) -- the OpenAI images.edit
+    convention, where transparent pixels mark what the model may change.
+
+    `margin` pads the editable region beyond the tight target box (as a fraction of the
+    box's own size) so the model has room to draw natural surrounding integration -- a
+    nearby occluding object, a bit of drawn context at the edges -- rather than being
+    forced to fill an exact rectangle, which is itself a compositing tell. Padding is why
+    the final accepted box (found by locate_in_crop) can end up smaller than, and offset
+    from, the box originally requested here; pick_target_box's box is a starting point for
+    the mask, not a promise about the final answer.
+    """
+    from PIL import Image, ImageDraw
+
+    width, height = image_size
+    x_min, y_min, x_max, y_max = _padded_bounds(target_box, margin)
+
+    mask = Image.new("RGBA", (width, height), (0, 0, 0, 255))
+    draw = ImageDraw.Draw(mask)
+    draw.rectangle(
+        [x_min * width, y_min * height, x_max * width, y_max * height],
+        fill=(0, 0, 0, 0),
+    )
+
+    buffer = io.BytesIO()
+    mask.save(buffer, format="PNG")
+    return buffer.getvalue()
 
 
 # ---------------------------------------------------------------------------
@@ -696,6 +875,26 @@ def _first_text(response):
     return "".join(parts).strip()
 
 
+def _padded_bounds(target, margin):
+    """Normalised (xMin, yMin, xMax, yMax) of `target` padded by `margin` (a fraction of
+    the target's own width/height), clamped to the unit square. Returns None if `target`
+    doesn't parse.
+
+    Shared between crop_to_bytes (which needs it in pixels, for cropping a finished image)
+    and the hybrid pipeline's build_mask_bytes / crop-to-full coordinate mapping (which
+    need it in normalised space, before any image exists) -- kept as one function so the
+    two can never quietly drift apart.
+    """
+    box = normalize_target(target)
+    if box is None:
+        return None
+    x_min, y_min, x_max, y_max = box
+    pad_x = (x_max - x_min) * margin
+    pad_y = (y_max - y_min) * margin
+    return (max(0.0, x_min - pad_x), max(0.0, y_min - pad_y),
+            min(1.0, x_max + pad_x), min(1.0, y_max + pad_y))
+
+
 def crop_to_bytes(image_bytes, target, margin=0.25, min_side=192):
     """Crop `image_bytes` to the target box plus a relative margin, as PNG bytes.
 
@@ -708,19 +907,17 @@ def crop_to_bytes(image_bytes, target, margin=0.25, min_side=192):
     """
     from PIL import Image
 
-    box = normalize_target(target)
-    if box is None:
+    padded = _padded_bounds(target, margin)
+    if padded is None:
         return None
     with Image.open(io.BytesIO(image_bytes)) as img:
         img = img.convert("RGB")
         width, height = img.size
-        x_min, y_min, x_max, y_max = box
-        pad_x = (x_max - x_min) * margin
-        pad_y = (y_max - y_min) * margin
-        left = int(max(0.0, x_min - pad_x) * width)
-        top = int(max(0.0, y_min - pad_y) * height)
-        right = int(min(1.0, x_max + pad_x) * width)
-        bottom = int(min(1.0, y_max + pad_y) * height)
+        x_min, y_min, x_max, y_max = padded
+        left = int(x_min * width)
+        top = int(y_min * height)
+        right = int(x_max * width)
+        bottom = int(y_max * height)
         if right <= left or bottom <= top:
             return None
         crop = img.crop((left, top, right, bottom))
@@ -731,6 +928,18 @@ def crop_to_bytes(image_bytes, target, margin=0.25, min_side=192):
         buffer = io.BytesIO()
         crop.save(buffer, format="PNG")
         return buffer.getvalue()
+
+
+def _save_attempt_debug(directory, difficulty, index, image_bytes, used_reference, tag):
+    """Write one generation attempt to disk for visual review, regardless of whether it
+    later passes validation. Debug-only (see build_validated_puzzle's save_attempts_dir) --
+    routine pool generation never calls this, so a normal run writes nothing extra."""
+    import os
+    os.makedirs(directory, exist_ok=True)
+    path_kind = "ref" if used_reference else "text"
+    path = os.path.join(directory, f"{difficulty}_attempt{index}_{path_kind}_{tag}.png")
+    with open(path, "wb") as handle:
+        handle.write(image_bytes)
 
 
 # ---------------------------------------------------------------------------
@@ -811,6 +1020,103 @@ async def verify_crop(client, crop_bytes, mascot_bytes, *,
     return _coerce_bool(payload.get("present")), _coerce_float(payload.get("confidence"))
 
 
+_LOCATE_IN_CROP_SYSTEM = """You are a precise visual localisation tool, checking one small crop taken from a \
+larger hidden-object puzzle illustration.
+
+You receive two images. The FIRST is a reference picture of a mascot character. The SECOND \
+is a small crop that should contain a redrawn version of that mascot somewhere within it. \
+It will usually be roughly centred in the crop, but do not assume this -- locate it \
+independently, the same way you would search a full image.
+
+Identify the mascot by its combination of features -- a green okra pod body, a tall white \
+chef's hat, large eyes, a smile with a mustache, white gloves, a raised hand -- not by \
+colour alone; the crop may contain other green or white elements as decoys.
+
+Report its bounding box in NORMALISED coordinates from 0 to 1 WITHIN THIS CROP (not the \
+original image this crop was taken from), where (0,0) is the crop's own top-left corner \
+and (1,1) is its own bottom-right. Make the box tight around the visible extent of the \
+character.
+
+Also report:
+- targetCount: how many distinct okra-mascot characters are visible in this crop. Should \
+be 1. Report 0 if you cannot find it, or 2+ if more than one appears.
+- confidence: 0 to 1, how certain you are that the box contains the mascot.
+- visibility: 0 to 1, how much of the character is unobscured and readable.
+- tooObvious: true if the character stands out immediately from its surroundings -- much \
+larger than nearby elements, sitting in open empty space, haloed, or drawn with crisper \
+linework or higher contrast than its neighbours.
+- malformed: true if the character is drawn incorrectly enough to be unrecognisable or is \
+missing its defining features.
+
+Answer only with a single JSON object, no prose and no code fence:
+{"targetCount": <int>, "boundingBox": {"xMin": <float>, "yMin": <float>, "xMax": <float>, \
+"yMax": <float>}, "confidence": <float>, "visibility": <float>, "tooObvious": <bool>, \
+"malformed": <bool>}
+
+If targetCount is 0, still emit the object with a zeroed boundingBox."""
+
+
+async def locate_in_crop(client, crop_bytes, mascot_bytes, *,
+                         model=VERIFY_MODEL, max_tokens=LOCATE_MAX_TOKENS, timeout=120):
+    """Hybrid pipeline's stage 2 (see build_validated_puzzle_hybrid): locate + validate
+    within a small crop around the position WE chose, rather than searching the whole
+    image the way locate_mascot does. Much cheaper (a small crop costs far fewer image
+    tokens than a full 1024x1024 scene) while keeping the same "never trust the generator,
+    trust a vision pass over the finished pixels" principle from the module docstring --
+    choosing roughly where the character should go does not mean trusting that it actually
+    ended up there, looks right, or is the only one; all of that is still independently
+    checked here, just over a smaller search space.
+
+    Returns a ValidationResult whose `target`, if any, is normalised to the CROP, not the
+    original image -- the caller maps it back to full-image coordinates (see
+    build_validated_puzzle_hybrid, which uses the same padding _padded_bounds computed for
+    the crop to invert the mapping).
+    """
+    if client is None:
+        raise PuzzleGenerationError("No vision client configured (ANTHROPIC_API_KEY unset).")
+    if not crop_bytes:
+        return ValidationResult(raw="<no crop>")
+    try:
+        response = await asyncio.wait_for(
+            client.messages.create(
+                model=model,
+                max_tokens=max_tokens,
+                system=[{"type": "text", "text": _LOCATE_IN_CROP_SYSTEM}],
+                messages=[{"role": "user", "content": [
+                    {"type": "text", "text": "Reference mascot:"},
+                    _image_block(mascot_bytes),
+                    {"type": "text", "text": "Crop to search:"},
+                    _image_block(crop_bytes),
+                ]}],
+            ),
+            timeout=timeout,
+        )
+    except asyncio.TimeoutError:
+        return ValidationResult(raw="<timeout>")
+    except Exception as exc:  # noqa: BLE001 -- surfaced through `raw` for the ops log
+        return ValidationResult(raw=f"<error: {exc}>")
+
+    return parse_validation(_first_text(response))
+
+
+def _map_crop_target_to_full(crop_target, padded_bounds):
+    """Map a box normalised to a crop (as returned by locate_in_crop) back into normalised
+    coordinates on the original full image, given the crop's own bounds (from
+    _padded_bounds) in that full image. Returns None if there's no crop target to map.
+
+    Resizing the crop (crop_to_bytes upscales small crops to stay above min_side) does not
+    affect this: normalised 0..1 proportions within the crop are unchanged by that resize,
+    so no extra correction for it is needed here.
+    """
+    if crop_target is None:
+        return None
+    cx_min, cy_min, cx_max, cy_max = crop_target
+    px_min, py_min, px_max, py_max = padded_bounds
+    pw, ph = px_max - px_min, py_max - py_min
+    return (px_min + cx_min * pw, py_min + cy_min * ph,
+            px_min + cx_max * pw, py_min + cy_max * ph)
+
+
 # ---------------------------------------------------------------------------
 # The pipeline
 # ---------------------------------------------------------------------------
@@ -826,7 +1132,8 @@ MIN_VERIFY_CONFIDENCE = 0.60
 
 async def build_validated_puzzle(*, edit_fn, generate_fn, vision_client, mascot_bytes,
                                  theme, difficulty, region, max_attempts=4,
-                                 use_reference=True, on_attempt=None):
+                                 use_reference=True, on_attempt=None,
+                                 save_attempts_dir=None):
     """Generate and validate one puzzle. Returns (image_bytes, ValidationResult, meta).
 
     `edit_fn(mascot_bytes, prompt) -> bytes` and `generate_fn(prompt) -> bytes` are async
@@ -835,6 +1142,14 @@ async def build_validated_puzzle(*, edit_fn, generate_fn, vision_client, mascot_
 
     `on_attempt(index, ok, reasons)`, if given, is called after each attempt so an ops
     script can stream progress.
+
+    `save_attempts_dir`, if given, writes EVERY generated attempt to disk (accepted or
+    rejected), not just the final accepted image the caller gets back -- normally a
+    rejected attempt's bytes are discarded the moment the loop moves on, which is fine for
+    routine pool-building but useless for diagnosing *why* attempts keep failing (numeric
+    rejection reasons alone don't show whether the mascot looks pasted-in, oversized, or
+    something else). Only for debugging/tuning runs -- routine generation leaves this None
+    so it isn't writing files nobody asked for.
 
     Raises PuzzleGenerationError if no attempt produced an acceptable puzzle.
     """
@@ -869,6 +1184,10 @@ async def build_validated_puzzle(*, edit_fn, generate_fn, vision_client, mascot_
             if on_attempt:
                 on_attempt(index, False, [f"generation_failed: {exc}"])
             continue
+
+        if save_attempts_dir is not None:
+            _save_attempt_debug(save_attempts_dir, difficulty, index, image_bytes,
+                               using_reference, tag="raw")
 
         result = await locate_mascot(vision_client, image_bytes, mascot_bytes)
         ok, reasons = validate(result, difficulty)
@@ -913,6 +1232,142 @@ async def build_validated_puzzle(*, edit_fn, generate_fn, vision_client, mascot_
         f"#{a['attempt']}: {', '.join(a['reasons']) or 'ok'}" for a in attempts)
     raise PuzzleGenerationError(
         f"No valid puzzle after {max_attempts} attempts ({difficulty}, {theme}) -- {summary}")
+
+
+# ---------------------------------------------------------------------------
+# The hybrid pipeline: background generated separately, mascot inserted at a chosen spot
+# ---------------------------------------------------------------------------
+
+# Padding around pick_target_box's box when building the edit mask -- generous, so the
+# model has real room to draw natural surrounding integration (a nearby object overlapping
+# the edge, a bit of drawn context) rather than being forced to fill an exact rectangle,
+# which is itself a compositing tell. The SAME margin is reused when cropping for
+# locate_in_crop, so the crop always covers the full editable region.
+_INSERTION_MASK_MARGIN = 0.5
+
+
+async def build_validated_puzzle_hybrid(*, background_fn, insert_fn, vision_client,
+                                        mascot_bytes, theme, difficulty, region=None,
+                                        max_attempts=4, on_attempt=None,
+                                        save_attempts_dir=None):
+    """Hybrid pipeline: generate a background with no mascot mentioned at all, then draw
+    the mascot into a masked region at a position WE choose -- rather than asking one call
+    to solve placement, rendering and style-matching together, which is what the original
+    single-call pipeline (build_validated_puzzle) kept failing at (see the module
+    docstring and the real generated samples that motivated this).
+
+    This is NOT literal compositing: the mascot is still genuinely drawn into the scene by
+    a model, matching the surrounding style, and its final position is still independently
+    confirmed by a vision pass (locate_in_crop) rather than trusted -- both of the module
+    docstring's two hard problems are still respected, just split so each call solves a
+    narrower piece of them. What changes is that WE fix roughly where and how big it
+    should be (via the mask), instead of leaving that to the generator and discovering the
+    result afterward.
+
+    `background_fn(prompt) -> bytes` and `insert_fn(background_bytes, mask_bytes, prompt)
+    -> bytes` are async callables already bound to a provider/model/quality by the caller.
+    The background is generated ONCE and reused across every insertion retry -- only the
+    insertion step (which is what's actually being validated) is retried, since regenerating
+    a whole new background on every retry would give up most of this pipeline's cost saving
+    for no benefit; the background isn't what's failing.
+
+    Returns (image_bytes, ValidationResult, meta). Raises PuzzleGenerationError if no
+    attempt produced an acceptable puzzle.
+    """
+    if difficulty not in DIFFICULTIES:
+        raise PuzzleGenerationError(f"Unknown difficulty {difficulty!r}")
+
+    rng = make_rng()
+    region = region or pick_region(rng)
+    region_index = REGIONS.index(region)
+
+    background_prompt = build_background_prompt(theme, difficulty)
+    try:
+        background_bytes = await background_fn(background_prompt)
+    except Exception as exc:  # noqa: BLE001 -- reported, not raised raw
+        raise PuzzleGenerationError(f"background generation failed: {exc}") from exc
+
+    if save_attempts_dir is not None:
+        _save_attempt_debug(save_attempts_dir, difficulty, 0, background_bytes, True,
+                           tag="background")
+
+    from PIL import Image
+    with Image.open(io.BytesIO(background_bytes)) as img:
+        image_size = img.size
+
+    insertion_prompt = build_insertion_prompt(difficulty)
+    attempts = []
+
+    for index in range(1, max_attempts + 1):
+        chosen_box = pick_target_box(difficulty, region_index, rng)
+        mask_bytes = build_mask_bytes(image_size, chosen_box, margin=_INSERTION_MASK_MARGIN)
+
+        try:
+            image_bytes = await insert_fn(background_bytes, mask_bytes, insertion_prompt)
+        except Exception as exc:  # noqa: BLE001 -- one bad attempt shouldn't end the run
+            attempts.append({"attempt": index, "ok": False,
+                             "reasons": [f"insertion_failed: {exc}"]})
+            if on_attempt:
+                on_attempt(index, False, [f"insertion_failed: {exc}"])
+            continue
+
+        if save_attempts_dir is not None:
+            _save_attempt_debug(save_attempts_dir, difficulty, index, image_bytes, True,
+                               tag="inserted")
+
+        padded = _padded_bounds(chosen_box, _INSERTION_MASK_MARGIN)
+        crop_bytes = crop_to_bytes(image_bytes, chosen_box, margin=_INSERTION_MASK_MARGIN)
+        crop_result = await locate_in_crop(vision_client, crop_bytes, mascot_bytes)
+        full_target = _map_crop_target_to_full(crop_result.target, padded)
+
+        result = ValidationResult(
+            target_count=crop_result.target_count, target=full_target,
+            confidence=crop_result.confidence, visibility=crop_result.visibility,
+            too_obvious=crop_result.too_obvious, malformed=crop_result.malformed,
+            raw=crop_result.raw,
+        )
+        ok, reasons = validate(result, difficulty)
+
+        # Only worth cross-checking a box that already passed everything else -- same
+        # reasoning as build_validated_puzzle: the located box becomes the permanent
+        # answer key, and this catches a confidently hallucinated one cheaply.
+        verify_confidence = None
+        if ok:
+            verify_crop_bytes = crop_to_bytes(image_bytes, result.target)
+            present, verify_confidence = await verify_crop(
+                vision_client, verify_crop_bytes, mascot_bytes)
+            if not present or verify_confidence < MIN_VERIFY_CONFIDENCE:
+                ok = False
+                reasons.append(f"crop_check_failed(present={present}, "
+                               f"confidence={verify_confidence:.2f})")
+
+        attempts.append({"attempt": index, "ok": ok, "reasons": list(reasons)})
+        if on_attempt:
+            on_attempt(index, ok, reasons)
+
+        if ok:
+            meta = {
+                "prompt": insertion_prompt,
+                "background_prompt": background_prompt,
+                "attempts": index,
+                "attempt_log": attempts,
+                "used_reference": False,
+                "pipeline": "hybrid",
+                "image_model": INSERTION_IMAGE_MODEL,
+                "image_quality": INSERTION_IMAGE_QUALITY,
+                "background_model": BACKGROUND_IMAGE_MODEL,
+                "background_quality": BACKGROUND_IMAGE_QUALITY,
+                "vision_model": VERIFY_MODEL,
+                "verify_model": VERIFY_MODEL,
+                "verify_confidence": verify_confidence,
+            }
+            return image_bytes, result, meta
+
+    summary = "; ".join(
+        f"#{a['attempt']}: {', '.join(a['reasons']) or 'ok'}" for a in attempts)
+    raise PuzzleGenerationError(
+        f"No valid puzzle after {max_attempts} attempts ({difficulty}, {theme}, hybrid) "
+        f"-- {summary}")
 
 
 # ---------------------------------------------------------------------------

@@ -642,6 +642,303 @@ def run_pipeline():
     asyncio.run(vision_failure_is_not_fatal())
 
 
+# ---------------------------------------------------------------------------
+# Hybrid pipeline: background generated separately, mascot inserted at a chosen spot
+# ---------------------------------------------------------------------------
+
+def run_target_box():
+    section("pick_target_box (hybrid)")
+    rng = random.Random(42)
+
+    for name in wo.DIFFICULTY_ORDER:
+        lo, hi = wo.DIFFICULTIES[name]["area"]
+        for region_index in range(9):
+            box = wo.pick_target_box(name, region_index, rng)
+            check(len(box) == 4, f"{name} region {region_index}: box has 4 coordinates")
+            x_min, y_min, x_max, y_max = box
+            check(0.0 <= x_min < x_max <= 1.0 and 0.0 <= y_min < y_max <= 1.0,
+                  f"{name} region {region_index}: box is within the unit square")
+            area = (x_max - x_min) * (y_max - y_min)
+            check(lo - 1e-9 <= area <= hi + 1e-9,
+                  f"{name} region {region_index}: area {area:.5f} within band ({lo}, {hi})")
+
+    # The box's centre should land inside the requested region's 3x3 cell.
+    x_min, y_min, x_max, y_max = wo.pick_target_box("hard", 0, rng)  # upper-left
+    cx, cy = (x_min + x_max) / 2, (y_min + y_max) / 2
+    check(cx <= 1 / 3 + 1e-6 and cy <= 1 / 3 + 1e-6,
+          f"region 0 (upper-left) keeps the box centre in its cell (got {cx:.3f},{cy:.3f})")
+
+    x_min, y_min, x_max, y_max = wo.pick_target_box("hard", 8, rng)  # lower-right
+    cx, cy = (x_min + x_max) / 2, (y_min + y_max) / 2
+    check(cx >= 2 / 3 - 1e-6 and cy >= 2 / 3 - 1e-6,
+          f"region 8 (lower-right) keeps the box centre in its cell (got {cx:.3f},{cy:.3f})")
+
+    x_min, y_min, x_max, y_max = wo.pick_target_box("hard", 4, rng)  # centre
+    cx, cy = (x_min + x_max) / 2, (y_min + y_max) / 2
+    check(1 / 3 - 1e-6 <= cx <= 2 / 3 + 1e-6 and 1 / 3 - 1e-6 <= cy <= 2 / 3 + 1e-6,
+          f"region 4 (centre) keeps the box centre in its cell (got {cx:.3f},{cy:.3f})")
+
+    # An explicit aspect ratio should be respected exactly (small enough to fit its cell).
+    x_min, y_min, x_max, y_max = wo.pick_target_box("easy", 4, rng, aspect_ratio=2.0)
+    w, h = x_max - x_min, y_max - y_min
+    check(abs(h / w - 2.0) < 1e-6, f"explicit aspect_ratio is respected (got {h / w:.3f})")
+
+    boxes = {wo.pick_target_box("hard", 4, rng) for _ in range(20)}
+    check(len(boxes) > 5, "repeated calls at the same region produce varied boxes")
+
+
+def run_mask_building():
+    section("build_mask_bytes (hybrid)")
+    from PIL import Image
+
+    size = (1024, 1024)
+    target = (0.5, 0.5, 0.6, 0.7)
+    mask_bytes = wo.build_mask_bytes(size, target, margin=0.5)
+    check(bool(mask_bytes), "build_mask_bytes returns bytes")
+
+    with Image.open(io.BytesIO(mask_bytes)) as mask:
+        check(mask.size == size, f"mask matches the requested image size (got {mask.size})")
+        check(mask.mode == "RGBA", f"mask is RGBA (got {mask.mode})")
+
+        a = mask.getpixel((5, 5))[3]
+        check(a == 255, "top-left corner is opaque (protected from editing)")
+        a = mask.getpixel((size[0] - 5, size[1] - 5))[3]
+        check(a == 255, "bottom-right corner is opaque (protected from editing)")
+
+        cx = int(((target[0] + target[2]) / 2) * size[0])
+        cy = int(((target[1] + target[3]) / 2) * size[1])
+        a = mask.getpixel((cx, cy))[3]
+        check(a == 0, f"target centre is transparent/editable (got alpha={a})")
+
+    tiny_near_corner = (0.01, 0.01, 0.02, 0.02)
+    check(bool(wo.build_mask_bytes(size, tiny_near_corner, margin=0.5)),
+          "a tiny near-corner target does not crash mask building")
+
+
+def run_crop_mapping():
+    section("crop <-> full-image coordinate mapping (hybrid)")
+
+    target = (0.6, 0.6, 0.66, 0.68)
+    padded = wo._padded_bounds(target, 0.5)
+    check(padded is not None, "_padded_bounds returns a box")
+    px_min, py_min, px_max, py_max = padded
+    check(px_min < target[0] and py_min < target[1],
+          "padding expands the box outward on the low edge")
+    check(px_max > target[2] and py_max > target[3],
+          "padding expands the box outward on the high edge")
+    check(0.0 <= px_min and px_max <= 1.0, "padded bounds stay clamped to the unit square")
+
+    # A crop-local box spanning the whole crop (0,0)-(1,1) must map back to exactly the
+    # padded bounds it was cropped from.
+    full = wo._map_crop_target_to_full((0.0, 0.0, 1.0, 1.0), padded)
+    check(all(abs(a - b) < 1e-9 for a, b in zip(full, padded)),
+          "mapping the crop's own full extent back reproduces the padded bounds")
+
+    # A box covering the crop's centre half maps back to the centre half of the padded
+    # region in the full image.
+    pw, ph = px_max - px_min, py_max - py_min
+    expected = (px_min + 0.25 * pw, py_min + 0.25 * ph,
+                px_min + 0.75 * pw, py_min + 0.75 * ph)
+    full2 = wo._map_crop_target_to_full((0.25, 0.25, 0.75, 0.75), padded)
+    check(all(abs(a - b) < 1e-9 for a, b in zip(full2, expected)),
+          "a partial crop-local box maps back proportionally")
+
+    check(wo._map_crop_target_to_full(None, padded) is None,
+          "no crop target maps to no full-image target")
+
+
+def run_hybrid_prompts():
+    section("hybrid prompt construction")
+
+    bg = wo.build_background_prompt(wo.THEMES[0], "hard")
+    check("okra" not in bg.lower(), "background prompt never mentions okra")
+    check("mascot" not in bg.lower(), "background prompt never mentions the mascot")
+    check("chef" not in bg.lower(), "background prompt never mentions a chef character")
+    check("reference" not in bg.lower(), "background prompt never mentions a reference image")
+    check(wo.THEMES[0] in bg, "background prompt carries the theme")
+    check(wo.DIFFICULTIES["hard"]["density"] in bg,
+          "background prompt carries the difficulty's density wording")
+
+    ins = wo.build_insertion_prompt("hard")
+    check("chef" in ins.lower() and "gloves" in ins.lower() and "mustache" in ins.lower(),
+          "insertion prompt carries the mascot's identifying features")
+    check("masked region" in ins, "insertion prompt references the masked region")
+    check("exactly one such character" in ins.lower(),
+          "insertion prompt still demands a single character")
+    check("haloed" in ins.lower(), "insertion prompt forbids the pasted-in tells")
+    spec = wo.DIFFICULTIES["hard"]
+    occ_text = f"{int(spec['occlusion'][0] * 100)}-{int(spec['occlusion'][1] * 100)}%"
+    check(occ_text in ins, "insertion prompt carries the difficulty's occlusion band")
+
+    for name in wo.DIFFICULTY_ORDER:
+        b = wo.build_background_prompt(wo.THEMES[1], name)
+        i = wo.build_insertion_prompt(name)
+        check("okra" not in b.lower(), f"{name}: background prompt stays mascot-free")
+        check(wo.DIFFICULTIES[name]["camouflage"] in i,
+              f"{name}: insertion prompt carries camouflage wording")
+
+
+class _HybridFakeMessages:
+    """Dispatches on a distinguishing phrase rather than a shared prefix: both
+    _LOCATE_IN_CROP_SYSTEM and the full-image _LOCATE_SYSTEM open with "You are a precise
+    visual localisation tool", so a naive startswith() check (fine for the non-hybrid fakes
+    above, which never see both in the same test) would misroute here."""
+
+    def __init__(self, locate_replies, verify_reply='{"present": true, "confidence": 0.95}'):
+        self._locate = list(locate_replies)
+        self._verify = verify_reply
+        self.locate_calls = 0
+        self.verify_calls = 0
+
+    async def create(self, **kwargs):
+        system = kwargs["system"][0]["text"]
+        if system.startswith("You verify a single crop"):
+            self.verify_calls += 1
+            return _Response(self._verify)
+        assert "checking one small crop" in system, f"unrouted system prompt: {system[:80]!r}"
+        self.locate_calls += 1
+        index = min(self.locate_calls - 1, len(self._locate) - 1)
+        return _Response(self._locate[index])
+
+
+class _HybridFakeVisionClient:
+    def __init__(self, locate_replies, verify_reply='{"present": true, "confidence": 0.95}'):
+        self.messages = _HybridFakeMessages(locate_replies, verify_reply)
+
+
+def run_hybrid_pipeline():
+    section("hybrid generate/validate pipeline")
+
+    # pick_target_box's own box is guaranteed within its difficulty's area band; the mask
+    # (and crop) around it pads by _INSERTION_MASK_MARGIN=0.5 on every side, so the
+    # original box occupies exactly the middle half of the padded/cropped region along
+    # each axis: padded width = w*(1+2*0.5) = 2w, and the offset from each padded edge to
+    # the original edge is (2w-w)/2 = w/2 = 0.25 of the padded width. A crop-local reply of
+    # exactly (0.25, 0.25, 0.75, 0.75) therefore reconstructs pick_target_box's own box
+    # EXACTLY once mapped back -- and so is valid for ANY difficulty/region draw, without
+    # needing to know what pick_target_box's internal (unseeded) rng actually picked.
+    # region=wo.REGIONS[4] (centre) is passed throughout so that reconstruction is never
+    # perturbed by _padded_bounds clamping a near-edge box against the unit square.
+    # visibility=0.9 clears every difficulty's min_visibility floor (highest is easy's
+    # 0.75), since this fixture is reused across sub-tests running different difficulties.
+    good_crop_reply = _box_reply(0.25, 0.25, 0.75, 0.75, confidence=0.95, visibility=0.9)
+    # A crop-local reply spanning the whole crop maps back to ~4x the original target's
+    # area (2x width * 2x height). "easy" and "medium" have a hi/lo band ratio of 3, so 4x
+    # ANY valid underlying draw exceeds their ceiling regardless of where in the band that
+    # draw landed -- unlike "hard"/"brutal", whose ratio of exactly 4 makes the worst case
+    # (draw at the band's own minimum) land exactly AT the ceiling, not over it.
+    oversized_crop_reply = _box_reply(0.0, 0.0, 1.0, 1.0, confidence=0.95, visibility=0.9)
+    centre_region = wo.REGIONS[4]
+
+    async def background_fn(prompt):
+        return _png()
+
+    def make_insert_fn(record=None):
+        async def insert_fn(background_bytes, mask_bytes, prompt):
+            if record is not None:
+                record.append((background_bytes, mask_bytes, prompt))
+            return _png()
+        return insert_fn
+
+    async def first_try():
+        client = _HybridFakeVisionClient([good_crop_reply])
+        image, result, meta = await wo.build_validated_puzzle_hybrid(
+            background_fn=background_fn, insert_fn=make_insert_fn(),
+            vision_client=client, mascot_bytes=_png(64, 64),
+            theme=wo.THEMES[0], difficulty="hard", region=centre_region)
+        check(bool(image), "a validated hybrid puzzle returns image bytes")
+        check(result.target is not None, "the mapped-back box is returned")
+        check(meta["attempts"] == 1, "a good first attempt does not retry")
+        check(meta["pipeline"] == "hybrid", "meta records which pipeline produced the image")
+        check(meta["used_reference"] is False,
+              "hybrid insertion never claims to use a reference image")
+        check(client.messages.locate_calls == 1, "exactly one locate_in_crop call on success")
+        check(client.messages.verify_calls == 1, "the crop cross-check runs on success")
+
+    asyncio.run(first_try())
+
+    async def background_generated_once():
+        calls = {"background": 0}
+
+        async def counting_background_fn(prompt):
+            calls["background"] += 1
+            return _png()
+
+        record = []
+        # First reply oversized (rejected), second good -- this must retry the INSERTION,
+        # not regenerate the background, which is the whole cost point of the hybrid split.
+        # "easy" (not "hard"): see oversized_crop_reply's comment above for why the band's
+        # hi/lo ratio matters here.
+        client = _HybridFakeVisionClient([oversized_crop_reply, good_crop_reply])
+        _, _, meta = await wo.build_validated_puzzle_hybrid(
+            background_fn=counting_background_fn, insert_fn=make_insert_fn(record),
+            vision_client=client, mascot_bytes=_png(64, 64),
+            theme=wo.THEMES[0], difficulty="easy", region=centre_region)
+        check(meta["attempts"] == 2, "a rejected attempt is retried")
+        check(calls["background"] == 1,
+              "the background is generated once and reused across insertion retries")
+        check(len(record) == 2, "the insertion call itself does retry")
+        first_bg, second_bg = record[0][0], record[1][0]
+        check(first_bg == second_bg,
+              "every insertion retry is handed the SAME background bytes, not a fresh one")
+
+    asyncio.run(background_generated_once())
+
+    async def crop_check_rejects():
+        client = _HybridFakeVisionClient(
+            [good_crop_reply], verify_reply='{"present": false, "confidence": 0.1}')
+        try:
+            await wo.build_validated_puzzle_hybrid(
+                background_fn=background_fn, insert_fn=make_insert_fn(),
+                vision_client=client, mascot_bytes=_png(64, 64),
+                theme=wo.THEMES[0], difficulty="hard", region=centre_region, max_attempts=1)
+        except wo.PuzzleGenerationError as exc:
+            check("crop_check_failed" in str(exc),
+                  "a failed crop cross-check rejects an otherwise-valid hybrid box")
+            return
+        check(False, "a failed crop check must not yield a hybrid puzzle")
+
+    asyncio.run(crop_check_rejects())
+
+    async def survives_a_broken_insertion():
+        async def boom(background_bytes, mask_bytes, prompt):
+            raise RuntimeError("edit endpoint exploded")
+
+        client = _HybridFakeVisionClient([good_crop_reply])
+        try:
+            await wo.build_validated_puzzle_hybrid(
+                background_fn=background_fn, insert_fn=boom,
+                vision_client=client, mascot_bytes=_png(64, 64),
+                theme=wo.THEMES[0], difficulty="hard", max_attempts=2)
+        except wo.PuzzleGenerationError as exc:
+            check("edit endpoint exploded" in str(exc),
+                  "an insertion exception is captured as a rejection reason, not raised raw")
+            return
+        check(False, "expected PuzzleGenerationError")
+
+    asyncio.run(survives_a_broken_insertion())
+
+    async def broken_background_is_fatal_immediately():
+        async def boom(prompt):
+            raise RuntimeError("background provider down")
+
+        client = _HybridFakeVisionClient([good_crop_reply])
+        try:
+            await wo.build_validated_puzzle_hybrid(
+                background_fn=boom, insert_fn=make_insert_fn(),
+                vision_client=client, mascot_bytes=_png(64, 64),
+                theme=wo.THEMES[0], difficulty="hard")
+        except wo.PuzzleGenerationError as exc:
+            check("background provider down" in str(exc),
+                  "a background failure raises immediately (nothing to retry without one)")
+            check(client.messages.locate_calls == 0,
+                  "no vision call happens if the background never got generated")
+            return
+        check(False, "expected PuzzleGenerationError")
+
+    asyncio.run(broken_background_is_fatal_immediately())
+
+
 def run_text_extraction():
     section("response text extraction")
     check(wo._first_text(_Response("hello")) == "hello",
@@ -763,9 +1060,14 @@ def run_offline():
     run_validation()
     run_prompts()
     run_placement()
+    run_target_box()
+    run_mask_building()
+    run_crop_mapping()
+    run_hybrid_prompts()
     run_text_extraction()
     run_cropping()
     run_pipeline()
+    run_hybrid_pipeline()
 
 
 def main():
