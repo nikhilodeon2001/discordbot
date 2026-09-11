@@ -1,14 +1,27 @@
 """One-time seed script: generate validated hidden-object puzzles for Where's Okra and
 store them in S3 (the image) plus Mongo (the secret answer box).
 
-Each puzzle is generated with the okra chef mascot as an identity reference, then located
-by a vision pass over the finished pixels, then cross-checked against a crop of that
-location. Only puzzles that survive all three steps are stored -- see wheres_okra.py for
-why the generator's own claims about placement are never trusted.
+Two pipelines, both in wheres_okra.py (--pipeline, default "hybrid"):
 
-Generation is slow (~30-90s per accepted puzzle) and costs real money (~$0.21 per attempt,
-roughly $0.40 per accepted puzzle), which is exactly why the game draws from a pre-built
-pool rather than generating inside a round.
+  hybrid (default): a mascot-free background is generated first, then the mascot is drawn
+  into a masked region at a position WE choose (see build_validated_puzzle_hybrid). Built
+  after the single-call pipeline's real generated samples showed a reliable failure mode:
+  one call asked to solve placement, rendering and style-matching together for a heavily
+  described character kept making that character the centred, full-height visual hero
+  instead of a hidden background figure. Splitting the work into a plain background call
+  plus a narrower "draw this character HERE" edit fixed that. Per-attempt cost and success
+  rate have not been measured over a real batch yet -- this is what the first live runs
+  are for; don't trust a guessed number for it.
+
+  single (build_validated_puzzle): the original one-call full-scene redraw with the mascot
+  as an identity reference, retried with a text-only fallback on repeated oversizing.
+  Kept available for comparison via --pipeline single. Measured at ~$0.21/attempt,
+  roughly $0.40/accepted puzzle, but with a much higher observed rejection rate in
+  practice than that alone suggests -- see the samples that motivated the hybrid pipeline.
+
+Either way, every attempt is located by a vision pass over the finished pixels (never the
+generator's own claims about placement) and cross-checked against a crop of that location
+before being trusted -- see wheres_okra.py's module docstring for why.
 
 Run once per environment -- staging and prod use different Mongo databases, so a pool
 built against one is invisible to the other.
@@ -92,11 +105,44 @@ def build_image_fns(openai_client):
     return edit_fn, generate_fn
 
 
+def build_hybrid_image_fns(openai_client):
+    """Bind the hybrid pipeline's two OpenAI calls (see
+    wo.build_validated_puzzle_hybrid): a plain background generation with no reference
+    image and no mask, and a masked local edit that draws the mascot into that background
+    only within the region the mask marks transparent/editable."""
+    async def background_fn(prompt):
+        response = await openai_client.images.generate(
+            model=wo.BACKGROUND_IMAGE_MODEL,
+            prompt=prompt,
+            size="1024x1024",
+            quality=wo.BACKGROUND_IMAGE_QUALITY,
+        )
+        return base64.b64decode(response.data[0].b64_json)
+
+    async def insert_fn(background_bytes, mask_bytes, prompt):
+        response = await openai_client.images.edit(
+            model=wo.INSERTION_IMAGE_MODEL,
+            image=("background.png", background_bytes, "image/png"),
+            mask=("mask.png", mask_bytes, "image/png"),
+            prompt=prompt,
+            size="1024x1024",
+            quality=wo.INSERTION_IMAGE_QUALITY,
+        )
+        return base64.b64decode(response.data[0].b64_json)
+
+    return background_fn, insert_fn
+
+
 def build_document(puzzle_id, s3_key, image_url, theme, difficulty, region, result, meta):
     """The stored puzzle. `target` is the secret and never leaves the server -- see the
-    integrity note in wheres_okra.py and the game loop in discordbot.py."""
+    integrity note in wheres_okra.py and the game loop in discordbot.py.
+
+    Shared between both pipelines; the hybrid-only meta keys (background_model/quality/
+    prompt) are added only when present rather than assumed, since build_validated_puzzle
+    (the single-call pipeline) never sets them.
+    """
     box = wo.normalize_target(result.target)
-    return {
+    document = {
         "_id": puzzle_id,
         "image_url": image_url,
         "s3_key": s3_key,
@@ -112,6 +158,7 @@ def build_document(puzzle_id, s3_key, image_url, theme, difficulty, region, resu
         "generated_at": datetime.datetime.utcnow(),
         "attempts": meta["attempts"],
         "used_reference": meta["used_reference"],
+        "pipeline": meta.get("pipeline", "single"),
         "image_model": meta["image_model"],
         "image_quality": meta["image_quality"],
         "vision_model": meta["vision_model"],
@@ -119,6 +166,11 @@ def build_document(puzzle_id, s3_key, image_url, theme, difficulty, region, resu
         "verify_confidence": meta["verify_confidence"],
         "prompt": meta["prompt"],
     }
+    if "background_model" in meta:
+        document["background_model"] = meta["background_model"]
+        document["background_quality"] = meta["background_quality"]
+        document["background_prompt"] = meta["background_prompt"]
+    return document
 
 
 async def run(args):
@@ -126,7 +178,8 @@ async def run(args):
 
     # --- Dry run: no credentials, no network, no writes. -------------------------------
     if args.dry_run:
-        print(f"Dry run: would generate {args.count} '{args.difficulty}' puzzle(s).\n")
+        print(f"Dry run [{args.pipeline}]: would generate {args.count} "
+              f"'{args.difficulty}' puzzle(s).\n")
         last_theme = last_region = None
         for i in range(args.count):
             theme = args.theme or wo.pick_theme(rng, exclude=last_theme)
@@ -137,9 +190,20 @@ async def run(args):
             print(f"           region={region!r} grid={spec['grid'][0]}x{spec['grid'][1]} "
                   f"area band={spec['area']} min_visibility={spec['min_visibility']}")
             if i == 0:
-                print("\n--- prompt ---")
-                print(wo.build_puzzle_prompt(theme, args.difficulty, region))
-                print("--- end prompt ---\n")
+                if args.pipeline == "hybrid":
+                    print("\n--- background prompt (no mascot mentioned) ---")
+                    print(wo.build_background_prompt(theme, args.difficulty))
+                    print("--- end background prompt ---\n")
+                    print("--- insertion prompt (masked local edit) ---")
+                    print(wo.build_insertion_prompt(args.difficulty))
+                    print("--- end insertion prompt ---\n")
+                    region_index = wo.REGIONS.index(region)
+                    box = wo.pick_target_box(args.difficulty, region_index, wo.make_rng())
+                    print(f"example chosen target box: {tuple(round(v, 4) for v in box)}\n")
+                else:
+                    print("\n--- prompt ---")
+                    print(wo.build_puzzle_prompt(theme, args.difficulty, region))
+                    print("--- end prompt ---\n")
         print(f"Would upload to s3://{S3_BUCKET_NAME}/{S3_PREFIX}{args.difficulty}/<uuid>.png")
         print(f"Would insert into Mongo collection {MONGO_COLLECTION!r}.")
         print("\nDry run -- no changes made.")
@@ -166,6 +230,7 @@ async def run(args):
     openai_client = AsyncOpenAI(api_key=openai_key)
     vision_client = anthropic.AsyncAnthropic(api_key=anthropic_key)
     edit_fn, generate_fn = build_image_fns(openai_client)
+    background_fn, insert_fn = build_hybrid_image_fns(openai_client)
 
     s3 = boto3.client(
         "s3",
@@ -193,10 +258,19 @@ async def run(args):
                   f"{'' if ok else ' -- ' + ', '.join(reasons)}")
 
         try:
-            image_bytes, result, meta = await wo.build_validated_puzzle(
-                edit_fn=edit_fn, generate_fn=generate_fn, vision_client=vision_client,
-                mascot_bytes=mascot_bytes, theme=theme, difficulty=args.difficulty,
-                region=region, max_attempts=args.max_attempts, on_attempt=on_attempt)
+            if args.pipeline == "hybrid":
+                image_bytes, result, meta = await wo.build_validated_puzzle_hybrid(
+                    background_fn=background_fn, insert_fn=insert_fn,
+                    vision_client=vision_client, mascot_bytes=mascot_bytes, theme=theme,
+                    difficulty=args.difficulty, region=region,
+                    max_attempts=args.max_attempts, on_attempt=on_attempt,
+                    save_attempts_dir=args.save_rejected)
+            else:
+                image_bytes, result, meta = await wo.build_validated_puzzle(
+                    edit_fn=edit_fn, generate_fn=generate_fn, vision_client=vision_client,
+                    mascot_bytes=mascot_bytes, theme=theme, difficulty=args.difficulty,
+                    region=region, max_attempts=args.max_attempts, on_attempt=on_attempt,
+                    save_attempts_dir=args.save_rejected)
         except wo.PuzzleGenerationError as exc:
             failed += 1
             total_attempts += args.max_attempts
@@ -230,8 +304,14 @@ async def run(args):
 
     print(f"\n{len(accepted)} accepted, {failed} failed, {total_attempts} total attempts")
     if total_attempts:
-        # Image generation dominates; the locate + crop-check pair adds roughly $0.04.
-        print(f"Rough spend: ${total_attempts * 0.21:.2f}")
+        if args.pipeline == "single":
+            # Image generation dominates; the locate + crop-check pair adds roughly $0.04.
+            print(f"Rough spend: ${total_attempts * 0.21:.2f} (measured -- see wheres_okra.py)")
+        else:
+            print(f"{total_attempts} insertion attempts across {len(accepted) + failed} "
+                  f"background(s) -- exact hybrid pricing is not yet measured over a real "
+                  f"batch, check actual OpenAI/Anthropic usage after this run rather than "
+                  f"trust a guessed number here.")
 
     for document in accepted[:20]:
         print(f"  {document['_id']}  {document['difficulty']:<7} {document['theme']}")
@@ -252,6 +332,11 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--count", type=int, default=1,
                         help="how many puzzles to accept (default 1)")
+    parser.add_argument("--pipeline", default="hybrid", choices=["hybrid", "single"],
+                        help="'hybrid' (default): mascot-free background + a targeted "
+                             "masked edit at a position we choose. 'single': the original "
+                             "one-call full-scene redraw (build_validated_puzzle) -- kept "
+                             "available for comparison, not the current default.")
     parser.add_argument("--difficulty", default="hard", choices=wo.DIFFICULTY_ORDER)
     parser.add_argument("--theme", default=None,
                         help="force a single theme (default: sampled from wheres_okra.THEMES)")
@@ -261,6 +346,9 @@ def main():
                         help="seed theme/region selection, for reproducible batches")
     parser.add_argument("--save-local", default=None, metavar="DIR",
                         help="also write accepted PNGs to DIR for visual inspection")
+    parser.add_argument("--save-rejected", default=None, metavar="DIR",
+                        help="write EVERY generated attempt to DIR, accepted or rejected -- "
+                             "for diagnosing why attempts keep failing, not routine use")
     parser.add_argument("--dry-run", action="store_true",
                         help="print prompts and the plan, write nothing, need no credentials")
     args = parser.parse_args()
