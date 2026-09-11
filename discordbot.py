@@ -24617,6 +24617,16 @@ def normalize_text(input):
     return text
 
 
+def _giveaway_words(category, question_text):
+    """Normalized words (len >= 4) drawn verbatim from the category or question
+    text. legacy_fuzzy_match's first-5-char / first-word / substring-anywhere
+    leniency heuristics exclude these so a guess can't win just by parroting a
+    word the trivia prompt already handed the user for free -- e.g. typing
+    "time" for "ragtime" when the category is '"Time" For A Change'."""
+    combined = f"{category or ''} {question_text or ''}"
+    return {w for w in normalize_text(combined).split() if len(w) >= 4}
+
+
 def levenshtein_similarity(str1, str2):
     return difflib.SequenceMatcher(None, str1.lower(), str2.lower()).ratio()
 
@@ -24703,7 +24713,7 @@ def trig_checker(response, answer):
 USE_LEGACY_FUZZY_MATCH = True
 
 
-def legacy_fuzzy_match(user_answer, correct_answer, category, url, _skip_alias_check=False, ignore_exact_mode=False):
+def legacy_fuzzy_match(user_answer, correct_answer, category, url, _skip_alias_check=False, ignore_exact_mode=False, question_text=""):
     """The pre-rebuild answer-matching heuristics (unguarded substring, char-level Jaccard,
     first-5-char/first-word hacks), kept verbatim as a fallback -- see USE_LEGACY_FUZZY_MATCH.
     Superseded by answer_matching.py, which is the default; this only runs if that flag is
@@ -24760,7 +24770,7 @@ def legacy_fuzzy_match(user_answer, correct_answer, category, url, _skip_alias_c
                             return True
                     else:
                         # Long alias: use normal fuzzy matching
-                        if legacy_fuzzy_match(user_answer, variant, category, url, _skip_alias_check=True):
+                        if legacy_fuzzy_match(user_answer, variant, category, url, _skip_alias_check=True, question_text=question_text):
                             return True
                 break  # Don't check other alias groups
 
@@ -24840,8 +24850,18 @@ def legacy_fuzzy_match(user_answer, correct_answer, category, url, _skip_alias_c
     if exact_mode and not ignore_exact_mode:
         return False
 
+    # Words drawn verbatim from the category/question text -- excluded from
+    # the leniency heuristics below so a guess can't win by parroting a word
+    # the prompt already handed the user for free (e.g. "time" for "ragtime"
+    # when the category is '"Time" For A Change').
+    giveaway_words = _giveaway_words(category, question_text)
+    user_is_giveaway_word = (
+        user_answer in giveaway_words or no_spaces_user in giveaway_words or
+        no_filler_user in giveaway_words or no_filler_spaces_user in giveaway_words
+    )
+
     # New Step: First 5 characters match
-    if user_answer[:5] == correct_answer[:5] or no_spaces_user[:5] == no_spaces_correct[:5] or no_filler_user[:5] == no_filler_correct[:5] or no_filler_spaces_user[:5] == no_filler_spaces_correct[:5]:
+    if not user_is_giveaway_word and (user_answer[:5] == correct_answer[:5] or no_spaces_user[:5] == no_spaces_correct[:5] or no_filler_user[:5] == no_filler_correct[:5] or no_filler_spaces_user[:5] == no_filler_spaces_correct[:5]):
         return True
 
     # Remove filler words and split correct answer
@@ -24849,16 +24869,16 @@ def legacy_fuzzy_match(user_answer, correct_answer, category, url, _skip_alias_c
     no_filler_answer_words = no_filler_correct.split()
 
     # Ensure correct_answer_words is not empty
-    if correct_answer_words and len(correct_answer_words[0]) >= 3:
+    if correct_answer_words and len(correct_answer_words[0]) >= 3 and correct_answer_words[0] not in giveaway_words:
         if user_answer == correct_answer_words[0] or no_filler_user == correct_answer_words[0]:
             return True
 
-    if no_filler_answer_words and len(no_filler_answer_words[0]) >= 3:
+    if no_filler_answer_words and len(no_filler_answer_words[0]) >= 3 and no_filler_answer_words[0] not in giveaway_words:
         if user_answer == no_filler_answer_words[0] or no_filler_user == no_filler_answer_words[0]:
             return True
 
     #Check if user's answer is a substring of the correct answer after normalization
-    if user_answer in correct_answer:
+    if user_answer not in giveaway_words and user_answer in correct_answer:
         return True
 
     # Step 1: Exact match or Partial match
@@ -24881,7 +24901,7 @@ def legacy_fuzzy_match(user_answer, correct_answer, category, url, _skip_alias_c
     return False  # No match found
 
 
-def fuzzy_match(user_answer, correct_answer, category, url, _skip_alias_check=False, ignore_exact_mode=False):
+def fuzzy_match(user_answer, correct_answer, category, url, _skip_alias_check=False, ignore_exact_mode=False, question_text=""):
     # Matching logic lives in answer_matching.py (testable in isolation). This
     # wrapper preserves the historic signature and wires Poindexter/exact_mode
     # to the STRICT end of the leniency dial.
@@ -24889,11 +24909,12 @@ def fuzzy_match(user_answer, correct_answer, category, url, _skip_alias_check=Fa
         return legacy_fuzzy_match(
             user_answer, correct_answer, category, url,
             _skip_alias_check=_skip_alias_check, ignore_exact_mode=ignore_exact_mode,
+            question_text=question_text,
         )
     config = answer_matching.STRICT if (exact_mode and not ignore_exact_mode) else answer_matching.ACTIVE_CONFIG
     return answer_matching.match_answer(
         user_answer, correct_answer, category=category, url=url,
-        config=config, skip_alias=_skip_alias_check,
+        config=config, skip_alias=_skip_alias_check, question_text=question_text,
     )
 
 
@@ -25029,10 +25050,11 @@ async def check_correct_responses_delete(question_ask_time, trivia_answer_list, 
                 "username": display_name,
                 "response": message_content
             })
-                                
+        question_text_for_match = (current_question_data.get("question_text") if current_question_data else "") or ""
+
         # Check if the user's response is in the list of correct answers
         fuzzy_match_per_answer = [
-            (answer, fuzzy_match(message_content, answer, trivia_category, trivia_url))
+            (answer, fuzzy_match(message_content, answer, trivia_category, trivia_url, question_text=question_text_for_match))
             for answer in trivia_answer_list
         ]
         if sender_id in response_trace:
