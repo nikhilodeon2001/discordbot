@@ -440,12 +440,9 @@ async def send_question_queen_submit_ad():
 # the same text is correct whether this deploy is staging or prod.
 okra_lab_announcement_enabled = True
 okra_lab_announcement_text = (
-    "🌍🗺️ **Geokraphy** just joined the Arena — think you can out-guess a cartographer?\n\n"
-    "🖼️ 250 countries and territories, each round randomly picking from that country's available pictures (a filled-in map, a globe locator, and/or a national flag) for visual variety\n\n"
-    "🎯 Pick your battlefield: quiz by **Region** (Africa, Asia, Europe, Americas, Oceania) or by **Difficulty** (Basic, Intermediate, Expert), or just say **All** to skip filtering entirely — Region and Difficulty don't mix, but All overrides both\n\n"
-    "🧩 Then pick your **question types** à la carte from 9 options (Identify, Capital, Flag, Continent, Currency, Language, Neighbors, ISO Code, Borders) — rounds cycle through your picks in the exact order you list them\n\n"
-    "▶️ Play it via the numbered picker (**28**) or `/arena game_name:\"geokraphy\"`. Reply with numbers or names (like `2 5 8` or `capital currency iso`), or say `all` for everything.\n\n"
-    "🔁 This replaces **Borderline** in the Arena — the same neighbors-only guessing round lives on as the **Borders** question type above.\n"
+    "🕵️ **Smarter answer checking** — if your guess is just a word lifted straight from the category or question, it won't count on its own anymore\n\n"
+    "🎯 The real answer (or a genuine, distinctive piece of it) still gets full credit like always — this only closes a loophole where echoing back a word you were already handed for free was enough to score\n\n"
+    "✅ Should make close calls feel fairer across every round, Arena game, and Okra's World\n"
 )
 okra_lab_announcement_show_new_badge = True
 
@@ -24627,6 +24624,14 @@ def _giveaway_words(category, question_text):
     return {w for w in normalize_text(combined).split() if len(w) >= 4}
 
 
+def _is_giveaway_word(word, giveaway_words):
+    """True if `word` is one of the giveaway words, or a simple morphological
+    variant of one (e.g. "martin" vs. category word "martins") -- containment
+    in either direction, not exact equality, so trivial plural/prefix drift
+    doesn't defeat the guard."""
+    return len(word) >= 4 and any(word in gw or gw in word for gw in giveaway_words)
+
+
 def levenshtein_similarity(str1, str2):
     return difflib.SequenceMatcher(None, str1.lower(), str2.lower()).ratio()
 
@@ -24855,9 +24860,9 @@ def legacy_fuzzy_match(user_answer, correct_answer, category, url, _skip_alias_c
     # the prompt already handed the user for free (e.g. "time" for "ragtime"
     # when the category is '"Time" For A Change').
     giveaway_words = _giveaway_words(category, question_text)
-    user_is_giveaway_word = (
-        user_answer in giveaway_words or no_spaces_user in giveaway_words or
-        no_filler_user in giveaway_words or no_filler_spaces_user in giveaway_words
+    user_is_giveaway_word = any(
+        _is_giveaway_word(w, giveaway_words)
+        for w in (user_answer, no_spaces_user, no_filler_user, no_filler_spaces_user)
     )
 
     # New Step: First 5 characters match
@@ -24869,16 +24874,16 @@ def legacy_fuzzy_match(user_answer, correct_answer, category, url, _skip_alias_c
     no_filler_answer_words = no_filler_correct.split()
 
     # Ensure correct_answer_words is not empty
-    if correct_answer_words and len(correct_answer_words[0]) >= 3 and correct_answer_words[0] not in giveaway_words:
+    if correct_answer_words and len(correct_answer_words[0]) >= 3 and not _is_giveaway_word(correct_answer_words[0], giveaway_words):
         if user_answer == correct_answer_words[0] or no_filler_user == correct_answer_words[0]:
             return True
 
-    if no_filler_answer_words and len(no_filler_answer_words[0]) >= 3 and no_filler_answer_words[0] not in giveaway_words:
+    if no_filler_answer_words and len(no_filler_answer_words[0]) >= 3 and not _is_giveaway_word(no_filler_answer_words[0], giveaway_words):
         if user_answer == no_filler_answer_words[0] or no_filler_user == no_filler_answer_words[0]:
             return True
 
     #Check if user's answer is a substring of the correct answer after normalization
-    if user_answer not in giveaway_words and user_answer in correct_answer:
+    if not _is_giveaway_word(user_answer, giveaway_words) and user_answer in correct_answer:
         return True
 
     # Step 1: Exact match or Partial match

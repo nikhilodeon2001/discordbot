@@ -54,6 +54,17 @@ CASES = [
      False, "first-word heuristic: category giveaway word must not win"),
     ("ocean", "Ocean Wave", "", "", "",
      True, "regression guard: first-word leniency still works absent giveaway overlap"),
+
+    # --- user-provided examples ---
+    ("bottom", "your bottom dollar", "Bottom", "", "",
+     False, "user-provided example: a whole word taken from the category must not win, even mid-phrase"),
+
+    # --- morphological variant (plural category word vs. singular guess) ---
+    ("martin", "Martin Bormann", "Martins", "",
+     "A skeleton found in 1972 was declared to be this Nazi, rumored alive in South America",
+     False, "reported gap: plural category word 'Martins' must still block singular guess 'martin'"),
+    ("vincent", "Martin Bormann", "", "", "",
+     False, "regression guard: 'vincent' is not a real match for 'Martin Bormann' regardless of giveaway logic"),
 ]
 
 

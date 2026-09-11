@@ -160,6 +160,12 @@ CASES = [
      "reported-style bug via any-key-word leniency: category giveaway word must not win"),
     ("bonaparte", "Napoleon Bonaparte", "The Story of Napoleon", "", "GENEROUS", True,
      "regression guard: surname/any-key-word leniency still works for a non-giveaway word"),
+    ("bottom", "your bottom dollar", "Bottom", "", "GENEROUS", False,
+     "user-provided example: a whole word taken from the category must not win, even mid-phrase"),
+    ("martin", "Martin Bormann", "Martins", "", "GENEROUS", False,
+     "morphological variant: plural category word 'Martins' must still block singular guess 'martin'"),
+    ("vincent", "Martin Bormann", "", "", "GENEROUS", False,
+     "regression guard: 'vincent' is not a real match for 'Martin Bormann' regardless of giveaway logic"),
 ]
 
 

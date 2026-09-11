@@ -228,6 +228,14 @@ def _giveaway_words(category, question_text):
     return set(normalize_text(combined).split())
 
 
+def _is_giveaway_word(word, giveaway_words):
+    """True if `word` is one of the giveaway words, or a simple morphological
+    variant of one (e.g. "martin" vs. category word "martins") -- containment
+    in either direction, not exact equality, so trivial plural/prefix drift
+    doesn't defeat the guard."""
+    return len(word) >= 4 and any(word in gw or gw in word for gw in giveaway_words)
+
+
 # ---------------------------------------------------------------------------
 # Negation handling
 # ---------------------------------------------------------------------------
@@ -590,12 +598,12 @@ def _free_text_match(user_answer, correct_answer, url, config, category="", ques
     if config.allow_surname_match and len(correct_sig) >= 2:
         last = correct_sig[-1]
         if len(last) >= config.min_key_word_len and last not in GENERIC_HEAD_WORDS \
-                and len(user_sig) == 1 and user_sig[0] not in giveaway_words \
+                and len(user_sig) == 1 and not _is_giveaway_word(user_sig[0], giveaway_words) \
                 and _word_match(user_sig[0], last, config):
             return True
     if config.allow_any_key_word and len(user_sig) == 1:
         uw = user_sig[0]
-        if uw not in giveaway_words and any(
+        if not _is_giveaway_word(uw, giveaway_words) and any(
                len(cw) >= config.min_key_word_len and cw not in GENERIC_HEAD_WORDS
                and _word_match(uw, cw, config)
                for cw in correct_sig):
@@ -610,7 +618,7 @@ def _free_text_match(user_answer, correct_answer, url, config, category="", ques
         # River" -- that guard is a separate, unrelated feature. Guarded on uw
         # (what the user typed), not cw, since that's what a category/question
         # giveaway word would be.
-        if len(uw) >= config.min_key_word_len and uw not in giveaway_words:
+        if len(uw) >= config.min_key_word_len and not _is_giveaway_word(uw, giveaway_words):
             if any(len(cw) >= config.min_key_word_len and cw not in GENERIC_HEAD_WORDS
                    and (uw in cw or cw in uw)
                    for cw in correct_sig):
