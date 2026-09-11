@@ -442,7 +442,8 @@ okra_lab_announcement_enabled = True
 okra_lab_announcement_text = (
     "🕵️ **Smarter answer checking** — if your guess is just a word lifted straight from the category or question, it won't count on its own anymore\n\n"
     "🎯 The real answer (or a genuine, distinctive piece of it) still gets full credit like always — this only closes a loophole where echoing back a word you were already handed for free was enough to score\n\n"
-    "✅ Should make close calls feel fairer across every round, Arena game, and Okra's World\n"
+    "✅ Should make close calls feel fairer across every round, Arena game, and Okra's World\n\n"
+    "⏱️ **More time to decide** — picking a minigame, setting round-end options, and writing your custom painting prompt now all give you double the time before the window closes\n"
 )
 okra_lab_announcement_show_new_badge = True
 
