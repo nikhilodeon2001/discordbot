@@ -91,5 +91,32 @@ def run():
     return len(failures)
 
 
+def run_toggle():
+    if discordbot is None:
+        return 0
+
+    failures = []
+    original = discordbot.GIVEAWAY_WORD_GUARD_ENABLED
+    try:
+        discordbot.GIVEAWAY_WORD_GUARD_ENABLED = True
+        on = discordbot.legacy_fuzzy_match(
+            "time", "ragtime", "\"Time\" For A Change", "",
+            question_text="Scott Joplin is a famous performer & composer of this musical style")
+        discordbot.GIVEAWAY_WORD_GUARD_ENABLED = False
+        off = discordbot.legacy_fuzzy_match(
+            "time", "ragtime", "\"Time\" For A Change", "",
+            question_text="Scott Joplin is a famous performer & composer of this musical style")
+    finally:
+        discordbot.GIVEAWAY_WORD_GUARD_ENABLED = original
+
+    ok = on is False and off is True
+    if not ok:
+        failures.append(("guard-on", on, False, "guard-off", off, True))
+    status = "PASS" if ok else "FAIL"
+    print(f"[{status}] GIVEAWAY_WORD_GUARD_ENABLED=True -> {on} (expected False), "
+          f"=False -> {off} (expected True)  -- toggle must restore pre-guard leniency when disabled")
+    return len(failures)
+
+
 if __name__ == "__main__":
-    sys.exit(1 if run() else 0)
+    sys.exit(1 if (run() + run_toggle()) else 0)

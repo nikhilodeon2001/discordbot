@@ -285,5 +285,37 @@ def run_question_text_cases():
     return len(failures)
 
 
+# (user, correct, category, question_text, expected_guard_on, expected_guard_off, note)
+GIVEAWAY_TOGGLE_CASES = [
+    ("time", "ragtime", "\"Time\" For A Change",
+     "Scott Joplin is a famous performer & composer of this musical style",
+     False, True, "enable_giveaway_guard=False must restore pre-guard leniency"),
+    ("ragtime", "ragtime", "\"Time\" For A Change",
+     "Scott Joplin is a famous performer & composer of this musical style",
+     True, True, "exact match is unaffected by the toggle either way"),
+]
+
+
+def run_giveaway_toggle_cases():
+    failures = []
+    for user, correct, category, question_text, expected_on, expected_off, note in GIVEAWAY_TOGGLE_CASES:
+        actual_on = match_answer(user, correct, category=category, question_text=question_text,
+                                  config=GENEROUS, enable_giveaway_guard=True)
+        actual_off = match_answer(user, correct, category=category, question_text=question_text,
+                                   config=GENEROUS, enable_giveaway_guard=False)
+        ok = actual_on == expected_on and actual_off == expected_off
+        if not ok:
+            failures.append((user, correct, expected_on, actual_on, expected_off, actual_off, note))
+        status = "PASS" if ok else "FAIL"
+        print(f"[{status}] match({user!r}, {correct!r}): guard-on={actual_on} (expected {expected_on}), "
+              f"guard-off={actual_off} (expected {expected_off})  -- {note}")
+    if failures:
+        print("\nGIVEAWAY-TOGGLE FAILURES:")
+        for user, correct, exp_on, act_on, exp_off, act_off, note in failures:
+            print(f"  match({user!r}, {correct!r}): guard-on {act_on} (expected {exp_on}), "
+                  f"guard-off {act_off} (expected {exp_off})  ({note})")
+    return len(failures)
+
+
 if __name__ == "__main__":
-    sys.exit(1 if (run() + run_word_limits() + run_question_text_cases()) else 0)
+    sys.exit(1 if (run() + run_word_limits() + run_question_text_cases() + run_giveaway_toggle_cases()) else 0)

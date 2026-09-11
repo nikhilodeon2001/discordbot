@@ -462,7 +462,8 @@ ALIAS_GROUPS = [
 ]
 
 
-def _alias_match(user_answer, correct_answer, category, url, config, question_text=""):
+def _alias_match(user_answer, correct_answer, category, url, config, question_text="",
+                 enable_giveaway_guard=True):
     """True if the guess matches the correct answer via a known alias group."""
     normalized_correct = normalize_text(correct_answer)
     for variants in ALIAS_GROUPS:
@@ -477,7 +478,8 @@ def _alias_match(user_answer, correct_answer, category, url, config, question_te
                 if normalized_user == normalized_variant:
                     return True
             elif match_answer(user_answer, variant, category=category, url=url,
-                              config=config, skip_alias=True, question_text=question_text):
+                              config=config, skip_alias=True, question_text=question_text,
+                              enable_giveaway_guard=enable_giveaway_guard):
                 return True
         # Correct answer belongs to this group but nothing matched; stop here.
         return False
@@ -548,7 +550,8 @@ def _subset_coverage_match(user_sig, correct_sig, config):
 # Free-text pipeline
 # ---------------------------------------------------------------------------
 
-def _free_text_match(user_answer, correct_answer, url, config, category="", question_text=""):
+def _free_text_match(user_answer, correct_answer, url, config, category="", question_text="",
+                     enable_giveaway_guard=True):
     norm_user = normalize_text(user_answer)
     norm_correct = normalize_text(correct_answer)
 
@@ -590,7 +593,7 @@ def _free_text_match(user_answer, correct_answer, url, config, category="", ques
                 and abs(len(nsu) - len(nsc)) <= 2:
             return True
 
-    giveaway_words = _giveaway_words(category, question_text)
+    giveaway_words = _giveaway_words(category, question_text) if enable_giveaway_guard else set()
 
     # Layer 4: guarded partial match.
     if config.subset_coverage < 1.0 and _subset_coverage_match(user_sig, correct_sig, config):
@@ -632,7 +635,7 @@ def _free_text_match(user_answer, correct_answer, url, config, category="", ques
 # ---------------------------------------------------------------------------
 
 def match_answer(user_answer, correct_answer, category="", url="",
-                 config=None, skip_alias=False, question_text=""):
+                 config=None, skip_alias=False, question_text="", enable_giveaway_guard=True):
     """Return True if `user_answer` should be accepted for `correct_answer`.
 
     category / url select the structured checker (if any); otherwise the
@@ -640,7 +643,9 @@ def match_answer(user_answer, correct_answer, category="", url="",
     ACTIVE_CONFIG); pass STRICT for Poindexter/exact mode. `question_text`,
     when given, is combined with `category` to build the giveaway-word guard
     (see _giveaway_words) that keeps the free-text leniency layers from
-    rewarding a guess that just parrots a word from the prompt.
+    rewarding a guess that just parrots a word from the prompt. Set
+    `enable_giveaway_guard=False` to fully disable that guard and restore the
+    matching behavior from before it existed.
     """
     if config is None:
         config = ACTIVE_CONFIG
@@ -653,7 +658,8 @@ def match_answer(user_answer, correct_answer, category="", url="",
     if user_answer == correct_answer:
         return True
 
-    if not skip_alias and _alias_match(user_answer, correct_answer, category, url, config, question_text):
+    if not skip_alias and _alias_match(user_answer, correct_answer, category, url, config, question_text,
+                                        enable_giveaway_guard=enable_giveaway_guard):
         return True
 
     # --- structured question types (deterministic) ---
@@ -691,4 +697,5 @@ def match_answer(user_answer, correct_answer, category="", url="",
 
     # --- free text ---
     return _free_text_match(user_answer, correct_answer, url, config,
-                             category=category, question_text=question_text)
+                             category=category, question_text=question_text,
+                             enable_giveaway_guard=enable_giveaway_guard)
