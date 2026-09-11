@@ -217,6 +217,17 @@ def _significant_tokens(normalized):
     return kept if kept else toks
 
 
+def _giveaway_words(category, question_text):
+    """Words drawn verbatim from the category or question text, normalized the
+    same way answers are. Excluded from the single-word leniency layers
+    (surname / any-key-word / substring) in _free_text_match, mirrored from
+    discordbot.py's legacy_fuzzy_match, so a one-word guess can't win just by
+    parroting a word the category/question already handed the player for
+    free."""
+    combined = f"{category or ''} {question_text or ''}"
+    return set(normalize_text(combined).split())
+
+
 # ---------------------------------------------------------------------------
 # Negation handling
 # ---------------------------------------------------------------------------
@@ -443,7 +454,7 @@ ALIAS_GROUPS = [
 ]
 
 
-def _alias_match(user_answer, correct_answer, category, url, config):
+def _alias_match(user_answer, correct_answer, category, url, config, question_text=""):
     """True if the guess matches the correct answer via a known alias group."""
     normalized_correct = normalize_text(correct_answer)
     for variants in ALIAS_GROUPS:
@@ -458,7 +469,7 @@ def _alias_match(user_answer, correct_answer, category, url, config):
                 if normalized_user == normalized_variant:
                     return True
             elif match_answer(user_answer, variant, category=category, url=url,
-                              config=config, skip_alias=True):
+                              config=config, skip_alias=True, question_text=question_text):
                 return True
         # Correct answer belongs to this group but nothing matched; stop here.
         return False
@@ -529,7 +540,7 @@ def _subset_coverage_match(user_sig, correct_sig, config):
 # Free-text pipeline
 # ---------------------------------------------------------------------------
 
-def _free_text_match(user_answer, correct_answer, url, config):
+def _free_text_match(user_answer, correct_answer, url, config, category="", question_text=""):
     norm_user = normalize_text(user_answer)
     norm_correct = normalize_text(correct_answer)
 
@@ -571,17 +582,21 @@ def _free_text_match(user_answer, correct_answer, url, config):
                 and abs(len(nsu) - len(nsc)) <= 2:
             return True
 
+    giveaway_words = _giveaway_words(category, question_text)
+
     # Layer 4: guarded partial match.
     if config.subset_coverage < 1.0 and _subset_coverage_match(user_sig, correct_sig, config):
         return True
     if config.allow_surname_match and len(correct_sig) >= 2:
         last = correct_sig[-1]
         if len(last) >= config.min_key_word_len and last not in GENERIC_HEAD_WORDS \
-                and len(user_sig) == 1 and _word_match(user_sig[0], last, config):
+                and len(user_sig) == 1 and user_sig[0] not in giveaway_words \
+                and _word_match(user_sig[0], last, config):
             return True
     if config.allow_any_key_word and len(user_sig) == 1:
         uw = user_sig[0]
-        if any(len(cw) >= config.min_key_word_len and cw not in GENERIC_HEAD_WORDS
+        if uw not in giveaway_words and any(
+               len(cw) >= config.min_key_word_len and cw not in GENERIC_HEAD_WORDS
                and _word_match(uw, cw, config)
                for cw in correct_sig):
             return True
@@ -592,8 +607,10 @@ def _free_text_match(user_answer, correct_answer, url, config):
         # "reac" inside "unreactive", which a prefix-only version would guard
         # against. Still floored by min_key_word_len on both sides and still
         # excludes GENERIC_HEAD_WORDS, so "river" still doesn't match "Nile
-        # River" -- that guard is a separate, unrelated feature.
-        if len(uw) >= config.min_key_word_len:
+        # River" -- that guard is a separate, unrelated feature. Guarded on uw
+        # (what the user typed), not cw, since that's what a category/question
+        # giveaway word would be.
+        if len(uw) >= config.min_key_word_len and uw not in giveaway_words:
             if any(len(cw) >= config.min_key_word_len and cw not in GENERIC_HEAD_WORDS
                    and (uw in cw or cw in uw)
                    for cw in correct_sig):
@@ -607,12 +624,15 @@ def _free_text_match(user_answer, correct_answer, url, config):
 # ---------------------------------------------------------------------------
 
 def match_answer(user_answer, correct_answer, category="", url="",
-                 config=None, skip_alias=False):
+                 config=None, skip_alias=False, question_text=""):
     """Return True if `user_answer` should be accepted for `correct_answer`.
 
     category / url select the structured checker (if any); otherwise the
     free-text pipeline runs. `config` is a MatchConfig (defaults to
-    ACTIVE_CONFIG); pass STRICT for Poindexter/exact mode.
+    ACTIVE_CONFIG); pass STRICT for Poindexter/exact mode. `question_text`,
+    when given, is combined with `category` to build the giveaway-word guard
+    (see _giveaway_words) that keeps the free-text leniency layers from
+    rewarding a guess that just parrots a word from the prompt.
     """
     if config is None:
         config = ACTIVE_CONFIG
@@ -625,7 +645,7 @@ def match_answer(user_answer, correct_answer, category="", url="",
     if user_answer == correct_answer:
         return True
 
-    if not skip_alias and _alias_match(user_answer, correct_answer, category, url, config):
+    if not skip_alias and _alias_match(user_answer, correct_answer, category, url, config, question_text):
         return True
 
     # --- structured question types (deterministic) ---
@@ -662,4 +682,5 @@ def match_answer(user_answer, correct_answer, category="", url="",
         return nu == text or nu.replace(" ", "") == text.replace(" ", "")
 
     # --- free text ---
-    return _free_text_match(user_answer, correct_answer, url, config)
+    return _free_text_match(user_answer, correct_answer, url, config,
+                             category=category, question_text=question_text)

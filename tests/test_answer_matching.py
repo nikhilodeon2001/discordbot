@@ -148,6 +148,18 @@ CASES = [
     # --- structured: scramble must be exact ---
     ("listen", "silent", "", "scramble", "BALANCED", False, "anagram is not the answer"),
     ("silent", "silent", "", "scramble", "BALANCED", True, "scramble solved"),
+
+    # --- category/question "giveaway word" guard (reported bug) ---
+    ("time", "ragtime", "\"Time\" For A Change", "", "GENEROUS", False,
+     "reported bug: category giveaway word 'time' must not win via substring leniency"),
+    ("ragtime", "ragtime", "\"Time\" For A Change", "", "GENEROUS", True,
+     "guard must not block an exact whole-answer match even though the category shares a substring"),
+    ("cucu", "a cucumber", "Vegetables", "", "GENEROUS", True,
+     "regression guard: substring leniency still works when the guess isn't a category giveaway word"),
+    ("napoleon", "Napoleon Bonaparte", "The Story of Napoleon", "", "GENEROUS", False,
+     "reported-style bug via any-key-word leniency: category giveaway word must not win"),
+    ("bonaparte", "Napoleon Bonaparte", "The Story of Napoleon", "", "GENEROUS", True,
+     "regression guard: surname/any-key-word leniency still works for a non-giveaway word"),
 ]
 
 
@@ -230,5 +242,42 @@ def run():
     return len(failures)
 
 
+# Giveaway-word guard with real question text, not just category.
+# (user, correct, category, question_text, config, expected, note)
+QUESTION_TEXT_CASES = [
+    ("time", "ragtime", "\"Time\" For A Change",
+     "Scott Joplin is a famous performer & composer of this musical style",
+     "GENEROUS", False, "reported bug, full repro: category+question giveaway word must not win"),
+    ("ragtime", "ragtime", "\"Time\" For A Change",
+     "Scott Joplin is a famous performer & composer of this musical style",
+     "GENEROUS", True, "guard must not block the actual exact answer"),
+    ("joplin", "ragtime", "\"Time\" For A Change",
+     "Scott Joplin is a famous performer & composer of this musical style",
+     "GENEROUS", False, "question-text-only giveaway word (not in category) must also be blocked"),
+    ("cucu", "a cucumber", "Vegetables",
+     "A long green fruit often mistaken for a vegetable",
+     "GENEROUS", True, "regression guard: substring leniency still works with no category/question overlap"),
+]
+
+
+def run_question_text_cases():
+    failures = []
+    for user, correct, category, question_text, cfg_name, expected, note in QUESTION_TEXT_CASES:
+        cfg = CONFIGS[cfg_name]
+        actual = match_answer(user, correct, category=category, question_text=question_text, config=cfg)
+        ok = actual == expected
+        if not ok:
+            failures.append((user, correct, cfg_name, expected, actual, note))
+        status = "PASS" if ok else "FAIL"
+        print(f"[{status}] {cfg_name:8} match({user!r}, {correct!r}, question_text={question_text!r}) "
+              f"= {actual} (expected {expected})  -- {note}")
+    if failures:
+        print("\nQUESTION-TEXT FAILURES:")
+        for user, correct, cfg_name, expected, actual, note in failures:
+            print(f"  {cfg_name:8} match({user!r}, {correct!r}) -> {actual}, "
+                  f"expected {expected}  ({note})")
+    return len(failures)
+
+
 if __name__ == "__main__":
-    sys.exit(1 if (run() + run_word_limits()) else 0)
+    sys.exit(1 if (run() + run_word_limits() + run_question_text_cases()) else 0)
