@@ -6001,6 +6001,21 @@ class _SelectPage(discord.ui.Select):
         await self._owner._resolve(interaction, self.values[0])
 
 
+def _add_select_row(view: "RestrictedView", options, placeholder, *, row):
+    """Adds a single flat Select (<=25 options) onto an existing view at an explicit row -- the
+    Select-based counterpart to _add_option_buttons, for a view that needs more than one
+    dropdown (e.g. ask_wof_number's per-round wof_options Select plus a separate "Recently
+    Played" Select). build_option_select_view can't be reused here since it always builds a
+    brand-new RestrictedView with its own `future`; this instead attaches a bare _SelectPage to
+    the view passed in, wired through the same _resolve() path everything else uses. Caller is
+    responsible for keeping total items within Discord's 25-per-view / 5-per-row limits. Returns
+    `view` for chaining."""
+    select = _SelectPage(view, _normalize_options(options)[:25], placeholder)
+    select.row = row
+    view.add_item(select)
+    return view
+
+
 class _GroupSelect(discord.ui.Select):
     """First-stage select in a cascading two-option-set view: picking a group repopulates the
     second-stage item Select in place, mirroring LeaderboardView's mode/category
@@ -21194,20 +21209,40 @@ async def ask_wof_number(winner, winner_id, cached_coffees=None, menu_text=None,
     # time than a typical answer window, but `magic_time` is a global reused by many
     # unrelated timing points, so it's doubled here locally rather than changed everywhere.
     minigame_choice_window = magic_time * 2
+    # A "Recently Played" Select, most-recent first -- Wheel of Fortune's collapsed entry (see
+    # _recent_minigame_key_name) can only be replayed via this round's actual WoF slots, so it's
+    # only offered when wof_options has something to fall back on; otherwise it's dropped from
+    # this round's list entirely rather than resolving to a stale/invalid value.
+    recent_entries = await get_recent_minigame_selections()
+    recent_options = []
+    for entry in recent_entries:
+        if entry["key"] == "wheel-of-fortune":
+            if not wof_options:
+                continue
+            recent_options.append({"value": wof_options[0]["value"], "label": f"\U0001f3a1 {entry['name']}"})
+        else:
+            recent_options.append({"value": entry["key"],
+                                    "label": f"{get_minigame_emoji(entry['key'])} {entry['name']}"})
+
     # wof_options (dynamic per-round "WoF: <category>" entries) go in a Select dropdown;
     # other_options (fixed CHAOS / Okra's Choice / Skip) become quick-click buttons instead of
-    # dropdown rows. wof_options can rarely come back empty (the per-round DB sample can return
-    # 0 docs) and discord.ui.Select can't hold zero options, so only build the Select when
-    # there's something to put in it. The Select, when present, is always the first item added
-    # to a brand-new view, so discord.py's row auto-packing deterministically lands it on row 0
-    # -- only the buttons need an explicit row (1 below the Select, or 0 alone without it).
+    # dropdown rows; recent_options (see above) becomes a second Select. wof_options can rarely
+    # come back empty (the per-round DB sample can return 0 docs) and discord.ui.Select can't
+    # hold zero options, so only build that Select when there's something to put in it. The
+    # wof_options Select, when present, is always the first item added to a brand-new view, so
+    # discord.py's row auto-packing deterministically lands it on row 0 -- everything added
+    # after it needs an explicit row.
+    next_row = 0
     if wof_options:
         view = build_option_select_view(wof_options, {winner_id, okrag_id}, timeout=minigame_choice_window,
                                          placeholder="\u26a1 Shortcuts\u2026")
-        _add_option_buttons(view, other_options, row=1)
+        next_row = 1
     else:
         view = RestrictedView({winner_id, okrag_id}, timeout=minigame_choice_window)
-        _add_option_buttons(view, other_options, row=0)
+    _add_option_buttons(view, other_options, row=next_row)
+    next_row += 1
+    if recent_options:
+        _add_select_row(view, recent_options, "\U0001f550 Recently Played\u2026", row=next_row)
     view.message = await safe_send(channel, "\U0001f447 Or pick a shortcut:", view=view)
     # Companion (phone/web) mirrors the full set regardless of Discord-side rendering (Select
     # vs. buttons doesn't apply there) -- minigame numbers stay typeable there too, same as
@@ -21277,6 +21312,7 @@ async def ask_wof_number(winner, winner_id, cached_coffees=None, menu_text=None,
 
                 # Store frequency data for user selection
                 await store_minigame_frequency(selected_question, "user", "discord")
+                await record_recent_minigame_selection(selected_question)
 
                 await message.add_reaction(get_minigame_emoji(selected_question))
                 await safe_send(channel, f"\n\U0001f4aa\U0001f6e1\ufe0f I got you **<@{responder_id}>**. **{selected_question}** it is.\n\u200b")
@@ -28479,6 +28515,67 @@ async def store_minigame_frequency(number, selection_type, bot_source="discord",
         
     except Exception as e:
         print(f"Error storing minigame frequency: {e}")
+
+
+def _recent_minigame_key_name(number):
+    """Collapses Wheel of Fortune's five per-round categories ("0"-"4") into one
+    "wheel-of-fortune" identity, matching store_minigame_frequency's existing convention --
+    they're the same underlying game with a different question set each round, not distinct
+    games, so the recency list shouldn't burn 5 of its 10 slots on one game."""
+    if str(number) in {"0", "1", "2", "3", "4"}:
+        return "wheel-of-fortune", "Wheel of Fortune"
+    return str(number), get_minigame_name(number)
+
+
+async def _seed_recent_minigame_selections(collection):
+    """First-run bootstrap: seeds the recency list with 10 random unique games so ask_wof_number's
+    "Recently Played" dropdown has something to show before any real picks have happened, instead
+    of staying empty until 10 organic selections accumulate. Every real minigame (excluding the
+    "00"/"x" meta-choices, which aren't games) is eligible, WoF collapsed to its one representative
+    entry same as a real pick would be."""
+    pool = [_recent_minigame_key_name(n) for n in (["0"] + [str(i) for i in range(5, 52)] + ["67", "99"])]
+    sampled = random.sample(pool, min(10, len(pool)))
+    now = datetime.datetime.now()
+    entries = [{"key": key, "name": name, "played_at": now} for key, name in sampled]
+    await collection.update_one({"_id": "recent"}, {"$set": {"entries": entries}}, upsert=True)
+    return entries
+
+
+async def get_recent_minigame_selections():
+    """Returns ask_wof_number's recency list, most-recently-played first (already stored in that
+    order by record_recent_minigame_selection's $position: 0 push). Seeds 10 random unique games
+    on first use (see _seed_recent_minigame_selections)."""
+    try:
+        db = await connect_to_mongodb()
+        collection = db["minigame-recent-selections"]
+        doc = await collection.find_one({"_id": "recent"})
+        if doc and doc.get("entries"):
+            return doc["entries"]
+        return await _seed_recent_minigame_selections(collection)
+    except Exception as e:
+        print(f"Error fetching recent minigame selections: {e}")
+        return []
+
+
+async def record_recent_minigame_selection(number):
+    """Records an explicit user pick (not a skip, not Okra's Choice/random) in ask_wof_number's
+    "Recently Played" recency list -- keeps the 10 most-recently-played unique games, newest
+    first, deduplicating by re-selection (picking something already in the list just bumps it
+    back to the top instead of duplicating it)."""
+    try:
+        db = await connect_to_mongodb()
+        collection = db["minigame-recent-selections"]
+        game_key, display_name = _recent_minigame_key_name(number)
+        await collection.update_one({"_id": "recent"}, {"$pull": {"entries": {"key": game_key}}})
+        await collection.update_one(
+            {"_id": "recent"},
+            {"$push": {"entries": {"$each": [{"key": game_key, "name": display_name,
+                                               "played_at": datetime.datetime.now()}],
+                                    "$position": 0, "$slice": 10}}},
+            upsert=True,
+        )
+    except Exception as e:
+        print(f"Error recording recent minigame selection: {e}")
 
 
 async def cleanup_tournament_roles():
