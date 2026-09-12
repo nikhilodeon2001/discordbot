@@ -16,6 +16,13 @@ trades some recall (it won't catch e.g. "Tunis" being derivable from a
 question naming "Tunisia" -- a real but rarer pattern with no clean way to
 tell apart from the compound-word false positives) for much higher precision.
 
+Every significant word of an answer is checked, including short ones (no
+4-char floor): skipping short words meant a multi-word answer like "San
+Salvador" or "Top Gun: Maverick" could get flagged just because its single
+longest word ("Salvador", "Maverick") was given away, without ever verifying
+the short, actually-distinguishing words ("San", "Top", "Gun") appeared
+anywhere at all.
+
 Read-only. Makes no database writes.
 
 Usage:
@@ -49,20 +56,23 @@ def _singularize(word):
 
 def is_whole_word_giveaway(word, giveaway_words):
     """Whole-word match (plus simple plural/singular drift) -- see module
-    docstring for why this is stricter than answer_matching._is_giveaway_word."""
-    if len(word) < 4:
-        return False
+    docstring for why this is stricter than answer_matching._is_giveaway_word.
+
+    No length floor: unlike the substring-containment check, exact/plural
+    whole-word equality has no coincidental-collision risk, so short answer
+    words ("San" in "San Salvador", "Top"/"Gun" in "Top Gun: Maverick") are
+    checked too, not silently skipped -- skipping them let a question get
+    flagged just because its single LONGEST word was given away, even when
+    the short, distinguishing words never actually appeared anywhere."""
     word_singular = _singularize(word)
     for gw in giveaway_words:
-        if len(gw) < 4:
-            continue
         if word == gw or word_singular == _singularize(gw):
             return True
     return False
 
 
 def answer_is_given_away(answer, giveaway_words):
-    sig = [w for w in _significant_tokens(normalize_text(answer)) if len(w) >= 4]
+    sig = _significant_tokens(normalize_text(answer))
     if not sig:
         return False  # no checkable words -- don't flag on a vacuous match
     return all(is_whole_word_giveaway(w, giveaway_words) for w in sig)
