@@ -21212,10 +21212,14 @@ async def ask_wof_number(winner, winner_id, cached_coffees=None, menu_text=None,
     # A "Recently Played" Select, most-recent first -- Wheel of Fortune's collapsed entry (see
     # _recent_minigame_key_name) can only be replayed via this round's actual WoF slots, so it's
     # only offered when wof_options has something to fall back on; otherwise it's dropped from
-    # this round's list entirely rather than resolving to a stale/invalid value.
+    # this round's list entirely rather than resolving to a stale/invalid value. CHAOS ("99")
+    # already has its own always-present button (see other_options) and is filtered out here too
+    # in case an already-seeded/recorded entry for it exists from before that exclusion.
     recent_entries = await get_recent_minigame_selections()
     recent_options = []
     for entry in recent_entries:
+        if entry["key"] == "99":
+            continue
         if entry["key"] == "wheel-of-fortune":
             if not wof_options:
                 continue
@@ -21246,8 +21250,12 @@ async def ask_wof_number(winner, winner_id, cached_coffees=None, menu_text=None,
     view.message = await safe_send(channel, "\U0001f447 Or pick a shortcut:", view=view)
     # Companion (phone/web) mirrors the full set regardless of Discord-side rendering (Select
     # vs. buttons doesn't apply there) -- minigame numbers stay typeable there too, same as
-    # Discord chat, just not offered as a button/select option.
+    # Discord chat, just not offered as a button/select option. recent_options can repeat a
+    # value already in wof_options (the WoF recency entry reuses wof_options[0]'s value) --
+    # skip those so companion doesn't list the same pick twice under two different labels.
     companion_options = wof_options + other_options
+    _companion_seen_values = {opt["value"] for opt in companion_options}
+    companion_options += [opt for opt in recent_options if opt["value"] not in _companion_seen_values]
 
     start = asyncio.get_event_loop().time()
     selected_question = None
@@ -28531,9 +28539,10 @@ async def _seed_recent_minigame_selections(collection):
     """First-run bootstrap: seeds the recency list with 10 random unique games so ask_wof_number's
     "Recently Played" dropdown has something to show before any real picks have happened, instead
     of staying empty until 10 organic selections accumulate. Every real minigame (excluding the
-    "00"/"x" meta-choices, which aren't games) is eligible, WoF collapsed to its one representative
-    entry same as a real pick would be."""
-    pool = [_recent_minigame_key_name(n) for n in (["0"] + [str(i) for i in range(5, 52)] + ["67", "99"])]
+    "00"/"x" meta-choices, which aren't games, and "99"/CHAOS, which stays button-only -- see
+    record_recent_minigame_selection) is eligible, WoF collapsed to its one representative entry
+    same as a real pick would be."""
+    pool = [_recent_minigame_key_name(n) for n in (["0"] + [str(i) for i in range(5, 52)] + ["67"])]
     sampled = random.sample(pool, min(10, len(pool)))
     now = datetime.datetime.now()
     entries = [{"key": key, "name": name, "played_at": now} for key, name in sampled]
@@ -28558,10 +28567,13 @@ async def get_recent_minigame_selections():
 
 
 async def record_recent_minigame_selection(number):
-    """Records an explicit user pick (not a skip, not Okra's Choice/random) in ask_wof_number's
-    "Recently Played" recency list -- keeps the 10 most-recently-played unique games, newest
-    first, deduplicating by re-selection (picking something already in the list just bumps it
-    back to the top instead of duplicating it)."""
+    """Records an explicit user pick (not a skip, not Okra's Choice/random, and not CHAOS --
+    CHAOS ("99") stays button-only, never entering the recency list, since it already has its
+    own always-present button) in ask_wof_number's "Recently Played" recency list -- keeps the
+    10 most-recently-played unique games, newest first, deduplicating by re-selection (picking
+    something already in the list just bumps it back to the top instead of duplicating it)."""
+    if str(number) == "99":
+        return
     try:
         db = await connect_to_mongodb()
         collection = db["minigame-recent-selections"]
