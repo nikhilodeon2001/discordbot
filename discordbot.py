@@ -24819,8 +24819,13 @@ def _is_giveaway_word(word, giveaway_words):
     """True if `word` is one of the giveaway words, or a simple morphological
     variant of one (e.g. "martin" vs. category word "martins") -- containment
     in either direction, not exact equality, so trivial plural/prefix drift
-    doesn't defeat the guard."""
-    return len(word) >= 4 and any(word in gw or gw in word for gw in giveaway_words)
+    doesn't defeat the guard. Both sides are floored at length 4: without a
+    floor on the giveaway word too, a short common word like "is" (from
+    "What is...") is a substring of countless unrelated answers ("paris"),
+    causing mass false positives."""
+    if len(word) < 4:
+        return False
+    return any(len(gw) >= 4 and (word in gw or gw in word) for gw in giveaway_words)
 
 
 def levenshtein_similarity(str1, str2):
