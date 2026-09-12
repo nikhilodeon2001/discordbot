@@ -20152,12 +20152,30 @@ async def ask_category(winner, categories, winner_coffees, winner_id, skip_messa
             return None, additional_prompt
 
 
+class PromptDoneView(RestrictedView):
+    """Single red 'I'm Done' button for request_prompt's custom-painting-prompt collector --
+    a click-based counterpart to typing a standalone 'x', for a winner who's said everything
+    they want to and doesn't want to wait out the rest of prompt_collection_window."""
+
+    def __init__(self, winner_id, *, timeout):
+        super().__init__({winner_id}, timeout=timeout)
+
+    @discord.ui.button(label="I'm Done", style=discord.ButtonStyle.danger, emoji="🛑")
+    async def done_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._resolve(interaction, "x")
+
+
 async def request_prompt(winner, winner_id):
     """Collects up to 10 words of free text from `winner_id` as their custom Okra Museum
     prompt. Returns the final prompt string if at least one word was collected (possibly
     trimmed to the word/char limit), or None if the window closed with nothing collected --
     callers must treat None the same as a theme-picker timeout (bank the credit, generate
-    nothing), not as a valid empty prompt."""
+    nothing), not as a valid empty prompt.
+
+    Collection ends early, before the words/window limit, either by a standalone 'x' typed
+    anywhere in a message (its own word, not e.g. inside "extra") or by clicking the
+    message's "I'm Done" button -- both treated identically to reaching the limit, keeping
+    whatever words were collected (including any earlier in the same message as a typed 'x')."""
     global magic_time
 
     collected_words = []
@@ -20169,10 +20187,12 @@ async def request_prompt(winner, winner_id):
     # `magic_time` is a global reused by many unrelated timing points, so it's doubled
     # here locally rather than changed everywhere.
     prompt_collection_window = (magic_time + 5) * 2
-   
+
     message = f"\u200b\n🖼️🔟 **<@{winner_id}>**, Fill in the blank. *10 words max* and **be good**.\n\u200b"
     message += f"\n*Draw an okra themed picture of...*\n\u200b"
-    prompt_message = await safe_send(channel, message)
+    view = PromptDoneView(winner_id, timeout=prompt_collection_window)
+    prompt_message = await safe_send(channel, message, view=view)
+    view.message = prompt_message
 
     target_channel = _active_game_channel or channel
 
@@ -20183,12 +20203,21 @@ async def request_prompt(winner, winner_id):
         try:
             while len(collected_words) < 10 and asyncio.get_event_loop().time() - start_time < prompt_collection_window:
                 try:
-                    response = await companion_bridge.wait_for_message_or_companion(
-                        check, magic_time, target_channel, {winner_id}, kind="mini_game_answer"
+                    response = await resolve_input_race(
+                        view,
+                        companion_bridge.wait_for_message_or_companion(
+                            check, magic_time, target_channel, {winner_id}, kind="mini_game_answer"
+                        ),
                     )
+                    # A standalone 'x' -- its own word, whether typed alone, mid-sentence, or
+                    # via the "I'm Done" button (which resolves to exactly "x") -- ends
+                    # collection early. Only the text before it counts toward the prompt.
+                    done_match = re.search(r'\bx\b', response.content, re.IGNORECASE)
+                    text_before_done = response.content[:done_match.start()] if done_match else response.content
+
                     # Bypass-resistant word extraction: hyphens/underscores/dots/
                     # zero-width chars all count as separators, not word glue.
-                    words = answer_matching.extract_words(response.content)
+                    words = answer_matching.extract_words(text_before_done)
 
                     for word in words:
                         if len(collected_words) < 10:
@@ -20198,6 +20227,9 @@ async def request_prompt(winner, winner_id):
                             break
 
                     await response.add_reaction("✅")
+
+                    if done_match:
+                        break
 
                 except asyncio.TimeoutError:
                     break  # no more responses in time
