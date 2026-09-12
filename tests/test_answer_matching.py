@@ -15,6 +15,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from answer_matching import (  # noqa: E402
     match_answer, STRICT, BALANCED, GENEROUS, extract_words, limit_words,
+    is_fully_given_away, _giveaway_words,
 )
 
 CONFIGS = {"STRICT": STRICT, "BALANCED": BALANCED, "GENEROUS": GENEROUS}
@@ -337,5 +338,52 @@ def run_giveaway_toggle_cases():
     return len(failures)
 
 
+# is_fully_given_away: the whole-word "does the prompt already contain this
+# text, word for word?" check shared by audit_giveaway_questions.py (checking
+# stored answers) and discordbot.py's real-time 🟥 reaction (checking a live
+# guess). (text, category, question_text, expected, note)
+GIVEN_AWAY_CASES = [
+    ("Sailfish", "Science & Nature", "What is the fastest fish in the ocean?",
+     False, "compound-word false positive must not fire: 'fish' is a substring of 'sailfish', not a whole word of it"),
+    ("San Salvador", "The World", "What is the capital of El Salvador?",
+     False, "short word 'san' is never actually verified present -> must not flag on 'salvador' alone"),
+    ("Top Gun: Maverick", "Movies", "Which movie features Tom Cruise reprising his role as Maverick?",
+     False, "short words 'top'/'gun' never verified present -> must not flag on 'maverick' alone"),
+    ("Top Gun: Maverick", "Top Gun Maverick", "Which movie features Tom Cruise reprising his role as Maverick?",
+     True, "regression: when 'top' and 'gun' really are present too (in the category here), still flags"),
+    ("Djibouti", "The World", "Which country has the capital city of Djibouti?",
+     True, "single-word answer literally repeated in the question"),
+    ("Martin Bormann", "Martins", "A skeleton found in 1972 was declared to be this Nazi, rumored alive in South America",
+     False, "'Bormann' never appears anywhere -> must not flag on 'Martin' (via plural 'Martins') alone"),
+    ("Martin Bormann", "Martin Bormann", "This infamous Nazi war criminal was rumored to be alive in South America after 1972.",
+     True, "both words present (category names the subject outright) -> flags"),
+    ("your bottom dollar", "Bottom", "A song from Annie tells us the sun will come out tomorrow bet your this that tomorrow there will be sun",
+     False, "'dollar' never appears anywhere -> must not flag even though 'your'/'bottom' both do"),
+    # --- the motivating example: generic category-type word inside a live guess ---
+    ("river", "Rivers", "Name this famous South American river that carries more water than any other in the world",
+     True, "a wrong, generic guess ('river') that's still fully present in the category/question must flag"),
+    ("amazon river", "Rivers", "Name this famous South American river that carries more water than any other in the world",
+     False, "'amazon' is never in the prompt -> the correct answer itself must not flag"),
+]
+
+
+def run_given_away_cases():
+    failures = []
+    for text, category, question_text, expected, note in GIVEN_AWAY_CASES:
+        giveaway_words = _giveaway_words(category, question_text)
+        actual = is_fully_given_away(text, giveaway_words)
+        ok = actual == expected
+        if not ok:
+            failures.append((text, expected, actual, note))
+        status = "PASS" if ok else "FAIL"
+        print(f"[{status}] is_fully_given_away({text!r}) = {actual} (expected {expected})  -- {note}")
+    if failures:
+        print("\nGIVEN-AWAY FAILURES:")
+        for text, expected, actual, note in failures:
+            print(f"  is_fully_given_away({text!r}) -> {actual}, expected {expected}  ({note})")
+    return len(failures)
+
+
 if __name__ == "__main__":
-    sys.exit(1 if (run() + run_word_limits() + run_question_text_cases() + run_giveaway_toggle_cases()) else 0)
+    sys.exit(1 if (run() + run_word_limits() + run_question_text_cases() + run_giveaway_toggle_cases()
+                    + run_given_away_cases()) else 0)

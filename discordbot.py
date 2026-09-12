@@ -1107,6 +1107,7 @@ filler_words = {'a', 'an', 'the', 'of', 'and', 'to', 'in', 'on', 'at', 'with', '
 categories_to_exclude = []  
 collected_responses = []
 current_question = None
+_giveaway_words_cache = {"key": None, "words": frozenset()}  # see _current_giveaway_words()
 previous_question = None
 round_in_progress = False  # True from the moment a round is committed to starting until it ends -- lets /checkupdate warn before an update would kill the process mid-round
 current_answer_view = None
@@ -24828,6 +24829,23 @@ def _is_giveaway_word(word, giveaway_words):
     return any(len(gw) >= 4 and (word in gw or gw in word) for gw in giveaway_words)
 
 
+def _current_giveaway_words():
+    """Cached, unfloored giveaway-word set (answer_matching._giveaway_words, NOT
+    this module's own floored/substring-flavored _giveaway_words above -- that
+    one backs the scoring guard; this one backs the "you just parroted the
+    prompt" 🟥 reaction, which needs whole-word matching down to short words
+    like "San"/"Top"/"Gun"). Cached per-question since the category/question
+    text is constant for the whole question window, so there's no reason to
+    re-normalize it on every single message."""
+    cat = current_question.get("trivia_category", "") if current_question else ""
+    q = current_question.get("trivia_question", "") if current_question else ""
+    key = (cat, q)
+    if _giveaway_words_cache["key"] != key:
+        _giveaway_words_cache["key"] = key
+        _giveaway_words_cache["words"] = answer_matching._giveaway_words(cat, q)
+    return _giveaway_words_cache["words"]
+
+
 def levenshtein_similarity(str1, str2):
     return difflib.SequenceMatcher(None, str1.lower(), str2.lower()).ratio()
 
@@ -25320,22 +25338,12 @@ async def check_correct_responses_delete(question_ask_time, trivia_answer_list, 
 
             if blitz_mode:
                 first_correct_found = True
-        else:
-            if GIVEAWAY_WORD_GUARD_ENABLED and message is not None:
-                blocked_by_giveaway_guard = any(
-                    fuzzy_match(message_content, answer, trivia_category, trivia_url,
-                                question_text=question_text_for_match, enable_giveaway_guard=False)
-                    for answer in trivia_answer_list
-                )
-                if blocked_by_giveaway_guard:
-                    try:
-                        await message.add_reaction("🟥")
-                    except discord.NotFound:
-                        print("❌ Message was already deleted, can't react.")
-                    except discord.Forbidden:
-                        print("❌ Bot lacks permission to add reactions.")
-                    except discord.HTTPException as e:
-                        print(f"❌ Failed to add reaction: {e}")
+        # The 🟥 "you just parroted the category/question" reaction now fires in real
+        # time from on_message as each message arrives (see _current_giveaway_words()),
+        # not here at time's-up -- and since `message` is only ever non-None for
+        # on_message-sourced responses (button and companion/web sources always pass
+        # message=None), that real-time hook already covers every case this batch-time
+        # check used to handle. See the giveaway-guard fix history for the old logic.
 
     had_correct_answer = bool(correct_responses)
 
@@ -28268,6 +28276,21 @@ async def on_message(message):
                 })
                 captured_as_answer = True
 
+                # React immediately if this guess just parrots a word from the category/
+                # question -- independent of whether it's otherwise correct (see the
+                # giveaway-guard fix history: e.g. "river" for "Amazon River" must not
+                # earn credit just because "river" is in nearly every river question).
+                if GIVEAWAY_WORD_GUARD_ENABLED and answer_matching.is_fully_given_away(
+                        message.content, _current_giveaway_words()):
+                    try:
+                        await message.add_reaction("🟥")
+                    except discord.NotFound:
+                        pass
+                    except discord.Forbidden:
+                        print("❌ Bot lacks permission to add reactions.")
+                    except discord.HTTPException as e:
+                        print(f"❌ Failed to add reaction: {e}")
+
                 # A typed guess that's actually one of this question's choices locks the
                 # user out of the buttons too, the same way clicking a button locks out
                 # further typing -- otherwise typing the answer then clicking the matching
@@ -29272,7 +29295,13 @@ def companion_submit_answer(user_id, display_name, text, client="companion"):
         mc_tokens = _mc_guess_tokens(trivia_answer_list, trivia_url)
         if mc_tokens is not None and answer_matching.normalize_text(text) in mc_tokens:
             current_answer_view.answered_user_ids.add(user_id)
-    return {"ok": True}
+    # Same real-time "you just parroted the category/question" signal on_message reacts
+    # with 🟥 for -- there's no Discord message to react to here, so it's surfaced in the
+    # response instead for the companion page's own UI to show.
+    guard_blocked = bool(
+        GIVEAWAY_WORD_GUARD_ENABLED and answer_matching.is_fully_given_away(text, _current_giveaway_words())
+    )
+    return {"ok": True, "guard_blocked": guard_blocked}
 
 
 async def companion_submit_flag(user_id, display_name, reasons, detail):

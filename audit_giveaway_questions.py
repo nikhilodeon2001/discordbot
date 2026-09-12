@@ -3,13 +3,14 @@ Audit: find questions in trivia_questions/jeopardy_questions/crossword_questions
 where every acceptable answer is already "given away" by the category/question
 text -- i.e. no real guessing is required to answer correctly.
 
-Uses whole-word matching (plus simple plural/singular drift, e.g. "martins" vs
-"martin"), deliberately NOT the looser substring-containment check the live
-answer matcher uses (answer_matching._is_giveaway_word). That looser check is
-the right tradeoff at answer-check time (a false positive there just makes the
-game slightly stricter), but it's the wrong tradeoff here: it flags ordinary
-English compounds/suffixes as giveaways just because they share characters
-with an unrelated word (e.g. "fish" inside "sailfish", "ability" inside
+Uses answer_matching.is_fully_given_away: whole-word matching (plus simple
+plural/singular drift, e.g. "martins" vs "martin"), deliberately NOT the
+looser substring-containment check the live answer matcher uses
+(answer_matching._is_giveaway_word). That looser check is the right tradeoff
+at answer-check time (a false positive there just makes the game slightly
+stricter), but it's the wrong tradeoff here: it flags ordinary English
+compounds/suffixes as giveaways just because they share characters with an
+unrelated word (e.g. "fish" inside "sailfish", "ability" inside
 "malleability", "wave" inside "wavelength") -- noise that would send a human
 reviewer chasing questions that aren't actually broken. Whole-word matching
 trades some recall (it won't catch e.g. "Tunis" being derivable from a
@@ -22,6 +23,9 @@ Salvador" or "Top Gun: Maverick" could get flagged just because its single
 longest word ("Salvador", "Maverick") was given away, without ever verifying
 the short, actually-distinguishing words ("San", "Top", "Gun") appeared
 anywhere at all.
+
+is_fully_given_away is shared with discordbot.py, which uses the same check to
+react to a live guess that parrots the category/question in real time.
 
 Read-only. Makes no database writes.
 
@@ -38,44 +42,10 @@ from pymongo import MongoClient
 from tqdm import tqdm
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from answer_matching import _giveaway_words, _significant_tokens, normalize_text
+from answer_matching import _giveaway_words, is_fully_given_away
 
 MONGO_URI = os.environ.get("MONGO_URI") or os.getenv("mongo_db_string")
 COLLECTIONS = ["trivia_questions", "jeopardy_questions", "crossword_questions"]
-
-
-def _singularize(word):
-    """Strip a simple trailing plural 's'/'es' -- just enough to bridge cases
-    like 'martins' vs 'martin', not a full morphological analyzer."""
-    if len(word) > 4 and word.endswith("es"):
-        return word[:-2]
-    if len(word) > 4 and word.endswith("s"):
-        return word[:-1]
-    return word
-
-
-def is_whole_word_giveaway(word, giveaway_words):
-    """Whole-word match (plus simple plural/singular drift) -- see module
-    docstring for why this is stricter than answer_matching._is_giveaway_word.
-
-    No length floor: unlike the substring-containment check, exact/plural
-    whole-word equality has no coincidental-collision risk, so short answer
-    words ("San" in "San Salvador", "Top"/"Gun" in "Top Gun: Maverick") are
-    checked too, not silently skipped -- skipping them let a question get
-    flagged just because its single LONGEST word was given away, even when
-    the short, distinguishing words never actually appeared anywhere."""
-    word_singular = _singularize(word)
-    for gw in giveaway_words:
-        if word == gw or word_singular == _singularize(gw):
-            return True
-    return False
-
-
-def answer_is_given_away(answer, giveaway_words):
-    sig = _significant_tokens(normalize_text(answer))
-    if not sig:
-        return False  # no checkable words -- don't flag on a vacuous match
-    return all(is_whole_word_giveaway(w, giveaway_words) for w in sig)
 
 
 def main():
@@ -103,7 +73,7 @@ def main():
             if not answers or not (category or question):
                 continue
             giveaway_words = _giveaway_words(category, question)
-            if all(answer_is_given_away(a, giveaway_words) for a in answers):
+            if all(is_fully_given_away(a, giveaway_words) for a in answers):
                 flagged.append((col_name, doc["_id"], category, question, answers))
                 col_flagged += 1
         print(f"{col_name}: {total} documents checked, {col_flagged} flagged")
