@@ -276,6 +276,13 @@ QUESTION_TEXT_CASES = [
     ("Franklin Roosevelt", "Franklin Delano Roosevelt", "", "",
      "BALANCED", True,
      "regression guard: unrelated multi-word partial match is untouched by the guard"),
+
+    # --- short-word false-positive (found via audit_giveaway_questions.py on real prod data) ---
+    ("Paris", "Paris, France", "The World",
+     "What is the capital of this country?",
+     "GENEROUS", True,
+     "regression: the 2-letter giveaway word 'is' (from \"What is\") must not falsely flag "
+     "'paris' as given-away just because 'is' is a substring of it"),
 ]
 
 
