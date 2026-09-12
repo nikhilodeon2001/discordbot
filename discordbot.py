@@ -5858,17 +5858,21 @@ async def resolve_input_race(view: "RestrictedView", chat_wait_coro):
         raise asyncio.TimeoutError()
 
 
-async def _run_selector_countdown_ticker(message, base_content, end_time, now):
-    """Edits `message` about once a second to append a "⏳ Ns" line to `base_content`,
-    wall-clock-synced to `end_time` the same way the per-question timer counts down to
-    question_asked_end (see the main round loop) -- recomputing remaining from `now()` each
-    tick instead of accumulating per-edit drift from a fixed-count sleep(1) loop."""
+async def _run_selector_countdown_ticker(message, embed, end_time, now):
+    """Edits `message`'s embed footer about once a second with a "⏳ Ns" countdown,
+    wall-clock-synced to `end_time` -- the same technique the per-question timer uses on
+    current_question_embed's footer (see the main round loop), recomputing remaining from
+    `now()` each tick instead of accumulating per-edit drift from a fixed-count sleep(1)
+    loop."""
     try:
         while True:
             remaining = max(0, math.ceil(end_time - now()))
-            new_content = f"{base_content}\n\n⏳ {remaining}s" if remaining > 0 else base_content
+            if remaining > 0:
+                embed.set_footer(text=f"⏳ {remaining}s")
+            else:
+                embed.remove_footer()
             try:
-                await message.edit(content=new_content)
+                await message.edit(embed=embed)
             except (discord.NotFound, discord.HTTPException, aiohttp.ClientError):
                 return
             if remaining <= 0:
@@ -5879,17 +5883,20 @@ async def _run_selector_countdown_ticker(message, base_content, end_time, now):
 
 
 @contextlib.asynccontextmanager
-async def selector_countdown(message, base_content, window_seconds, *, now=None):
-    """Background countdown widget for a selector's prompt message, live for the duration of
-    the `async with` block -- gives the minigame picker, round-options picker, and custom-
-    painting-prompt collector the same visible countdown a question's answer window already
-    has. `now`, if given, is the clock the caller measured `window_seconds` against (e.g.
-    time.time for prompt_user_for_response's round_options_window); defaults to the event
-    loop's own clock. Cancelled on exit regardless of how the block finishes -- a pick made,
-    the window timing out, or an exception."""
+async def selector_countdown(message, window_seconds, *, now=None):
+    """Background countdown widget on `message`'s embed footer, live for the duration of the
+    `async with` block -- gives the minigame picker, round-options picker, and custom-
+    painting-prompt collector the same footer countdown a question's answer window already
+    has. `message` must already carry the embed to countdown on (safe_send wraps plain
+    content into one by default, so `view.message`/the sent message already qualifies). `now`,
+    if given, is the clock the caller measured `window_seconds` against (e.g. time.time for
+    prompt_user_for_response's round_options_window); defaults to the event loop's own clock.
+    Cancelled on exit regardless of how the block finishes -- a pick made, the window timing
+    out, or an exception."""
     now = now or (lambda: asyncio.get_event_loop().time())
+    embed = message.embeds[0] if message.embeds else discord.Embed()
     end_time = now() + window_seconds
-    task = asyncio.ensure_future(_run_selector_countdown_ticker(message, base_content, end_time, now))
+    task = asyncio.ensure_future(_run_selector_countdown_ticker(message, embed, end_time, now))
     try:
         yield
     finally:
@@ -20172,7 +20179,7 @@ async def request_prompt(winner, winner_id):
     def check(m):
         return m.channel == target_channel and m.author != get_bot().user and m.author.id == winner_id
 
-    async with selector_countdown(prompt_message, message, prompt_collection_window):
+    async with selector_countdown(prompt_message, prompt_collection_window):
         try:
             while len(collected_words) < 10 and asyncio.get_event_loop().time() - start_time < prompt_collection_window:
                 try:
@@ -21145,7 +21152,7 @@ async def ask_wof_number(winner, winner_id, cached_coffees=None, menu_text=None,
     start = asyncio.get_event_loop().time()
     selected_question = None
 
-    async with selector_countdown(view.message, "\U0001f447 Or pick a shortcut:", minigame_choice_window):
+    async with selector_countdown(view.message, minigame_choice_window):
         try:
             while asyncio.get_event_loop().time() - start < minigame_choice_window:
                 remaining = minigame_choice_window - (asyncio.get_event_loop().time() - start)
@@ -22959,8 +22966,7 @@ async def prompt_user_for_response(round_winner, winner_points, winner_coffees, 
     # no separate resolution path is needed here, only the rendering metadata.
     companion_options = [{"value": k, "label": info[0]} for k, info in _KEYWORD_EFFECTS.items()]
 
-    async with selector_countdown(view.message, "\U0001f447 Or set modifiers from the buttons below:",
-                                   round_options_window, now=time.time):
+    async with selector_countdown(view.message, round_options_window, now=time.time):
         while time.time() - start_time < round_options_window:
             try:
                 message = await resolve_input_race(
