@@ -20190,6 +20190,7 @@ async def request_prompt(winner, winner_id):
 
     message = f"\u200b\n🖼️🔟 **<@{winner_id}>**, Fill in the blank. *10 words max* and **be good**.\n\u200b"
     message += f"\n*Draw an okra themed picture of...*\n\u200b"
+    message += f"\n*(Type* **x** *or hit the button below when you're done.)*"
     view = PromptDoneView(winner_id, timeout=prompt_collection_window)
     prompt_message = await safe_send(channel, message, view=view)
     view.message = prompt_message
