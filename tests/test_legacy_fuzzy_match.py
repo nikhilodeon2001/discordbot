@@ -118,5 +118,38 @@ def run_toggle():
     return len(failures)
 
 
+def run_per_call_override():
+    """enable_giveaway_guard on legacy_fuzzy_match itself (not the global flag) --
+    used by the 🟥 reaction to test "would this have matched without the guard?"
+    on a single call, without touching GIVEAWAY_WORD_GUARD_ENABLED (unsafe to
+    mutate mid-request in an async bot serving concurrent games)."""
+    if discordbot is None:
+        return 0
+
+    kwargs = dict(
+        category="\"Time\" For A Change",
+        question_text="Scott Joplin is a famous performer & composer of this musical style",
+    )
+    original = discordbot.GIVEAWAY_WORD_GUARD_ENABLED
+    cases = [
+        (None, False, "enable_giveaway_guard=None falls back to the global default (True)"),
+        (True, False, "enable_giveaway_guard=True explicitly matches the guarded default"),
+        (False, True, "enable_giveaway_guard=False bypasses the guard for this call only"),
+    ]
+    failures = []
+    for override, expected, note in cases:
+        actual = discordbot.legacy_fuzzy_match("time", "ragtime", kwargs["category"], "",
+                                                question_text=kwargs["question_text"],
+                                                enable_giveaway_guard=override)
+        global_unchanged = discordbot.GIVEAWAY_WORD_GUARD_ENABLED == original
+        ok = actual == expected and global_unchanged
+        if not ok:
+            failures.append((override, expected, actual, global_unchanged, note))
+        status = "PASS" if ok else "FAIL"
+        print(f"[{status}] enable_giveaway_guard={override!r} -> {actual} (expected {expected}), "
+              f"global unchanged={global_unchanged}  -- {note}")
+    return len(failures)
+
+
 if __name__ == "__main__":
-    sys.exit(1 if (run() + run_toggle()) else 0)
+    sys.exit(1 if (run() + run_toggle() + run_per_call_override()) else 0)
