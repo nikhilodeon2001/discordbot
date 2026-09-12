@@ -27299,7 +27299,10 @@ async def start_trivia():
 
                 if message_task in done:
                     msg = message_task.result()
-                    await msg.add_reaction("🥒")
+                    try:
+                        await msg.add_reaction("🥒")
+                    except (discord.NotFound, discord.HTTPException, aiohttp.ClientError):
+                        pass
                     starter = msg.author
                 else:
                     interaction = view.future.result()
