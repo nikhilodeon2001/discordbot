@@ -28535,32 +28535,17 @@ def _recent_minigame_key_name(number):
     return str(number), get_minigame_name(number)
 
 
-async def _seed_recent_minigame_selections(collection):
-    """First-run bootstrap: seeds the recency list with 10 random unique games so ask_wof_number's
-    "Recently Played" dropdown has something to show before any real picks have happened, instead
-    of staying empty until 10 organic selections accumulate. Every real minigame (excluding the
-    "00"/"x" meta-choices, which aren't games, and "99"/CHAOS, which stays button-only -- see
-    record_recent_minigame_selection) is eligible, WoF collapsed to its one representative entry
-    same as a real pick would be."""
-    pool = [_recent_minigame_key_name(n) for n in (["0"] + [str(i) for i in range(5, 52)] + ["67"])]
-    sampled = random.sample(pool, min(10, len(pool)))
-    now = datetime.datetime.now()
-    entries = [{"key": key, "name": name, "played_at": now} for key, name in sampled]
-    await collection.update_one({"_id": "recent"}, {"$set": {"entries": entries}}, upsert=True)
-    return entries
-
-
 async def get_recent_minigame_selections():
     """Returns ask_wof_number's recency list, most-recently-played first (already stored in that
-    order by record_recent_minigame_selection's $position: 0 push). Seeds 10 random unique games
-    on first use (see _seed_recent_minigame_selections)."""
+    order by record_recent_minigame_selection's $position: 0 push). Starts empty and grows
+    purely from real picks -- no random seeding, so the "Recently Played" dropdown simply isn't
+    offered (see ask_wof_number's `if recent_options:` guard) until something's actually been
+    played."""
     try:
         db = await connect_to_mongodb()
         collection = db["minigame-recent-selections"]
         doc = await collection.find_one({"_id": "recent"})
-        if doc and doc.get("entries"):
-            return doc["entries"]
-        return await _seed_recent_minigame_selections(collection)
+        return doc["entries"] if doc else []
     except Exception as e:
         print(f"Error fetching recent minigame selections: {e}")
         return []
