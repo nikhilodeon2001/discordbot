@@ -5727,17 +5727,20 @@ class ReportQuestionView(discord.ui.View):
 
 
 def _normalize_options(options):
-    """Accepts options as a list of dicts ({"value","label"[,"emoji"]}) or plain
+    """Accepts options as a list of dicts ({"value","label"[,"emoji"][,"style"]}) or plain
     (value, label[, emoji]) tuples; returns a list of normalized dicts. Shared by every
-    button/select builder below so callers can pass whichever shape is convenient."""
+    button/select builder below so callers can pass whichever shape is convenient. `style`
+    (a discord.ButtonStyle) is a button-only per-option override -- ignored by Select-based
+    builders, which have no per-option color concept."""
     normalized = []
     for opt in options:
         if isinstance(opt, dict):
-            normalized.append({"value": str(opt["value"]), "label": opt["label"], "emoji": opt.get("emoji")})
+            normalized.append({"value": str(opt["value"]), "label": opt["label"], "emoji": opt.get("emoji"),
+                                "style": opt.get("style")})
         else:
             value, label = opt[0], opt[1]
             emoji = opt[2] if len(opt) > 2 else None
-            normalized.append({"value": str(value), "label": label, "emoji": emoji})
+            normalized.append({"value": str(value), "label": label, "emoji": emoji, "style": None})
     return normalized
 
 
@@ -5937,24 +5940,24 @@ def parse_ordered_multi_selection(content, num_to_key, name_to_key, max_num):
     return ordered
 
 
-def build_option_button_view(options, allowed_user_ids, *, timeout=60, style=discord.ButtonStyle.primary,
-                              disabled_values=None):
-    """Small-fixed-set button row (<=25 options, <=5 per row) -- the button-based counterpart
-    to build_option_select_view() below, for choice sets that fit in a row or two without
-    needing a dropdown (e.g. the 5-option Okra Museum theme picker). `options` accepts dicts
-    ({"value","label"[,"emoji"]}) or (value, label[, emoji]) tuples. `disabled_values`, if
-    given, greys out those buttons up front (e.g. a coffee-gated option the current picker
-    can't afford) instead of letting them click it and only then rejecting it -- since these
-    views are typically built for one specific restricted user, not shared across viewers with
-    different eligibility, disabling per-view is safe here (unlike a per-user visual state,
-    which Discord buttons can't express). Pair with resolve_input_race() so typed chat keeps
-    working alongside the buttons."""
-    normalized = _normalize_options(options)[:25]
+def _add_option_buttons(view: "RestrictedView", options, *, style=discord.ButtonStyle.primary,
+                         disabled_values=None, row=0):
+    """Adds one discord.ui.Button per option onto an existing view, wired to that view's
+    _resolve() exactly like build_option_button_view's buttons -- factored out so a view that
+    already has other items (e.g. a Select from build_option_select_view) can grow a button row
+    without duplicating the callback-construction loop. `options`/`disabled_values` match
+    build_option_button_view's contract; an option dict's own "style" key (see
+    _normalize_options) overrides this function's `style` default per-button. `row` is a base
+    offset: buttons pack 5-per-row starting at `row` (row, row+1, ...), the same i // 5 packing
+    build_option_button_view always used, just shiftable so a button group can share a view with
+    something already occupying earlier rows (e.g. a Select pinned to row 0). Caller is
+    responsible for keeping total items within Discord's 25-per-view / 5-per-row limits. Returns
+    `view` for chaining."""
+    normalized = _normalize_options(options)
     disabled_values = disabled_values or set()
-    view = RestrictedView(allowed_user_ids, timeout=timeout)
     for i, opt in enumerate(normalized):
-        button = discord.ui.Button(label=opt["label"][:80], style=style, emoji=opt["emoji"], row=i // 5,
-                                    disabled=opt["value"] in disabled_values)
+        button = discord.ui.Button(label=opt["label"][:80], style=opt["style"] or style, emoji=opt["emoji"],
+                                    row=row + i // 5, disabled=opt["value"] in disabled_values)
 
         async def _callback(interaction: discord.Interaction, value=opt["value"]):
             await view._resolve(interaction, value)
@@ -5962,6 +5965,22 @@ def build_option_button_view(options, allowed_user_ids, *, timeout=60, style=dis
         button.callback = _callback
         view.add_item(button)
     return view
+
+
+def build_option_button_view(options, allowed_user_ids, *, timeout=60, style=discord.ButtonStyle.primary,
+                              disabled_values=None):
+    """Small-fixed-set button row (<=25 options, <=5 per row) -- the button-based counterpart
+    to build_option_select_view() below, for choice sets that fit in a row or two without
+    needing a dropdown (e.g. the 5-option Okra Museum theme picker). `options` accepts dicts
+    ({"value","label"[,"emoji"][,"style"]}) or (value, label[, emoji]) tuples. `disabled_values`,
+    if given, greys out those buttons up front (e.g. a coffee-gated option the current picker
+    can't afford) instead of letting them click it and only then rejecting it -- since these
+    views are typically built for one specific restricted user, not shared across viewers with
+    different eligibility, disabling per-view is safe here (unlike a per-user visual state,
+    which Discord buttons can't express). Pair with resolve_input_race() so typed chat keeps
+    working alongside the buttons."""
+    view = RestrictedView(allowed_user_ids, timeout=timeout)
+    return _add_option_buttons(view, options[:25], style=style, disabled_values=disabled_values, row=0)
 
 
 class _SelectPage(discord.ui.Select):
@@ -20188,8 +20207,7 @@ async def request_prompt(winner, winner_id):
     # here locally rather than changed everywhere.
     prompt_collection_window = (magic_time + 5) * 2
 
-    message = f"\u200b\n🖼️🔟 **<@{winner_id}>**, Fill in the blank. *10 words max* and **be good**.\n\u200b"
-    message += f"\n*Draw an okra themed picture of...*\n\u200b"
+    message = f"\u200b\n🖼️🔟 **<@{winner_id}>**, give me **10 words max** and be good.\n\u200b"
     message += f"\n*(Type* **x** *or hit the button below when you're done.)*"
     view = PromptDoneView(winner_id, timeout=prompt_collection_window)
     prompt_message = await safe_send(channel, message, view=view)
@@ -21164,22 +21182,36 @@ async def ask_wof_number(winner, winner_id, cached_coffees=None, menu_text=None,
     # need the group->item cascade from build_option_select_view's `groups`, and a 2-page
     # "Minigames (1/2)/(2/2)" split was worse UX than just leaving them typed-chat-only (still
     # a first-class fast path, unaffected -- content-based dispatch below handles any of 5-50
-    # regardless of how it arrived). Only the two small, real fixed-choice groups get buttons.
+    # regardless of how it arrived). Only the two small, real fixed-choice groups get an
+    # interactive control -- wof_options via the Select below, other_options as buttons.
     wof_options = wof_tier_options or []
     other_options = [
-        {"value": "99", "label": "\U0001f300 CHAOS"},
-        {"value": "00", "label": "\U0001f957 Okra\'s Choice (Random)"},
-        {"value": "x", "label": "\u23ed\ufe0f Skip Mini-Game"},
+        {"value": "99", "label": "\U0001f300 CHAOS", "style": discord.ButtonStyle.primary},
+        {"value": "00", "label": "\U0001f957 Okra\'s Choice (Random)", "style": discord.ButtonStyle.success},
+        {"value": "x", "label": "\u23ed\ufe0f Skip Mini-Game", "style": discord.ButtonStyle.danger},
     ]
     # Doubled from the shared `magic_time` used elsewhere -- picking a minigame needs more
     # time than a typical answer window, but `magic_time` is a global reused by many
     # unrelated timing points, so it's doubled here locally rather than changed everywhere.
     minigame_choice_window = magic_time * 2
-    view = build_option_select_view(wof_options + other_options, {winner_id, okrag_id}, timeout=minigame_choice_window,
-                                     placeholder="\u26a1 Shortcuts\u2026")
+    # wof_options (dynamic per-round "WoF: <category>" entries) go in a Select dropdown;
+    # other_options (fixed CHAOS / Okra's Choice / Skip) become quick-click buttons instead of
+    # dropdown rows. wof_options can rarely come back empty (the per-round DB sample can return
+    # 0 docs) and discord.ui.Select can't hold zero options, so only build the Select when
+    # there's something to put in it. The Select, when present, is always the first item added
+    # to a brand-new view, so discord.py's row auto-packing deterministically lands it on row 0
+    # -- only the buttons need an explicit row (1 below the Select, or 0 alone without it).
+    if wof_options:
+        view = build_option_select_view(wof_options, {winner_id, okrag_id}, timeout=minigame_choice_window,
+                                         placeholder="\u26a1 Shortcuts\u2026")
+        _add_option_buttons(view, other_options, row=1)
+    else:
+        view = RestrictedView({winner_id, okrag_id}, timeout=minigame_choice_window)
+        _add_option_buttons(view, other_options, row=0)
     view.message = await safe_send(channel, "\U0001f447 Or pick a shortcut:", view=view)
-    # Companion (phone/web) mirrors the same trimmed set -- minigame numbers stay typeable
-    # there too, same as Discord chat, just not offered as a button/select option.
+    # Companion (phone/web) mirrors the full set regardless of Discord-side rendering (Select
+    # vs. buttons doesn't apply there) -- minigame numbers stay typeable there too, same as
+    # Discord chat, just not offered as a button/select option.
     companion_options = wof_options + other_options
 
     start = asyncio.get_event_loop().time()
