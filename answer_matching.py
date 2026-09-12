@@ -241,6 +241,42 @@ def _is_giveaway_word(word, giveaway_words):
     return any(len(gw) >= 4 and (word in gw or gw in word) for gw in giveaway_words)
 
 
+def _singularize(word):
+    """Strip a simple trailing plural 's'/'es' -- just enough to bridge cases
+    like 'martins' vs 'martin', not a full morphological analyzer."""
+    if len(word) > 4 and word.endswith("es"):
+        return word[:-2]
+    if len(word) > 4 and word.endswith("s"):
+        return word[:-1]
+    return word
+
+
+def is_whole_word_giveaway(word, giveaway_words):
+    """Whole-word match (plus simple plural/singular drift) -- unlike
+    _is_giveaway_word, this is NOT substring-containment, so it doesn't flag
+    ordinary English compounds ("fish" inside "sailfish") as giveaways. No
+    length floor: exact/plural whole-word equality has no coincidental-
+    collision risk the way substring containment does, so short words ("San"
+    in "San Salvador") are checked too, not silently skipped."""
+    word_singular = _singularize(word)
+    for gw in giveaway_words:
+        if word == gw or word_singular == _singularize(gw):
+            return True
+    return False
+
+
+def is_fully_given_away(text, giveaway_words):
+    """True if every significant word of `text` (filler words stripped) is a
+    whole-word giveaway -- i.e. the category/question could have supplied
+    `text` verbatim, word for word. Used both to audit stored answers
+    (audit_giveaway_questions.py) and to react to a live guess that just
+    parrots the prompt (discordbot.py)."""
+    sig = _significant_tokens(normalize_text(text))
+    if not sig:
+        return False
+    return all(is_whole_word_giveaway(w, giveaway_words) for w in sig)
+
+
 # ---------------------------------------------------------------------------
 # Negation handling
 # ---------------------------------------------------------------------------
