@@ -24758,7 +24758,7 @@ USE_LEGACY_FUZZY_MATCH = True
 GIVEAWAY_WORD_GUARD_ENABLED = True
 
 
-def legacy_fuzzy_match(user_answer, correct_answer, category, url, _skip_alias_check=False, ignore_exact_mode=False, question_text=""):
+def legacy_fuzzy_match(user_answer, correct_answer, category, url, _skip_alias_check=False, ignore_exact_mode=False, question_text="", enable_giveaway_guard=None):
     """The pre-rebuild answer-matching heuristics (unguarded substring, char-level Jaccard,
     first-5-char/first-word hacks), kept verbatim as a fallback -- see USE_LEGACY_FUZZY_MATCH.
     Superseded by answer_matching.py, which is the default; this only runs if that flag is
@@ -24815,7 +24815,7 @@ def legacy_fuzzy_match(user_answer, correct_answer, category, url, _skip_alias_c
                             return True
                     else:
                         # Long alias: use normal fuzzy matching
-                        if legacy_fuzzy_match(user_answer, variant, category, url, _skip_alias_check=True, question_text=question_text):
+                        if legacy_fuzzy_match(user_answer, variant, category, url, _skip_alias_check=True, question_text=question_text, enable_giveaway_guard=enable_giveaway_guard):
                             return True
                 break  # Don't check other alias groups
 
@@ -24899,7 +24899,8 @@ def legacy_fuzzy_match(user_answer, correct_answer, category, url, _skip_alias_c
     # the leniency heuristics below so a guess can't win by parroting a word
     # the prompt already handed the user for free (e.g. "time" for "ragtime"
     # when the category is '"Time" For A Change').
-    giveaway_words = _giveaway_words(category, question_text) if GIVEAWAY_WORD_GUARD_ENABLED else set()
+    guard_enabled = GIVEAWAY_WORD_GUARD_ENABLED if enable_giveaway_guard is None else enable_giveaway_guard
+    giveaway_words = _giveaway_words(category, question_text) if guard_enabled else set()
     user_is_giveaway_word = any(
         _is_giveaway_word(w, giveaway_words)
         for w in (user_answer, no_spaces_user, no_filler_user, no_filler_spaces_user)
@@ -24946,7 +24947,7 @@ def legacy_fuzzy_match(user_answer, correct_answer, category, url, _skip_alias_c
     return False  # No match found
 
 
-def fuzzy_match(user_answer, correct_answer, category, url, _skip_alias_check=False, ignore_exact_mode=False, question_text=""):
+def fuzzy_match(user_answer, correct_answer, category, url, _skip_alias_check=False, ignore_exact_mode=False, question_text="", enable_giveaway_guard=None):
     # Matching logic lives in answer_matching.py (testable in isolation). This
     # wrapper preserves the historic signature and wires Poindexter/exact_mode
     # to the STRICT end of the leniency dial.
@@ -24954,13 +24955,14 @@ def fuzzy_match(user_answer, correct_answer, category, url, _skip_alias_check=Fa
         return legacy_fuzzy_match(
             user_answer, correct_answer, category, url,
             _skip_alias_check=_skip_alias_check, ignore_exact_mode=ignore_exact_mode,
-            question_text=question_text,
+            question_text=question_text, enable_giveaway_guard=enable_giveaway_guard,
         )
     config = answer_matching.STRICT if (exact_mode and not ignore_exact_mode) else answer_matching.ACTIVE_CONFIG
+    resolved_guard = GIVEAWAY_WORD_GUARD_ENABLED if enable_giveaway_guard is None else enable_giveaway_guard
     return answer_matching.match_answer(
         user_answer, correct_answer, category=category, url=url,
         config=config, skip_alias=_skip_alias_check, question_text=question_text,
-        enable_giveaway_guard=GIVEAWAY_WORD_GUARD_ENABLED,
+        enable_giveaway_guard=resolved_guard,
     )
 
 
@@ -25153,6 +25155,22 @@ async def check_correct_responses_delete(question_ask_time, trivia_answer_list, 
 
             if blitz_mode:
                 first_correct_found = True
+        else:
+            if GIVEAWAY_WORD_GUARD_ENABLED and message is not None:
+                blocked_by_giveaway_guard = any(
+                    fuzzy_match(message_content, answer, trivia_category, trivia_url,
+                                question_text=question_text_for_match, enable_giveaway_guard=False)
+                    for answer in trivia_answer_list
+                )
+                if blocked_by_giveaway_guard:
+                    try:
+                        await message.add_reaction("🟥")
+                    except discord.NotFound:
+                        print("❌ Message was already deleted, can't react.")
+                    except discord.Forbidden:
+                        print("❌ Bot lacks permission to add reactions.")
+                    except discord.HTTPException as e:
+                        print(f"❌ Failed to add reaction: {e}")
 
     had_correct_answer = bool(correct_responses)
 
