@@ -77,6 +77,7 @@ from PIL import Image, ImageDraw, ImageFilter
 import numpy as np
 import cairosvg
 import asyncio
+import contextlib
 import difflib
 from metaphone import doublemetaphone
 import answer_matching
@@ -5855,6 +5856,46 @@ async def resolve_input_race(view: "RestrictedView", chat_wait_coro):
         return done.pop().result()
     except asyncio.CancelledError:
         raise asyncio.TimeoutError()
+
+
+async def _run_selector_countdown_ticker(message, base_content, end_time, now):
+    """Edits `message` about once a second to append a "⏳ Ns" line to `base_content`,
+    wall-clock-synced to `end_time` the same way the per-question timer counts down to
+    question_asked_end (see the main round loop) -- recomputing remaining from `now()` each
+    tick instead of accumulating per-edit drift from a fixed-count sleep(1) loop."""
+    try:
+        while True:
+            remaining = max(0, math.ceil(end_time - now()))
+            new_content = f"{base_content}\n\n⏳ {remaining}s" if remaining > 0 else base_content
+            try:
+                await message.edit(content=new_content)
+            except (discord.NotFound, discord.HTTPException, aiohttp.ClientError):
+                return
+            if remaining <= 0:
+                return
+            await asyncio.sleep(min(1.0, max(0.0, end_time - now())))
+    except asyncio.CancelledError:
+        pass
+
+
+@contextlib.asynccontextmanager
+async def selector_countdown(message, base_content, window_seconds, *, now=None):
+    """Background countdown widget for a selector's prompt message, live for the duration of
+    the `async with` block -- gives the minigame picker, round-options picker, and custom-
+    painting-prompt collector the same visible countdown a question's answer window already
+    has. `now`, if given, is the clock the caller measured `window_seconds` against (e.g.
+    time.time for prompt_user_for_response's round_options_window); defaults to the event
+    loop's own clock. Cancelled on exit regardless of how the block finishes -- a pick made,
+    the window timing out, or an exception."""
+    now = now or (lambda: asyncio.get_event_loop().time())
+    end_time = now() + window_seconds
+    task = asyncio.ensure_future(_run_selector_countdown_ticker(message, base_content, end_time, now))
+    try:
+        yield
+    finally:
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
 
 
 def parse_ordered_multi_selection(content, num_to_key, name_to_key, max_num):
@@ -20124,38 +20165,39 @@ async def request_prompt(winner, winner_id):
    
     message = f"\u200b\n🖼️🔟 **<@{winner_id}>**, Fill in the blank. *10 words max* and **be good**.\n\u200b"
     message += f"\n*Draw an okra themed picture of...*\n\u200b"
-    await safe_send(channel, message)
+    prompt_message = await safe_send(channel, message)
 
     target_channel = _active_game_channel or channel
 
     def check(m):
         return m.channel == target_channel and m.author != get_bot().user and m.author.id == winner_id
 
-    try:
-        while len(collected_words) < 10 and asyncio.get_event_loop().time() - start_time < prompt_collection_window:
-            try:
-                response = await companion_bridge.wait_for_message_or_companion(
-                    check, magic_time, target_channel, {winner_id}, kind="mini_game_answer"
-                )
-                # Bypass-resistant word extraction: hyphens/underscores/dots/
-                # zero-width chars all count as separators, not word glue.
-                words = answer_matching.extract_words(response.content)
+    async with selector_countdown(prompt_message, message, prompt_collection_window):
+        try:
+            while len(collected_words) < 10 and asyncio.get_event_loop().time() - start_time < prompt_collection_window:
+                try:
+                    response = await companion_bridge.wait_for_message_or_companion(
+                        check, magic_time, target_channel, {winner_id}, kind="mini_game_answer"
+                    )
+                    # Bypass-resistant word extraction: hyphens/underscores/dots/
+                    # zero-width chars all count as separators, not word glue.
+                    words = answer_matching.extract_words(response.content)
 
-                for word in words:
-                    if len(collected_words) < 10:
-                        collected_words.append(word)
-                    else:
-                        trimmed = True
-                        break
+                    for word in words:
+                        if len(collected_words) < 10:
+                            collected_words.append(word)
+                        else:
+                            trimmed = True
+                            break
 
-                await response.add_reaction("✅")
+                    await response.add_reaction("✅")
 
-            except asyncio.TimeoutError:
-                break  # no more responses in time
+                except asyncio.TimeoutError:
+                    break  # no more responses in time
 
-    except Exception as e:
-        print(f"Error collecting words: {e}")
-        sentry_sdk.capture_exception(e)
+        except Exception as e:
+            print(f"Error collecting words: {e}")
+            sentry_sdk.capture_exception(e)
 
     if not collected_words:
         await safe_send(channel, "Nothing. Okra time.")
@@ -21103,73 +21145,74 @@ async def ask_wof_number(winner, winner_id, cached_coffees=None, menu_text=None,
     start = asyncio.get_event_loop().time()
     selected_question = None
 
-    try:
-        while asyncio.get_event_loop().time() - start < minigame_choice_window:
-            remaining = minigame_choice_window - (asyncio.get_event_loop().time() - start)
-            message = await resolve_input_race(
-                view,
-                companion_bridge.wait_for_message_or_companion(
-                    check, remaining, target_channel, {winner_id, okrag_id}, kind="wof_selection",
-                    prompt_text=menu_text, options=companion_options
-                ),
-            )
-            content = message.content.strip().lower()
-            responder_id = message.author.id
-            if responder_id == winner_id and cached_coffees is not None:
-                winner_coffees = cached_coffees
-            else:
-                winner_coffees = await get_coffees(responder_id)
+    async with selector_countdown(view.message, "\U0001f447 Or pick a shortcut:", minigame_choice_window):
+        try:
+            while asyncio.get_event_loop().time() - start < minigame_choice_window:
+                remaining = minigame_choice_window - (asyncio.get_event_loop().time() - start)
+                message = await resolve_input_race(
+                    view,
+                    companion_bridge.wait_for_message_or_companion(
+                        check, remaining, target_channel, {winner_id, okrag_id}, kind="wof_selection",
+                        prompt_text=menu_text, options=companion_options
+                    ),
+                )
+                content = message.content.strip().lower()
+                responder_id = message.author.id
+                if responder_id == winner_id and cached_coffees is not None:
+                    winner_coffees = cached_coffees
+                else:
+                    winner_coffees = await get_coffees(responder_id)
 
-            if content == "x":
-                return "x"
+                if content == "x":
+                    return "x"
 
-            if content == "00":
-                await message.add_reaction("\U0001f44d")
-                set_a = [str(i) for i in range(5)]
-                set_b = [str(i) for i in range(5, 52)] + ["67"]
-                if len(round_responders) < 2:
-                    set_b = [g for g in set_b if g not in multiplayer_required]
-                set_b = [g for g in set_b if g not in RANDOM_EXCLUDED_NUMBERS]
-                selected_question = random.choice(set_a if random.random() < 0.5 else set_b)
+                if content == "00":
+                    await message.add_reaction("\U0001f44d")
+                    set_a = [str(i) for i in range(5)]
+                    set_b = [str(i) for i in range(5, 52)] + ["67"]
+                    if len(round_responders) < 2:
+                        set_b = [g for g in set_b if g not in multiplayer_required]
+                    set_b = [g for g in set_b if g not in RANDOM_EXCLUDED_NUMBERS]
+                    selected_question = random.choice(set_a if random.random() < 0.5 else set_b)
 
-                # Store frequency data for random selection
-                await store_minigame_frequency(selected_question, "random", "discord")
+                    # Store frequency data for random selection
+                    await store_minigame_frequency(selected_question, "random", "discord")
+
+                    await message.add_reaction(get_minigame_emoji(selected_question))
+                    await safe_send(channel, f"\n\U0001f381 **<@{responder_id}>**, let\'s do {selected_question}.\n")
+                    return selected_question
+
+                if content not in all_options:
+                    await message.add_reaction("\u274c")
+                    await view.reset()
+                    continue
+
+                # Check coffee lock
+                if content in unlocks and winner_coffees <= 0:
+                    await message.add_reaction("\U0001f952")
+                    await safe_send(channel, f"\n\U0001f64f\U0001f614 Sorry **<@{responder_id}>**. \'**{unlocks[content]}**\' is for **Okrans Only** \U0001f952.\n")
+                    await view.reset()
+                    continue
+
+                # Check multiplayer lock
+                if content in multiplayer_required and len(round_responders) < 2 and responder_id != okrag_id:
+                    await message.add_reaction("\U0001f622")
+                    await safe_send(channel, f"\n\U0001f64f\U0001f614 Sorry **<@{responder_id}>**. \'**{unlocks[content]}**\' requires **2+ players**.\n")
+                    await view.reset()
+                    continue
+
+                selected_question = content
+
+                # Store frequency data for user selection
+                await store_minigame_frequency(selected_question, "user", "discord")
 
                 await message.add_reaction(get_minigame_emoji(selected_question))
-                await safe_send(channel, f"\n\U0001f381 **<@{responder_id}>**, let\'s do {selected_question}.\n")
+                await safe_send(channel, f"\n\U0001f4aa\U0001f6e1\ufe0f I got you **<@{responder_id}>**. **{selected_question}** it is.\n\u200b")
+                await asyncio.sleep(2)
                 return selected_question
 
-            if content not in all_options:
-                await message.add_reaction("\u274c")
-                await view.reset()
-                continue
-
-            # Check coffee lock
-            if content in unlocks and winner_coffees <= 0:
-                await message.add_reaction("\U0001f952")
-                await safe_send(channel, f"\n\U0001f64f\U0001f614 Sorry **<@{responder_id}>**. \'**{unlocks[content]}**\' is for **Okrans Only** \U0001f952.\n")
-                await view.reset()
-                continue
-
-            # Check multiplayer lock
-            if content in multiplayer_required and len(round_responders) < 2 and responder_id != okrag_id:
-                await message.add_reaction("\U0001f622")
-                await safe_send(channel, f"\n\U0001f64f\U0001f614 Sorry **<@{responder_id}>**. \'**{unlocks[content]}**\' requires **2+ players**.\n")
-                await view.reset()
-                continue
-
-            selected_question = content
-
-            # Store frequency data for user selection
-            await store_minigame_frequency(selected_question, "user", "discord")
-
-            await message.add_reaction(get_minigame_emoji(selected_question))
-            await safe_send(channel, f"\n\U0001f4aa\U0001f6e1\ufe0f I got you **<@{responder_id}>**. **{selected_question}** it is.\n\u200b")
-            await asyncio.sleep(2)
-            return selected_question
-
-    except asyncio.TimeoutError:
-        pass
+        except asyncio.TimeoutError:
+            pass
 
     # Fallback random selection
     return "x"
@@ -22916,48 +22959,50 @@ async def prompt_user_for_response(round_winner, winner_points, winner_coffees, 
     # no separate resolution path is needed here, only the rendering metadata.
     companion_options = [{"value": k, "label": info[0]} for k, info in _KEYWORD_EFFECTS.items()]
 
-    while time.time() - start_time < round_options_window:
-        try:
-            message = await resolve_input_race(
-                view,
-                companion_bridge.wait_for_message_or_companion(
-                    check, round_options_window - (time.time() - start_time), target_channel, {round_winner_id, okrag_id},
-                    kind="post_round_menu", prompt_text=menu_text, options=companion_options, multi=True
-                ),
-            )
-            message_content = message.content.strip().lower()
+    async with selector_countdown(view.message, "\U0001f447 Or set modifiers from the buttons below:",
+                                   round_options_window, now=time.time):
+        while time.time() - start_time < round_options_window:
+            try:
+                message = await resolve_input_race(
+                    view,
+                    companion_bridge.wait_for_message_or_companion(
+                        check, round_options_window - (time.time() - start_time), target_channel, {round_winner_id, okrag_id},
+                        kind="post_round_menu", prompt_text=menu_text, options=companion_options, multi=True
+                    ),
+                )
+                message_content = message.content.strip().lower()
 
-            delay_match = re.search(r'\bdelay\s*(\d+)\b', message_content)
-            if delay_match:
-                delay_value = max(3, min(int(delay_match.group(1)), 15))
-                time_between_questions = delay_value
-                await safe_send(channel, f"\u23f1\ufe0f\u23f3 **<@{round_winner_id}>** has set {delay_value}s between questions.")
+                delay_match = re.search(r'\bdelay\s*(\d+)\b', message_content)
+                if delay_match:
+                    delay_value = max(3, min(int(delay_match.group(1)), 15))
+                    time_between_questions = delay_value
+                    await safe_send(channel, f"\u23f1\ufe0f\u23f3 **<@{round_winner_id}>** has set {delay_value}s between questions.")
 
-            answer_match = re.search(r'\banswer\s*(\d+)\b', message_content)
-            if answer_match:
-                answer_value = max(3, min(int(answer_match.group(1)), question_time_default))
-                question_time = answer_value
-                await safe_send(channel, f"\u23f1\ufe0f\u2753 **<@{round_winner_id}>** has set {answer_value}s to answer.")
+                answer_match = re.search(r'\banswer\s*(\d+)\b', message_content)
+                if answer_match:
+                    answer_value = max(3, min(int(answer_match.group(1)), question_time_default))
+                    question_time = answer_value
+                    await safe_send(channel, f"\u23f1\ufe0f\u2753 **<@{round_winner_id}>** has set {answer_value}s to answer.")
 
-            # Keyword flags -- one shared table (_KEYWORD_EFFECTS) drives both this typed-chat
-            # substring match and WofModifierModal's multi-select, so each keyword's coffee-gate
-            # + global flag(s) + announcement exists exactly once (see _apply_keyword_flag).
-            for keyword in _KEYWORD_EFFECTS:
-                config = keyword_config[keyword]
-                if keyword in message_content and (not config["exclude_hashtag"] or f"#{keyword}" not in message_content):
-                    await _apply_keyword_flag(keyword, keyword_config, winner_coffees, round_winner_id)
+                # Keyword flags -- one shared table (_KEYWORD_EFFECTS) drives both this typed-chat
+                # substring match and WofModifierModal's multi-select, so each keyword's coffee-gate
+                # + global flag(s) + announcement exists exactly once (see _apply_keyword_flag).
+                for keyword in _KEYWORD_EFFECTS:
+                    config = keyword_config[keyword]
+                    if keyword in message_content and (not config["exclude_hashtag"] or f"#{keyword}" not in message_content):
+                        await _apply_keyword_flag(keyword, keyword_config, winner_coffees, round_winner_id)
 
-            # x (as a standalone word, not e.g. inside "xela"/"marx") ends the prompt early --
-            # checked last so it still chains with whatever other keywords were in this same
-            # message, matching how every other option can be combined in one string. The
-            # WofModifierView "Done" button also resolves to this same "x" content.
-            if re.search(r'\bx\b', message_content):
-                await message.add_reaction("\U0001f3c1")
-                await safe_send(channel, f"\U0001f3c1 **<@{round_winner_id}>** is all set. Let's get to it!")
+                # x (as a standalone word, not e.g. inside "xela"/"marx") ends the prompt early --
+                # checked last so it still chains with whatever other keywords were in this same
+                # message, matching how every other option can be combined in one string. The
+                # WofModifierView "Done" button also resolves to this same "x" content.
+                if re.search(r'\bx\b', message_content):
+                    await message.add_reaction("\U0001f3c1")
+                    await safe_send(channel, f"\U0001f3c1 **<@{round_winner_id}>** is all set. Let's get to it!")
+                    break
+
+            except asyncio.TimeoutError:
                 break
-
-        except asyncio.TimeoutError:
-            break
 
     window_closed["value"] = True
     await save_round_options_to_db()
