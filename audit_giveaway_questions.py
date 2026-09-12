@@ -1,9 +1,20 @@
 """
 Audit: find questions in trivia_questions/jeopardy_questions/crossword_questions
 where every acceptable answer is already "given away" by the category/question
-text, using the same giveaway-word logic the live answer matcher uses
-(answer_matching._giveaway_words / _is_giveaway_word) -- so a flagged question
-is one where no real guessing is required to answer correctly.
+text -- i.e. no real guessing is required to answer correctly.
+
+Uses whole-word matching (plus simple plural/singular drift, e.g. "martins" vs
+"martin"), deliberately NOT the looser substring-containment check the live
+answer matcher uses (answer_matching._is_giveaway_word). That looser check is
+the right tradeoff at answer-check time (a false positive there just makes the
+game slightly stricter), but it's the wrong tradeoff here: it flags ordinary
+English compounds/suffixes as giveaways just because they share characters
+with an unrelated word (e.g. "fish" inside "sailfish", "ability" inside
+"malleability", "wave" inside "wavelength") -- noise that would send a human
+reviewer chasing questions that aren't actually broken. Whole-word matching
+trades some recall (it won't catch e.g. "Tunis" being derivable from a
+question naming "Tunisia" -- a real but rarer pattern with no clean way to
+tell apart from the compound-word false positives) for much higher precision.
 
 Read-only. Makes no database writes.
 
@@ -20,17 +31,41 @@ from pymongo import MongoClient
 from tqdm import tqdm
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from answer_matching import _giveaway_words, _is_giveaway_word, _significant_tokens, normalize_text
+from answer_matching import _giveaway_words, _significant_tokens, normalize_text
 
 MONGO_URI = os.environ.get("MONGO_URI") or os.getenv("mongo_db_string")
 COLLECTIONS = ["trivia_questions", "jeopardy_questions", "crossword_questions"]
+
+
+def _singularize(word):
+    """Strip a simple trailing plural 's'/'es' -- just enough to bridge cases
+    like 'martins' vs 'martin', not a full morphological analyzer."""
+    if len(word) > 4 and word.endswith("es"):
+        return word[:-2]
+    if len(word) > 4 and word.endswith("s"):
+        return word[:-1]
+    return word
+
+
+def is_whole_word_giveaway(word, giveaway_words):
+    """Whole-word match (plus simple plural/singular drift) -- see module
+    docstring for why this is stricter than answer_matching._is_giveaway_word."""
+    if len(word) < 4:
+        return False
+    word_singular = _singularize(word)
+    for gw in giveaway_words:
+        if len(gw) < 4:
+            continue
+        if word == gw or word_singular == _singularize(gw):
+            return True
+    return False
 
 
 def answer_is_given_away(answer, giveaway_words):
     sig = [w for w in _significant_tokens(normalize_text(answer)) if len(w) >= 4]
     if not sig:
         return False  # no checkable words -- don't flag on a vacuous match
-    return all(_is_giveaway_word(w, giveaway_words) for w in sig)
+    return all(is_whole_word_giveaway(w, giveaway_words) for w in sig)
 
 
 def main():
