@@ -20203,10 +20203,11 @@ async def request_prompt(winner, winner_id):
         try:
             while len(collected_words) < 10 and asyncio.get_event_loop().time() - start_time < prompt_collection_window:
                 try:
+                    remaining = prompt_collection_window - (asyncio.get_event_loop().time() - start_time)
                     response = await resolve_input_race(
                         view,
                         companion_bridge.wait_for_message_or_companion(
-                            check, magic_time, target_channel, {winner_id}, kind="mini_game_answer"
+                            check, remaining, target_channel, {winner_id}, kind="mini_game_answer"
                         ),
                     )
                     # A standalone 'x' -- its own word, whether typed alone, mid-sentence, or
@@ -20239,7 +20240,6 @@ async def request_prompt(winner, winner_id):
             sentry_sdk.capture_exception(e)
 
     if not collected_words:
-        await safe_send(channel, "Nothing. Okra time.")
         return None
 
     final_prompt, char_trimmed = answer_matching.limit_words(' '.join(collected_words), 10, 90)
