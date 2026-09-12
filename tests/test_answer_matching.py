@@ -263,6 +263,19 @@ QUESTION_TEXT_CASES = [
     ("cucu", "a cucumber", "Vegetables",
      "A long green fruit often mistaken for a vegetable",
      "GENEROUS", True, "regression guard: substring leniency still works with no category/question overlap"),
+
+    # --- subset-coverage leniency (multi-word partial credit) ---
+    ("bottom dollar", "your bottom dollar", "Bottom",
+     "A song from \"Annie\" tells us, \"the sun'll come out tomorrow, bet your\" this "
+     "\"that tomorrow there'll be sun\"",
+     "BALANCED", False,
+     "subset-coverage gap: 2 of 3 answer words lifted from category+question must not win"),
+    ("bottom dollar", "your bottom dollar", "", "",
+     "BALANCED", True,
+     "regression guard: subset-coverage leniency still works absent giveaway overlap"),
+    ("Franklin Roosevelt", "Franklin Delano Roosevelt", "", "",
+     "BALANCED", True,
+     "regression guard: unrelated multi-word partial match is untouched by the guard"),
 ]
 
 

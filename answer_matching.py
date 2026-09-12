@@ -530,11 +530,15 @@ def _word_match(user_word, correct_word, config):
     return False
 
 
-def _subset_coverage_match(user_sig, correct_sig, config):
-    """Fraction of correct significant tokens matched by a distinct guess token."""
+def _subset_coverage_match(user_sig, correct_sig, config, giveaway_words=frozenset()):
+    """Fraction of correct significant tokens matched by a distinct guess token.
+    Guess words that are themselves category/question giveaway words are excluded
+    from the pool before matching, so partial credit can't be earned purely by
+    echoing back words the prompt already handed the player (e.g. 2 of 3 words
+    of "your bottom dollar" lifted straight from the question text)."""
     if not correct_sig:
         return False
-    remaining = list(user_sig)
+    remaining = [w for w in user_sig if not _is_giveaway_word(w, giveaway_words)]
     matched = 0
     for cw in correct_sig:
         for i, uw in enumerate(remaining):
@@ -596,7 +600,7 @@ def _free_text_match(user_answer, correct_answer, url, config, category="", ques
     giveaway_words = _giveaway_words(category, question_text) if enable_giveaway_guard else set()
 
     # Layer 4: guarded partial match.
-    if config.subset_coverage < 1.0 and _subset_coverage_match(user_sig, correct_sig, config):
+    if config.subset_coverage < 1.0 and _subset_coverage_match(user_sig, correct_sig, config, giveaway_words):
         return True
     if config.allow_surname_match and len(correct_sig) >= 2:
         last = correct_sig[-1]
