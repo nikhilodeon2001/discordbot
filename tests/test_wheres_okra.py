@@ -441,6 +441,23 @@ def run_placement():
     check(wo.THEMES[0] not in themes, "the previous theme is excluded")
     check(len(set(themes)) > 5, "themes vary")
 
+    # choices=... lets the sprite pipeline feed a dynamic (data-driven) theme list instead
+    # of the module's hardcoded THEMES constant, without disturbing any existing caller
+    # that omits it.
+    dynamic = ["beach", "market", "forest"]
+    picks = [wo.pick_theme(rng, choices=dynamic) for _ in range(200)]
+    check(all(p in dynamic for p in picks), "choices restricts selection to the given list")
+    excluded_picks = [wo.pick_theme(rng, exclude="beach", choices=dynamic) for _ in range(200)]
+    check("beach" not in excluded_picks, "exclude still applies against a dynamic choices list")
+    only_one = wo.pick_theme(rng, exclude="beach", choices=["beach"])
+    check(only_one == "beach",
+          "excluding the only available choice falls back to it rather than erroring")
+    try:
+        wo.pick_theme(rng, choices=[])
+        check(False, "an empty dynamic choices list must raise, not silently crash on rng.choice")
+    except ValueError:
+        check(True, "an empty choices list raises a clear ValueError")
+
 
 # ---------------------------------------------------------------------------
 # Pipeline, with fake clients
@@ -939,6 +956,272 @@ def run_hybrid_pipeline():
     asyncio.run(broken_background_is_fatal_immediately())
 
 
+# ---------------------------------------------------------------------------
+# Sprite compositing pipeline (the default -- see wheres_okra.py's module docstring)
+# ---------------------------------------------------------------------------
+
+def _solid_sprite(w, h, color=(200, 50, 50, 255)):
+    """A fully-opaque solid-colour RGBA sprite as PNG bytes -- for tests that just need
+    something scatter-able and don't care about its exact silhouette."""
+    from PIL import Image
+    buf = io.BytesIO()
+    Image.new("RGBA", (w, h), color).save(buf, format="PNG")
+    return buf.getvalue()
+
+
+def _ring_sprite(size=40, color=(0, 200, 0, 255), width=6):
+    """A ring -- has a real transparent hole in the middle, the same way the actual
+    mascot has real gaps (between the hat and head, under the raised arm). Using this
+    instead of a solid rectangle is what catches a visibility implementation that measures
+    rectangle-coverage instead of the mascot's own opaque-pixel footprint."""
+    from PIL import Image, ImageDraw
+    img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    ImageDraw.Draw(img).ellipse([0, 0, size - 1, size - 1], outline=color, width=width)
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    return buf.getvalue()
+
+
+def run_sprite_prep():
+    section("sprite prep (bbox-crop / resize / rotate)")
+    from PIL import Image
+
+    # A sprite with a wide transparent margin around a small opaque core.
+    canvas = Image.new("RGBA", (100, 100), (0, 0, 0, 0))
+    canvas.paste(Image.new("RGBA", (20, 40), (0, 200, 0, 255)), (40, 30))
+    buf = io.BytesIO()
+    canvas.save(buf, format="PNG")
+    padded_bytes = buf.getvalue()
+
+    cropped = wo._bbox_crop_rgba(Image.open(io.BytesIO(padded_bytes)).convert("RGBA"))
+    check(cropped.size == (20, 40), f"bbox-crop strips the transparent margin (got {cropped.size})")
+
+    resized = wo._resize_to_height(cropped, 80)
+    check(resized.height == 80, "resize hits the exact target height")
+    check(resized.width == 40, f"resize preserves aspect ratio (got width {resized.width})")
+
+    check(wo._resize_to_height(cropped, 0).height == 1,
+          "a zero/negative target height clamps to 1px rather than producing an empty image")
+
+    prepped = wo.prep_sprite(padded_bytes, 80)
+    check(prepped.size == (40, 80), "prep_sprite chains crop -> resize correctly")
+
+    rotated = wo.prep_sprite(padded_bytes, 80, rotation_degrees=45)
+    check(rotated.width > 40 and rotated.height > 80,
+          "expand=True rotation grows the frame rather than clipping corners")
+
+    unrotated = wo.prep_sprite(padded_bytes, 80, rotation_degrees=0)
+    check(unrotated.size == (40, 80), "zero rotation is a no-op on size")
+
+    # Fully transparent input -- _bbox_crop_rgba must not crash, and prep_sprite's caller
+    # (compose_sprite_puzzle) is expected to reject a resulting zero-size image.
+    blank = Image.new("RGBA", (10, 10), (0, 0, 0, 0))
+    check(wo._bbox_crop_rgba(blank).size == (10, 10),
+          "a fully transparent sprite is returned unchanged (nothing to crop to)")
+
+
+def run_visibility_computation():
+    section("compute_visibility (the deterministic replacement for vision-based estimation)")
+    from PIL import Image
+
+    # A mascot with a KNOWN exact opaque pixel count: a solid 10x10 square, 100 pixels.
+    mascot = Image.new("RGBA", (10, 10), (0, 255, 0, 255))
+    mascot_pos = (100, 100)
+
+    check(wo.compute_visibility(mascot, mascot_pos, []) == 1.0,
+          "no occluders -> full visibility, exactly 1.0")
+
+    far_occluder = Image.new("RGBA", (5, 5), (255, 0, 0, 255))
+    check(wo.compute_visibility(mascot, mascot_pos, [(far_occluder, (900, 900))]) == 1.0,
+          "a non-overlapping occluder leaves visibility at exactly 1.0")
+
+    half_occluder = Image.new("RGBA", (5, 10), (255, 0, 0, 255))  # covers x=100..104 of 10
+    vis = wo.compute_visibility(mascot, mascot_pos, [(half_occluder, (100, 100))])
+    check(abs(vis - 0.5) < 1e-9, f"an occluder covering exactly half the pixels gives 0.5 (got {vis})")
+
+    full_occluder = Image.new("RGBA", (20, 20), (255, 0, 0, 255))
+    check(wo.compute_visibility(mascot, mascot_pos, [(full_occluder, (95, 95))]) == 0.0,
+          "an occluder covering the whole mascot gives exactly 0.0")
+
+    two_quarters = [
+        (Image.new("RGBA", (5, 5), (255, 0, 0, 255)), (100, 100)),   # top-left quarter
+        (Image.new("RGBA", (5, 5), (255, 0, 0, 255)), (105, 105)),   # bottom-right quarter
+    ]
+    vis_two = wo.compute_visibility(mascot, mascot_pos, two_quarters)
+    check(abs(vis_two - 0.5) < 1e-9,
+          f"multiple occluders' coverage is unioned, not double-counted (got {vis_two})")
+
+    # The case the review flagged specifically: a mascot with a real transparent hole
+    # (a ring), occluded exactly in the hole. A rectangle-coverage implementation would
+    # wrongly reduce visibility here; the correct one must not, since there's no mascot
+    # pixel there to cover.
+    ring_bytes = _ring_sprite(size=40)
+    ring = Image.open(io.BytesIO(ring_bytes)).convert("RGBA")
+    ring_pos = (200, 200)
+    centre_occluder = Image.new("RGBA", (10, 10), (255, 0, 0, 255))
+    centre_pos = (200 + 15, 200 + 15)  # the ring's hollow middle
+    vis_gap = wo.compute_visibility(ring, ring_pos, [(centre_occluder, centre_pos)])
+    check(vis_gap == 1.0,
+          f"an occluder over the mascot's own transparent gap does not reduce visibility (got {vis_gap})")
+
+    # And the inverse: an occluder over the ring's actual (opaque) stroke DOES reduce it.
+    ring_alpha = wo._sprite_alpha_array(ring)
+    total_ring_px = int(ring_alpha.sum())
+    check(0 < total_ring_px < 40 * 40, "the ring fixture genuinely has partial opacity (a real test of gaps)")
+    edge_occluder = Image.new("RGBA", (40, 6), (255, 0, 0, 255))
+    vis_edge = wo.compute_visibility(ring, ring_pos, [(edge_occluder, (200, 200))])
+    check(vis_edge < 1.0, f"an occluder over the mascot's actual opaque stroke DOES reduce visibility (got {vis_edge})")
+
+    check(wo.compute_visibility(Image.new("RGBA", (5, 5), (0, 0, 0, 0)), (0, 0), []) == 0.0,
+          "a fully transparent mascot (nothing to see) reports 0.0, not a division by zero")
+
+
+def run_choose_decoys():
+    section("_choose_decoys (selection + camouflage bias)")
+    rng = random.Random(11)
+    sprites = [
+        {"bytes": b"a", "tags": ["red"], "scale_class": "small_prop"},
+        {"bytes": b"b", "tags": ["green", "tall"], "scale_class": "person_sized"},
+        {"bytes": b"c", "tags": ["blue"], "scale_class": "large_object"},
+    ]
+
+    check(wo._choose_decoys([], 5, rng) == [], "an empty sprite list yields an empty pick")
+
+    picks = wo._choose_decoys(sprites, 10, rng)
+    check(len(picks) == 10, "picks with replacement to reach the requested count")
+    check(all(p in sprites for p in picks), "every pick comes from the input list")
+
+    # Camouflage bias: with a strong weight and many draws, tag-matching sprites should be
+    # picked noticeably more often than without bias.
+    unbiased = wo._choose_decoys(sprites, 3000, random.Random(1))
+    biased = wo._choose_decoys(sprites, 3000, random.Random(1),
+                               prefer_tags=wo.MASCOT_CAMOUFLAGE_TAGS, prefer_weight=5.0)
+    unbiased_green_rate = sum(1 for p in unbiased if "green" in p["tags"]) / len(unbiased)
+    biased_green_rate = sum(1 for p in biased if "green" in p["tags"]) / len(biased)
+    check(biased_green_rate > unbiased_green_rate * 1.5,
+          f"camouflage bias measurably favours tag-matching decoys "
+          f"(unbiased={unbiased_green_rate:.3f}, biased={biased_green_rate:.3f})")
+
+
+def run_available_themes():
+    section("available_themes")
+    check(wo.available_themes(["beach", "market"], ["beach", "forest"]) == ["beach"],
+          "only themes present in BOTH lists are playable")
+    check(wo.available_themes([], ["beach"]) == [],
+          "no sprites for any theme -> nothing playable, even with backgrounds")
+    check(wo.available_themes(["beach"], []) == [],
+          "no backgrounds for any theme -> nothing playable, even with sprites")
+    check(wo.available_themes(["a", "a", "b"], ["a", "b", "b"]) == ["a", "b"],
+          "duplicates collapse; result is sorted")
+
+
+def run_sprite_compositor():
+    section("compose_sprite_puzzle")
+    background_bytes = _solid_sprite(1024, 1024, (220, 220, 220, 255))
+    mascot_bytes = _ring_sprite(size=80, width=10)  # a mascot with real gaps, like the real one
+    decoys = [
+        {"bytes": _solid_sprite(60, 60, (255, 0, 0, 255)), "tags": ["red"], "scale_class": "small_prop"},
+        {"bytes": _solid_sprite(60, 60, (0, 180, 0, 255)), "tags": ["green"], "scale_class": "small_prop"},
+        {"bytes": _solid_sprite(100, 100, (0, 0, 255, 255)), "tags": ["blue"], "scale_class": "person_sized"},
+        {"bytes": _solid_sprite(150, 150, (255, 255, 0, 255)), "tags": ["yellow"], "scale_class": "large_object"},
+    ]
+
+    try:
+        wo.compose_sprite_puzzle(background_bytes, [], mascot_bytes, "hard", wo.REGIONS[4],
+                                 wo.make_rng(1))
+        check(False, "an empty decoy list must raise PuzzleGenerationError")
+    except wo.PuzzleGenerationError as exc:
+        check("decoy" in str(exc).lower(), "the error names the actual missing input")
+
+    try:
+        wo.compose_sprite_puzzle(background_bytes, decoys, mascot_bytes, "impossible",
+                                 wo.REGIONS[4], wo.make_rng(1))
+        check(False, "an unknown difficulty must raise PuzzleGenerationError")
+    except wo.PuzzleGenerationError:
+        check(True, "unknown difficulty rejected")
+
+    for difficulty in wo.DIFFICULTY_ORDER:
+        rng = wo.make_rng(99)
+        image_bytes, target_box, meta = wo.compose_sprite_puzzle(
+            background_bytes, decoys, mascot_bytes, difficulty, wo.REGIONS[0], rng)
+
+        from PIL import Image
+        img = Image.open(io.BytesIO(image_bytes))
+        check(img.size == wo.CANVAS_SIZE, f"{difficulty}: output canvas matches CANVAS_SIZE (got {img.size})")
+
+        box = wo.normalize_target(target_box)
+        check(box is not None, f"{difficulty}: target_box is a valid normalised box")
+        x_min, y_min, x_max, y_max = box
+        check(0.0 <= x_min < x_max <= 1.0 and 0.0 <= y_min < y_max <= 1.0,
+              f"{difficulty}: target_box stays within the unit square")
+
+        lo, hi = wo.DIFFICULTIES[difficulty]["sprite_count"]
+        check(lo <= meta["sprite_count"] <= hi,
+              f"{difficulty}: sprite_count within the difficulty's band ({meta['sprite_count']})")
+        occ_lo, occ_hi = wo.DIFFICULTIES[difficulty]["occlusion_sprites"]
+        check(occ_lo <= meta["occlusion_sprites"] <= max(occ_hi, meta["occlusion_sprites"]),
+              f"{difficulty}: occlusion_sprites at least the band's floor")
+        check(meta["pipeline"] == "sprite", f"{difficulty}: meta identifies the sprite pipeline")
+        check(0.0 <= meta["visibility"] <= 1.0, f"{difficulty}: visibility is a valid fraction")
+
+        # The automated correctness check the AI pipeline never had: sample pixels across
+        # the claimed target box and confirm at least one isn't just background colour --
+        # proving placement is real, not merely claimed. Offsets are scaled to the box's
+        # OWN pixel size (which varies a great deal across difficulties -- "easy" boxes run
+        # well over 100px, "brutal" ones under 20px), not a fixed pixel amount: a fixed
+        # small offset would sample nowhere near the ring fixture's actual stroke on a
+        # large "easy" box, or clip outside a tiny "brutal" one, giving false failures in
+        # both directions.
+        box_w_px = (x_max - x_min) * img.width
+        box_h_px = (y_max - y_min) * img.height
+        cx = int((x_min + x_max) / 2 * img.width)
+        cy = int((y_min + y_max) / 2 * img.height)
+        background_pixel = (220, 220, 220)
+        rgb_img = img.convert("RGB")
+        offsets = [0.0, 0.35, -0.35]
+        near_pixels = [
+            rgb_img.getpixel((px, py))
+            for fx in offsets for fy in offsets
+            for px in [int(cx + fx * box_w_px / 2)]
+            for py in [int(cy + fy * box_h_px / 2)]
+            if 0 <= px < img.width and 0 <= py < img.height
+        ]
+        check(any(p != background_pixel for p in near_pixels),
+              f"{difficulty}: the claimed target box actually contains non-background content")
+
+    # Harder difficulties must be at least as dense as easier ones.
+    rng = wo.make_rng(5)
+    counts = {}
+    for difficulty in wo.DIFFICULTY_ORDER:
+        _, _, meta = wo.compose_sprite_puzzle(background_bytes, decoys, mascot_bytes,
+                                              difficulty, wo.REGIONS[4], wo.make_rng(5))
+        counts[difficulty] = meta["sprite_count"]
+    check(counts["brutal"] > counts["easy"],
+          f"brutal scatters more sprites than easy ({counts})")
+
+
+def run_sprite_compositor_reroll():
+    section("compose_sprite_puzzle: local visibility reroll")
+    # A single-pixel-wide mascot and a decoy sized to reliably straddle its whole box on
+    # most draws, forcing several reroll attempts before (if ever) landing in-band -- this
+    # exercises the retry path itself, not just the happy path where attempt 1 succeeds.
+    background_bytes = _solid_sprite(1024, 1024, (220, 220, 220, 255))
+    mascot_bytes = _solid_sprite(6, 6, (0, 255, 0, 255))
+    huge_decoy = [{"bytes": _solid_sprite(300, 300, (255, 0, 0, 255)), "tags": [],
+                  "scale_class": "large_object"}]
+
+    _, _, meta = wo.compose_sprite_puzzle(
+        background_bytes, huge_decoy, mascot_bytes, "brutal", wo.REGIONS[4],
+        wo.make_rng(3), max_local_attempts=6)
+    check(meta["attempts"] <= 6, "the reroll loop is bounded by max_local_attempts")
+    check("visibility_in_band" in meta,
+          "meta always reports whether the reroll actually converged, never silently")
+    if not meta["visibility_in_band"]:
+        check(meta["visibility"] >= 0.0,
+              "even a non-converged result reports the actual visibility achieved, not a lie")
+
+
+
 def run_text_extraction():
     section("response text extraction")
     check(wo._first_text(_Response("hello")) == "hello",
@@ -1068,6 +1351,12 @@ def run_offline():
     run_cropping()
     run_pipeline()
     run_hybrid_pipeline()
+    run_sprite_prep()
+    run_visibility_computation()
+    run_choose_decoys()
+    run_available_themes()
+    run_sprite_compositor()
+    run_sprite_compositor_reroll()
 
 
 def main():

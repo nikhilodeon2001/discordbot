@@ -10069,29 +10069,165 @@ def _wheres_okra_fetch(image_url):
     return response.content
 
 
-async def _wheres_okra_draw_puzzle(difficulty):
-    """Pull one unplayed puzzle for `difficulty`, newest exclusions first.
+# --- Sprite/background library cache ---------------------------------------------------
+# Populated lazily per theme and refreshed periodically, mirroring GAME_ASSET_FILES/
+# ensure_game_assets()'s "fetch once, reuse" idea -- just keyed dynamically by theme
+# (rather than a fixed startup list) since new themes get bootstrapped over time via
+# scripts/generate_sprite_library.py / generate_theme_backgrounds.py against the same
+# Mongo/S3, not redeployed. Round-time work touches this cache, not S3, except on a real
+# miss (a theme's first play, or a newly-bootstrapped sprite showing up after a refresh).
+_wheres_okra_theme_cache = {}       # theme -> {"sprites": [...], "backgrounds": [...], "fetched_at": ts}
+_wheres_okra_bytes_cache = {}       # image_url -> bytes, shared across every theme/round
+HIDDEN_OKRA_LIBRARY_CACHE_TTL = 1800  # 30 min
 
-    Same $nin-recent-ids + $sample shape every other mini-game uses, including the
-    fallback that drops the exclusion when it has emptied the pool -- with a small pool a
-    fresh install would otherwise find nothing on the second play.
+
+def _wheres_okra_fetch_bytes(image_url):
+    """Blocking fetch of one sprite/background PNG. Always called via run_in_executor --
+    the same convention as _wheres_okra_fetch, kept as a separate name since that one's
+    callers/docstring still refer specifically to a full finished puzzle image."""
+    response = requests.get(image_url, timeout=20)
+    if response.status_code != 200:
+        raise RuntimeError(f"asset fetch failed: HTTP {response.status_code}")
+    return response.content
+
+
+async def _wheres_okra_resolve_bytes(loop, image_url):
+    cached = _wheres_okra_bytes_cache.get(image_url)
+    if cached is not None:
+        return cached
+    data = await loop.run_in_executor(None, _wheres_okra_fetch_bytes, image_url)
+    _wheres_okra_bytes_cache[image_url] = data
+    return data
+
+
+async def _wheres_okra_load_theme(theme):
+    """Resolve one theme's full sprite + background pool, with bytes, from cache where
+    possible. On a cache miss (new theme, or past HIDDEN_OKRA_LIBRARY_CACHE_TTL), queries
+    Mongo for the theme's current documents and fetches any bytes not already cached --
+    already-cached bytes for an unchanged sprite/background are reused even across a
+    metadata refresh, since they're keyed by image URL, not by cache age.
+
+    Returns {"sprites": [...], "backgrounds": [...]} (both lists of dicts with resolved
+    "bytes"), or None if the theme has nothing usable -- shouldn't happen for a theme that
+    came from wheres_okra.available_themes, but callers should not assume it can't (a
+    sprite/background could fail to fetch, or a theme could be pulled between the
+    available_themes() check and this call).
     """
-    recent_ids = await get_recent_question_ids_from_mongo("wheres_okra")
-    collection = db["hidden_okra_puzzles"]
-    match_filter = {"difficulty": difficulty, "_id": {"$nin": list(recent_ids)}}
-    pipeline = [{"$match": match_filter}, {"$sample": {"size": 1}}]
+    cached = _wheres_okra_theme_cache.get(theme)
+    if cached and (time.time() - cached["fetched_at"]) < HIDDEN_OKRA_LIBRARY_CACHE_TTL:
+        return cached
 
-    puzzles = [doc async for doc in collection.aggregate(pipeline)]
-    if not puzzles:
-        puzzles = [doc async for doc in collection.aggregate(
-            [{"$match": {"difficulty": difficulty}}, {"$sample": {"size": 1}}])]
-    if not puzzles:
+    sprite_docs = await db["hidden_okra_sprites"].find({"theme": theme}).to_list(length=None)
+    background_docs = await db["hidden_okra_backgrounds"].find({"theme": theme}).to_list(length=None)
+    if not sprite_docs or not background_docs:
         return None
 
-    puzzle = puzzles[0]
-    if puzzle.get("_id"):
-        await store_question_ids_in_mongo([puzzle["_id"]], "wheres_okra")
-    return puzzle
+    loop = asyncio.get_running_loop()
+    sprites = []
+    for doc in sprite_docs:
+        try:
+            data = await _wheres_okra_resolve_bytes(loop, doc["image_url"])
+        except Exception as e:
+            sentry_sdk.capture_exception(e)
+            continue  # one bad sprite shouldn't take down the whole theme
+        sprites.append({"bytes": data, "tags": doc.get("tags") or [],
+                        "scale_class": doc.get("scale_class")})
+
+    backgrounds = []
+    for doc in background_docs:
+        try:
+            data = await _wheres_okra_resolve_bytes(loop, doc["image_url"])
+        except Exception as e:
+            sentry_sdk.capture_exception(e)
+            continue
+        backgrounds.append({"bytes": data, "_id": doc.get("_id")})
+
+    if not sprites or not backgrounds:
+        return None
+
+    pool = {"sprites": sprites, "backgrounds": backgrounds, "fetched_at": time.time()}
+    _wheres_okra_theme_cache[theme] = pool
+    return pool
+
+
+async def _wheres_okra_draw_puzzle(difficulty, exclude_theme=None, exclude_background_id=None):
+    """Compose one puzzle live from the sprite library -- see
+    wheres_okra.compose_sprite_puzzle -- instead of querying a pre-built pool. Puzzles are
+    no longer pre-generated at all: compositing is free and near-instant, so there is
+    nothing to build ahead of time and nothing that can "run dry" the way a pool could.
+
+    Returns {"image_url": ..., "target": ..., "theme": ..., "background_id": ...} -- the
+    first two keys are the exact shape the old hidden_okra_puzzles-backed version returned
+    (`target` as a plain 4-tuple, which normalize_target already accepts directly), so
+    nothing downstream in ask_wheres_okra_challenge needs to change; the last two exist
+    only so the caller can thread exclude_theme/exclude_background_id to the next round.
+
+    `exclude_theme`/`exclude_background_id` keep a best-of-N match from rendering two
+    consecutive rounds off the same theme or the same literal background image --
+    plausible since only a handful of background variants exist per theme, unlike the old
+    pool where every puzzle was already a unique generation.
+    """
+    sprite_themes = await db["hidden_okra_sprites"].distinct("theme")
+    background_themes = await db["hidden_okra_backgrounds"].distinct("theme")
+    themes = wheres_okra.available_themes(sprite_themes, background_themes)
+    if not themes:
+        return None
+
+    rng = wheres_okra.make_rng()
+    theme = wheres_okra.pick_theme(rng, exclude=exclude_theme, choices=themes)
+    pool = await _wheres_okra_load_theme(theme)
+    if not pool:
+        return None
+
+    backgrounds = pool["backgrounds"]
+    candidates = [b for b in backgrounds if b.get("_id") != exclude_background_id] or backgrounds
+    background = rng.choice(candidates)
+
+    region = wheres_okra.pick_region(rng)
+    mascot_bytes = await _wheres_okra_mascot_bytes()
+    loop = asyncio.get_running_loop()
+    try:
+        image_bytes, target, meta = await loop.run_in_executor(
+            None, wheres_okra.compose_sprite_puzzle, background["bytes"], pool["sprites"],
+            mascot_bytes, difficulty, region, rng)
+    except wheres_okra.PuzzleGenerationError as e:
+        sentry_sdk.capture_exception(e)
+        print(f"Error composing Where's Okra puzzle: {e}")
+        return None
+
+    puzzle_id = str(uuid.uuid4())
+    s3_key = f"hidden_okra/live/{puzzle_id}.png"
+    session = aioboto3.Session()
+    async with session.client("s3") as s3c:
+        await s3c.put_object(Bucket=S3_BUCKET_NAME, Key=s3_key, Body=image_bytes,
+                             ContentType="image/png")
+    image_url = (f"https://{S3_BUCKET_NAME}.s3.us-east-2.amazonaws.com/{s3_key}"
+                f"?v={int(time.time())}")
+
+    return {"image_url": image_url, "target": target, "theme": theme,
+           "background_id": background.get("_id")}
+
+
+_wheres_okra_mascot_bytes_cache = None
+
+
+def _read_file_bytes(path):
+    with open(path, "rb") as handle:
+        return handle.read()
+
+
+async def _wheres_okra_mascot_bytes():
+    """The mascot sprite's bytes, read from the local disk copy GAME_ASSET_FILES already
+    hydrates at startup, cached in memory after the first read -- it never changes at
+    runtime, unlike the sprite/background library."""
+    global _wheres_okra_mascot_bytes_cache
+    if _wheres_okra_mascot_bytes_cache is None:
+        loop = asyncio.get_running_loop()
+        path = private_asset_path("okra_chef.png")
+        _wheres_okra_mascot_bytes_cache = await loop.run_in_executor(
+            None, _read_file_bytes, path)
+    return _wheres_okra_mascot_bytes_cache
+
 
 
 async def ask_wheres_okra_challenge(winner, winner_id, num=3):
@@ -10154,23 +10290,28 @@ async def ask_wheres_okra_challenge(winner, winner_id, num=3):
     user_correct_answers = {}
     sorted_users = []
     loop = asyncio.get_running_loop()
+    last_theme = last_background_id = None
 
     round_num = 1
     while round_num <= num:
         try:
-            puzzle = await _wheres_okra_draw_puzzle(difficulty)
+            puzzle = await _wheres_okra_draw_puzzle(
+                difficulty, exclude_theme=last_theme, exclude_background_id=last_background_id)
         except Exception as e:
             sentry_sdk.capture_exception(e)
-            print(f"Error selecting Where's Okra puzzle:\n{traceback.format_exc()}")
+            print(f"Error composing Where's Okra puzzle:\n{traceback.format_exc()}")
             return None
 
         if not puzzle:
             await safe_send(
                 channel,
-                f"​\n⚠️ No **{difficulty}** puzzles are seeded yet.\n\n"
-                f"Run `scripts/generate_hidden_okra_puzzles.py` to fill the pool.\n​")
+                f"​\n⚠️ No sprite library is bootstrapped yet.\n\n"
+                f"Run `scripts/generate_sprite_library.py` and "
+                f"`scripts/generate_theme_backgrounds.py` for at least one theme.\n​")
             return None
 
+        last_theme = puzzle.get("theme")
+        last_background_id = puzzle.get("background_id")
         target = puzzle["target"]
 
         try:

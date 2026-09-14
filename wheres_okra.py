@@ -1,9 +1,25 @@
 """Where's Okra -- hidden-object ("Where's Waldo") puzzle generation and grading.
 
-A puzzle is a dense, crowded illustration with the okra chef mascot redrawn into it as a
-native character. Players hunt for it; the first to point at it wins the round.
+A puzzle is a dense, crowded illustration with the okra chef mascot hidden in it. Players
+hunt for it; the first to point at it wins the round.
 
-Two things make this harder than "generate an image and remember where you put it":
+THE DEFAULT PIPELINE (see "Sprite compositing pipeline" further down in this file) builds
+each puzzle by scattering pre-made decoy sprite images plus the mascot onto a background,
+at positions/scales/z-order WE choose deterministically. Because placement is exact by
+construction, there is no generator's claim to distrust and nothing to validate afterward
+-- compose_sprite_puzzle either has valid inputs or it doesn't, it can't "get the placement
+wrong" the way asking a model to draw a whole scene and hide something in it could.
+
+THE AI-GENERATION PIPELINES below that (build_puzzle_prompt / build_validated_puzzle, and
+the background+masked-insertion hybrid / build_validated_puzzle_hybrid) are the earlier
+approach: ask a model to draw the whole scene AND hide the mascot in it in one call, then
+send the finished pixels to a vision model to discover where it actually put it. Both
+variants were tried live against staging and neither ever produced an accepted puzzle
+across five test batches -- the model reliably made the mascot the centred, full-height
+visual focus regardless of prompt wording, and the hybrid version's mask turned out not to
+be a hard boundary for the image-edit API either. This code is kept in the file, unused,
+by deliberate choice rather than deleted -- see the two docstring paragraphs below for the
+reasoning behind it, which is still sound even though the execution didn't work out:
 
 1. The mascot has to look like the same illustrator drew it. That is a *prompting*
    problem, not a compositing one -- pasting the reference PNG into the scene is the one
@@ -16,19 +32,21 @@ Two things make this harder than "generate an image and remember where you put i
    of itself, because a confidently hallucinated bounding box would make the puzzle
    permanently unwinnable -- this box IS the answer key, so it is worth a second call.
 
-Difficulty is expressed in the generation prompt (how small, how occluded, how camouflaged)
-and then *enforced* by the validator via the bounding-box area band -- never by resizing a
-finished image, which would give the mascot a different line weight than its neighbours and
-reintroduce exactly the pasted-in look this module exists to avoid.
+Difficulty, in the AI pipelines, is expressed in the generation prompt (how small, how
+occluded, how camouflaged) and then *enforced* by the validator via the bounding-box area
+band -- never by resizing a finished image, which would give the mascot a different line
+weight than its neighbours and reintroduce exactly the pasted-in look this module exists to
+avoid. The sprite pipeline enforces the same idea differently -- see its own section.
 
 Like answer_matching.py and feud_llm_matching.py, this module is deliberately free of
 discord / mongo / boto3 imports and takes its clients and generation functions by
 injection, so it can be unit-tested offline (see tests/test_wheres_okra.py).
 
 SDK note: the repo pins anthropic==0.49.0, which predates `output_config` (effort /
-structured outputs). Calls here therefore use only model/max_tokens/system/messages, and
-the JSON reply is parsed tolerantly rather than schema-enforced. Model IDs are passed
-through as plain strings, so LOCATE_MODEL can name a model newer than the SDK.
+structured outputs). AI-pipeline calls here therefore use only
+model/max_tokens/system/messages, and the JSON reply is parsed tolerantly rather than
+schema-enforced. Model IDs are passed through as plain strings, so LOCATE_MODEL can name a
+model newer than the SDK. The sprite pipeline makes no API calls at all.
 """
 
 import asyncio
@@ -103,6 +121,11 @@ DIFFICULTIES = {
         "area": (0.010, 0.030),
         "min_visibility": 0.75,
         "guess_time": 30,
+        # Sprite-compositing axes (see compose_sprite_puzzle) -- sprite_count is the
+        # primary density knob; occlusion_sprites is how many of those are deliberately
+        # positioned to overlap the mascot's box, on top of general clutter density.
+        "sprite_count": (10, 16),
+        "occlusion_sprites": (0, 1),
     },
     "medium": {
         "scale": "roughly the size of a background person",
@@ -113,6 +136,8 @@ DIFFICULTIES = {
         "area": (0.005, 0.015),
         "min_visibility": 0.55,
         "guess_time": 40,
+        "sprite_count": (16, 24),
+        "occlusion_sprites": (1, 2),
     },
     "hard": {
         "scale": "roughly the size of a small background person",
@@ -123,6 +148,8 @@ DIFFICULTIES = {
         "area": (0.002, 0.008),
         "min_visibility": 0.40,
         "guess_time": 50,
+        "sprite_count": (18, 28),
+        "occlusion_sprites": (2, 4),
     },
     "brutal": {
         "scale": "roughly the size of a distant background figure",
@@ -133,6 +160,8 @@ DIFFICULTIES = {
         "area": (0.001, 0.004),
         "min_visibility": 0.28,
         "guess_time": 60,
+        "sprite_count": (24, 36),
+        "occlusion_sprites": (3, 6),
     },
 }
 
@@ -200,9 +229,18 @@ def pick_region(rng, exclude=None):
     return rng.choices(REGIONS, weights=weights, k=1)[0]
 
 
-def pick_theme(rng, exclude=None):
-    choices = [t for t in THEMES if t != exclude] or list(THEMES)
-    return rng.choice(choices)
+def pick_theme(rng, exclude=None, choices=None):
+    """Choose a theme, biased away from `exclude` (the previous puzzle's theme, for
+    anti-repeat). `choices` lets a caller feed a dynamic list -- e.g. available_themes()'s
+    result, for the sprite-compositing pipeline, where themes are data-driven (whatever's
+    actually bootstrapped in Mongo) rather than fixed -- instead of the module's default
+    THEMES constant the AI-generation pipelines above use. Defaults to None (-> THEMES) so
+    every existing caller is unaffected."""
+    pool = list(choices) if choices is not None else THEMES
+    if not pool:
+        raise ValueError("pick_theme: no themes available to choose from")
+    picks = [t for t in pool if t != exclude] or pool
+    return rng.choice(picks)
 
 
 # okra.png is roughly 338x595 (height/width ~= 1.76). Varied a little per puzzle in
@@ -1368,6 +1406,386 @@ async def build_validated_puzzle_hybrid(*, background_fn, insert_fn, vision_clie
     raise PuzzleGenerationError(
         f"No valid puzzle after {max_attempts} attempts ({difficulty}, {theme}, hybrid) "
         f"-- {summary}")
+
+# ---------------------------------------------------------------------------
+# Sprite compositing pipeline (the default -- see module docstring). Deterministic
+# Pillow compositing: WE choose every sprite's position, scale, and z-order, so unlike
+# the AI-generation pipelines above there is no placement uncertainty to discover and
+# validate afterward -- the target box is exact by construction. The AI pipelines are
+# left in place, unused, by deliberate choice rather than deleted.
+# ---------------------------------------------------------------------------
+
+CANVAS_SIZE = (1024, 1024)  # matches the AI pipelines' image size and what
+                            # _wheres_okra_render (discordbot.py) already assumes.
+
+# Target height of a pasted decoy, as a fraction of canvas height, keyed by scale_class --
+# gives sprites bootstrapped in separate generation sessions a shared, principled scale
+# convention instead of each being resized by an arbitrary independent random factor.
+SCALE_CLASS_HEIGHT_FRACTION = {
+    "small_prop": 0.045,
+    "person_sized": 0.11,
+    "large_object": 0.20,
+}
+DEFAULT_SCALE_CLASS = "person_sized"
+
+# Alpha threshold (0-255) above which a pixel counts as "opaque" for silhouette/visibility
+# purposes -- low enough to include real content, high enough to ignore anti-aliasing fuzz
+# at a sprite's edge.
+_ALPHA_OPAQUE_THRESHOLD = 32
+
+_SHADOW_OFFSET = (5, 7)      # px, down-right -- a consistent implied light direction
+_SHADOW_BLUR_RADIUS = 5
+_SHADOW_OPACITY = 90         # 0-255, how dark the synthesised shadow reads
+
+_DECOY_ROTATION_RANGE = (-15.0, 15.0)   # degrees; visual variety
+_MASCOT_ROTATION_RANGE = (-3.0, 3.0)    # kept small so it stays recognisable
+
+# The mascot's own rough palette/shape, for camouflage decoy selection (see
+# _choose_decoys). Sprites should be tagged with these same vocabulary words at
+# bootstrap/review time for the bias to have anything to match against.
+MASCOT_CAMOUFLAGE_TAGS = {"green", "white", "tall"}
+
+# Camouflage bias only kicks in here -- easy/medium stay a neutral, unbiased mix,
+# matching their "low"/"moderate" camouflage wording in DIFFICULTIES.
+_CAMOUFLAGE_DIFFICULTIES = {"hard", "brutal"}
+
+
+def _bbox_crop_rgba(img):
+    """Crop an RGBA image to the bounding box of its non-transparent content. Returns the
+    image unchanged if it has no transparent border to trim, or if it's fully transparent
+    (nothing to crop to -- callers should treat that as a bad sprite)."""
+    alpha = img.split()[-1]
+    bbox = alpha.getbbox()
+    if bbox is None:
+        return img
+    return img.crop(bbox)
+
+
+def _resize_to_height(img, target_height):
+    """Aspect-preserving resize to an exact target height. Clamped to at least 1px so a
+    pathologically small scale/fraction can never produce an unpasteable zero-size image."""
+    from PIL import Image
+    target_height = max(1, round(target_height))
+    if img.height == 0:
+        return img
+    scale = target_height / img.height
+    target_width = max(1, round(img.width * scale))
+    return img.resize((target_width, target_height), Image.LANCZOS)
+
+
+def prep_sprite(sprite_bytes, target_height, rotation_degrees=0.0):
+    """bbox-crop -> aspect-preserving resize -> optional rotation. The one sprite-prep
+    pipeline shared by decoys and the mascot alike, mirroring render_emoji_icon's
+    bbox-crop-then-LANCZOS-resize pattern (discordbot.py) -- the closest existing
+    precedent in this codebase for "produce one clean, scatter-ready sprite."
+
+    Rotation has no precedent in this codebase (zero `.rotate(` calls in discordbot.py).
+    `expand=True` keeps the whole rotated sprite in frame rather than clipping corners, at
+    the cost of the returned image being larger in both dimensions than the pre-rotation
+    resize target -- callers must use the ROTATED image's own `.size` when computing where
+    its centre lands, never `target_height` directly.
+    """
+    from PIL import Image
+    img = Image.open(io.BytesIO(sprite_bytes)).convert("RGBA")
+    img = _bbox_crop_rgba(img)
+    img = _resize_to_height(img, target_height)
+    if rotation_degrees:
+        img = img.rotate(rotation_degrees, expand=True, resample=Image.BICUBIC)
+    return img
+
+
+def _sprite_alpha_array(img):
+    """RGBA PIL Image -> numpy bool array (h, w): True where the pixel is meaningfully
+    opaque (see _ALPHA_OPAQUE_THRESHOLD). numpy is already a hard dependency of this
+    project -- used here for the vectorised pixel-mask math visibility computation needs;
+    a pure-Python per-pixel loop over a canvas-sized image would be far too slow to run
+    every round."""
+    import numpy as np
+    alpha = np.array(img.split()[-1])
+    return alpha > _ALPHA_OPAQUE_THRESHOLD
+
+
+def _region_overlap_mask(target_box_px, sprite_alpha, sprite_pos):
+    """Where a sprite's own opaque pixels (`sprite_alpha`, a bool array in the sprite's OWN
+    local coordinates) fall within `target_box_px` (left, top, right, bottom, in canvas
+    pixel coordinates), once the sprite is placed at `sprite_pos` (its top-left corner, in
+    canvas coordinates).
+
+    Returns a bool array shaped exactly like target_box_px's own region, so it can be
+    directly combined with the mascot's own alpha mask (computed in that same coordinate
+    system). All-False if the sprite doesn't reach the target box at all.
+    """
+    import numpy as np
+    tb_left, tb_top, tb_right, tb_bottom = target_box_px
+    tb_w, tb_h = tb_right - tb_left, tb_bottom - tb_top
+    result = np.zeros((tb_h, tb_w), dtype=bool)
+
+    sh, sw = sprite_alpha.shape
+    sx, sy = sprite_pos
+    sprite_right, sprite_bottom = sx + sw, sy + sh
+
+    ix_left, ix_top = max(sx, tb_left), max(sy, tb_top)
+    ix_right, ix_bottom = min(sprite_right, tb_right), min(sprite_bottom, tb_bottom)
+    if ix_right <= ix_left or ix_bottom <= ix_top:
+        return result
+
+    sprite_slice = sprite_alpha[ix_top - sy:ix_bottom - sy, ix_left - sx:ix_right - sx]
+    result[ix_top - tb_top:ix_bottom - tb_top, ix_left - tb_left:ix_right - tb_left] = sprite_slice
+    return result
+
+
+def compute_visibility(mascot_img, mascot_pos, occluders):
+    """The mascot's true visible fraction: (the mascot's own opaque pixels that no
+    later-drawn occluding sprite also covers) / (the mascot's own total opaque pixel
+    count).
+
+    Deliberately NOT "sample colours in the finished composite" (decoys can share the
+    mascot's palette by design -- see camouflage -- and anti-aliased edges make colour
+    sampling ambiguous) and NOT "fraction of the target box rectangle left uncovered" (the
+    mascot has real transparent gaps -- between the hat and head, under the raised arm --
+    that a rectangle-coverage estimate would misclassify depending on which side of the gap
+    an occluder happens to land on).
+
+    `mascot_pos`: the mascot sprite's own top-left corner, in canvas coordinates.
+    `occluders`: iterable of (sprite_img, sprite_pos) pairs for every sprite drawn AFTER
+    the mascot, regardless of whether it looks likely to overlap -- the overlap test inside
+    is what actually decides relevance, so callers should not pre-filter.
+    """
+    import numpy as np
+    mascot_alpha = _sprite_alpha_array(mascot_img)
+    total = int(mascot_alpha.sum())
+    if total == 0:
+        return 0.0  # a degenerate/fully-transparent mascot sprite -- treat as wholly hidden
+
+    mx, my = mascot_pos
+    target_box_px = (mx, my, mx + mascot_img.width, my + mascot_img.height)
+
+    covered = np.zeros_like(mascot_alpha)
+    for sprite_img, sprite_pos in occluders:
+        sprite_alpha = _sprite_alpha_array(sprite_img)
+        covered |= _region_overlap_mask(target_box_px, sprite_alpha, sprite_pos)
+
+    covered_mascot = covered & mascot_alpha
+    return 1.0 - (int(covered_mascot.sum()) / total)
+
+
+def _paste_with_shadow(canvas, sprite, position):
+    """Paste `sprite` (RGBA) onto `canvas` (RGBA) at `position`, first dropping a soft
+    blurred shadow synthesised from the sprite's own alpha silhouette, offset down-right.
+    Every pasted element -- decoys and mascot alike -- gets this, so sprites bootstrapped
+    in entirely separate generation sessions still share one consistent depth cue and
+    implied light direction, rather than reading as flat cutouts stacked on a background."""
+    from PIL import Image, ImageFilter
+
+    shadow = Image.new("RGBA", sprite.size, (0, 0, 0, 0))
+    shadow_alpha = sprite.split()[-1].point(
+        lambda a: _SHADOW_OPACITY if a > _ALPHA_OPAQUE_THRESHOLD else 0)
+    shadow.putalpha(shadow_alpha)
+    shadow = shadow.filter(ImageFilter.GaussianBlur(_SHADOW_BLUR_RADIUS))
+
+    sx, sy = position
+    ox, oy = _SHADOW_OFFSET
+    canvas.paste(shadow, (sx + ox, sy + oy), shadow)
+    canvas.paste(sprite, (sx, sy), sprite)
+
+
+def _choose_decoys(sprites, count, rng, prefer_tags=None, prefer_weight=3.0):
+    """Pick `count` decoy sprites from `sprites` (a list of dicts, each at least
+    {"bytes": ..., "tags": [...], "scale_class": ...}), WITH replacement -- a theme's
+    library is expected to be much smaller than the number of times a sprite gets placed
+    across a puzzle's lifetime, and reusing a decoy multiple times (each with its own
+    independent scale/position/rotation) is normal, not a bug.
+
+    `prefer_tags`, if given, upweights sprites sharing at least one tag with it (the
+    camouflage difficulty axis) by `prefer_weight` -- e.g. at hard/brutal this is
+    MASCOT_CAMOUFLAGE_TAGS, biasing toward green/tall/white decoys so the mascot competes
+    with colour- and shape-similar clutter, not just a wall of visually distinct objects.
+    """
+    if not sprites:
+        return []
+    weights = [1.0] * len(sprites)
+    if prefer_tags:
+        prefer_tags = set(prefer_tags)
+        for i, sprite in enumerate(sprites):
+            if prefer_tags.intersection(sprite.get("tags") or ()):
+                weights[i] = prefer_weight
+    return rng.choices(sprites, weights=weights, k=count)
+
+
+def _decoy_target_height(sprite, canvas_height):
+    fraction = SCALE_CLASS_HEIGHT_FRACTION.get(
+        sprite.get("scale_class"), SCALE_CLASS_HEIGHT_FRACTION[DEFAULT_SCALE_CLASS])
+    return canvas_height * fraction
+
+
+def _random_canvas_position(sprite_img, canvas_size, rng):
+    """A random top-left corner for `sprite_img` such that it stays fully within
+    `canvas_size` when possible; for a sprite larger than the canvas (shouldn't happen
+    given SCALE_CLASS_HEIGHT_FRACTION's ranges, but not assumed), clamps to (0, 0) rather
+    than producing a negative-range rng.randint call."""
+    width, height = canvas_size
+    max_x = max(0, width - sprite_img.width)
+    max_y = max(0, height - sprite_img.height)
+    return (rng.randint(0, max_x), rng.randint(0, max_y))
+
+
+def _position_near_box(sprite_img, target_box_px, canvas_size, rng, jitter=0.5):
+    """A random top-left corner for `sprite_img` such that its centre lands within (or
+    just outside, per `jitter`) `target_box_px` -- used for occlusion-layer decoys, which
+    need to actually reach the mascot's box, not land anywhere on the canvas by chance."""
+    tb_left, tb_top, tb_right, tb_bottom = target_box_px
+    tb_w, tb_h = tb_right - tb_left, tb_bottom - tb_top
+    pad_x, pad_y = tb_w * jitter, tb_h * jitter
+    cx = rng.uniform(tb_left - pad_x, tb_right + pad_x)
+    cy = rng.uniform(tb_top - pad_y, tb_bottom + pad_y)
+    width, height = canvas_size
+    x = int(min(max(0, cx - sprite_img.width / 2), width - sprite_img.width))
+    y = int(min(max(0, cy - sprite_img.height / 2), height - sprite_img.height))
+    return (max(0, x), max(0, y))
+
+
+def compose_sprite_puzzle(background_bytes, decoy_sprites, mascot_bytes, difficulty,
+                          region, rng, max_local_attempts=6):
+    """The sprite-compositing pipeline: scatter decoy sprites plus the mascot onto a
+    background, all at positions/scales WE choose, so there is no placement uncertainty to
+    validate afterward the way the AI-generation pipelines above needed a vision call for.
+
+    `decoy_sprites`: list of dicts, each {"bytes": <png bytes>, "tags": [...],
+    "scale_class": "small_prop"|"person_sized"|"large_object"} -- the caller (the ops
+    scripts' Mongo/S3 layer, or a test fixture) is responsible for actually fetching these;
+    this function has no I/O of its own, matching the rest of this module's "injectable,
+    offline testable" discipline.
+
+    Returns (image_bytes, target_box, meta). `target_box` is normalised (0-1) coordinates
+    derived from where the mascot ACTUALLY ended up after aspect-preserving resize -- never
+    blindly trusted from the originally-requested pick_target_box output, on the same
+    "verify what was actually drawn, not what was asked for" principle the rest of this
+    project has had to learn the hard way, even though here we have full control. `meta`
+    carries the computed visibility, whether the local reroll actually converged in-band,
+    attempt count, and which decoys/positions were used -- replacing the old pipelines'
+    `attempt_log`.
+
+    Raises PuzzleGenerationError only on missing/invalid inputs (no decoys, unreadable
+    background/mascot) -- unlike the AI pipelines, this can't fail on "the model drew it
+    wrong," only on "the library/inputs are missing," so a failure here is a real setup
+    problem, not bad luck.
+    """
+    from PIL import Image
+
+    if difficulty not in DIFFICULTIES:
+        raise PuzzleGenerationError(f"Unknown difficulty {difficulty!r}")
+    if not decoy_sprites:
+        raise PuzzleGenerationError("No decoy sprites available for this theme.")
+
+    spec = DIFFICULTIES[difficulty]
+    width, height = CANVAS_SIZE
+    try:
+        base_background = Image.open(io.BytesIO(background_bytes)).convert("RGBA")
+    except Exception as exc:  # noqa: BLE001
+        raise PuzzleGenerationError(f"Unreadable background image: {exc}") from exc
+    base_background = base_background.resize(CANVAS_SIZE)
+
+    region_index = REGIONS.index(region)
+    prefer_tags = MASCOT_CAMOUFLAGE_TAGS if difficulty in _CAMOUFLAGE_DIFFICULTIES else None
+
+    sprite_count = rng.randint(*spec["sprite_count"])
+    occlusion_count = min(rng.randint(*spec["occlusion_sprites"]), sprite_count)
+    background_count = sprite_count - occlusion_count
+
+    # The mascot is prepped and positioned ONCE -- its scale/placement don't change across
+    # reroll attempts below, only which decoys occlude it do.
+    box = pick_target_box(difficulty, region_index, rng)
+    box_left, box_top, box_right, box_bottom = (
+        round(box[0] * width), round(box[1] * height),
+        round(box[2] * width), round(box[3] * height))
+    box_height_px = max(1, box_bottom - box_top)
+    mascot_rotation = rng.uniform(*_MASCOT_ROTATION_RANGE)
+    mascot_img = prep_sprite(mascot_bytes, box_height_px, mascot_rotation)
+    if mascot_img.width == 0 or mascot_img.height == 0:
+        raise PuzzleGenerationError("Mascot sprite is empty after bbox-crop.")
+    mascot_pos = (
+        box_left + (box_right - box_left - mascot_img.width) // 2,
+        box_top + (box_bottom - box_top - mascot_img.height) // 2,
+    )
+    mascot_pos = (max(0, min(width - mascot_img.width, mascot_pos[0])),
+                  max(0, min(height - mascot_img.height, mascot_pos[1])))
+    final_target_box_px = (mascot_pos[0], mascot_pos[1],
+                           mascot_pos[0] + mascot_img.width, mascot_pos[1] + mascot_img.height)
+
+    # Background-layer decoys (drawn before the mascot, so they can never occlude it
+    # regardless of position) are also fixed once -- only the occlusion layer is rerolled.
+    background_decoys = _choose_decoys(decoy_sprites, background_count, rng, prefer_tags)
+    background_placements = []
+    for sprite in background_decoys:
+        target_h = _decoy_target_height(sprite, height)
+        rotation = rng.uniform(*_DECOY_ROTATION_RANGE)
+        img = prep_sprite(sprite["bytes"], target_h, rotation)
+        pos = _random_canvas_position(img, CANVAS_SIZE, rng)
+        background_placements.append((img, pos))
+
+    best = None  # (visibility, occlusion_placements) -- closest to in-band, across attempts
+    for attempt in range(1, max_local_attempts + 1):
+        occlusion_decoys = _choose_decoys(decoy_sprites, occlusion_count, rng, prefer_tags)
+        occlusion_placements = []
+        for sprite in occlusion_decoys:
+            target_h = _decoy_target_height(sprite, height)
+            rotation = rng.uniform(*_DECOY_ROTATION_RANGE)
+            img = prep_sprite(sprite["bytes"], target_h, rotation)
+            pos = _position_near_box(img, final_target_box_px, CANVAS_SIZE, rng)
+            occlusion_placements.append((img, pos))
+
+        visibility = compute_visibility(mascot_img, mascot_pos, occlusion_placements)
+        in_band = spec["min_visibility"] <= visibility <= 1.0
+        if best is None or in_band or abs(visibility - spec["min_visibility"]) < \
+                abs(best[0] - spec["min_visibility"]):
+            best = (visibility, occlusion_placements, attempt)
+        if in_band:
+            break
+
+    visibility, occlusion_placements, attempts_used = best
+    in_band = spec["min_visibility"] <= visibility <= 1.0
+
+    canvas = base_background.copy()
+    for img, pos in background_placements:
+        _paste_with_shadow(canvas, img, pos)
+    _paste_with_shadow(canvas, mascot_img, mascot_pos)
+    for img, pos in occlusion_placements:
+        _paste_with_shadow(canvas, img, pos)
+
+    buffer = io.BytesIO()
+    canvas.convert("RGB").save(buffer, format="PNG")
+    image_bytes = buffer.getvalue()
+
+    target_box = (final_target_box_px[0] / width, final_target_box_px[1] / height,
+                 final_target_box_px[2] / width, final_target_box_px[3] / height)
+
+    meta = {
+        "pipeline": "sprite",
+        "region": region,
+        "theme_sprite_count": len(decoy_sprites),
+        "sprite_count": sprite_count,
+        "occlusion_sprites": occlusion_count,
+        "visibility": visibility,
+        "visibility_in_band": in_band,
+        "attempts": attempts_used,
+        "camouflage_biased": prefer_tags is not None,
+    }
+    return image_bytes, target_box, meta
+
+
+def available_themes(sprite_themes, background_themes):
+    """Which themes actually have both decoy sprites AND a background available --
+    themes are data-driven now (whatever's actually in the two Mongo collections), not the
+    old hardcoded THEMES list, so a new theme becomes playable just by bootstrapping it,
+    with no code change.
+
+    Pure set intersection -- callers pass in the results of their own
+    `db.hidden_okra_sprites.distinct("theme")` / `db.hidden_okra_backgrounds.distinct
+    ("theme")` calls (plain iterables of strings), keeping this module free of any direct
+    Mongo dependency, same as everywhere else in it.
+    """
+    return sorted(set(sprite_themes) & set(background_themes))
+
 
 
 # ---------------------------------------------------------------------------
