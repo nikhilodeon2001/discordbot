@@ -217,6 +217,66 @@ def _significant_tokens(normalized):
     return kept if kept else toks
 
 
+def _giveaway_words(category, question_text):
+    """Words drawn verbatim from the category or question text, normalized the
+    same way answers are. Excluded from the single-word leniency layers
+    (surname / any-key-word / substring) in _free_text_match, mirrored from
+    discordbot.py's legacy_fuzzy_match, so a one-word guess can't win just by
+    parroting a word the category/question already handed the player for
+    free."""
+    combined = f"{category or ''} {question_text or ''}"
+    return set(normalize_text(combined).split())
+
+
+def _is_giveaway_word(word, giveaway_words):
+    """True if `word` is one of the giveaway words, or a simple morphological
+    variant of one (e.g. "martin" vs. category word "martins") -- containment
+    in either direction, not exact equality, so trivial plural/prefix drift
+    doesn't defeat the guard. Both sides are floored at length 4: without a
+    floor on the giveaway word too, a short common word like "is" (from
+    "What is...") is a substring of countless unrelated answers ("paris"),
+    causing mass false positives."""
+    if len(word) < 4:
+        return False
+    return any(len(gw) >= 4 and (word in gw or gw in word) for gw in giveaway_words)
+
+
+def _singularize(word):
+    """Strip a simple trailing plural 's'/'es' -- just enough to bridge cases
+    like 'martins' vs 'martin', not a full morphological analyzer."""
+    if len(word) > 4 and word.endswith("es"):
+        return word[:-2]
+    if len(word) > 4 and word.endswith("s"):
+        return word[:-1]
+    return word
+
+
+def is_whole_word_giveaway(word, giveaway_words):
+    """Whole-word match (plus simple plural/singular drift) -- unlike
+    _is_giveaway_word, this is NOT substring-containment, so it doesn't flag
+    ordinary English compounds ("fish" inside "sailfish") as giveaways. No
+    length floor: exact/plural whole-word equality has no coincidental-
+    collision risk the way substring containment does, so short words ("San"
+    in "San Salvador") are checked too, not silently skipped."""
+    word_singular = _singularize(word)
+    for gw in giveaway_words:
+        if word == gw or word_singular == _singularize(gw):
+            return True
+    return False
+
+
+def is_fully_given_away(text, giveaway_words):
+    """True if every significant word of `text` (filler words stripped) is a
+    whole-word giveaway -- i.e. the category/question could have supplied
+    `text` verbatim, word for word. Used both to audit stored answers
+    (audit_giveaway_questions.py) and to react to a live guess that just
+    parrots the prompt (discordbot.py)."""
+    sig = _significant_tokens(normalize_text(text))
+    if not sig:
+        return False
+    return all(is_whole_word_giveaway(w, giveaway_words) for w in sig)
+
+
 # ---------------------------------------------------------------------------
 # Negation handling
 # ---------------------------------------------------------------------------
@@ -443,7 +503,8 @@ ALIAS_GROUPS = [
 ]
 
 
-def _alias_match(user_answer, correct_answer, category, url, config):
+def _alias_match(user_answer, correct_answer, category, url, config, question_text="",
+                 enable_giveaway_guard=True):
     """True if the guess matches the correct answer via a known alias group."""
     normalized_correct = normalize_text(correct_answer)
     for variants in ALIAS_GROUPS:
@@ -458,7 +519,8 @@ def _alias_match(user_answer, correct_answer, category, url, config):
                 if normalized_user == normalized_variant:
                     return True
             elif match_answer(user_answer, variant, category=category, url=url,
-                              config=config, skip_alias=True):
+                              config=config, skip_alias=True, question_text=question_text,
+                              enable_giveaway_guard=enable_giveaway_guard):
                 return True
         # Correct answer belongs to this group but nothing matched; stop here.
         return False
@@ -509,11 +571,15 @@ def _word_match(user_word, correct_word, config):
     return False
 
 
-def _subset_coverage_match(user_sig, correct_sig, config):
-    """Fraction of correct significant tokens matched by a distinct guess token."""
+def _subset_coverage_match(user_sig, correct_sig, config, giveaway_words=frozenset()):
+    """Fraction of correct significant tokens matched by a distinct guess token.
+    Guess words that are themselves category/question giveaway words are excluded
+    from the pool before matching, so partial credit can't be earned purely by
+    echoing back words the prompt already handed the player (e.g. 2 of 3 words
+    of "your bottom dollar" lifted straight from the question text)."""
     if not correct_sig:
         return False
-    remaining = list(user_sig)
+    remaining = [w for w in user_sig if not _is_giveaway_word(w, giveaway_words)]
     matched = 0
     for cw in correct_sig:
         for i, uw in enumerate(remaining):
@@ -529,7 +595,8 @@ def _subset_coverage_match(user_sig, correct_sig, config):
 # Free-text pipeline
 # ---------------------------------------------------------------------------
 
-def _free_text_match(user_answer, correct_answer, url, config):
+def _free_text_match(user_answer, correct_answer, url, config, category="", question_text="",
+                     enable_giveaway_guard=True):
     norm_user = normalize_text(user_answer)
     norm_correct = normalize_text(correct_answer)
 
@@ -571,17 +638,21 @@ def _free_text_match(user_answer, correct_answer, url, config):
                 and abs(len(nsu) - len(nsc)) <= 2:
             return True
 
+    giveaway_words = _giveaway_words(category, question_text) if enable_giveaway_guard else set()
+
     # Layer 4: guarded partial match.
-    if config.subset_coverage < 1.0 and _subset_coverage_match(user_sig, correct_sig, config):
+    if config.subset_coverage < 1.0 and _subset_coverage_match(user_sig, correct_sig, config, giveaway_words):
         return True
     if config.allow_surname_match and len(correct_sig) >= 2:
         last = correct_sig[-1]
         if len(last) >= config.min_key_word_len and last not in GENERIC_HEAD_WORDS \
-                and len(user_sig) == 1 and _word_match(user_sig[0], last, config):
+                and len(user_sig) == 1 and not _is_giveaway_word(user_sig[0], giveaway_words) \
+                and _word_match(user_sig[0], last, config):
             return True
     if config.allow_any_key_word and len(user_sig) == 1:
         uw = user_sig[0]
-        if any(len(cw) >= config.min_key_word_len and cw not in GENERIC_HEAD_WORDS
+        if not _is_giveaway_word(uw, giveaway_words) and any(
+               len(cw) >= config.min_key_word_len and cw not in GENERIC_HEAD_WORDS
                and _word_match(uw, cw, config)
                for cw in correct_sig):
             return True
@@ -592,8 +663,10 @@ def _free_text_match(user_answer, correct_answer, url, config):
         # "reac" inside "unreactive", which a prefix-only version would guard
         # against. Still floored by min_key_word_len on both sides and still
         # excludes GENERIC_HEAD_WORDS, so "river" still doesn't match "Nile
-        # River" -- that guard is a separate, unrelated feature.
-        if len(uw) >= config.min_key_word_len:
+        # River" -- that guard is a separate, unrelated feature. Guarded on uw
+        # (what the user typed), not cw, since that's what a category/question
+        # giveaway word would be.
+        if len(uw) >= config.min_key_word_len and not _is_giveaway_word(uw, giveaway_words):
             if any(len(cw) >= config.min_key_word_len and cw not in GENERIC_HEAD_WORDS
                    and (uw in cw or cw in uw)
                    for cw in correct_sig):
@@ -607,12 +680,17 @@ def _free_text_match(user_answer, correct_answer, url, config):
 # ---------------------------------------------------------------------------
 
 def match_answer(user_answer, correct_answer, category="", url="",
-                 config=None, skip_alias=False):
+                 config=None, skip_alias=False, question_text="", enable_giveaway_guard=True):
     """Return True if `user_answer` should be accepted for `correct_answer`.
 
     category / url select the structured checker (if any); otherwise the
     free-text pipeline runs. `config` is a MatchConfig (defaults to
-    ACTIVE_CONFIG); pass STRICT for Poindexter/exact mode.
+    ACTIVE_CONFIG); pass STRICT for Poindexter/exact mode. `question_text`,
+    when given, is combined with `category` to build the giveaway-word guard
+    (see _giveaway_words) that keeps the free-text leniency layers from
+    rewarding a guess that just parrots a word from the prompt. Set
+    `enable_giveaway_guard=False` to fully disable that guard and restore the
+    matching behavior from before it existed.
     """
     if config is None:
         config = ACTIVE_CONFIG
@@ -625,7 +703,8 @@ def match_answer(user_answer, correct_answer, category="", url="",
     if user_answer == correct_answer:
         return True
 
-    if not skip_alias and _alias_match(user_answer, correct_answer, category, url, config):
+    if not skip_alias and _alias_match(user_answer, correct_answer, category, url, config, question_text,
+                                        enable_giveaway_guard=enable_giveaway_guard):
         return True
 
     # --- structured question types (deterministic) ---
@@ -662,4 +741,6 @@ def match_answer(user_answer, correct_answer, category="", url="",
         return nu == text or nu.replace(" ", "") == text.replace(" ", "")
 
     # --- free text ---
-    return _free_text_match(user_answer, correct_answer, url, config)
+    return _free_text_match(user_answer, correct_answer, url, config,
+                             category=category, question_text=question_text,
+                             enable_giveaway_guard=enable_giveaway_guard)

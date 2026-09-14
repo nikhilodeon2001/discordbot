@@ -1850,7 +1850,13 @@ async function submit(answer) {
       markChoice(answer);  // highlight the chosen option (no-op for typed free-text)
       if (oneGuess) {
         // One-guess question: lock the inputs after the single allowed submit.
-        setStatus('🔒 Locked in: ' + answer, 'ok');
+        // guard_blocked: this guess just parrots a word from the category/question --
+        // still locked in (matches Discord's real-time 🟥 reaction, which doesn't
+        // block the guess either), but flagged so the player knows it won't count
+        // unless it's the exact answer.
+        setStatus(data.guard_blocked
+          ? '🟥 Locked in: ' + answer + ' — but that\'s just a word from the category/question, it won\'t count unless it\'s the exact answer'
+          : '🔒 Locked in: ' + answer, data.guard_blocked ? 'bad' : 'ok');
         const inp = document.getElementById('ans'); if (inp) inp.disabled = true;
         document.querySelectorAll('.choice').forEach(function (b) {
           b.disabled = true;
@@ -1859,7 +1865,9 @@ async function submit(answer) {
         const btn = document.querySelector('button.primary'); if (btn) btn.disabled = true;
       } else {
         // Free-text: multiple submissions allowed (like Discord typing).
-        setStatus('✓ Submitted: ' + answer + ' — you can submit again', 'ok');
+        setStatus(data.guard_blocked
+          ? '🟥 That\'s just a word from the category/question — you need the exact answer to get credit'
+          : '✓ Submitted: ' + answer + ' — you can submit again', data.guard_blocked ? 'bad' : 'ok');
         const inp = document.getElementById('ans'); if (inp) { inp.value = ''; inp.focus(); }
       }
     } else if (data.reason === 'already') {

@@ -77,6 +77,7 @@ from PIL import Image, ImageDraw, ImageFilter
 import numpy as np
 import cairosvg
 import asyncio
+import contextlib
 import difflib
 from metaphone import doublemetaphone
 import answer_matching
@@ -441,12 +442,10 @@ async def send_question_queen_submit_ad():
 # the same text is correct whether this deploy is staging or prod.
 okra_lab_announcement_enabled = True
 okra_lab_announcement_text = (
-    "🌍🗺️ **Geokraphy** just joined the Arena — think you can out-guess a cartographer?\n\n"
-    "🖼️ 250 countries and territories, each round randomly picking from that country's available pictures (a filled-in map, a globe locator, and/or a national flag) for visual variety\n\n"
-    "🎯 Pick your battlefield: quiz by **Region** (Africa, Asia, Europe, Americas, Oceania) or by **Difficulty** (Basic, Intermediate, Expert), or just say **All** to skip filtering entirely — Region and Difficulty don't mix, but All overrides both\n\n"
-    "🧩 Then pick your **question types** à la carte from 9 options (Identify, Capital, Flag, Continent, Currency, Language, Neighbors, ISO Code, Borders) — rounds cycle through your picks in the exact order you list them\n\n"
-    "▶️ Play it via the numbered picker (**28**) or `/arena game_name:\"geokraphy\"`. Reply with numbers or names (like `2 5 8` or `capital currency iso`), or say `all` for everything.\n\n"
-    "🔁 This replaces **Borderline** in the Arena — the same neighbors-only guessing round lives on as the **Borders** question type above.\n"
+    "🕵️ **Smarter answer checking** — if your guess is just a word lifted straight from the category or question, it won't count on its own anymore\n\n"
+    "🎯 The real answer (or a genuine, distinctive piece of it) still gets full credit like always — this only closes a loophole where echoing back a word you were already handed for free was enough to score\n\n"
+    "✅ Should make close calls feel fairer across every round, Arena game, and Okra's World\n\n"
+    "⏱️ **More time to decide** — picking a minigame, setting round-end options, and writing your custom painting prompt now all give you double the time before the window closes\n"
 )
 okra_lab_announcement_show_new_badge = True
 
@@ -1113,6 +1112,7 @@ filler_words = {'a', 'an', 'the', 'of', 'and', 'to', 'in', 'on', 'at', 'with', '
 categories_to_exclude = []  
 collected_responses = []
 current_question = None
+_giveaway_words_cache = {"key": None, "words": frozenset()}  # see _current_giveaway_words()
 previous_question = None
 round_in_progress = False  # True from the moment a round is committed to starting until it ends -- lets /checkupdate warn before an update would kill the process mid-round
 current_answer_view = None
@@ -5733,17 +5733,20 @@ class ReportQuestionView(discord.ui.View):
 
 
 def _normalize_options(options):
-    """Accepts options as a list of dicts ({"value","label"[,"emoji"]}) or plain
+    """Accepts options as a list of dicts ({"value","label"[,"emoji"][,"style"]}) or plain
     (value, label[, emoji]) tuples; returns a list of normalized dicts. Shared by every
-    button/select builder below so callers can pass whichever shape is convenient."""
+    button/select builder below so callers can pass whichever shape is convenient. `style`
+    (a discord.ButtonStyle) is a button-only per-option override -- ignored by Select-based
+    builders, which have no per-option color concept."""
     normalized = []
     for opt in options:
         if isinstance(opt, dict):
-            normalized.append({"value": str(opt["value"]), "label": opt["label"], "emoji": opt.get("emoji")})
+            normalized.append({"value": str(opt["value"]), "label": opt["label"], "emoji": opt.get("emoji"),
+                                "style": opt.get("style")})
         else:
             value, label = opt[0], opt[1]
             emoji = opt[2] if len(opt) > 2 else None
-            normalized.append({"value": str(value), "label": label, "emoji": emoji})
+            normalized.append({"value": str(value), "label": label, "emoji": emoji, "style": None})
     return normalized
 
 
@@ -5864,6 +5867,53 @@ async def resolve_input_race(view: "RestrictedView", chat_wait_coro):
         raise asyncio.TimeoutError()
 
 
+async def _run_selector_countdown_ticker(message, embed, end_time, now):
+    """Edits `message`'s embed footer about once a second with a "⏳ Ns" countdown,
+    wall-clock-synced to `end_time` -- the same technique the per-question timer uses on
+    current_question_embed's footer (see the main round loop), recomputing remaining from
+    `now()` each tick instead of accumulating per-edit drift from a fixed-count sleep(1)
+    loop."""
+    try:
+        while True:
+            remaining = max(0, math.ceil(end_time - now()))
+            if remaining > 0:
+                embed.set_footer(text=f"⏳ {remaining}s")
+            else:
+                embed.remove_footer()
+            try:
+                await message.edit(embed=embed)
+            except (discord.NotFound, discord.HTTPException, aiohttp.ClientError):
+                return
+            if remaining <= 0:
+                return
+            await asyncio.sleep(min(1.0, max(0.0, end_time - now())))
+    except asyncio.CancelledError:
+        pass
+
+
+@contextlib.asynccontextmanager
+async def selector_countdown(message, window_seconds, *, now=None):
+    """Background countdown widget on `message`'s embed footer, live for the duration of the
+    `async with` block -- gives the minigame picker, round-options picker, and custom-
+    painting-prompt collector the same footer countdown a question's answer window already
+    has. `message` must already carry the embed to countdown on (safe_send wraps plain
+    content into one by default, so `view.message`/the sent message already qualifies). `now`,
+    if given, is the clock the caller measured `window_seconds` against (e.g. time.time for
+    prompt_user_for_response's round_options_window); defaults to the event loop's own clock.
+    Cancelled on exit regardless of how the block finishes -- a pick made, the window timing
+    out, or an exception."""
+    now = now or (lambda: asyncio.get_event_loop().time())
+    embed = message.embeds[0] if message.embeds else discord.Embed()
+    end_time = now() + window_seconds
+    task = asyncio.ensure_future(_run_selector_countdown_ticker(message, embed, end_time, now))
+    try:
+        yield
+    finally:
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
+
 def parse_ordered_multi_selection(content, num_to_key, name_to_key, max_num):
     """Extracts a category selection from free-typed text, preserving the order the user
     typed things in (by string position), deduplicated (first occurrence wins).
@@ -5896,24 +5946,24 @@ def parse_ordered_multi_selection(content, num_to_key, name_to_key, max_num):
     return ordered
 
 
-def build_option_button_view(options, allowed_user_ids, *, timeout=60, style=discord.ButtonStyle.primary,
-                              disabled_values=None):
-    """Small-fixed-set button row (<=25 options, <=5 per row) -- the button-based counterpart
-    to build_option_select_view() below, for choice sets that fit in a row or two without
-    needing a dropdown (e.g. the 5-option Okra Museum theme picker). `options` accepts dicts
-    ({"value","label"[,"emoji"]}) or (value, label[, emoji]) tuples. `disabled_values`, if
-    given, greys out those buttons up front (e.g. a coffee-gated option the current picker
-    can't afford) instead of letting them click it and only then rejecting it -- since these
-    views are typically built for one specific restricted user, not shared across viewers with
-    different eligibility, disabling per-view is safe here (unlike a per-user visual state,
-    which Discord buttons can't express). Pair with resolve_input_race() so typed chat keeps
-    working alongside the buttons."""
-    normalized = _normalize_options(options)[:25]
+def _add_option_buttons(view: "RestrictedView", options, *, style=discord.ButtonStyle.primary,
+                         disabled_values=None, row=0):
+    """Adds one discord.ui.Button per option onto an existing view, wired to that view's
+    _resolve() exactly like build_option_button_view's buttons -- factored out so a view that
+    already has other items (e.g. a Select from build_option_select_view) can grow a button row
+    without duplicating the callback-construction loop. `options`/`disabled_values` match
+    build_option_button_view's contract; an option dict's own "style" key (see
+    _normalize_options) overrides this function's `style` default per-button. `row` is a base
+    offset: buttons pack 5-per-row starting at `row` (row, row+1, ...), the same i // 5 packing
+    build_option_button_view always used, just shiftable so a button group can share a view with
+    something already occupying earlier rows (e.g. a Select pinned to row 0). Caller is
+    responsible for keeping total items within Discord's 25-per-view / 5-per-row limits. Returns
+    `view` for chaining."""
+    normalized = _normalize_options(options)
     disabled_values = disabled_values or set()
-    view = RestrictedView(allowed_user_ids, timeout=timeout)
     for i, opt in enumerate(normalized):
-        button = discord.ui.Button(label=opt["label"][:80], style=style, emoji=opt["emoji"], row=i // 5,
-                                    disabled=opt["value"] in disabled_values)
+        button = discord.ui.Button(label=opt["label"][:80], style=opt["style"] or style, emoji=opt["emoji"],
+                                    row=row + i // 5, disabled=opt["value"] in disabled_values)
 
         async def _callback(interaction: discord.Interaction, value=opt["value"]):
             await view._resolve(interaction, value)
@@ -5921,6 +5971,22 @@ def build_option_button_view(options, allowed_user_ids, *, timeout=60, style=dis
         button.callback = _callback
         view.add_item(button)
     return view
+
+
+def build_option_button_view(options, allowed_user_ids, *, timeout=60, style=discord.ButtonStyle.primary,
+                              disabled_values=None):
+    """Small-fixed-set button row (<=25 options, <=5 per row) -- the button-based counterpart
+    to build_option_select_view() below, for choice sets that fit in a row or two without
+    needing a dropdown (e.g. the 5-option Okra Museum theme picker). `options` accepts dicts
+    ({"value","label"[,"emoji"][,"style"]}) or (value, label[, emoji]) tuples. `disabled_values`,
+    if given, greys out those buttons up front (e.g. a coffee-gated option the current picker
+    can't afford) instead of letting them click it and only then rejecting it -- since these
+    views are typically built for one specific restricted user, not shared across viewers with
+    different eligibility, disabling per-view is safe here (unlike a per-user visual state,
+    which Discord buttons can't express). Pair with resolve_input_race() so typed chat keeps
+    working alongside the buttons."""
+    view = RestrictedView(allowed_user_ids, timeout=timeout)
+    return _add_option_buttons(view, options[:25], style=style, disabled_values=disabled_values, row=0)
 
 
 class _SelectPage(discord.ui.Select):
@@ -5939,6 +6005,21 @@ class _SelectPage(discord.ui.Select):
 
     async def callback(self, interaction: discord.Interaction):
         await self._owner._resolve(interaction, self.values[0])
+
+
+def _add_select_row(view: "RestrictedView", options, placeholder, *, row):
+    """Adds a single flat Select (<=25 options) onto an existing view at an explicit row -- the
+    Select-based counterpart to _add_option_buttons, for a view that needs more than one
+    dropdown (e.g. ask_wof_number's per-round wof_options Select plus a separate "Recently
+    Played" Select). build_option_select_view can't be reused here since it always builds a
+    brand-new RestrictedView with its own `future`; this instead attaches a bare _SelectPage to
+    the view passed in, wired through the same _resolve() path everything else uses. Caller is
+    responsible for keeping total items within Discord's 25-per-view / 5-per-row limits. Returns
+    `view` for chaining."""
+    select = _SelectPage(view, _normalize_options(options)[:25], placeholder)
+    select.row = row
+    view.add_item(select)
+    return view
 
 
 class _GroupSelect(discord.ui.Select):
@@ -19885,7 +19966,9 @@ async def build_okra_image_prompt_grok(base_idea):
 async def generate_round_summary_image(round_data, winner, winner_id, winner_coffees=None,
                                          category_already_shown=False, category_result=None):
     """Returns True if an image was successfully posted (or there was nothing to do), False on
-    generation failure, None if the theme picker timed out (credit stays banked, nothing posted)."""
+    generation failure, None if the winner ran out of time -- either picking a theme, or (for
+    category "4") typing their custom prompt with nothing collected -- credit stays banked,
+    nothing posted."""
     if skip_summary == True:
         message = "\nBe sure to drink your Okratine.\n"
         await safe_send(channel, message)
@@ -19919,7 +20002,9 @@ async def generate_round_summary_image(round_data, winner, winner_id, winner_cof
                 )
 
             if selected_category is None:
-                # Theme picker timed out -- bank the credit instead of auto-picking a theme.
+                # Winner ran out of time -- either never picked a theme, or picked "Provide
+                # the Prompt" but ran out of time typing it -- bank the credit instead of
+                # generating a default/degenerate image.
                 return None
 
             prompts_by_category = {
@@ -20538,6 +20623,12 @@ async def ask_category(winner, categories, winner_coffees, winner_id, skip_messa
 
             if message_content == '4' and winner_coffees > 0:
                 additional_prompt = await request_prompt(winner, winner_id)
+                if additional_prompt is None:
+                    # Ran out of time typing the custom prompt with nothing collected --
+                    # propagate the same (None, "") signal a theme-picker timeout produces,
+                    # so generate_round_summary_image banks the credit instead of drawing
+                    # a default/degenerate "Draw an okra themed picture of ." image.
+                    return None, ""
 
             return message_content, additional_prompt
 
@@ -20545,51 +20636,95 @@ async def ask_category(winner, categories, winner_coffees, winner_id, skip_messa
             return None, additional_prompt
 
 
+class PromptDoneView(RestrictedView):
+    """Single red 'I'm Done' button for request_prompt's custom-painting-prompt collector --
+    a click-based counterpart to typing a standalone 'x', for a winner who's said everything
+    they want to and doesn't want to wait out the rest of prompt_collection_window."""
+
+    def __init__(self, winner_id, *, timeout):
+        super().__init__({winner_id}, timeout=timeout)
+
+    @discord.ui.button(label="I'm Done", style=discord.ButtonStyle.danger, emoji="🛑")
+    async def done_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self._resolve(interaction, "x")
+
+
 async def request_prompt(winner, winner_id):
+    """Collects up to 10 words of free text from `winner_id` as their custom Okra Museum
+    prompt. Returns the final prompt string if at least one word was collected (possibly
+    trimmed to the word/char limit), or None if the window closed with nothing collected --
+    callers must treat None the same as a theme-picker timeout (bank the credit, generate
+    nothing), not as a valid empty prompt.
+
+    Collection ends early, before the words/window limit, either by a standalone 'x' typed
+    anywhere in a message (its own word, not e.g. inside "extra") or by clicking the
+    message's "I'm Done" button -- both treated identically to reaching the limit, keeping
+    whatever words were collected (including any earlier in the same message as a typed 'x')."""
     global magic_time
 
     collected_words = []
     trimmed = False
     start_time = asyncio.get_event_loop().time()
-   
-    message = f"\u200b\n🖼️🔟 **<@{winner_id}>**, Fill in the blank. *10 words max* and **be good**.\n\u200b"
-    message += f"\n*Draw an okra themed picture of...*\n\u200b"
-    await safe_send(channel, message)
+
+    # Doubled from the shared `magic_time + 5` window used elsewhere (e.g. the theme
+    # picker itself) -- typing a custom prompt needs more time than picking a button, but
+    # `magic_time` is a global reused by many unrelated timing points, so it's doubled
+    # here locally rather than changed everywhere.
+    prompt_collection_window = (magic_time + 5) * 2
+
+    message = f"\u200b\n🖼️🔟 **<@{winner_id}>**, give me **10 words max** and be good.\n\u200b"
+    message += f"\n*(Type* **x** *or hit the button below when you're done.)*\n\u200b"
+    view = PromptDoneView(winner_id, timeout=prompt_collection_window)
+    prompt_message = await safe_send(channel, message, view=view)
+    view.message = prompt_message
 
     target_channel = _active_game_channel or channel
 
     def check(m):
         return m.channel == target_channel and m.author != get_bot().user and m.author.id == winner_id
 
-    try:
-        while len(collected_words) < 10 and asyncio.get_event_loop().time() - start_time < (magic_time + 5):
-            try:
-                response = await companion_bridge.wait_for_message_or_companion(
-                    check, magic_time, target_channel, {winner_id}, kind="mini_game_answer"
-                )
-                # Bypass-resistant word extraction: hyphens/underscores/dots/
-                # zero-width chars all count as separators, not word glue.
-                words = answer_matching.extract_words(response.content)
+    async with selector_countdown(prompt_message, prompt_collection_window):
+        try:
+            while len(collected_words) < 10 and asyncio.get_event_loop().time() - start_time < prompt_collection_window:
+                try:
+                    remaining = prompt_collection_window - (asyncio.get_event_loop().time() - start_time)
+                    response = await resolve_input_race(
+                        view,
+                        companion_bridge.wait_for_message_or_companion(
+                            check, remaining, target_channel, {winner_id}, kind="mini_game_answer"
+                        ),
+                    )
+                    # A standalone 'x' -- its own word, whether typed alone, mid-sentence, or
+                    # via the "I'm Done" button (which resolves to exactly "x") -- ends
+                    # collection early. Only the text before it counts toward the prompt.
+                    done_match = re.search(r'\bx\b', response.content, re.IGNORECASE)
+                    text_before_done = response.content[:done_match.start()] if done_match else response.content
 
-                for word in words:
-                    if len(collected_words) < 10:
-                        collected_words.append(word)
-                    else:
-                        trimmed = True
+                    # Bypass-resistant word extraction: hyphens/underscores/dots/
+                    # zero-width chars all count as separators, not word glue.
+                    words = answer_matching.extract_words(text_before_done)
+
+                    for word in words:
+                        if len(collected_words) < 10:
+                            collected_words.append(word)
+                        else:
+                            trimmed = True
+                            break
+
+                    await response.add_reaction("✅")
+
+                    if done_match:
                         break
 
-                await response.add_reaction("✅")
+                except asyncio.TimeoutError:
+                    break  # no more responses in time
 
-            except asyncio.TimeoutError:
-                break  # no more responses in time
-
-    except Exception as e:
-        print(f"Error collecting words: {e}")
-        sentry_sdk.capture_exception(e)
+        except Exception as e:
+            print(f"Error collecting words: {e}")
+            sentry_sdk.capture_exception(e)
 
     if not collected_words:
-        await safe_send(channel, "Nothing. Okra time.")
-        return ""
+        return None
 
     final_prompt, char_trimmed = answer_matching.limit_words(' '.join(collected_words), 10, 90)
     trim_note = "✂️ *(trimmed to the 10-word limit)* " if (trimmed or char_trimmed) else ""
@@ -21525,92 +21660,140 @@ async def ask_wof_number(winner, winner_id, cached_coffees=None, menu_text=None,
     # need the group->item cascade from build_option_select_view's `groups`, and a 2-page
     # "Minigames (1/2)/(2/2)" split was worse UX than just leaving them typed-chat-only (still
     # a first-class fast path, unaffected -- content-based dispatch below handles any of 5-50
-    # regardless of how it arrived). Only the two small, real fixed-choice groups get buttons.
+    # regardless of how it arrived). Only the two small, real fixed-choice groups get an
+    # interactive control -- wof_options via the Select below, other_options as buttons.
     wof_options = wof_tier_options or []
     other_options = [
-        {"value": "99", "label": "\U0001f300 CHAOS"},
-        {"value": "00", "label": "\U0001f957 Okra\'s Choice (Random)"},
-        {"value": "x", "label": "\u23ed\ufe0f Skip Mini-Game"},
+        {"value": "99", "label": "\U0001f300 CHAOS", "style": discord.ButtonStyle.primary},
+        {"value": "00", "label": "\U0001f957 Okra\'s Choice (Random)", "style": discord.ButtonStyle.success},
+        {"value": "x", "label": "\u23ed\ufe0f Skip Mini-Game", "style": discord.ButtonStyle.danger},
     ]
-    view = build_option_select_view(wof_options + other_options, {winner_id, okrag_id}, timeout=magic_time,
-                                     placeholder="\u26a1 Shortcuts\u2026")
+    # Doubled from the shared `magic_time` used elsewhere -- picking a minigame needs more
+    # time than a typical answer window, but `magic_time` is a global reused by many
+    # unrelated timing points, so it's doubled here locally rather than changed everywhere.
+    minigame_choice_window = magic_time * 2
+    # A "Recently Played" Select, most-recent first -- Wheel of Fortune's collapsed entry (see
+    # _recent_minigame_key_name) can only be replayed via this round's actual WoF slots, so it's
+    # only offered when wof_options has something to fall back on; otherwise it's dropped from
+    # this round's list entirely rather than resolving to a stale/invalid value. CHAOS ("99")
+    # already has its own always-present button (see other_options) and is filtered out here too
+    # in case an already-seeded/recorded entry for it exists from before that exclusion.
+    recent_entries = await get_recent_minigame_selections()
+    recent_options = []
+    for entry in recent_entries:
+        if entry["key"] == "99":
+            continue
+        if entry["key"] == "wheel-of-fortune":
+            if not wof_options:
+                continue
+            recent_options.append({"value": wof_options[0]["value"], "label": f"\U0001f3a1 {entry['name']}"})
+        else:
+            recent_options.append({"value": entry["key"],
+                                    "label": f"{get_minigame_emoji(entry['key'])} {entry['name']}"})
+
+    # wof_options (dynamic per-round "WoF: <category>" entries) go in a Select dropdown;
+    # other_options (fixed CHAOS / Okra's Choice / Skip) become quick-click buttons instead of
+    # dropdown rows; recent_options (see above) becomes a second Select. wof_options can rarely
+    # come back empty (the per-round DB sample can return 0 docs) and discord.ui.Select can't
+    # hold zero options, so only build that Select when there's something to put in it. The
+    # wof_options Select, when present, is always the first item added to a brand-new view, so
+    # discord.py's row auto-packing deterministically lands it on row 0 -- everything added
+    # after it needs an explicit row.
+    next_row = 0
+    if wof_options:
+        view = build_option_select_view(wof_options, {winner_id, okrag_id}, timeout=minigame_choice_window,
+                                         placeholder="\u26a1 Shortcuts\u2026")
+        next_row = 1
+    else:
+        view = RestrictedView({winner_id, okrag_id}, timeout=minigame_choice_window)
+    _add_option_buttons(view, other_options, row=next_row)
+    next_row += 1
+    if recent_options:
+        _add_select_row(view, recent_options, "\U0001f550 Recently Played\u2026", row=next_row)
     view.message = await safe_send(channel, "\U0001f447 Or pick a shortcut:", view=view)
-    # Companion (phone/web) mirrors the same trimmed set -- minigame numbers stay typeable
-    # there too, same as Discord chat, just not offered as a button/select option.
+    # Companion (phone/web) mirrors the full set regardless of Discord-side rendering (Select
+    # vs. buttons doesn't apply there) -- minigame numbers stay typeable there too, same as
+    # Discord chat, just not offered as a button/select option. recent_options can repeat a
+    # value already in wof_options (the WoF recency entry reuses wof_options[0]'s value) --
+    # skip those so companion doesn't list the same pick twice under two different labels.
     companion_options = wof_options + other_options
+    _companion_seen_values = {opt["value"] for opt in companion_options}
+    companion_options += [opt for opt in recent_options if opt["value"] not in _companion_seen_values]
 
     start = asyncio.get_event_loop().time()
     selected_question = None
 
-    try:
-        while asyncio.get_event_loop().time() - start < magic_time:
-            remaining = magic_time - (asyncio.get_event_loop().time() - start)
-            message = await resolve_input_race(
-                view,
-                companion_bridge.wait_for_message_or_companion(
-                    check, remaining, target_channel, {winner_id, okrag_id}, kind="wof_selection",
-                    prompt_text=menu_text, options=companion_options
-                ),
-            )
-            content = message.content.strip().lower()
-            responder_id = message.author.id
-            if responder_id == winner_id and cached_coffees is not None:
-                winner_coffees = cached_coffees
-            else:
-                winner_coffees = await get_coffees(responder_id)
+    async with selector_countdown(view.message, minigame_choice_window):
+        try:
+            while asyncio.get_event_loop().time() - start < minigame_choice_window:
+                remaining = minigame_choice_window - (asyncio.get_event_loop().time() - start)
+                message = await resolve_input_race(
+                    view,
+                    companion_bridge.wait_for_message_or_companion(
+                        check, remaining, target_channel, {winner_id, okrag_id}, kind="wof_selection",
+                        prompt_text=menu_text, options=companion_options
+                    ),
+                )
+                content = message.content.strip().lower()
+                responder_id = message.author.id
+                if responder_id == winner_id and cached_coffees is not None:
+                    winner_coffees = cached_coffees
+                else:
+                    winner_coffees = await get_coffees(responder_id)
 
-            if content == "x":
-                return "x"
+                if content == "x":
+                    return "x"
 
-            if content == "00":
-                await message.add_reaction("\U0001f44d")
-                set_a = [str(i) for i in range(5)]
-                # range(5, 53): 5-52 inclusive -- same off-by-one hazard as
-                # all_options above, kept in sync with it by hand.
-                set_b = [str(i) for i in range(5, 53)] + ["67"]
-                if len(round_responders) < 2:
-                    set_b = [g for g in set_b if g not in multiplayer_required]
-                set_b = [g for g in set_b if g not in RANDOM_EXCLUDED_NUMBERS]
-                selected_question = random.choice(set_a if random.random() < 0.5 else set_b)
+                if content == "00":
+                    await message.add_reaction("\U0001f44d")
+                    set_a = [str(i) for i in range(5)]
+                    # range(5, 53): 5-52 inclusive -- same off-by-one hazard as
+                    # all_options above, kept in sync with it by hand.
+                    set_b = [str(i) for i in range(5, 53)] + ["67"]
+                    if len(round_responders) < 2:
+                        set_b = [g for g in set_b if g not in multiplayer_required]
+                    set_b = [g for g in set_b if g not in RANDOM_EXCLUDED_NUMBERS]
+                    selected_question = random.choice(set_a if random.random() < 0.5 else set_b)
 
-                # Store frequency data for random selection
-                await store_minigame_frequency(selected_question, "random", "discord")
+                    # Store frequency data for random selection
+                    await store_minigame_frequency(selected_question, "random", "discord")
+
+                    await message.add_reaction(get_minigame_emoji(selected_question))
+                    await safe_send(channel, f"\n\U0001f381 **<@{responder_id}>**, let\'s do {selected_question}.\n")
+                    return selected_question
+
+                if content not in all_options:
+                    await message.add_reaction("\u274c")
+                    await view.reset()
+                    continue
+
+                # Check coffee lock
+                if content in unlocks and winner_coffees <= 0:
+                    await message.add_reaction("\U0001f952")
+                    await safe_send(channel, f"\n\U0001f64f\U0001f614 Sorry **<@{responder_id}>**. \'**{unlocks[content]}**\' is for **Okrans Only** \U0001f952.\n")
+                    await view.reset()
+                    continue
+
+                # Check multiplayer lock
+                if content in multiplayer_required and len(round_responders) < 2 and responder_id != okrag_id:
+                    await message.add_reaction("\U0001f622")
+                    await safe_send(channel, f"\n\U0001f64f\U0001f614 Sorry **<@{responder_id}>**. \'**{unlocks[content]}**\' requires **2+ players**.\n")
+                    await view.reset()
+                    continue
+
+                selected_question = content
+
+                # Store frequency data for user selection
+                await store_minigame_frequency(selected_question, "user", "discord")
+                await record_recent_minigame_selection(selected_question)
 
                 await message.add_reaction(get_minigame_emoji(selected_question))
-                await safe_send(channel, f"\n\U0001f381 **<@{responder_id}>**, let\'s do {selected_question}.\n")
+                await safe_send(channel, f"\n\U0001f4aa\U0001f6e1\ufe0f I got you **<@{responder_id}>**. **{selected_question}** it is.\n\u200b")
+                await asyncio.sleep(2)
                 return selected_question
 
-            if content not in all_options:
-                await message.add_reaction("\u274c")
-                await view.reset()
-                continue
-
-            # Check coffee lock
-            if content in unlocks and winner_coffees <= 0:
-                await message.add_reaction("\U0001f952")
-                await safe_send(channel, f"\n\U0001f64f\U0001f614 Sorry **<@{responder_id}>**. \'**{unlocks[content]}**\' is for **Okrans Only** \U0001f952.\n")
-                await view.reset()
-                continue
-
-            # Check multiplayer lock
-            if content in multiplayer_required and len(round_responders) < 2 and responder_id != okrag_id:
-                await message.add_reaction("\U0001f622")
-                await safe_send(channel, f"\n\U0001f64f\U0001f614 Sorry **<@{responder_id}>**. \'**{unlocks[content]}**\' requires **2+ players**.\n")
-                await view.reset()
-                continue
-
-            selected_question = content
-
-            # Store frequency data for user selection
-            await store_minigame_frequency(selected_question, "user", "discord")
-
-            await message.add_reaction(get_minigame_emoji(selected_question))
-            await safe_send(channel, f"\n\U0001f4aa\U0001f6e1\ufe0f I got you **<@{responder_id}>**. **{selected_question}** it is.\n\u200b")
-            await asyncio.sleep(2)
-            return selected_question
-
-    except asyncio.TimeoutError:
-        pass
+        except asyncio.TimeoutError:
+            pass
 
     # Fallback random selection
     return "x"
@@ -23341,59 +23524,65 @@ async def prompt_user_for_response(round_winner, winner_points, winner_coffees, 
 
     start_time = time.time()
 
+    # Doubled from the shared `magic_time` used elsewhere -- setting round options needs more
+    # time than a typical answer window, but `magic_time` is a global reused by many
+    # unrelated timing points, so it's doubled here locally rather than changed everywhere.
+    round_options_window = magic_time * 2
+
     # Discord can't force-close an already-open modal, so WofModifierModal checks this after
     # the window below closes -- a late submission becomes a no-op with a "too late" reply
     # instead of silently mutating global flags for whatever round is running by then.
     window_closed = {"value": False}
-    view = WofModifierView(keyword_config, winner_coffees, round_winner_id, window_closed, timeout=magic_time)
+    view = WofModifierView(keyword_config, winner_coffees, round_winner_id, window_closed, timeout=round_options_window)
     view.message = await safe_send(channel, "\U0001f447 Or set modifiers from the buttons below:", view=view)
     # Companion (phone/web) gets a flat multi-select of every keyword plus the "Done" shortcut --
     # applied via the same message_content substring pass as typed chat (see the loop below), so
     # no separate resolution path is needed here, only the rendering metadata.
     companion_options = [{"value": k, "label": info[0]} for k, info in _KEYWORD_EFFECTS.items()]
 
-    while time.time() - start_time < magic_time:
-        try:
-            message = await resolve_input_race(
-                view,
-                companion_bridge.wait_for_message_or_companion(
-                    check, magic_time - (time.time() - start_time), target_channel, {round_winner_id, okrag_id},
-                    kind="post_round_menu", prompt_text=menu_text, options=companion_options, multi=True
-                ),
-            )
-            message_content = message.content.strip().lower()
+    async with selector_countdown(view.message, round_options_window, now=time.time):
+        while time.time() - start_time < round_options_window:
+            try:
+                message = await resolve_input_race(
+                    view,
+                    companion_bridge.wait_for_message_or_companion(
+                        check, round_options_window - (time.time() - start_time), target_channel, {round_winner_id, okrag_id},
+                        kind="post_round_menu", prompt_text=menu_text, options=companion_options, multi=True
+                    ),
+                )
+                message_content = message.content.strip().lower()
 
-            delay_match = re.search(r'\bdelay\s*(\d+)\b', message_content)
-            if delay_match:
-                delay_value = max(3, min(int(delay_match.group(1)), 15))
-                time_between_questions = delay_value
-                await safe_send(channel, f"\u23f1\ufe0f\u23f3 **<@{round_winner_id}>** has set {delay_value}s between questions.")
+                delay_match = re.search(r'\bdelay\s*(\d+)\b', message_content)
+                if delay_match:
+                    delay_value = max(3, min(int(delay_match.group(1)), 15))
+                    time_between_questions = delay_value
+                    await safe_send(channel, f"\u23f1\ufe0f\u23f3 **<@{round_winner_id}>** has set {delay_value}s between questions.")
 
-            answer_match = re.search(r'\banswer\s*(\d+)\b', message_content)
-            if answer_match:
-                answer_value = max(3, min(int(answer_match.group(1)), question_time_default))
-                question_time = answer_value
-                await safe_send(channel, f"\u23f1\ufe0f\u2753 **<@{round_winner_id}>** has set {answer_value}s to answer.")
+                answer_match = re.search(r'\banswer\s*(\d+)\b', message_content)
+                if answer_match:
+                    answer_value = max(3, min(int(answer_match.group(1)), question_time_default))
+                    question_time = answer_value
+                    await safe_send(channel, f"\u23f1\ufe0f\u2753 **<@{round_winner_id}>** has set {answer_value}s to answer.")
 
-            # Keyword flags -- one shared table (_KEYWORD_EFFECTS) drives both this typed-chat
-            # substring match and WofModifierModal's multi-select, so each keyword's coffee-gate
-            # + global flag(s) + announcement exists exactly once (see _apply_keyword_flag).
-            for keyword in _KEYWORD_EFFECTS:
-                config = keyword_config[keyword]
-                if keyword in message_content and (not config["exclude_hashtag"] or f"#{keyword}" not in message_content):
-                    await _apply_keyword_flag(keyword, keyword_config, winner_coffees, round_winner_id)
+                # Keyword flags -- one shared table (_KEYWORD_EFFECTS) drives both this typed-chat
+                # substring match and WofModifierModal's multi-select, so each keyword's coffee-gate
+                # + global flag(s) + announcement exists exactly once (see _apply_keyword_flag).
+                for keyword in _KEYWORD_EFFECTS:
+                    config = keyword_config[keyword]
+                    if keyword in message_content and (not config["exclude_hashtag"] or f"#{keyword}" not in message_content):
+                        await _apply_keyword_flag(keyword, keyword_config, winner_coffees, round_winner_id)
 
-            # x (as a standalone word, not e.g. inside "xela"/"marx") ends the prompt early --
-            # checked last so it still chains with whatever other keywords were in this same
-            # message, matching how every other option can be combined in one string. The
-            # WofModifierView "Done" button also resolves to this same "x" content.
-            if re.search(r'\bx\b', message_content):
-                await message.add_reaction("\U0001f3c1")
-                await safe_send(channel, f"\U0001f3c1 **<@{round_winner_id}>** is all set. Let's get to it!")
+                # x (as a standalone word, not e.g. inside "xela"/"marx") ends the prompt early --
+                # checked last so it still chains with whatever other keywords were in this same
+                # message, matching how every other option can be combined in one string. The
+                # WofModifierView "Done" button also resolves to this same "x" content.
+                if re.search(r'\bx\b', message_content):
+                    await message.add_reaction("\U0001f3c1")
+                    await safe_send(channel, f"\U0001f3c1 **<@{round_winner_id}>** is all set. Let's get to it!")
+                    break
+
+            except asyncio.TimeoutError:
                 break
-
-        except asyncio.TimeoutError:
-            break
 
     window_closed["value"] = True
     await save_round_options_to_db()
@@ -25081,6 +25270,46 @@ def normalize_text(input):
     return text
 
 
+def _giveaway_words(category, question_text):
+    """Normalized words (len >= 4) drawn verbatim from the category or question
+    text. legacy_fuzzy_match's first-5-char / first-word / substring-anywhere
+    leniency heuristics exclude these so a guess can't win just by parroting a
+    word the trivia prompt already handed the user for free -- e.g. typing
+    "time" for "ragtime" when the category is '"Time" For A Change'."""
+    combined = f"{category or ''} {question_text or ''}"
+    return {w for w in normalize_text(combined).split() if len(w) >= 4}
+
+
+def _is_giveaway_word(word, giveaway_words):
+    """True if `word` is one of the giveaway words, or a simple morphological
+    variant of one (e.g. "martin" vs. category word "martins") -- containment
+    in either direction, not exact equality, so trivial plural/prefix drift
+    doesn't defeat the guard. Both sides are floored at length 4: without a
+    floor on the giveaway word too, a short common word like "is" (from
+    "What is...") is a substring of countless unrelated answers ("paris"),
+    causing mass false positives."""
+    if len(word) < 4:
+        return False
+    return any(len(gw) >= 4 and (word in gw or gw in word) for gw in giveaway_words)
+
+
+def _current_giveaway_words():
+    """Cached, unfloored giveaway-word set (answer_matching._giveaway_words, NOT
+    this module's own floored/substring-flavored _giveaway_words above -- that
+    one backs the scoring guard; this one backs the "you just parroted the
+    prompt" 🟥 reaction, which needs whole-word matching down to short words
+    like "San"/"Top"/"Gun"). Cached per-question since the category/question
+    text is constant for the whole question window, so there's no reason to
+    re-normalize it on every single message."""
+    cat = current_question.get("trivia_category", "") if current_question else ""
+    q = current_question.get("trivia_question", "") if current_question else ""
+    key = (cat, q)
+    if _giveaway_words_cache["key"] != key:
+        _giveaway_words_cache["key"] = key
+        _giveaway_words_cache["words"] = answer_matching._giveaway_words(cat, q)
+    return _giveaway_words_cache["words"]
+
+
 def levenshtein_similarity(str1, str2):
     return difflib.SequenceMatcher(None, str1.lower(), str2.lower()).ratio()
 
@@ -25166,8 +25395,17 @@ def trig_checker(response, answer):
 # Requires a code deploy to flip -- not a live/runtime toggle.
 USE_LEGACY_FUZZY_MATCH = True
 
+# Flip to False to revert to pre-giveaway-guard behavior: category/question words
+# are no longer excluded from the substring/first-5-chars/first-word (and, in
+# answer_matching.py, surname/any-key-word/substring) leniency heuristics, i.e.
+# today's matching becomes exactly what it was before that guard existed.
+# Applies to both legacy_fuzzy_match and answer_matching.py, whichever
+# USE_LEGACY_FUZZY_MATCH selects. Requires a code deploy to flip -- not a
+# live/runtime toggle.
+GIVEAWAY_WORD_GUARD_ENABLED = True
 
-def legacy_fuzzy_match(user_answer, correct_answer, category, url, _skip_alias_check=False, ignore_exact_mode=False):
+
+def legacy_fuzzy_match(user_answer, correct_answer, category, url, _skip_alias_check=False, ignore_exact_mode=False, question_text="", enable_giveaway_guard=None):
     """The pre-rebuild answer-matching heuristics (unguarded substring, char-level Jaccard,
     first-5-char/first-word hacks), kept verbatim as a fallback -- see USE_LEGACY_FUZZY_MATCH.
     Superseded by answer_matching.py, which is the default; this only runs if that flag is
@@ -25224,7 +25462,7 @@ def legacy_fuzzy_match(user_answer, correct_answer, category, url, _skip_alias_c
                             return True
                     else:
                         # Long alias: use normal fuzzy matching
-                        if legacy_fuzzy_match(user_answer, variant, category, url, _skip_alias_check=True):
+                        if legacy_fuzzy_match(user_answer, variant, category, url, _skip_alias_check=True, question_text=question_text, enable_giveaway_guard=enable_giveaway_guard):
                             return True
                 break  # Don't check other alias groups
 
@@ -25304,8 +25542,19 @@ def legacy_fuzzy_match(user_answer, correct_answer, category, url, _skip_alias_c
     if exact_mode and not ignore_exact_mode:
         return False
 
+    # Words drawn verbatim from the category/question text -- excluded from
+    # the leniency heuristics below so a guess can't win by parroting a word
+    # the prompt already handed the user for free (e.g. "time" for "ragtime"
+    # when the category is '"Time" For A Change').
+    guard_enabled = GIVEAWAY_WORD_GUARD_ENABLED if enable_giveaway_guard is None else enable_giveaway_guard
+    giveaway_words = _giveaway_words(category, question_text) if guard_enabled else set()
+    user_is_giveaway_word = any(
+        _is_giveaway_word(w, giveaway_words)
+        for w in (user_answer, no_spaces_user, no_filler_user, no_filler_spaces_user)
+    )
+
     # New Step: First 5 characters match
-    if user_answer[:5] == correct_answer[:5] or no_spaces_user[:5] == no_spaces_correct[:5] or no_filler_user[:5] == no_filler_correct[:5] or no_filler_spaces_user[:5] == no_filler_spaces_correct[:5]:
+    if not user_is_giveaway_word and (user_answer[:5] == correct_answer[:5] or no_spaces_user[:5] == no_spaces_correct[:5] or no_filler_user[:5] == no_filler_correct[:5] or no_filler_spaces_user[:5] == no_filler_spaces_correct[:5]):
         return True
 
     # Remove filler words and split correct answer
@@ -25313,16 +25562,16 @@ def legacy_fuzzy_match(user_answer, correct_answer, category, url, _skip_alias_c
     no_filler_answer_words = no_filler_correct.split()
 
     # Ensure correct_answer_words is not empty
-    if correct_answer_words and len(correct_answer_words[0]) >= 3:
+    if correct_answer_words and len(correct_answer_words[0]) >= 3 and not _is_giveaway_word(correct_answer_words[0], giveaway_words):
         if user_answer == correct_answer_words[0] or no_filler_user == correct_answer_words[0]:
             return True
 
-    if no_filler_answer_words and len(no_filler_answer_words[0]) >= 3:
+    if no_filler_answer_words and len(no_filler_answer_words[0]) >= 3 and not _is_giveaway_word(no_filler_answer_words[0], giveaway_words):
         if user_answer == no_filler_answer_words[0] or no_filler_user == no_filler_answer_words[0]:
             return True
 
     #Check if user's answer is a substring of the correct answer after normalization
-    if user_answer in correct_answer:
+    if not _is_giveaway_word(user_answer, giveaway_words) and user_answer in correct_answer:
         return True
 
     # Step 1: Exact match or Partial match
@@ -25345,7 +25594,7 @@ def legacy_fuzzy_match(user_answer, correct_answer, category, url, _skip_alias_c
     return False  # No match found
 
 
-def fuzzy_match(user_answer, correct_answer, category, url, _skip_alias_check=False, ignore_exact_mode=False):
+def fuzzy_match(user_answer, correct_answer, category, url, _skip_alias_check=False, ignore_exact_mode=False, question_text="", enable_giveaway_guard=None):
     # Matching logic lives in answer_matching.py (testable in isolation). This
     # wrapper preserves the historic signature and wires Poindexter/exact_mode
     # to the STRICT end of the leniency dial.
@@ -25353,11 +25602,14 @@ def fuzzy_match(user_answer, correct_answer, category, url, _skip_alias_check=Fa
         return legacy_fuzzy_match(
             user_answer, correct_answer, category, url,
             _skip_alias_check=_skip_alias_check, ignore_exact_mode=ignore_exact_mode,
+            question_text=question_text, enable_giveaway_guard=enable_giveaway_guard,
         )
     config = answer_matching.STRICT if (exact_mode and not ignore_exact_mode) else answer_matching.ACTIVE_CONFIG
+    resolved_guard = GIVEAWAY_WORD_GUARD_ENABLED if enable_giveaway_guard is None else enable_giveaway_guard
     return answer_matching.match_answer(
         user_answer, correct_answer, category=category, url=url,
-        config=config, skip_alias=_skip_alias_check,
+        config=config, skip_alias=_skip_alias_check, question_text=question_text,
+        enable_giveaway_guard=resolved_guard,
     )
 
 
@@ -25493,10 +25745,11 @@ async def check_correct_responses_delete(question_ask_time, trivia_answer_list, 
                 "username": display_name,
                 "response": message_content
             })
-                                
+        question_text_for_match = (current_question_data.get("question_text") if current_question_data else "") or ""
+
         # Check if the user's response is in the list of correct answers
         fuzzy_match_per_answer = [
-            (answer, fuzzy_match(message_content, answer, trivia_category, trivia_url))
+            (answer, fuzzy_match(message_content, answer, trivia_category, trivia_url, question_text=question_text_for_match))
             for answer in trivia_answer_list
         ]
         if sender_id in response_trace:
@@ -25549,6 +25802,12 @@ async def check_correct_responses_delete(question_ask_time, trivia_answer_list, 
 
             if blitz_mode:
                 first_correct_found = True
+        # The 🟥 "you just parroted the category/question" reaction now fires in real
+        # time from on_message as each message arrives (see _current_giveaway_words()),
+        # not here at time's-up -- and since `message` is only ever non-None for
+        # on_message-sourced responses (button and companion/web sources always pass
+        # message=None), that real-time hook already covers every case this batch-time
+        # check used to handle. See the giveaway-guard fix history for the old logic.
 
     had_correct_answer = bool(correct_responses)
 
@@ -26017,7 +26276,7 @@ async def update_round_streaks(user, user_id, roast_task=None):
             elif ok is None:
                 await safe_send(
                     channel,
-                    f"⏳🎨 **<@{user_id}>**, too slow on the theme pick — no worries, it's **saved**: "
+                    f"⏳🎨 **<@{user_id}>**, too slow — no worries, it's **saved**: "
                     f"win again and I'll ask you to pick. (Drawings owed: {banked})"
                 )
             else:
@@ -27677,7 +27936,10 @@ async def start_trivia():
 
                 if message_task in done:
                     msg = message_task.result()
-                    await msg.add_reaction("🥒")
+                    try:
+                        await msg.add_reaction("🥒")
+                    except (discord.NotFound, discord.HTTPException, aiohttp.ClientError):
+                        pass
                     starter = msg.author
                 else:
                     interaction = view.future.result()
@@ -28478,6 +28740,21 @@ async def on_message(message):
                 })
                 captured_as_answer = True
 
+                # React immediately if this guess just parrots a word from the category/
+                # question -- independent of whether it's otherwise correct (see the
+                # giveaway-guard fix history: e.g. "river" for "Amazon River" must not
+                # earn credit just because "river" is in nearly every river question).
+                if GIVEAWAY_WORD_GUARD_ENABLED and answer_matching.is_fully_given_away(
+                        message.content, _current_giveaway_words()):
+                    try:
+                        await message.add_reaction("🟥")
+                    except discord.NotFound:
+                        pass
+                    except discord.Forbidden:
+                        print("❌ Bot lacks permission to add reactions.")
+                    except discord.HTTPException as e:
+                        print(f"❌ Failed to add reaction: {e}")
+
                 # A typed guess that's actually one of this question's choices locks the
                 # user out of the buttons too, the same way clicking a button locks out
                 # further typing -- otherwise typing the answer then clicking the matching
@@ -28740,6 +29017,56 @@ async def store_minigame_frequency(number, selection_type, bot_source="discord",
         
     except Exception as e:
         print(f"Error storing minigame frequency: {e}")
+
+
+def _recent_minigame_key_name(number):
+    """Collapses Wheel of Fortune's five per-round categories ("0"-"4") into one
+    "wheel-of-fortune" identity, matching store_minigame_frequency's existing convention --
+    they're the same underlying game with a different question set each round, not distinct
+    games, so the recency list shouldn't burn 5 of its 10 slots on one game."""
+    if str(number) in {"0", "1", "2", "3", "4"}:
+        return "wheel-of-fortune", "Wheel of Fortune"
+    return str(number), get_minigame_name(number)
+
+
+async def get_recent_minigame_selections():
+    """Returns ask_wof_number's recency list, most-recently-played first (already stored in that
+    order by record_recent_minigame_selection's $position: 0 push). Starts empty and grows
+    purely from real picks -- no random seeding, so the "Recently Played" dropdown simply isn't
+    offered (see ask_wof_number's `if recent_options:` guard) until something's actually been
+    played."""
+    try:
+        db = await connect_to_mongodb()
+        collection = db["minigame-recent-selections"]
+        doc = await collection.find_one({"_id": "recent"})
+        return doc["entries"] if doc else []
+    except Exception as e:
+        print(f"Error fetching recent minigame selections: {e}")
+        return []
+
+
+async def record_recent_minigame_selection(number):
+    """Records an explicit user pick (not a skip, not Okra's Choice/random, and not CHAOS --
+    CHAOS ("99") stays button-only, never entering the recency list, since it already has its
+    own always-present button) in ask_wof_number's "Recently Played" recency list -- keeps the
+    10 most-recently-played unique games, newest first, deduplicating by re-selection (picking
+    something already in the list just bumps it back to the top instead of duplicating it)."""
+    if str(number) == "99":
+        return
+    try:
+        db = await connect_to_mongodb()
+        collection = db["minigame-recent-selections"]
+        game_key, display_name = _recent_minigame_key_name(number)
+        await collection.update_one({"_id": "recent"}, {"$pull": {"entries": {"key": game_key}}})
+        await collection.update_one(
+            {"_id": "recent"},
+            {"$push": {"entries": {"$each": [{"key": game_key, "name": display_name,
+                                               "played_at": datetime.datetime.now()}],
+                                    "$position": 0, "$slice": 10}}},
+            upsert=True,
+        )
+    except Exception as e:
+        print(f"Error recording recent minigame selection: {e}")
 
 
 async def cleanup_tournament_roles():
@@ -29456,7 +29783,13 @@ def companion_submit_answer(user_id, display_name, text, client="companion"):
         mc_tokens = _mc_guess_tokens(trivia_answer_list, trivia_url)
         if mc_tokens is not None and answer_matching.normalize_text(text) in mc_tokens:
             current_answer_view.answered_user_ids.add(user_id)
-    return {"ok": True}
+    # Same real-time "you just parroted the category/question" signal on_message reacts
+    # with 🟥 for -- there's no Discord message to react to here, so it's surfaced in the
+    # response instead for the companion page's own UI to show.
+    guard_blocked = bool(
+        GIVEAWAY_WORD_GUARD_ENABLED and answer_matching.is_fully_given_away(text, _current_giveaway_words())
+    )
+    return {"ok": True, "guard_blocked": guard_blocked}
 
 
 async def companion_submit_flag(user_id, display_name, reasons, detail):

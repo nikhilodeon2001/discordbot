@@ -15,6 +15,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from answer_matching import (  # noqa: E402
     match_answer, STRICT, BALANCED, GENEROUS, extract_words, limit_words,
+    is_fully_given_away, _giveaway_words,
 )
 
 CONFIGS = {"STRICT": STRICT, "BALANCED": BALANCED, "GENEROUS": GENEROUS}
@@ -148,6 +149,24 @@ CASES = [
     # --- structured: scramble must be exact ---
     ("listen", "silent", "", "scramble", "BALANCED", False, "anagram is not the answer"),
     ("silent", "silent", "", "scramble", "BALANCED", True, "scramble solved"),
+
+    # --- category/question "giveaway word" guard (reported bug) ---
+    ("time", "ragtime", "\"Time\" For A Change", "", "GENEROUS", False,
+     "reported bug: category giveaway word 'time' must not win via substring leniency"),
+    ("ragtime", "ragtime", "\"Time\" For A Change", "", "GENEROUS", True,
+     "guard must not block an exact whole-answer match even though the category shares a substring"),
+    ("cucu", "a cucumber", "Vegetables", "", "GENEROUS", True,
+     "regression guard: substring leniency still works when the guess isn't a category giveaway word"),
+    ("napoleon", "Napoleon Bonaparte", "The Story of Napoleon", "", "GENEROUS", False,
+     "reported-style bug via any-key-word leniency: category giveaway word must not win"),
+    ("bonaparte", "Napoleon Bonaparte", "The Story of Napoleon", "", "GENEROUS", True,
+     "regression guard: surname/any-key-word leniency still works for a non-giveaway word"),
+    ("bottom", "your bottom dollar", "Bottom", "", "GENEROUS", False,
+     "user-provided example: a whole word taken from the category must not win, even mid-phrase"),
+    ("martin", "Martin Bormann", "Martins", "", "GENEROUS", False,
+     "morphological variant: plural category word 'Martins' must still block singular guess 'martin'"),
+    ("vincent", "Martin Bormann", "", "", "GENEROUS", False,
+     "regression guard: 'vincent' is not a real match for 'Martin Bormann' regardless of giveaway logic"),
 ]
 
 
@@ -230,5 +249,141 @@ def run():
     return len(failures)
 
 
+# Giveaway-word guard with real question text, not just category.
+# (user, correct, category, question_text, config, expected, note)
+QUESTION_TEXT_CASES = [
+    ("time", "ragtime", "\"Time\" For A Change",
+     "Scott Joplin is a famous performer & composer of this musical style",
+     "GENEROUS", False, "reported bug, full repro: category+question giveaway word must not win"),
+    ("ragtime", "ragtime", "\"Time\" For A Change",
+     "Scott Joplin is a famous performer & composer of this musical style",
+     "GENEROUS", True, "guard must not block the actual exact answer"),
+    ("joplin", "ragtime", "\"Time\" For A Change",
+     "Scott Joplin is a famous performer & composer of this musical style",
+     "GENEROUS", False, "question-text-only giveaway word (not in category) must also be blocked"),
+    ("cucu", "a cucumber", "Vegetables",
+     "A long green fruit often mistaken for a vegetable",
+     "GENEROUS", True, "regression guard: substring leniency still works with no category/question overlap"),
+
+    # --- subset-coverage leniency (multi-word partial credit) ---
+    ("bottom dollar", "your bottom dollar", "Bottom",
+     "A song from \"Annie\" tells us, \"the sun'll come out tomorrow, bet your\" this "
+     "\"that tomorrow there'll be sun\"",
+     "BALANCED", False,
+     "subset-coverage gap: 2 of 3 answer words lifted from category+question must not win"),
+    ("bottom dollar", "your bottom dollar", "", "",
+     "BALANCED", True,
+     "regression guard: subset-coverage leniency still works absent giveaway overlap"),
+    ("Franklin Roosevelt", "Franklin Delano Roosevelt", "", "",
+     "BALANCED", True,
+     "regression guard: unrelated multi-word partial match is untouched by the guard"),
+
+    # --- short-word false-positive (found via audit_giveaway_questions.py on real prod data) ---
+    ("Paris", "Paris, France", "The World",
+     "What is the capital of this country?",
+     "GENEROUS", True,
+     "regression: the 2-letter giveaway word 'is' (from \"What is\") must not falsely flag "
+     "'paris' as given-away just because 'is' is a substring of it"),
+]
+
+
+def run_question_text_cases():
+    failures = []
+    for user, correct, category, question_text, cfg_name, expected, note in QUESTION_TEXT_CASES:
+        cfg = CONFIGS[cfg_name]
+        actual = match_answer(user, correct, category=category, question_text=question_text, config=cfg)
+        ok = actual == expected
+        if not ok:
+            failures.append((user, correct, cfg_name, expected, actual, note))
+        status = "PASS" if ok else "FAIL"
+        print(f"[{status}] {cfg_name:8} match({user!r}, {correct!r}, question_text={question_text!r}) "
+              f"= {actual} (expected {expected})  -- {note}")
+    if failures:
+        print("\nQUESTION-TEXT FAILURES:")
+        for user, correct, cfg_name, expected, actual, note in failures:
+            print(f"  {cfg_name:8} match({user!r}, {correct!r}) -> {actual}, "
+                  f"expected {expected}  ({note})")
+    return len(failures)
+
+
+# (user, correct, category, question_text, expected_guard_on, expected_guard_off, note)
+GIVEAWAY_TOGGLE_CASES = [
+    ("time", "ragtime", "\"Time\" For A Change",
+     "Scott Joplin is a famous performer & composer of this musical style",
+     False, True, "enable_giveaway_guard=False must restore pre-guard leniency"),
+    ("ragtime", "ragtime", "\"Time\" For A Change",
+     "Scott Joplin is a famous performer & composer of this musical style",
+     True, True, "exact match is unaffected by the toggle either way"),
+]
+
+
+def run_giveaway_toggle_cases():
+    failures = []
+    for user, correct, category, question_text, expected_on, expected_off, note in GIVEAWAY_TOGGLE_CASES:
+        actual_on = match_answer(user, correct, category=category, question_text=question_text,
+                                  config=GENEROUS, enable_giveaway_guard=True)
+        actual_off = match_answer(user, correct, category=category, question_text=question_text,
+                                   config=GENEROUS, enable_giveaway_guard=False)
+        ok = actual_on == expected_on and actual_off == expected_off
+        if not ok:
+            failures.append((user, correct, expected_on, actual_on, expected_off, actual_off, note))
+        status = "PASS" if ok else "FAIL"
+        print(f"[{status}] match({user!r}, {correct!r}): guard-on={actual_on} (expected {expected_on}), "
+              f"guard-off={actual_off} (expected {expected_off})  -- {note}")
+    if failures:
+        print("\nGIVEAWAY-TOGGLE FAILURES:")
+        for user, correct, exp_on, act_on, exp_off, act_off, note in failures:
+            print(f"  match({user!r}, {correct!r}): guard-on {act_on} (expected {exp_on}), "
+                  f"guard-off {act_off} (expected {exp_off})  ({note})")
+    return len(failures)
+
+
+# is_fully_given_away: the whole-word "does the prompt already contain this
+# text, word for word?" check shared by audit_giveaway_questions.py (checking
+# stored answers) and discordbot.py's real-time 🟥 reaction (checking a live
+# guess). (text, category, question_text, expected, note)
+GIVEN_AWAY_CASES = [
+    ("Sailfish", "Science & Nature", "What is the fastest fish in the ocean?",
+     False, "compound-word false positive must not fire: 'fish' is a substring of 'sailfish', not a whole word of it"),
+    ("San Salvador", "The World", "What is the capital of El Salvador?",
+     False, "short word 'san' is never actually verified present -> must not flag on 'salvador' alone"),
+    ("Top Gun: Maverick", "Movies", "Which movie features Tom Cruise reprising his role as Maverick?",
+     False, "short words 'top'/'gun' never verified present -> must not flag on 'maverick' alone"),
+    ("Top Gun: Maverick", "Top Gun Maverick", "Which movie features Tom Cruise reprising his role as Maverick?",
+     True, "regression: when 'top' and 'gun' really are present too (in the category here), still flags"),
+    ("Djibouti", "The World", "Which country has the capital city of Djibouti?",
+     True, "single-word answer literally repeated in the question"),
+    ("Martin Bormann", "Martins", "A skeleton found in 1972 was declared to be this Nazi, rumored alive in South America",
+     False, "'Bormann' never appears anywhere -> must not flag on 'Martin' (via plural 'Martins') alone"),
+    ("Martin Bormann", "Martin Bormann", "This infamous Nazi war criminal was rumored to be alive in South America after 1972.",
+     True, "both words present (category names the subject outright) -> flags"),
+    ("your bottom dollar", "Bottom", "A song from Annie tells us the sun will come out tomorrow bet your this that tomorrow there will be sun",
+     False, "'dollar' never appears anywhere -> must not flag even though 'your'/'bottom' both do"),
+    # --- the motivating example: generic category-type word inside a live guess ---
+    ("river", "Rivers", "Name this famous South American river that carries more water than any other in the world",
+     True, "a wrong, generic guess ('river') that's still fully present in the category/question must flag"),
+    ("amazon river", "Rivers", "Name this famous South American river that carries more water than any other in the world",
+     False, "'amazon' is never in the prompt -> the correct answer itself must not flag"),
+]
+
+
+def run_given_away_cases():
+    failures = []
+    for text, category, question_text, expected, note in GIVEN_AWAY_CASES:
+        giveaway_words = _giveaway_words(category, question_text)
+        actual = is_fully_given_away(text, giveaway_words)
+        ok = actual == expected
+        if not ok:
+            failures.append((text, expected, actual, note))
+        status = "PASS" if ok else "FAIL"
+        print(f"[{status}] is_fully_given_away({text!r}) = {actual} (expected {expected})  -- {note}")
+    if failures:
+        print("\nGIVEN-AWAY FAILURES:")
+        for text, expected, actual, note in failures:
+            print(f"  is_fully_given_away({text!r}) -> {actual}, expected {expected}  ({note})")
+    return len(failures)
+
+
 if __name__ == "__main__":
-    sys.exit(1 if (run() + run_word_limits()) else 0)
+    sys.exit(1 if (run() + run_word_limits() + run_question_text_cases() + run_giveaway_toggle_cases()
+                    + run_given_away_cases()) else 0)
