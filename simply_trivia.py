@@ -647,7 +647,8 @@ def _record_guess(user, text, fuzzy_match_func, message=None):
             correct_answer,
             active_question.get("category", ""),
             active_question.get("url", ""),
-            ignore_exact_mode=True
+            ignore_exact_mode=True,
+            question_text=active_question.get("question", "")
         ):
             matched = True
             current_time = asyncio.get_event_loop().time()
