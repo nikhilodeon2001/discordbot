@@ -17,20 +17,22 @@ segmentation this codebase has no precedent or dependency for. See the plan's "D
 choice, not an oversight" note if you're revisiting this later at real scale.
 
 Style consistency across a batch comes from using images.edit with the mascot
-(okra_chef.png) as a STYLE reference (not an identity/character reference) -- "draw this
-subject in the same illustration style as the reference image" -- so decoys visually
-belong next to the mascot they need to blend among.
+(okra_pod.png -- a PLAIN okra pod, not the anthropomorphised okra_chef.png character used
+by the legacy AI pipeline) as a STYLE reference -- "draw this subject in the same
+illustration style as the reference image" -- so decoys visually belong next to the
+mascot they need to blend among. The mascot itself has no character traits (no face, no
+gloves), so the prompt says explicitly that decoys shouldn't either -- matching a
+reference's rendering style doesn't automatically avoid or add personification either
+way; both need to be said out loud (see build_sprite_prompt's docstring).
 
 Sprites are described via a JSON spec file, one entry per sprite:
     [
-      {"subject": "a red and white striped beach ball, slightly deflated",
-       "tags": ["red", "white", "round"], "scale_class": "small_prop"},
-      {"subject": "a tall wooden lifeguard chair", "tags": ["tan", "tall"],
-       "scale_class": "large_object"}
+      {"subject": "a whole cucumber", "tags": ["green", "tall"], "scale_class": "small_prop"},
+      {"subject": "a head of broccoli", "tags": ["green", "round"], "scale_class": "small_prop"}
     ]
 `tags` drive the compositor's camouflage bias (see MASCOT_CAMOUFLAGE_TAGS in
-wheres_okra.py -- "green", "white", "tall" are the mascot's own, so decoys sharing those
-make harder difficulties genuinely harder to spot, not just busier). `scale_class` is one
+wheres_okra.py -- "green", "tall" are the mascot's own, so decoys sharing those make
+harder difficulties genuinely harder to spot, not just busier). `scale_class` is one
 of "small_prop" | "person_sized" | "large_object" (wheres_okra.SCALE_CLASS_HEIGHT_FRACTION)
 -- gives sprites bootstrapped in separate sessions a shared, principled size convention
 instead of each being scaled arbitrarily.
@@ -78,7 +80,7 @@ S3_REGION = "us-east-2"
 MONGO_COLLECTION = "hidden_okra_sprites"
 VALID_SCALE_CLASSES = set(wo.SCALE_CLASS_HEIGHT_FRACTION)
 
-MASCOT_FILENAME = "okra_chef.png"
+MASCOT_FILENAME = "okra_pod.png"
 SPRITE_IMAGE_MODEL = "gpt-image-1"
 SPRITE_IMAGE_QUALITY = "high"
 
@@ -89,18 +91,25 @@ def mascot_path():
 
 
 def build_sprite_prompt(subject):
-    """The one prompt this script sends per sprite. Style consistency comes from calling
-    images.edit with the mascot as a reference (see run()), not from prompt text alone --
-    this text only has to describe the subject and reiterate the isolation/transparency
-    requirement in case the edit call's own background="transparent" gets overridden by
-    something in the reference-matching pass."""
+    """The one prompt this script sends per sprite. The mascot (okra_pod.png) is a plain
+    vegetable, not a character -- no face, no gloves, no personality -- so decoys need to
+    match it as plain rendered objects too, explicitly, not just in rendering style. An
+    earlier direction for this game DID personify the mascot (see MASCOT_FILENAME's
+    history / wheres_okra.py's legacy AI pipeline, which still uses okra_chef.png); this
+    prompt is deliberately the opposite of that -- say "no character traits" out loud
+    rather than assume matching the reference's style alone will avoid them, the same way
+    the personified version needed to say "give it a face" out loud rather than assume
+    style-matching alone would add one."""
     return (
         f"A single isolated illustration of {subject}, drawn in the exact same "
         f"illustration style as the reference image -- matching its line quality, line "
         f"weight, outline treatment, shading, texture, and colour saturation exactly, as "
-        f"if the same illustrator drew both. The subject fills most of the frame, centred, "
-        f"fully visible, with nothing cropped off. Background is fully transparent -- no "
-        f"scene, no shadow, no ground plane, no other objects, no text."
+        f"if the same illustrator drew both. A plain vegetable/plant, not a character: no "
+        f"face, no eyes, no gloves, no limbs, no personality -- just the plant itself, the "
+        f"same way the reference image is just a plain vegetable with no character traits. "
+        f"The subject fills most of the frame, centred, fully visible, with nothing "
+        f"cropped off. Background is fully transparent -- no scene, no shadow, no ground "
+        f"plane, no other objects, no text."
     )
 
 
@@ -185,7 +194,11 @@ async def run(args):
                 size="1024x1024",
                 quality=SPRITE_IMAGE_QUALITY,
                 background="transparent",
-                output_format="png",
+                # NOTE: images.edit has no output_format parameter (unlike
+                # images.generate, which does) -- confirmed against the installed SDK's
+                # AsyncImages.edit signature. gpt-image-1's edit endpoint returns PNG by
+                # default when background="transparent" is set, which is what alpha
+                # transparency requires anyway.
             )
             image_bytes = base64.b64decode(response.data[0].b64_json)
         except Exception as exc:  # noqa: BLE001 -- one bad sprite shouldn't end the run

@@ -1443,7 +1443,11 @@ _MASCOT_ROTATION_RANGE = (-3.0, 3.0)    # kept small so it stays recognisable
 # The mascot's own rough palette/shape, for camouflage decoy selection (see
 # _choose_decoys). Sprites should be tagged with these same vocabulary words at
 # bootstrap/review time for the bias to have anything to match against.
-MASCOT_CAMOUFLAGE_TAGS = {"green", "white", "tall"}
+#
+# okra_pod.png -- a plain green okra pod, no chef hat/gloves -- so "white" is dropped;
+# an earlier version of this constant (from when the mascot was okra_chef.png, the
+# anthropomorphised chef character) included it for the hat/gloves, which no longer exist.
+MASCOT_CAMOUFLAGE_TAGS = {"green", "tall"}
 
 # Camouflage bias only kicks in here -- easy/medium stay a neutral, unbiased mix,
 # matching their "low"/"moderate" camouflage wording in DIFFICULTIES.
@@ -1598,8 +1602,8 @@ def _choose_decoys(sprites, count, rng, prefer_tags=None, prefer_weight=3.0):
 
     `prefer_tags`, if given, upweights sprites sharing at least one tag with it (the
     camouflage difficulty axis) by `prefer_weight` -- e.g. at hard/brutal this is
-    MASCOT_CAMOUFLAGE_TAGS, biasing toward green/tall/white decoys so the mascot competes
-    with colour- and shape-similar clutter, not just a wall of visually distinct objects.
+    MASCOT_CAMOUFLAGE_TAGS, biasing toward green/tall decoys so the mascot competes with
+    colour- and shape-similar clutter, not just a wall of visually distinct objects.
     """
     if not sprites:
         return []
