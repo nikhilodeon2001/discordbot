@@ -157,7 +157,7 @@ s3_client = boto3.client(
 )
 
 # Static game asset files - no longer tracked in git, fetched from S3 on demand
-GAME_ASSET_FILES = ["okra.png", "okra_chef.png", "periodic_table.svg", "wordlist.txt", "4letterwords.csv", "5letterwords.csv"]
+GAME_ASSET_FILES = ["okra.png", "okra_chef.png", "okra_pod.png", "periodic_table.svg", "wordlist.txt", "4letterwords.csv", "5letterwords.csv"]
 GAME_ASSETS_S3_PREFIX = "private_assets/"
 PRIVATE_ASSETS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "private-assets")
 
@@ -10219,11 +10219,17 @@ def _read_file_bytes(path):
 async def _wheres_okra_mascot_bytes():
     """The mascot sprite's bytes, read from the local disk copy GAME_ASSET_FILES already
     hydrates at startup, cached in memory after the first read -- it never changes at
-    runtime, unlike the sprite/background library."""
+    runtime, unlike the sprite/background library.
+
+    okra_pod.png (a plain, non-anthropomorphised okra pod), NOT okra_chef.png (the chef
+    character) -- the sprite-compositing game hides a plain vegetable among other plain
+    vegetables of similar colouring, not a character among characters. okra_chef.png is
+    still used by the legacy AI-generation pipeline (build_validated_puzzle and friends,
+    kept in wheres_okra.py unused) and elsewhere in the bot -- deliberately untouched."""
     global _wheres_okra_mascot_bytes_cache
     if _wheres_okra_mascot_bytes_cache is None:
         loop = asyncio.get_running_loop()
-        path = private_asset_path("okra_chef.png")
+        path = private_asset_path("okra_pod.png")
         _wheres_okra_mascot_bytes_cache = await loop.run_in_executor(
             None, _read_file_bytes, path)
     return _wheres_okra_mascot_bytes_cache
