@@ -1428,6 +1428,17 @@ SCALE_CLASS_HEIGHT_FRACTION = {
 }
 DEFAULT_SCALE_CLASS = "person_sized"
 
+# Every decoy is pasted at this same height fraction -- see _decoy_target_height. Sits
+# between the old small_prop/person_sized fractions above so a scene composited entirely
+# at one size still reads as reasonably dense at every difficulty.
+DECOY_TARGET_HEIGHT_FRACTION = 0.06
+
+# How many times a placement helper retries before accepting an overlapping position
+# rather than dropping the decoy outright. Bounded so a crowded canvas (many decoys, a
+# hard/brutal puzzle) degrades to "one decoy slightly overlaps another" instead of hanging
+# or silently under-filling the puzzle below its difficulty's sprite_count.
+_PLACEMENT_MAX_ATTEMPTS = 12
+
 # Alpha threshold (0-255) above which a pixel counts as "opaque" for silhouette/visibility
 # purposes -- low enough to include real content, high enough to ignore anti-aliasing fuzz
 # at a sprite's edge.
@@ -1617,35 +1628,68 @@ def _choose_decoys(sprites, count, rng, prefer_tags=None, prefer_weight=3.0):
 
 
 def _decoy_target_height(sprite, canvas_height):
-    fraction = SCALE_CLASS_HEIGHT_FRACTION.get(
-        sprite.get("scale_class"), SCALE_CLASS_HEIGHT_FRACTION[DEFAULT_SCALE_CLASS])
-    return canvas_height * fraction
+    """Every decoy is pasted at the SAME size, ignoring scale_class. A real generated
+    puzzle showed size variance (a "small_prop" bell pepper next to a "person_sized"
+    zucchini) reading as inconsistent clutter, not deliberate variety -- a tiny asparagus
+    bundle floating at the same apparent size as a fence picket looks like a mistake, not
+    a design choice. scale_class stays on each sprite document (harmless, possibly useful
+    for a more deliberate per-theme sizing scheme later), but the compositor itself no
+    longer reads it for pixel sizing."""
+    return canvas_height * DECOY_TARGET_HEIGHT_FRACTION
 
 
-def _random_canvas_position(sprite_img, canvas_size, rng):
-    """A random top-left corner for `sprite_img` such that it stays fully within
-    `canvas_size` when possible; for a sprite larger than the canvas (shouldn't happen
-    given SCALE_CLASS_HEIGHT_FRACTION's ranges, but not assumed), clamps to (0, 0) rather
-    than producing a negative-range rng.randint call."""
+def _rects_overlap(a, b):
+    ax0, ay0, ax1, ay1 = a
+    bx0, by0, bx1, by1 = b
+    return not (ax1 <= bx0 or bx1 <= ax0 or ay1 <= by0 or by1 <= ay0)
+
+
+def _random_canvas_position(sprite_img, canvas_size, rng, placed_rects=None):
+    """A random top-left corner for `sprite_img` within `canvas_size`. If `placed_rects` is
+    given, retries up to _PLACEMENT_MAX_ATTEMPTS times to avoid overlapping any rectangle
+    already in it -- decoys should never overlap EACH OTHER (a real generated puzzle showed
+    clustered/overlapping decoys reading as visual clutter, not intentional density).
+    Overlapping the MASCOT is a separate, deliberate difficulty mechanic and is unaffected
+    by this -- see _position_near_box. Falls back to the last-tried (possibly overlapping)
+    position if none is found, rather than silently dropping the decoy and under-filling
+    the puzzle below what the difficulty's sprite_count asked for."""
     width, height = canvas_size
     max_x = max(0, width - sprite_img.width)
     max_y = max(0, height - sprite_img.height)
-    return (rng.randint(0, max_x), rng.randint(0, max_y))
+    attempts = _PLACEMENT_MAX_ATTEMPTS if placed_rects is not None else 1
+    x = y = 0
+    for _ in range(attempts):
+        x, y = rng.randint(0, max_x), rng.randint(0, max_y)
+        rect = (x, y, x + sprite_img.width, y + sprite_img.height)
+        if not placed_rects or not any(_rects_overlap(rect, r) for r in placed_rects):
+            break
+    return (x, y)
 
 
-def _position_near_box(sprite_img, target_box_px, canvas_size, rng, jitter=0.5):
+def _position_near_box(sprite_img, target_box_px, canvas_size, rng, jitter=0.5,
+                       placed_rects=None):
     """A random top-left corner for `sprite_img` such that its centre lands within (or
     just outside, per `jitter`) `target_box_px` -- used for occlusion-layer decoys, which
-    need to actually reach the mascot's box, not land anywhere on the canvas by chance."""
+    need to actually reach the mascot's box, not land anywhere on the canvas by chance.
+    Overlapping the mascot is the entire point here and is never avoided. `placed_rects`,
+    if given, still keeps this decoy from overlapping OTHER decoys (the same non-overlap
+    rule _random_canvas_position enforces), retried the same way."""
     tb_left, tb_top, tb_right, tb_bottom = target_box_px
     tb_w, tb_h = tb_right - tb_left, tb_bottom - tb_top
     pad_x, pad_y = tb_w * jitter, tb_h * jitter
-    cx = rng.uniform(tb_left - pad_x, tb_right + pad_x)
-    cy = rng.uniform(tb_top - pad_y, tb_bottom + pad_y)
     width, height = canvas_size
-    x = int(min(max(0, cx - sprite_img.width / 2), width - sprite_img.width))
-    y = int(min(max(0, cy - sprite_img.height / 2), height - sprite_img.height))
-    return (max(0, x), max(0, y))
+    attempts = _PLACEMENT_MAX_ATTEMPTS if placed_rects is not None else 1
+    x = y = 0
+    for _ in range(attempts):
+        cx = rng.uniform(tb_left - pad_x, tb_right + pad_x)
+        cy = rng.uniform(tb_top - pad_y, tb_bottom + pad_y)
+        x = int(min(max(0, cx - sprite_img.width / 2), width - sprite_img.width))
+        y = int(min(max(0, cy - sprite_img.height / 2), height - sprite_img.height))
+        x, y = max(0, x), max(0, y)
+        rect = (x, y, x + sprite_img.width, y + sprite_img.height)
+        if not placed_rects or not any(_rects_overlap(rect, r) for r in placed_rects):
+            break
+    return (x, y)
 
 
 def compose_sprite_puzzle(background_bytes, decoy_sprites, mascot_bytes, difficulty,
@@ -1720,23 +1764,31 @@ def compose_sprite_puzzle(background_bytes, decoy_sprites, mascot_bytes, difficu
     # regardless of position) are also fixed once -- only the occlusion layer is rerolled.
     background_decoys = _choose_decoys(decoy_sprites, background_count, rng, prefer_tags)
     background_placements = []
+    background_rects = []
     for sprite in background_decoys:
         target_h = _decoy_target_height(sprite, height)
         rotation = rng.uniform(*_DECOY_ROTATION_RANGE)
         img = prep_sprite(sprite["bytes"], target_h, rotation)
-        pos = _random_canvas_position(img, CANVAS_SIZE, rng)
+        pos = _random_canvas_position(img, CANVAS_SIZE, rng, placed_rects=background_rects)
         background_placements.append((img, pos))
+        background_rects.append((pos[0], pos[1], pos[0] + img.width, pos[1] + img.height))
 
     best = None  # (visibility, occlusion_placements) -- closest to in-band, across attempts
     for attempt in range(1, max_local_attempts + 1):
+        # placed_rects starts fresh from the (fixed) background layer each attempt -- a
+        # rejected occlusion-layer attempt must not permanently block positions for the
+        # next reroll, only avoid overlapping decoys actually placed on THIS attempt.
+        placed_rects = list(background_rects)
         occlusion_decoys = _choose_decoys(decoy_sprites, occlusion_count, rng, prefer_tags)
         occlusion_placements = []
         for sprite in occlusion_decoys:
             target_h = _decoy_target_height(sprite, height)
             rotation = rng.uniform(*_DECOY_ROTATION_RANGE)
             img = prep_sprite(sprite["bytes"], target_h, rotation)
-            pos = _position_near_box(img, final_target_box_px, CANVAS_SIZE, rng)
+            pos = _position_near_box(img, final_target_box_px, CANVAS_SIZE, rng,
+                                     placed_rects=placed_rects)
             occlusion_placements.append((img, pos))
+            placed_rects.append((pos[0], pos[1], pos[0] + img.width, pos[1] + img.height))
 
         visibility = compute_visibility(mascot_img, mascot_pos, occlusion_placements)
         in_band = spec["min_visibility"] <= visibility <= 1.0

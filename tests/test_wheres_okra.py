@@ -1103,6 +1103,66 @@ def run_choose_decoys():
           f"(unbiased={unbiased_green_rate:.3f}, biased={biased_green_rate:.3f})")
 
 
+def run_decoy_sizing_and_overlap():
+    section("_decoy_target_height / placement overlap-avoidance")
+    # Uniform sizing: a real generated puzzle showed inconsistent decoy sizes because
+    # sizing used to be driven by each sprite's scale_class -- confirm that's gone and
+    # every decoy resolves to the SAME height fraction regardless of scale_class.
+    small = {"tags": [], "scale_class": "small_prop"}
+    medium = {"tags": [], "scale_class": "person_sized"}
+    large = {"tags": [], "scale_class": "large_object"}
+    none_ = {"tags": []}
+    heights = {wo._decoy_target_height(s, 1000) for s in (small, medium, large, none_)}
+    check(len(heights) == 1, f"every decoy resolves to one uniform height regardless of scale_class (got {heights})")
+    check(next(iter(heights)) == 1000 * wo.DECOY_TARGET_HEIGHT_FRACTION,
+          "the uniform height matches DECOY_TARGET_HEIGHT_FRACTION")
+
+    from PIL import Image
+    rng = random.Random(7)
+    # Mirrors real-game density: CANVAS_SIZE at the actual decoy size (~6% of canvas
+    # height), with a sprite count near "brutal"'s high end. At this density there's
+    # plenty of room for the bounded retry in _random_canvas_position/_position_near_box
+    # to actually find a non-overlapping spot -- a tighter canvas would make the fallback
+    # (accept an overlap rather than hang or drop the decoy) legitimately kick in, which
+    # is a real, documented, and separately-acceptable behavior, not what this test is
+    # checking for.
+    canvas_size = wo.CANVAS_SIZE
+    sprite_dim = round(wo.CANVAS_SIZE[1] * wo.DECOY_TARGET_HEIGHT_FRACTION)
+    sprite = Image.new("RGBA", (sprite_dim, sprite_dim), (255, 0, 0, 255))
+
+    # _random_canvas_position: many sprites placed one after another, each checking
+    # against everything placed before it, must never overlap.
+    placed_rects = []
+    for _ in range(24):
+        pos = wo._random_canvas_position(sprite, canvas_size, rng, placed_rects=placed_rects)
+        rect = (pos[0], pos[1], pos[0] + sprite.width, pos[1] + sprite.height)
+        check(not any(wo._rects_overlap(rect, r) for r in placed_rects),
+              f"decoy at {pos} does not overlap any previously-placed decoy")
+        placed_rects.append(rect)
+
+    # _position_near_box: same non-overlap guarantee against other decoys, while still
+    # being free to land on top of the mascot's own box (that's the whole point of this
+    # helper -- occlusion-layer decoys must be able to reach the mascot). Count matches
+    # the real occlusion_sprites band's high end (DIFFICULTIES["brutal"]["occlusion_sprites"]),
+    # not an arbitrary number -- the jittered target region is necessarily small (anchored
+    # to one mascot box), so a much larger count would make the documented occasional-
+    # overlap fallback kick in legitimately, which isn't what this test is checking for.
+    mascot_box = (450, 450, 574, 574)
+    placed_rects = []
+    for _ in range(wo.DIFFICULTIES["brutal"]["occlusion_sprites"][1]):
+        pos = wo._position_near_box(sprite, mascot_box, canvas_size, rng, placed_rects=placed_rects)
+        rect = (pos[0], pos[1], pos[0] + sprite.width, pos[1] + sprite.height)
+        check(not any(wo._rects_overlap(rect, r) for r in placed_rects),
+              f"occlusion decoy at {pos} does not overlap any previously-placed decoy")
+        placed_rects.append(rect)
+
+    # Sanity check on _rects_overlap itself, since everything above leans on it.
+    check(wo._rects_overlap((0, 0, 10, 10), (5, 5, 15, 15)), "overlapping rects detected")
+    check(not wo._rects_overlap((0, 0, 10, 10), (10, 10, 20, 20)),
+          "rects that only touch at an edge/corner do not count as overlapping")
+    check(not wo._rects_overlap((0, 0, 10, 10), (20, 20, 30, 30)), "disjoint rects do not overlap")
+
+
 def run_available_themes():
     section("available_themes")
     check(wo.available_themes(["beach", "market"], ["beach", "forest"]) == ["beach"],
@@ -1354,6 +1414,7 @@ def run_offline():
     run_sprite_prep()
     run_visibility_computation()
     run_choose_decoys()
+    run_decoy_sizing_and_overlap()
     run_available_themes()
     run_sprite_compositor()
     run_sprite_compositor_reroll()
