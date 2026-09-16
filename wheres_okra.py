@@ -548,7 +548,9 @@ Answer only with a single JSON object, no prose and no code fence:
 HIT_TOLERANCE = 0.015
 TAP_TOLERANCE = 0.035
 
-_GRID_RE = re.compile(r"^\s*([A-Za-z]{1,2})\s*[-_, ]?\s*(\d{1,2})\s*$")
+_GRID_RE = re.compile(
+    r"^\s*(?:(?P<col1>[A-Za-z]{1,2})\s*[-_, ]?\s*(?P<row1>\d{1,2})"
+    r"|(?P<row2>\d{1,2})\s*[-_, ]?\s*(?P<col2>[A-Za-z]{1,2}))\s*$")
 _CLICK_RE = re.compile(r"^\s*click\s*:\s*(-?\d*\.?\d+)\s*,\s*(-?\d*\.?\d+)\s*$", re.IGNORECASE)
 
 
@@ -575,7 +577,10 @@ def column_index(label):
 
 
 def parse_grid_guess(text, cols, rows):
-    """Parse a player's grid guess ("F7", "f-7", "f 7") into a 0-based (col, row).
+    """Parse a player's grid guess into a 0-based (col, row). Accepts either token order --
+    "F7"/"f-7"/"f 7" (the format the round prompt itself shows) as well as the reversed
+    "7F" -- since players type whichever order reads naturally to them and rejecting one
+    silently just looks like the bot ignored a real guess.
 
     Returns None if it does not look like a grid reference at all, or if it names a cell
     outside the grid. Both cases are treated the same by the caller: not a guess, ignore it
@@ -587,10 +592,12 @@ def parse_grid_guess(text, cols, rows):
     match = _GRID_RE.match(text)
     if not match:
         return None
-    col = column_index(match.group(1))
+    col_label = match.group("col1") or match.group("col2")
+    row_str = match.group("row1") or match.group("row2")
+    col = column_index(col_label)
     if col is None or not 0 <= col < cols:
         return None
-    row = int(match.group(2)) - 1
+    row = int(row_str) - 1
     if not 0 <= row < rows:
         return None
     return col, row
