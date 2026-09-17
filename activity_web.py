@@ -822,7 +822,7 @@ function render(state) {
     // player taps the mascot directly and the tap's normalised coordinates are graded
     // server-side. The target box is never sent to this page.
     if (state.image_url !== spotterKey) { spotterKey = state.image_url; spotterMark = null; }
-    app.innerHTML = '<div class="qhead"><span class="cat">Where\'s Okra</span></div>' +
+    app.innerHTML = '<div class="qhead"><span class="cat">Where\\'s Okra</span></div>' +
       '<div class="spothint">Tap the okra chef. Wrong taps cost you nothing.</div>' +
       '<div class="spotwrap"><img class="spotimg" src="' + esc(P + state.image_url) +
       '" alt="Hidden object puzzle"></div>' +
