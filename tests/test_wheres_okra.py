@@ -1435,29 +1435,40 @@ def run_lookalike_difficulties():
     check(set(wo.LOOKALIKE_DIFFICULTIES) == set(wo.LOOKALIKE_DIFFICULTY_ORDER),
           "every ordered difficulty has a matching spec entry, and no extras")
 
-    prev_count = prev_canvas_area = prev_cap = -1
+    prev_count = prev_canvas_area = prev_cap = prev_density = -1
     for key in wo.LOOKALIKE_DIFFICULTY_ORDER:
         spec = wo.LOOKALIKE_DIFFICULTIES[key]
         canvas_area = spec["canvas_size"][0] * spec["canvas_size"][1]
+        density = spec["sprite_count"] / canvas_area
         check(isinstance(spec["label"], str) and spec["label"],
               f"{key}: has a non-empty display label ({spec['label']!r})")
         check("okra" in spec["label"].lower(),
               f"{key}: label contains 'Okra' ({spec['label']!r})")
         check(spec["sprite_count"] > prev_count,
               f"{key}: strictly denser than the previous tier ({spec['sprite_count']} sprites)")
-        check(canvas_area > prev_canvas_area,
-              f"{key}: strictly larger canvas than the previous tier ({spec['canvas_size']})")
+        check(canvas_area >= prev_canvas_area,
+              f"{key}: canvas never shrinks tier-over-tier ({spec['canvas_size']})")
+        # The real "is this tier actually harder" invariant -- canvas area alone can be
+        # held flat between two tiers (impossible deliberately reuses brutal's canvas at
+        # 2x the sprite_count, which IS "twice as dense" by definition), but density itself
+        # must always increase.
+        check(density > prev_density,
+              f"{key}: strictly denser (sprites per unit area) than the previous tier ({density:.6f})")
         check(spec["max_covered_fraction"] >= prev_cap,
               f"{key}: overlap cap never decreases tier-over-tier ({spec['max_covered_fraction']})")
         check(spec["guess_time"] > 0, f"{key}: has a positive guess_time")
         check(spec["sprite_height"] > 0, f"{key}: has a positive sprite_height")
-        prev_count, prev_canvas_area, prev_cap = spec["sprite_count"], canvas_area, spec["max_covered_fraction"]
+        prev_count, prev_canvas_area, prev_cap, prev_density = (
+            spec["sprite_count"], canvas_area, spec["max_covered_fraction"], density)
 
     check(wo.LOOKALIKE_DIFFICULTIES["impossible"]["max_covered_fraction"] > 0.0,
-          "only the hardest tier allows real overlap")
-    for key in ["easy", "medium", "hard", "brutal"]:
+          "the hardest tier allows real overlap")
+    for key in ["easy", "medium", "hard"]:
         check(wo.LOOKALIKE_DIFFICULTIES[key]["max_covered_fraction"] == 0.0,
-              f"{key}: strict non-overlap, same guarantee as before")
+              f"{key}: strict non-overlap")
+    for key in ["brutal", "impossible"]:
+        check(wo.LOOKALIKE_DIFFICULTIES[key]["max_covered_fraction"] > 0.0,
+              f"{key}: allows real overlap")
 
 
 def run_text_extraction():

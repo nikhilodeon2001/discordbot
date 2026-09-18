@@ -1877,17 +1877,32 @@ def available_themes(sprite_themes, background_themes):
 # between its grid overlay and its continuous scatter. Witty labels per the user's request
 # (every one contains "Okra," per their explicit correction); `key` is the stable internal
 # identifier (button values / stored state), `label` is display-only.
+# Shifted one tier harder per direct feedback ("easy is too easy") -- every tier's spec is
+# what the tier below it used to be, and a brand new hardest spec was added for "impossible"
+# at literally 2x the density of the old hardest tier (same canvas as the old impossible
+# tier, double the sprite_count -- density = count/area, so doubling count on an unchanged
+# area is exactly 2x density by definition).
 LOOKALIKE_DIFFICULTIES = {
-    "easy":       {"label": "Okra-dinary",   "sprite_count": 16,  "canvas_size": (800, 800),   "grid": (4, 4),   "sprite_height": 176, "max_covered_fraction": 0.0,  "guess_time": 30},
-    "medium":     {"label": "Okra Squad",    "sprite_count": 36,  "canvas_size": (1080, 1080), "grid": (6, 6),   "sprite_height": 158, "max_covered_fraction": 0.0,  "guess_time": 45},
-    "hard":       {"label": "Okra-geddon",   "sprite_count": 64,  "canvas_size": (1320, 1320), "grid": (8, 8),   "sprite_height": 145, "max_covered_fraction": 0.0,  "guess_time": 60},
-    "brutal":     {"label": "Okra Overload", "sprite_count": 100, "canvas_size": (1500, 1500), "grid": (10, 10), "sprite_height": 132, "max_covered_fraction": 0.0,  "guess_time": 90},
-    "impossible": {"label": "Okrap",         "sprite_count": 180, "canvas_size": (1700, 1700), "grid": (12, 12), "sprite_height": 125, "max_covered_fraction": 0.30, "guess_time": 120},
+    "easy":       {"label": "Okra-dinary",   "sprite_count": 36,  "canvas_size": (1080, 1080), "grid": (6, 6),   "sprite_height": 158, "max_covered_fraction": 0.0,  "guess_time": 45},
+    "medium":     {"label": "Okra Squad",    "sprite_count": 64,  "canvas_size": (1320, 1320), "grid": (8, 8),   "sprite_height": 145, "max_covered_fraction": 0.0,  "guess_time": 60},
+    "hard":       {"label": "Okra-geddon",   "sprite_count": 100, "canvas_size": (1500, 1500), "grid": (10, 10), "sprite_height": 132, "max_covered_fraction": 0.0,  "guess_time": 90},
+    "brutal":     {"label": "Okra Overload", "sprite_count": 180, "canvas_size": (1700, 1700), "grid": (12, 12), "sprite_height": 125, "max_covered_fraction": 0.30, "guess_time": 120},
+    "impossible": {"label": "Okrap",         "sprite_count": 360, "canvas_size": (1700, 1700), "grid": (16, 16), "sprite_height": 100, "max_covered_fraction": 0.40, "guess_time": 150},
 }
 LOOKALIKE_DIFFICULTY_ORDER = ["easy", "medium", "hard", "brutal", "impossible"]
 
 LOOKALIKE_REFERENCE_SIZE = (360, 360)
 LOOKALIKE_REFERENCE_BG = (250, 248, 240, 255)  # a plain warm off-white, not the busy board
+
+# Every one of the 30 profession sprites was generated with the character filling the full
+# height of its own 1024x1024 frame edge-to-edge (confirmed: all 30 have opaque pixels
+# touching row 0 and the last row) -- there is no baked-in breathing room. Scattered
+# placement can legitimately put a sprite's top-left corner at (0, 0) or hard against the
+# canvas's far edge, which then reads as the character's hat/feet being "cut off" even
+# though every pixel is genuinely on-canvas -- there's just zero visual gap at that
+# position. Reserving this margin (a fraction of the sprite's OWN height, not the canvas's,
+# so it scales sensibly across tiers) keeps every sprite visibly clear of the board edge.
+LOOKALIKE_EDGE_MARGIN_FRACTION = 0.15
 
 
 def _sprite_coverage_check(candidate_alpha, candidate_pos, placed, max_covered_fraction):
@@ -1907,9 +1922,16 @@ def _sprite_coverage_check(candidate_alpha, candidate_pos, placed, max_covered_f
     updates = []
     ch, cw = candidate_alpha.shape
     cx, cy = candidate_pos
+    candidate_box = (cx, cy, cx + cw, cy + ch)
     for i, p in enumerate(placed):
         ph, pw = p["alpha"].shape
         box = (p["pos"][0], p["pos"][1], p["pos"][0] + pw, p["pos"][1] + ph)
+        # Cheap bounding-box pre-filter before the numpy alpha-mask work below -- at high
+        # sprite counts (the "Okrap" tier scatters 360) most candidates don't come anywhere
+        # near most already-placed sprites, so skipping those pairs outright matters for
+        # real wall-clock time, not just style.
+        if not _rects_overlap(candidate_box, box):
+            continue
         # _region_overlap_mask only reports where the CANDIDATE has opaque pixels within
         # p's box -- it knows nothing about p's own alpha (see compute_visibility, which
         # masks by the mascot's own alpha in the caller for the same reason). Without the
@@ -1980,6 +2002,17 @@ def compose_lookalike_puzzle(background_bytes, pool, rng, sprite_count, canvas_s
     remaining = [s for s in pool if s["id"] != target["id"]]
     target_index = rng.randrange(sprite_count)
 
+    # Reserve a margin around the whole canvas so no sprite can land flush against the
+    # board edge -- see LOOKALIKE_EDGE_MARGIN_FRACTION's docstring above for why that
+    # matters even though _random_canvas_position already guarantees full containment
+    # (every sprite fills its own source frame edge-to-edge with zero built-in padding, so
+    # "fully contained" alone still allowed a hat or feet to sit exactly on row 0). Sampling
+    # against a shrunk "effective canvas" and offsetting by the margin reuses
+    # _random_canvas_position unchanged rather than needing a variant of it.
+    margin = round(sprite_height * LOOKALIKE_EDGE_MARGIN_FRACTION)
+    width, height = canvas_size
+    effective_canvas_size = (max(1, width - 2 * margin), max(1, height - 2 * margin))
+
     placed = []
     target_pos = target_img = None
 
@@ -1993,7 +2026,8 @@ def compose_lookalike_puzzle(background_bytes, pool, rng, sprite_count, canvas_s
 
         accepted_pos, accepted_updates = None, []
         for _attempt in range(_PLACEMENT_MAX_ATTEMPTS):
-            pos = _random_canvas_position(img, canvas_size, rng)
+            raw_x, raw_y = _random_canvas_position(img, effective_canvas_size, rng)
+            pos = (raw_x + margin, raw_y + margin)
             ok, updates = _sprite_coverage_check(alpha, pos, placed, max_covered_fraction)
             accepted_pos, accepted_updates = pos, updates
             if ok:
