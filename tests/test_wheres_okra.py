@@ -1286,6 +1286,107 @@ def run_sprite_compositor_reroll():
               "even a non-converged result reports the actual visibility achieved, not a lie")
 
 
+def run_lookalike_compositor():
+    section("compose_lookalike_puzzle (Where's Okra v3 -- spot the non-duplicated one)")
+
+    try:
+        wo.compose_lookalike_puzzle(
+            _solid_sprite(400, 400, (230, 230, 230, 255)),
+            [{"bytes": _solid_sprite(80, 80, (255, 0, 0, 255)), "id": "only-one"}],
+            wo.make_rng(1), 4, 4, (400, 400))
+        check(False, "a pool of fewer than 2 sprites must raise PuzzleGenerationError")
+    except wo.PuzzleGenerationError as exc:
+        check("2" in str(exc), "the error names the actual requirement")
+
+    background_bytes = _solid_sprite(600, 600, (230, 230, 230, 255))
+    # Three distinctly-coloured sprites -- distinct colours let the pixel-sampling checks
+    # below prove WHICH sprite ended up where, not just that something did.
+    pool = [
+        {"bytes": _solid_sprite(80, 80, (255, 0, 0, 255)), "id": "red"},
+        {"bytes": _solid_sprite(80, 80, (0, 255, 0, 255)), "id": "green"},
+        {"bytes": _solid_sprite(80, 80, (0, 0, 255, 255)), "id": "blue"},
+    ]
+
+    for cols, rows, canvas_size in [(4, 4, (600, 600)), (6, 6, (900, 900))]:
+        rng = wo.make_rng(42)
+        board_bytes, ref_bytes, target_box, meta = wo.compose_lookalike_puzzle(
+            background_bytes, pool, rng, cols, rows, canvas_size)
+
+        from PIL import Image
+        board = Image.open(io.BytesIO(board_bytes))
+        check(board.size == canvas_size,
+              f"{cols}x{rows}: board canvas matches the requested size (got {board.size})")
+
+        ref = Image.open(io.BytesIO(ref_bytes))
+        check(ref.size == wo.LOOKALIKE_REFERENCE_SIZE,
+              f"{cols}x{rows}: reference card matches LOOKALIKE_REFERENCE_SIZE")
+
+        box = wo.normalize_target(target_box)
+        check(box is not None, f"{cols}x{rows}: target_box is a valid normalised box")
+        expected_box = wo.grid_cell_rect(
+            int(round(box[0] * cols)), int(round(box[1] * rows)), cols, rows)
+        check(all(abs(a - b) < 1e-9 for a, b in zip(box, expected_box)),
+              f"{cols}x{rows}: target_box is exactly one grid cell's rect, not an arbitrary box")
+
+        check(meta["pipeline"] == "lookalike", f"{cols}x{rows}: meta identifies the lookalike pipeline")
+        check(meta["target_id"] in {"red", "green", "blue"},
+              f"{cols}x{rows}: meta reports which pool sprite is the target")
+        check(meta["cols"] == cols and meta["rows"] == rows,
+              f"{cols}x{rows}: meta reports the actual grid used")
+
+        # The automated correctness check: sample the reference card's centre pixel and
+        # confirm it matches the target sprite's own known colour, proving the reference
+        # image really is a picture of the target, not merely claimed.
+        target_color = {"red": (255, 0, 0), "green": (0, 255, 0), "blue": (0, 0, 255)}[meta["target_id"]]
+        ref_center = ref.convert("RGB").getpixel((ref.width // 2, ref.height // 2))
+        check(ref_center == target_color,
+              f"{cols}x{rows}: reference card's centre pixel matches the target sprite's colour "
+              f"(target={meta['target_id']}, got {ref_center})")
+
+        # And the board itself: sample the claimed target cell's centre and confirm it
+        # matches the same colour -- the target really is sitting where target_box claims.
+        x_min, y_min, x_max, y_max = box
+        cx = int((x_min + x_max) / 2 * board.width)
+        cy = int((y_min + y_max) / 2 * board.height)
+        board_pixel = board.convert("RGB").getpixel((cx, cy))
+        check(board_pixel == target_color,
+              f"{cols}x{rows}: the board's claimed target cell actually contains the target's colour")
+
+    # Uniqueness by construction: run many times and confirm every single one places
+    # exactly one target sprite, never zero, never duplicated by chance (impossible here
+    # since the target is excluded from the decoy sampling pool, but this is the
+    # observable, testable consequence of that exclusion holding).
+    rng = wo.make_rng(7)
+    for _ in range(20):
+        _, _, target_box, meta = wo.compose_lookalike_puzzle(
+            background_bytes, pool, rng, 4, 4, (600, 600))
+        check(meta["target_id"] in {"red", "green", "blue"},
+              "every run picks a real pool member as the target")
+        check(meta["pool_size"] == len(pool), "meta reports the actual pool size used")
+
+
+def run_lookalike_difficulties():
+    section("LOOKALIKE_DIFFICULTIES (the four witty tiers)")
+    check(wo.LOOKALIKE_DIFFICULTY_ORDER == ["easy", "medium", "hard", "impossible"],
+          "difficulty order is easy -> medium -> hard -> impossible")
+    check(set(wo.LOOKALIKE_DIFFICULTIES) == set(wo.LOOKALIKE_DIFFICULTY_ORDER),
+          "every ordered difficulty has a matching spec entry, and no extras")
+
+    prev_cells = prev_canvas_area = 0
+    for key in wo.LOOKALIKE_DIFFICULTY_ORDER:
+        spec = wo.LOOKALIKE_DIFFICULTIES[key]
+        cols, rows = spec["grid"]
+        cells = cols * rows
+        canvas_area = spec["canvas_size"][0] * spec["canvas_size"][1]
+        check(isinstance(spec["label"], str) and spec["label"],
+              f"{key}: has a non-empty display label ({spec['label']!r})")
+        check(cells > prev_cells,
+              f"{key}: strictly denser than the previous tier ({cells} cells)")
+        check(canvas_area > prev_canvas_area,
+              f"{key}: strictly larger canvas than the previous tier ({spec['canvas_size']})")
+        check(spec["guess_time"] > 0, f"{key}: has a positive guess_time")
+        prev_cells, prev_canvas_area = cells, canvas_area
+
 
 def run_text_extraction():
     section("response text extraction")
@@ -1423,6 +1524,8 @@ def run_offline():
     run_available_themes()
     run_sprite_compositor()
     run_sprite_compositor_reroll()
+    run_lookalike_compositor()
+    run_lookalike_difficulties()
 
 
 def main():

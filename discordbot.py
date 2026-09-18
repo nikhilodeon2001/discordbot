@@ -442,10 +442,10 @@ async def send_question_queen_submit_ad():
 # the same text is correct whether this deploy is staging or prod.
 okra_lab_announcement_enabled = True
 okra_lab_announcement_text = (
-    "🕵️ **Smarter answer checking** — if your guess is just a word lifted straight from the category or question, it won't count on its own anymore\n\n"
-    "🎯 The real answer (or a genuine, distinctive piece of it) still gets full credit like always — this only closes a loophole where echoing back a word you were already handed for free was enough to score\n\n"
-    "✅ Should make close calls feel fairer across every round, Arena game, and Okra's World\n\n"
-    "⏱️ **More time to decide** — picking a minigame, setting round-end options, and writing your custom painting prompt now all give you double the time before the window closes\n"
+    "🥒🕵️ **All-new Where's Okra** — instead of hunting for him in a busy scene, you'll get a reference photo of one specific Okra first, then have to spot the one that matches it exactly among a whole board of near-identical look-alikes\n\n"
+    "🎭 Every look-alike is Okra in a different disguise — astronaut, pirate, wizard, cheerleader, and dozens more — all sharing the same face and build, so you're matching costumes, not colors\n\n"
+    "🟢🟡🟠🔴 **Four difficulty tiers**: Okra-dinary, Pod Squad, Okra-geddon, and Needle in an Okra-stack — 16 up to 100 look-alikes to search, your call\n\n"
+    "🌎🕵️ **Okra San Diego** (the old Where's Okra geography game) got a glow-up too — OkraStrut's in-character messages now drop several subtle clues about where he's hiding each round, not just the local weather, so there's actually something to reason about\n"
 )
 okra_lab_announcement_show_new_badge = True
 
@@ -10150,6 +10150,118 @@ async def _wheres_okra_load_theme(theme):
     return pool
 
 
+WHERES_OKRA_LOOKALIKE_THEME = "okra_lookalike"
+_wheres_okra_lookalike_cache = None   # {"sprites": [...], "fetched_at": ts}
+_wheres_okra_background_docs_cache = None  # {"docs": [...], "fetched_at": ts} -- metadata
+                                            # only; resolved bytes still go through the
+                                            # shared _wheres_okra_bytes_cache above.
+
+
+async def _wheres_okra_load_lookalike_pool():
+    """Resolve the full 'spot the non-duplicated one' sprite pool, with bytes, from cache
+    where possible -- same TTL/refresh pattern as _wheres_okra_load_theme, but flat (one
+    pool, no per-theme split, no paired backgrounds -- this mode draws its background from
+    the whole hidden_okra_backgrounds collection instead, see
+    _wheres_okra_load_any_background)."""
+    global _wheres_okra_lookalike_cache
+    cached = _wheres_okra_lookalike_cache
+    if cached and (time.time() - cached["fetched_at"]) < HIDDEN_OKRA_LIBRARY_CACHE_TTL:
+        return cached["sprites"]
+
+    sprite_docs = await db["hidden_okra_sprites"].find(
+        {"theme": WHERES_OKRA_LOOKALIKE_THEME}).to_list(length=None)
+    if not sprite_docs:
+        return []
+
+    loop = asyncio.get_running_loop()
+    sprites = []
+    for doc in sprite_docs:
+        try:
+            data = await _wheres_okra_resolve_bytes(loop, doc["image_url"])
+        except Exception as e:
+            sentry_sdk.capture_exception(e)
+            continue  # one bad sprite shouldn't take down the whole pool
+        sprites.append({"bytes": data, "id": str(doc["_id"])})
+
+    _wheres_okra_lookalike_cache = {"sprites": sprites, "fetched_at": time.time()}
+    return sprites
+
+
+async def _wheres_okra_load_any_background():
+    """One background image's bytes, picked at random from the WHOLE
+    hidden_okra_backgrounds collection regardless of theme -- this mode has no
+    sprite/background theme coupling the way the retired vegetable-hunt mode did (a
+    police-officer okra isn't 'market-themed'), so any of the existing theme backdrops is
+    equally valid variety. Returns None if the collection is empty or the chosen
+    background's bytes can't be fetched."""
+    global _wheres_okra_background_docs_cache
+    cached = _wheres_okra_background_docs_cache
+    if not (cached and (time.time() - cached["fetched_at"]) < HIDDEN_OKRA_LIBRARY_CACHE_TTL):
+        docs = await db["hidden_okra_backgrounds"].find({}).to_list(length=None)
+        _wheres_okra_background_docs_cache = {"docs": docs, "fetched_at": time.time()}
+    docs = _wheres_okra_background_docs_cache["docs"]
+    if not docs:
+        return None
+
+    doc = random.choice(docs)
+    loop = asyncio.get_running_loop()
+    try:
+        return await _wheres_okra_resolve_bytes(loop, doc["image_url"])
+    except Exception as e:
+        sentry_sdk.capture_exception(e)
+        return None
+
+
+async def _wheres_okra_draw_lookalike_puzzle(difficulty):
+    """Compose one 'spot the non-duplicated one' puzzle live -- see
+    wheres_okra.compose_lookalike_puzzle. This is what the round loop actually calls now;
+    _wheres_okra_draw_puzzle (the vegetable-hunt version) stays defined below, unused, same
+    "preserve, don't delete" choice made for the AI pipelines before it.
+
+    `difficulty`: one of wheres_okra.LOOKALIKE_DIFFICULTY_ORDER -- picks the grid/canvas
+    size for this round via wheres_okra.LOOKALIKE_DIFFICULTIES.
+
+    Returns {"image_url", "reference_image_url", "target", "cols", "rows"}, or None if the
+    lookalike pool has fewer than 2 sprites or no background could be loaded -- nothing
+    bootstrapped yet, or a fetch failure.
+    """
+    pool = await _wheres_okra_load_lookalike_pool()
+    if len(pool) < 2:
+        return None
+    background_bytes = await _wheres_okra_load_any_background()
+    if background_bytes is None:
+        return None
+
+    spec = wheres_okra.LOOKALIKE_DIFFICULTIES[difficulty]
+    cols, rows = spec["grid"]
+    rng = wheres_okra.make_rng()
+    loop = asyncio.get_running_loop()
+    try:
+        board_bytes, reference_bytes, target, meta = await loop.run_in_executor(
+            None, wheres_okra.compose_lookalike_puzzle, background_bytes, pool, rng,
+            cols, rows, spec["canvas_size"])
+    except wheres_okra.PuzzleGenerationError as e:
+        sentry_sdk.capture_exception(e)
+        print(f"Error composing Where's Okra lookalike puzzle: {e}")
+        return None
+
+    puzzle_id = str(uuid.uuid4())
+    board_key = f"hidden_okra/live/{puzzle_id}.png"
+    ref_key = f"hidden_okra/live/{puzzle_id}_ref.png"
+    session = aioboto3.Session()
+    async with session.client("s3") as s3c:
+        await s3c.put_object(Bucket=S3_BUCKET_NAME, Key=board_key, Body=board_bytes,
+                             ContentType="image/png")
+        await s3c.put_object(Bucket=S3_BUCKET_NAME, Key=ref_key, Body=reference_bytes,
+                             ContentType="image/png")
+    v = int(time.time())
+    image_url = f"https://{S3_BUCKET_NAME}.s3.us-east-2.amazonaws.com/{board_key}?v={v}"
+    reference_image_url = f"https://{S3_BUCKET_NAME}.s3.us-east-2.amazonaws.com/{ref_key}?v={v}"
+
+    return {"image_url": image_url, "reference_image_url": reference_image_url,
+           "target": target, "cols": cols, "rows": rows}
+
+
 async def _wheres_okra_draw_puzzle(difficulty, exclude_theme=None, exclude_background_id=None):
     """Compose one puzzle live from the sprite library -- see
     wheres_okra.compose_sprite_puzzle -- instead of querying a pre-built pool. Puzzles are
@@ -10246,18 +10358,19 @@ async def ask_wheres_okra_challenge(winner, winner_id, num=3):
     await asyncio.sleep(2)
 
     # --- difficulty pick (round winner only) ------------------------------------------
-    difficulty = "hard"
-    labels = {"easy": "\U0001f7e2 Easy", "medium": "\U0001f7e1 Medium",
-              "hard": "\U0001f7e0 Hard", "brutal": "\U0001f534 Brutal"}
-    button_options = [{"value": name, "label": labels[name]}
-                      for name in wheres_okra.DIFFICULTY_ORDER]
+    difficulty = "medium"
+    emoji = {"easy": "\U0001f7e2", "medium": "\U0001f7e1",
+             "hard": "\U0001f7e0", "impossible": "\U0001f534"}
+    button_options = [
+        {"value": name, "label": f"{emoji[name]} {wheres_okra.LOOKALIKE_DIFFICULTIES[name]['label']}"}
+        for name in wheres_okra.LOOKALIKE_DIFFICULTY_ORDER]
     view = build_option_button_view(button_options, {winner_id}, timeout=magic_time + 5)
 
     prompt = (f"​\n\U0001f579️ **<@{winner_id}>**, pick a difficulty:\n\n"
-              f"\U0001f7e2 **Easy** — he's hiding, but not hard.\n"
-              f"\U0001f7e1 **Medium** — smaller, partly covered.\n"
-              f"\U0001f7e0 **Hard** — background-sized and camouflaged.\n"
-              f"\U0001f534 **Brutal** — tiny. Good luck.\n​")
+              f"\U0001f7e2 **Okra-dinary** — a gentle warmup, 16 to search.\n"
+              f"\U0001f7e1 **Pod Squad** — 36 look-alikes, business as usual.\n"
+              f"\U0001f7e0 **Okra-geddon** — 64 of them, smaller and sneakier.\n"
+              f"\U0001f534 **Needle in an Okra-stack** — 100 look-alikes. Good luck.\n​")
     view.message = await safe_send(channel, prompt, view=view)
 
     target_channel = _active_game_channel or channel
@@ -10274,19 +10387,19 @@ async def ask_wheres_okra_challenge(winner, winner_id, num=3):
                 kind="mini_game_answer", options=button_options),
         )
         picked = msg.content.strip().lower()
-        for name in wheres_okra.DIFFICULTY_ORDER:
+        for name in wheres_okra.LOOKALIKE_DIFFICULTY_ORDER:
             if picked == name or picked == name[0]:
                 difficulty = name
                 break
     except asyncio.TimeoutError:
         pass
 
-    spec = wheres_okra.DIFFICULTIES[difficulty]
+    spec = wheres_okra.LOOKALIKE_DIFFICULTIES[difficulty]
     cols, rows = spec["grid"]
     guess_time = spec["guess_time"]
 
     await safe_send(channel,
-                    f"​\n\U0001f4a5 **{difficulty.upper()}** it is.\n​")
+                    f"​\n\U0001f4a5 **{spec['label']}** it is.\n​")
     await asyncio.sleep(2)
 
     if num > 1:
@@ -10296,13 +10409,11 @@ async def ask_wheres_okra_challenge(winner, winner_id, num=3):
     user_correct_answers = {}
     sorted_users = []
     loop = asyncio.get_running_loop()
-    last_theme = last_background_id = None
 
     round_num = 1
     while round_num <= num:
         try:
-            puzzle = await _wheres_okra_draw_puzzle(
-                difficulty, exclude_theme=last_theme, exclude_background_id=last_background_id)
+            puzzle = await _wheres_okra_draw_lookalike_puzzle(difficulty)
         except Exception as e:
             sentry_sdk.capture_exception(e)
             print(f"Error composing Where's Okra puzzle:\n{traceback.format_exc()}")
@@ -10311,13 +10422,11 @@ async def ask_wheres_okra_challenge(winner, winner_id, num=3):
         if not puzzle:
             await safe_send(
                 channel,
-                f"​\n⚠️ No sprite library is bootstrapped yet.\n\n"
-                f"Run `scripts/generate_sprite_library.py` and "
-                f"`scripts/generate_theme_backgrounds.py` for at least one theme.\n​")
+                f"​\n⚠️ No lookalike sprite pool is bootstrapped yet.\n\n"
+                f"Run `scripts/upload_okra_lookalike_sprites.py` (and make sure at least "
+                f"one `hidden_okra_backgrounds` document exists).\n​")
             return None
 
-        last_theme = puzzle.get("theme")
-        last_background_id = puzzle.get("background_id")
         target = puzzle["target"]
 
         try:
@@ -10332,12 +10441,20 @@ async def ask_wheres_okra_challenge(winner, winner_id, num=3):
             round_num += 1
             continue
 
+        ref_embed = discord.Embed()
+        ref_embed.set_image(url=puzzle["reference_image_url"])
+        await safe_send(
+            channel,
+            content=(f"​\n\U0001f50d **Round {round_num}**: find THIS one!\n\n"
+                     f"He's hiding somewhere below, surrounded by look-alikes.\n​"),
+            embed=ref_embed)
+
         embed = discord.Embed()
         embed.set_image(url="attachment://wheres_okra.png")
         await safe_send(
             channel,
-            content=(f"​\n\U0001f50d **Round {round_num}**: find the okra chef!\n\n"
-                     f"\U0001f5fa️ Type a grid square like **{wheres_okra.column_label(cols // 2)}{rows // 2}** "
+            content=(f"​\n\U0001f5fa️ Type a grid square like "
+                     f"**{wheres_okra.column_label(cols // 2)}{rows // 2}** "
                      f"— first one on him wins.\n"
                      f"⏱️ You have **{guess_time}** seconds.\n​"),
             embed=embed,
@@ -10360,6 +10477,7 @@ async def ask_wheres_okra_challenge(winner, winner_id, num=3):
                     # normalised coordinates are relative to the same frame the stored
                     # target box was measured against. `target` is deliberately NOT here.
                     extra={"spotter": True, "image_url": puzzle["image_url"],
+                           "reference_image_url": puzzle["reference_image_url"],
                            "cols": cols, "rows": rows})
             except asyncio.TimeoutError:
                 break
@@ -17852,6 +17970,24 @@ async def get_google_maps(lat, lon):
     return street_view_url, satellite_view_url, satellite_live_url
 
 
+# Randomly injected into get_random_city's prompt each call so repeat visits to the same
+# city (skip is uniform over the whole collection, so repeats happen) don't produce
+# near-identical clues -- temperature alone gives phrasing variety, not variety in WHICH
+# facts get emphasized, so the angle itself needs to be randomized too.
+OKRA_SAN_DIEGO_CLUE_ANGLES = [
+    "local food and cuisine",
+    "street sounds and smells",
+    "what locals are probably doing right now",
+    "local sports fandom",
+    "the skyline or architecture",
+    "traffic and how people get around",
+    "a recent-sounding local headline",
+    "currency and shopping",
+    "a famous local export or industry",
+    "the language or accent overheard nearby",
+]
+
+
 async def get_random_city(winner):
     collection = db["where_is_okra"]
     total = await collection.count_documents({})
@@ -17895,26 +18031,43 @@ async def get_random_city(winner):
     local_time = datetime.datetime.utcnow() + datetime.timedelta(seconds=offset)
     time_str = local_time.strftime("%B %-d, %Y %-I:%M%p").lower()
 
+    hemisphere = "Northern" if lat >= 0 else "Southern"
+    is_capital = bool(city.get("capital"))
+
     summary = (
         f"Fahrenheit Temperature: {temp_f}°F\n"
         f"Celsius Temperature: {temp_c}°C\n"
         f"Weather Conditions: {conditions}\n"
         f"Local Date and Time: {time_str}\n"
+        f"Hemisphere: {hemisphere}\n"
+        f"Is this a national capital city: {'Yes' if is_capital else 'No'}\n"
     )
-    
+
     if ai_on:
+        clue_angles = random.sample(OKRA_SAN_DIEGO_CLUE_ANGLES, 2)
         try:
             result = await openai_client.chat.completions.create(
                 model="gpt-4o-mini",
                 messages=[
                     {
                         "role": "system",
-                        "content": f"You are OkraStrut fleeing from {winner} like Carmen Sandiego. Use these facts:"
+                        "content": (
+                            f"You are OkraStrut fleeing from {winner} like Carmen Sandiego. "
+                            f"Use these facts to write a short in-character message from "
+                            f"wherever you're hiding. Weave in 2-4 SUBTLE, INDIRECT clues "
+                            f"about your location -- lean especially on these two angles "
+                            f"this time: {clue_angles[0]} and {clue_angles[1]}. Every clue "
+                            f"must be something a player could reason about, not a giveaway. "
+                            f"You must NEVER state the city name, country name, continent, "
+                            f"or any single landmark specific enough to be an instant "
+                            f"giveaway -- the whole point is the player has to guess. Stay "
+                            f"in character and keep it short."
+                        )
                     },
                     {"role": "user", "content": summary}
                 ],
                 max_tokens=500,
-                temperature=0.3
+                temperature=0.9
             )
             clue = result.choices[0].message.content.strip()
         except Exception as e:
@@ -29685,6 +29838,7 @@ def build_companion_state(user_id=None):
         if extra.get("spotter") and extra.get("image_url"):
             idle["spotter"] = True
             idle["image_url"] = extra["image_url"]
+            idle["reference_image_url"] = extra.get("reference_image_url")
             idle["grid"] = {"cols": extra.get("cols"), "rows": extra.get("rows")}
         return idle
     trivia_url = cq.get("trivia_url", "")
@@ -29750,6 +29904,7 @@ def build_companion_arena_state(user_id=None):
         if extra.get("spotter") and extra.get("image_url"):
             state["spotter"] = True
             state["image_url"] = extra["image_url"]
+            state["reference_image_url"] = extra.get("reference_image_url")
             state["grid"] = {"cols": extra.get("cols"), "rows": extra.get("rows")}
         return state
     return {

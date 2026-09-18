@@ -1850,6 +1850,137 @@ def available_themes(sprite_themes, background_themes):
     return sorted(set(sprite_themes) & set(background_themes))
 
 
+# ---------------------------------------------------------------------------
+# "Spot the non-duplicated one" compositor -- Where's Okra v3
+# ---------------------------------------------------------------------------
+# Replaces compose_sprite_puzzle as what the live round loop actually calls (see
+# discordbot.py's module notes near _wheres_okra_draw_lookalike_puzzle). Everything above
+# this point (compose_sprite_puzzle, _choose_decoys, MASCOT_CAMOUFLAGE_TAGS, DIFFICULTIES,
+# available_themes) stays in the file, unused by default -- same "preserve, don't delete"
+# choice already made twice before in this module's history (the AI full-scene pipelines,
+# then this).
+#
+# The mechanic: a pool of near-identical mascot variants (today: 30 profession-costumed
+# okra_chef sprites -- an astronaut, a pirate, a wizard, etc., all sharing the same body,
+# size and illustration style). One is chosen as the round's target. The rest of a fixed
+# grid is filled by sampling WITH REPLACEMENT from the other 29 -- repeats are the entire
+# point, since the target is "the one not duplicated anywhere else on the board," not
+# necessarily the most visually distinct one. The player is shown the target's own image
+# first (grading/rendering never reveal it before that), then the board.
+
+# Four difficulty tiers, escalating on three axes at once rather than just "more decoys":
+# grid density (16 -> 100 cells), overall canvas size (800 -> 1500px), AND per-sprite size
+# shrinking modestly as canvas growth doesn't keep pace with cell-count growth (each cell's
+# own pixel size: 200 -> 180 -> 165 -> 150px) -- more to scan, less time per sprite, and a
+# bigger board to take in, all at once. Witty labels per the user's request; `key` is the
+# stable internal identifier (used in button values / stored state), `label` is display-only.
+LOOKALIKE_DIFFICULTIES = {
+    "easy":       {"label": "Okra-dinary",              "grid": (4, 4),  "canvas_size": (800, 800),   "guess_time": 30},
+    "medium":     {"label": "Pod Squad",                 "grid": (6, 6),  "canvas_size": (1080, 1080), "guess_time": 45},
+    "hard":       {"label": "Okra-geddon",                "grid": (8, 8),  "canvas_size": (1320, 1320), "guess_time": 60},
+    "impossible": {"label": "Needle in an Okra-stack",    "grid": (10, 10),"canvas_size": (1500, 1500), "guess_time": 90},
+}
+LOOKALIKE_DIFFICULTY_ORDER = ["easy", "medium", "hard", "impossible"]
+
+LOOKALIKE_CELL_PADDING = 0.12    # fraction of a cell's own size left empty around a sprite
+LOOKALIKE_REFERENCE_SIZE = (360, 360)
+LOOKALIKE_REFERENCE_BG = (250, 248, 240, 255)  # a plain warm off-white, not the busy board
+
+
+def compose_lookalike_puzzle(background_bytes, pool, rng, cols, rows, canvas_size):
+    """Composite one "spot the non-duplicated one" board.
+
+    `background_bytes`: one of the existing hidden_okra_backgrounds images (any theme --
+    this mode has no sprite/background theme coupling, unlike compose_sprite_puzzle; the
+    caller picks at random from the whole collection).
+
+    `pool`: list of dicts, each at least {"bytes": <png bytes>, "id": <hashable, unique
+    per sprite>}. `id` is what makes uniqueness checkable and testable -- two dicts with
+    identical bytes but different `id`s would still be treated as different sprites, so
+    callers must pass a real per-document identifier (e.g. the Mongo `_id`), not derive one
+    from content.
+
+    `cols`, `rows`, `canvas_size`: from the caller's chosen LOOKALIKE_DIFFICULTIES entry --
+    all three vary per difficulty (grid density, overall size, and implicitly per-sprite
+    size), so this function takes them explicitly rather than defaulting to one tier.
+
+    Picks one pool entry as the target, fills the remaining `cols*rows - 1` cells by
+    sampling WITH REPLACEMENT from the rest of the pool, and pastes each sprite uniformly
+    sized (bbox-cropped then resized to fit one cell, minus `LOOKALIKE_CELL_PADDING`) and
+    centred in its cell -- a literal grid, not scattered/rejection-sampled placement, which
+    trivially guarantees the uniform-size-and-no-overlap properties an earlier scattered
+    version of this game had to retrofit (see _decoy_target_height/_random_canvas_position's
+    docstrings above). Every paste uses _paste_with_shadow, same depth-cue consistency as
+    compose_sprite_puzzle.
+
+    Returns (board_image_bytes, reference_image_bytes, target_box, meta). `target_box` is
+    `grid_cell_rect(target_col, target_row, cols, rows)` -- the exact shape
+    grade_submission/_wheres_okra_render already expect, so nothing downstream needs to
+    know this compositor works differently from compose_sprite_puzzle. `reference_image_bytes`
+    is the target sprite alone on a plain card (LOOKALIKE_REFERENCE_BG), deliberately not
+    composited against the board's busy background, so it reads clearly as "find THIS one"
+    rather than blending into the reveal itself.
+
+    Raises PuzzleGenerationError if `pool` has fewer than 2 sprites -- nothing can be "the
+    only one of its kind" when there is nothing else to duplicate.
+    """
+    from PIL import Image
+
+    if len(pool) < 2:
+        raise PuzzleGenerationError(
+            f"Need at least 2 lookalike sprites to compose a puzzle, got {len(pool)}.")
+
+    width, height = canvas_size
+    cell_w, cell_h = width / cols, height / rows
+
+    try:
+        canvas = Image.open(io.BytesIO(background_bytes)).convert("RGBA")
+    except Exception as exc:  # noqa: BLE001
+        raise PuzzleGenerationError(f"Unreadable background image: {exc}") from exc
+    canvas = canvas.resize(canvas_size)
+
+    target = rng.choice(pool)
+    remaining = [s for s in pool if s["id"] != target["id"]]
+
+    total_cells = cols * rows
+    target_index = rng.randrange(total_cells)
+    target_col, target_row = target_index % cols, target_index // cols
+
+    target_height = min(cell_w, cell_h) * (1.0 - LOOKALIKE_CELL_PADDING)
+
+    for index in range(total_cells):
+        col, row = index % cols, index // cols
+        sprite_entry = target if index == target_index else rng.choice(remaining)
+        img = prep_sprite(sprite_entry["bytes"], target_height)
+        cx = (col + 0.5) * cell_w
+        cy = (row + 0.5) * cell_h
+        pos = (round(cx - img.width / 2), round(cy - img.height / 2))
+        _paste_with_shadow(canvas, img, pos)
+
+    buffer = io.BytesIO()
+    canvas.convert("RGB").save(buffer, format="PNG")
+    board_image_bytes = buffer.getvalue()
+
+    ref_img = prep_sprite(target["bytes"], LOOKALIKE_REFERENCE_SIZE[1] * 0.8)
+    ref_canvas = Image.new("RGBA", LOOKALIKE_REFERENCE_SIZE, LOOKALIKE_REFERENCE_BG)
+    ref_pos = (round((ref_canvas.width - ref_img.width) / 2),
+              round((ref_canvas.height - ref_img.height) / 2))
+    ref_canvas.paste(ref_img, ref_pos, ref_img)
+    ref_buffer = io.BytesIO()
+    ref_canvas.convert("RGB").save(ref_buffer, format="PNG")
+    reference_image_bytes = ref_buffer.getvalue()
+
+    target_box = grid_cell_rect(target_col, target_row, cols, rows)
+
+    meta = {
+        "pipeline": "lookalike",
+        "cols": cols,
+        "rows": rows,
+        "target_id": target["id"],
+        "pool_size": len(pool),
+    }
+    return board_image_bytes, reference_image_bytes, target_box, meta
+
 
 # ---------------------------------------------------------------------------
 # Round-time grading (pure)
