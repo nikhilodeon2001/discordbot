@@ -10233,13 +10233,16 @@ async def _wheres_okra_draw_lookalike_puzzle(difficulty):
         return None
 
     spec = wheres_okra.LOOKALIKE_DIFFICULTIES[difficulty]
+    # `grid` is only the chat/Activity coordinate-guessing overlay now -- sprite placement
+    # is scattered (compose_lookalike_puzzle), decoupled from it.
     cols, rows = spec["grid"]
     rng = wheres_okra.make_rng()
     loop = asyncio.get_running_loop()
     try:
         board_bytes, reference_bytes, target, meta = await loop.run_in_executor(
             None, wheres_okra.compose_lookalike_puzzle, background_bytes, pool, rng,
-            cols, rows, spec["canvas_size"])
+            spec["sprite_count"], spec["canvas_size"], spec["sprite_height"],
+            spec["max_covered_fraction"])
     except wheres_okra.PuzzleGenerationError as e:
         sentry_sdk.capture_exception(e)
         print(f"Error composing Where's Okra lookalike puzzle: {e}")
@@ -10359,8 +10362,8 @@ async def ask_wheres_okra_challenge(winner, winner_id, num=3):
 
     # --- difficulty pick (round winner only) ------------------------------------------
     difficulty = "medium"
-    emoji = {"easy": "\U0001f7e2", "medium": "\U0001f7e1",
-             "hard": "\U0001f7e0", "impossible": "\U0001f534"}
+    emoji = {"easy": "\U0001f7e2", "medium": "\U0001f7e1", "hard": "\U0001f7e0",
+             "brutal": "\U0001f534", "impossible": "\U0001f7e3"}
     button_options = [
         {"value": name, "label": f"{emoji[name]} {wheres_okra.LOOKALIKE_DIFFICULTIES[name]['label']}"}
         for name in wheres_okra.LOOKALIKE_DIFFICULTY_ORDER]
@@ -10368,9 +10371,10 @@ async def ask_wheres_okra_challenge(winner, winner_id, num=3):
 
     prompt = (f"​\n\U0001f579️ **<@{winner_id}>**, pick a difficulty:\n\n"
               f"\U0001f7e2 **Okra-dinary** — a gentle warmup, 16 to search.\n"
-              f"\U0001f7e1 **Pod Squad** — 36 look-alikes, business as usual.\n"
+              f"\U0001f7e1 **Okra Squad** — 36 look-alikes, business as usual.\n"
               f"\U0001f7e0 **Okra-geddon** — 64 of them, smaller and sneakier.\n"
-              f"\U0001f534 **Needle in an Okra-stack** — 100 look-alikes. Good luck.\n​")
+              f"\U0001f534 **Okra Overload** — 100 look-alikes. Good luck.\n"
+              f"\U0001f7e3 **Okrap** — 180 look-alikes, crowded and overlapping. Godspeed.\n​")
     view.message = await safe_send(channel, prompt, view=view)
 
     target_channel = _active_game_channel or channel
@@ -10462,7 +10466,7 @@ async def ask_wheres_okra_challenge(winner, winner_id, num=3):
 
         start_time = asyncio.get_event_loop().time()
         found_by = None          # id of whoever found him, or None -- never a loop leftover
-        processed = set()
+        guessed_users = set()    # one guess per user this round, right or wrong, typed or tapped
 
         def check(m):
             return m.channel == target_channel and m.author != get_bot().user
@@ -10495,10 +10499,9 @@ async def ask_wheres_okra_challenge(winner, winner_id, num=3):
             if kind is None:
                 continue  # ordinary chat in an open-floor channel, not a guess
 
-            key = (user_id, content.lower())
-            if key in processed:
-                continue
-            processed.add(key)
+            if user_id in guessed_users:
+                continue  # already used their one guess this round
+            guessed_users.add(user_id)
 
             if correct:
                 found_by = user_id

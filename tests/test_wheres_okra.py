@@ -1286,6 +1286,54 @@ def run_sprite_compositor_reroll():
               "even a non-converged result reports the actual visibility achieved, not a lie")
 
 
+def run_sprite_coverage_check():
+    section("_sprite_coverage_check (per-sprite overlap cap, generalised compute_visibility)")
+    import numpy as np
+    from PIL import Image
+
+    def alpha_of(png_bytes):
+        return wo._sprite_alpha_array(Image.open(io.BytesIO(png_bytes)).convert("RGBA"))
+
+    solid_a = alpha_of(_solid_sprite(40, 40, (255, 0, 0, 255)))
+
+    # No overlap at all -- always accepted, regardless of the cap.
+    placed = [{"pos": (0, 0), "alpha": solid_a, "total": int(solid_a.sum()),
+              "covered": np.zeros_like(solid_a, dtype=bool)}]
+    ok, updates = wo._sprite_coverage_check(solid_a, (100, 100), placed, 0.0)
+    check(ok, "a candidate with zero pixel overlap is always accepted, even at cap 0.0")
+    check(updates == [], "no overlap means no coverage update for the earlier sprite")
+
+    # Exact 50% overlap (candidate placed offset by half its own width) at cap 0.0 -> rejected.
+    ok, updates = wo._sprite_coverage_check(solid_a, (20, 0), placed, 0.0)
+    check(not ok, "50% pixel overlap is rejected at max_covered_fraction=0.0")
+
+    # Same 50% overlap, but the cap now allows it.
+    ok, updates = wo._sprite_coverage_check(solid_a, (20, 0), placed, 0.5)
+    check(ok, "50% overlap is accepted once the cap allows exactly that much")
+    check(len(updates) == 1 and updates[0][0] == 0, "the earlier sprite's covered mask is queued for update")
+    covered_frac = updates[0][1].sum() / placed[0]["total"]
+    check(abs(covered_frac - 0.5) < 0.02,
+          f"the computed covered fraction matches the real ~50% overlap (got {covered_frac:.3f})")
+
+    # Just over the cap -> rejected.
+    ok, updates = wo._sprite_coverage_check(solid_a, (20, 0), placed, 0.4)
+    check(not ok, "51%-ish overlap is rejected when the cap is 0.4")
+
+    # Ring fixture (real transparent hole) -- an occluder placed over the hollow middle
+    # must NOT count as coverage, same discipline compute_visibility's own test enforces.
+    ring_a = alpha_of(_ring_sprite(size=40, width=6))
+    ring_total = int(ring_a.sum())
+    placed_ring = [{"pos": (100, 100), "alpha": ring_a, "total": ring_total,
+                    "covered": np.zeros_like(ring_a, dtype=bool)}]
+    small_solid = alpha_of(_solid_sprite(10, 10, (0, 0, 255, 255)))
+    # Centred over the ring's hollow middle (ring has a real gap there).
+    ok, updates = wo._sprite_coverage_check(small_solid, (115, 115), placed_ring, 0.0)
+    check(ok, "an occluder over the ring's own transparent hole doesn't count as covering it")
+    # Over the ring's actual opaque stroke (near the top edge).
+    ok, updates = wo._sprite_coverage_check(small_solid, (115, 100), placed_ring, 0.0)
+    check(not ok, "an occluder over the ring's real opaque stroke IS rejected at cap 0.0")
+
+
 def run_lookalike_compositor():
     section("compose_lookalike_puzzle (Where's Okra v3 -- spot the non-duplicated one)")
 
@@ -1293,7 +1341,7 @@ def run_lookalike_compositor():
         wo.compose_lookalike_puzzle(
             _solid_sprite(400, 400, (230, 230, 230, 255)),
             [{"bytes": _solid_sprite(80, 80, (255, 0, 0, 255)), "id": "only-one"}],
-            wo.make_rng(1), 4, 4, (400, 400))
+            wo.make_rng(1), 10, (400, 400), 40)
         check(False, "a pool of fewer than 2 sprites must raise PuzzleGenerationError")
     except wo.PuzzleGenerationError as exc:
         check("2" in str(exc), "the error names the actual requirement")
@@ -1302,37 +1350,36 @@ def run_lookalike_compositor():
     # Three distinctly-coloured sprites -- distinct colours let the pixel-sampling checks
     # below prove WHICH sprite ended up where, not just that something did.
     pool = [
-        {"bytes": _solid_sprite(80, 80, (255, 0, 0, 255)), "id": "red"},
-        {"bytes": _solid_sprite(80, 80, (0, 255, 0, 255)), "id": "green"},
-        {"bytes": _solid_sprite(80, 80, (0, 0, 255, 255)), "id": "blue"},
+        {"bytes": _solid_sprite(60, 60, (255, 0, 0, 255)), "id": "red"},
+        {"bytes": _solid_sprite(60, 60, (0, 255, 0, 255)), "id": "green"},
+        {"bytes": _solid_sprite(60, 60, (0, 0, 255, 255)), "id": "blue"},
     ]
 
-    for cols, rows, canvas_size in [(4, 4, (600, 600)), (6, 6, (900, 900))]:
+    for sprite_count, canvas_size, sprite_height in [(8, (600, 600), 60), (16, (900, 900), 55)]:
         rng = wo.make_rng(42)
         board_bytes, ref_bytes, target_box, meta = wo.compose_lookalike_puzzle(
-            background_bytes, pool, rng, cols, rows, canvas_size)
+            background_bytes, pool, rng, sprite_count, canvas_size, sprite_height)
 
         from PIL import Image
         board = Image.open(io.BytesIO(board_bytes))
         check(board.size == canvas_size,
-              f"{cols}x{rows}: board canvas matches the requested size (got {board.size})")
+              f"n={sprite_count}: board canvas matches the requested size (got {board.size})")
 
         ref = Image.open(io.BytesIO(ref_bytes))
         check(ref.size == wo.LOOKALIKE_REFERENCE_SIZE,
-              f"{cols}x{rows}: reference card matches LOOKALIKE_REFERENCE_SIZE")
+              f"n={sprite_count}: reference card matches LOOKALIKE_REFERENCE_SIZE")
 
         box = wo.normalize_target(target_box)
-        check(box is not None, f"{cols}x{rows}: target_box is a valid normalised box")
-        expected_box = wo.grid_cell_rect(
-            int(round(box[0] * cols)), int(round(box[1] * rows)), cols, rows)
-        check(all(abs(a - b) < 1e-9 for a, b in zip(box, expected_box)),
-              f"{cols}x{rows}: target_box is exactly one grid cell's rect, not an arbitrary box")
+        check(box is not None, f"n={sprite_count}: target_box is a valid normalised box")
+        x_min, y_min, x_max, y_max = box
+        check(0.0 <= x_min < x_max <= 1.0 and 0.0 <= y_min < y_max <= 1.0,
+              f"n={sprite_count}: target_box stays within the unit square")
 
-        check(meta["pipeline"] == "lookalike", f"{cols}x{rows}: meta identifies the lookalike pipeline")
+        check(meta["pipeline"] == "lookalike", f"n={sprite_count}: meta identifies the lookalike pipeline")
         check(meta["target_id"] in {"red", "green", "blue"},
-              f"{cols}x{rows}: meta reports which pool sprite is the target")
-        check(meta["cols"] == cols and meta["rows"] == rows,
-              f"{cols}x{rows}: meta reports the actual grid used")
+              f"n={sprite_count}: meta reports which pool sprite is the target")
+        check(meta["sprite_count"] == sprite_count,
+              f"n={sprite_count}: meta reports the actual sprite count placed")
 
         # The automated correctness check: sample the reference card's centre pixel and
         # confirm it matches the target sprite's own known colour, proving the reference
@@ -1340,17 +1387,16 @@ def run_lookalike_compositor():
         target_color = {"red": (255, 0, 0), "green": (0, 255, 0), "blue": (0, 0, 255)}[meta["target_id"]]
         ref_center = ref.convert("RGB").getpixel((ref.width // 2, ref.height // 2))
         check(ref_center == target_color,
-              f"{cols}x{rows}: reference card's centre pixel matches the target sprite's colour "
+              f"n={sprite_count}: reference card's centre pixel matches the target sprite's colour "
               f"(target={meta['target_id']}, got {ref_center})")
 
-        # And the board itself: sample the claimed target cell's centre and confirm it
+        # And the board itself: sample the claimed target box's centre and confirm it
         # matches the same colour -- the target really is sitting where target_box claims.
-        x_min, y_min, x_max, y_max = box
         cx = int((x_min + x_max) / 2 * board.width)
         cy = int((y_min + y_max) / 2 * board.height)
         board_pixel = board.convert("RGB").getpixel((cx, cy))
         check(board_pixel == target_color,
-              f"{cols}x{rows}: the board's claimed target cell actually contains the target's colour")
+              f"n={sprite_count}: the board's claimed target box actually contains the target's colour")
 
     # Uniqueness by construction: run many times and confirm every single one places
     # exactly one target sprite, never zero, never duplicated by chance (impossible here
@@ -1359,33 +1405,59 @@ def run_lookalike_compositor():
     rng = wo.make_rng(7)
     for _ in range(20):
         _, _, target_box, meta = wo.compose_lookalike_puzzle(
-            background_bytes, pool, rng, 4, 4, (600, 600))
+            background_bytes, pool, rng, 8, (600, 600), 60)
         check(meta["target_id"] in {"red", "green", "blue"},
               "every run picks a real pool member as the target")
         check(meta["pool_size"] == len(pool), "meta reports the actual pool size used")
 
+    # The overlap cap actually changes behaviour: a canvas too small to fit many
+    # non-overlapping sprites forces max_covered_fraction=0.0 to give up densely-packed
+    # placements (falls back to a still-technically-violating position per its documented
+    # fallback), but a generous cap on the SAME tight canvas should let it actually succeed
+    # in placing everything without needing that fallback as often -- observable via
+    # meta["max_covered_fraction"] simply reporting what was asked, and via the call
+    # completing without error at high density where an unbounded-strict run would still
+    # (silently, per its fallback contract) also complete -- so the real, precise proof of
+    # the cap doing its job lives in run_sprite_coverage_check's direct unit tests above;
+    # this just confirms the compositor actually threads the parameter through.
+    _, _, _, meta_strict = wo.compose_lookalike_puzzle(
+        background_bytes, pool, wo.make_rng(3), 8, (600, 600), 60, max_covered_fraction=0.0)
+    check(meta_strict["max_covered_fraction"] == 0.0, "meta reports the strict cap that was requested")
+    _, _, _, meta_loose = wo.compose_lookalike_puzzle(
+        background_bytes, pool, wo.make_rng(3), 8, (600, 600), 60, max_covered_fraction=0.3)
+    check(meta_loose["max_covered_fraction"] == 0.3, "meta reports the loose cap that was requested")
+
 
 def run_lookalike_difficulties():
-    section("LOOKALIKE_DIFFICULTIES (the four witty tiers)")
-    check(wo.LOOKALIKE_DIFFICULTY_ORDER == ["easy", "medium", "hard", "impossible"],
-          "difficulty order is easy -> medium -> hard -> impossible")
+    section("LOOKALIKE_DIFFICULTIES (the five witty tiers)")
+    check(wo.LOOKALIKE_DIFFICULTY_ORDER == ["easy", "medium", "hard", "brutal", "impossible"],
+          "difficulty order is easy -> medium -> hard -> brutal -> impossible")
     check(set(wo.LOOKALIKE_DIFFICULTIES) == set(wo.LOOKALIKE_DIFFICULTY_ORDER),
           "every ordered difficulty has a matching spec entry, and no extras")
 
-    prev_cells = prev_canvas_area = 0
+    prev_count = prev_canvas_area = prev_cap = -1
     for key in wo.LOOKALIKE_DIFFICULTY_ORDER:
         spec = wo.LOOKALIKE_DIFFICULTIES[key]
-        cols, rows = spec["grid"]
-        cells = cols * rows
         canvas_area = spec["canvas_size"][0] * spec["canvas_size"][1]
         check(isinstance(spec["label"], str) and spec["label"],
               f"{key}: has a non-empty display label ({spec['label']!r})")
-        check(cells > prev_cells,
-              f"{key}: strictly denser than the previous tier ({cells} cells)")
+        check("okra" in spec["label"].lower(),
+              f"{key}: label contains 'Okra' ({spec['label']!r})")
+        check(spec["sprite_count"] > prev_count,
+              f"{key}: strictly denser than the previous tier ({spec['sprite_count']} sprites)")
         check(canvas_area > prev_canvas_area,
               f"{key}: strictly larger canvas than the previous tier ({spec['canvas_size']})")
+        check(spec["max_covered_fraction"] >= prev_cap,
+              f"{key}: overlap cap never decreases tier-over-tier ({spec['max_covered_fraction']})")
         check(spec["guess_time"] > 0, f"{key}: has a positive guess_time")
-        prev_cells, prev_canvas_area = cells, canvas_area
+        check(spec["sprite_height"] > 0, f"{key}: has a positive sprite_height")
+        prev_count, prev_canvas_area, prev_cap = spec["sprite_count"], canvas_area, spec["max_covered_fraction"]
+
+    check(wo.LOOKALIKE_DIFFICULTIES["impossible"]["max_covered_fraction"] > 0.0,
+          "only the hardest tier allows real overlap")
+    for key in ["easy", "medium", "hard", "brutal"]:
+        check(wo.LOOKALIKE_DIFFICULTIES[key]["max_covered_fraction"] == 0.0,
+              f"{key}: strict non-overlap, same guarantee as before")
 
 
 def run_text_extraction():
@@ -1524,6 +1596,7 @@ def run_offline():
     run_available_themes()
     run_sprite_compositor()
     run_sprite_compositor_reroll()
+    run_sprite_coverage_check()
     run_lookalike_compositor()
     run_lookalike_difficulties()
 

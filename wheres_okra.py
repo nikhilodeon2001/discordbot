@@ -1868,27 +1868,76 @@ def available_themes(sprite_themes, background_themes):
 # necessarily the most visually distinct one. The player is shown the target's own image
 # first (grading/rendering never reveal it before that), then the board.
 
-# Four difficulty tiers, escalating on three axes at once rather than just "more decoys":
-# grid density (16 -> 100 cells), overall canvas size (800 -> 1500px), AND per-sprite size
-# shrinking modestly as canvas growth doesn't keep pace with cell-count growth (each cell's
-# own pixel size: 200 -> 180 -> 165 -> 150px) -- more to scan, less time per sprite, and a
-# bigger board to take in, all at once. Witty labels per the user's request; `key` is the
-# stable internal identifier (used in button values / stored state), `label` is display-only.
+# Five difficulty tiers, escalating on multiple axes: sprite_count (density), canvas_size
+# (overall board size), sprite_height (shrinks tier-over-tier so there's genuinely less
+# room per sprite, not just more of them), and -- only for the hardest tier -- real overlap
+# via max_covered_fraction. `grid` is now ONLY a coordinate-guessing overlay for chat/
+# Activity ("type B8"), decoupled from actual sprite placement, which is scattered (see
+# compose_lookalike_puzzle) -- same relationship the retired vegetable-hunt mode had
+# between its grid overlay and its continuous scatter. Witty labels per the user's request
+# (every one contains "Okra," per their explicit correction); `key` is the stable internal
+# identifier (button values / stored state), `label` is display-only.
 LOOKALIKE_DIFFICULTIES = {
-    "easy":       {"label": "Okra-dinary",              "grid": (4, 4),  "canvas_size": (800, 800),   "guess_time": 30},
-    "medium":     {"label": "Pod Squad",                 "grid": (6, 6),  "canvas_size": (1080, 1080), "guess_time": 45},
-    "hard":       {"label": "Okra-geddon",                "grid": (8, 8),  "canvas_size": (1320, 1320), "guess_time": 60},
-    "impossible": {"label": "Needle in an Okra-stack",    "grid": (10, 10),"canvas_size": (1500, 1500), "guess_time": 90},
+    "easy":       {"label": "Okra-dinary",   "sprite_count": 16,  "canvas_size": (800, 800),   "grid": (4, 4),   "sprite_height": 176, "max_covered_fraction": 0.0,  "guess_time": 30},
+    "medium":     {"label": "Okra Squad",    "sprite_count": 36,  "canvas_size": (1080, 1080), "grid": (6, 6),   "sprite_height": 158, "max_covered_fraction": 0.0,  "guess_time": 45},
+    "hard":       {"label": "Okra-geddon",   "sprite_count": 64,  "canvas_size": (1320, 1320), "grid": (8, 8),   "sprite_height": 145, "max_covered_fraction": 0.0,  "guess_time": 60},
+    "brutal":     {"label": "Okra Overload", "sprite_count": 100, "canvas_size": (1500, 1500), "grid": (10, 10), "sprite_height": 132, "max_covered_fraction": 0.0,  "guess_time": 90},
+    "impossible": {"label": "Okrap",         "sprite_count": 180, "canvas_size": (1700, 1700), "grid": (12, 12), "sprite_height": 125, "max_covered_fraction": 0.30, "guess_time": 120},
 }
-LOOKALIKE_DIFFICULTY_ORDER = ["easy", "medium", "hard", "impossible"]
+LOOKALIKE_DIFFICULTY_ORDER = ["easy", "medium", "hard", "brutal", "impossible"]
 
-LOOKALIKE_CELL_PADDING = 0.12    # fraction of a cell's own size left empty around a sprite
 LOOKALIKE_REFERENCE_SIZE = (360, 360)
 LOOKALIKE_REFERENCE_BG = (250, 248, 240, 255)  # a plain warm off-white, not the busy board
 
 
-def compose_lookalike_puzzle(background_bytes, pool, rng, cols, rows, canvas_size):
-    """Composite one "spot the non-duplicated one" board.
+def _sprite_coverage_check(candidate_alpha, candidate_pos, placed, max_covered_fraction):
+    """Would placing a sprite with `candidate_alpha` (bool array) at `candidate_pos` push
+    any ALREADY-placed sprite's cumulative covered fraction over `max_covered_fraction`?
+    Symmetric with compute_visibility's math (same _region_overlap_mask primitive) but
+    generalised: every sprite gets this protection here, not just one designated mascot.
+
+    `placed`: list of dicts, each {"pos", "alpha", "total", "covered"} for a sprite already
+    on the board -- "covered" is a bool array (that sprite's own local frame) of which of
+    its opaque pixels are already covered by sprites drawn on top of it so far.
+
+    Returns (ok, updates) -- `updates` is [(index into placed, new "covered" mask), ...]
+    for every already-placed sprite the candidate would newly overlap; the caller applies
+    these only if it actually accepts this candidate's position (a rejected attempt must
+    not mutate state that a later, accepted attempt didn't cause)."""
+    updates = []
+    ch, cw = candidate_alpha.shape
+    cx, cy = candidate_pos
+    for i, p in enumerate(placed):
+        ph, pw = p["alpha"].shape
+        box = (p["pos"][0], p["pos"][1], p["pos"][0] + pw, p["pos"][1] + ph)
+        # _region_overlap_mask only reports where the CANDIDATE has opaque pixels within
+        # p's box -- it knows nothing about p's own alpha (see compute_visibility, which
+        # masks by the mascot's own alpha in the caller for the same reason). Without the
+        # "& p['alpha']" here, a candidate placed over p's real transparent gaps (e.g. the
+        # ring fixture's hollow middle) would incorrectly count as covering p.
+        addition = _region_overlap_mask(box, candidate_alpha, candidate_pos) & p["alpha"]
+        if not addition.any():
+            continue
+        combined = p["covered"] | addition
+        frac = combined.sum() / p["total"]
+        if frac > max_covered_fraction + 1e-9:
+            return False, []
+        updates.append((i, combined))
+    return True, updates
+
+
+def compose_lookalike_puzzle(background_bytes, pool, rng, sprite_count, canvas_size,
+                             sprite_height, max_covered_fraction=0.0):
+    """Composite one "spot the non-duplicated one" board with SCATTERED placement (not a
+    literal grid -- an earlier grid-cell version of this read as too regular/mechanical per
+    direct feedback). Every sprite is the same size (`sprite_height`); positions are chosen
+    freely across the canvas, retried (bounded) whenever a candidate would push any
+    ALREADY-placed sprite's covered fraction above `max_covered_fraction` -- see
+    _sprite_coverage_check. At `max_covered_fraction=0.0` this reduces to exactly the
+    strict non-overlap guarantee the earlier decoy-sizing fix established (any nonzero
+    overlap is rejected); a higher value (only the hardest tier uses one) allows real
+    crowding/overlap up to that cap, symmetric across every sprite on the board, not just
+    the target.
 
     `background_bytes`: one of the existing hidden_okra_backgrounds images (any theme --
     this mode has no sprite/background theme coupling, unlike compose_sprite_puzzle; the
@@ -1900,38 +1949,26 @@ def compose_lookalike_puzzle(background_bytes, pool, rng, cols, rows, canvas_siz
     callers must pass a real per-document identifier (e.g. the Mongo `_id`), not derive one
     from content.
 
-    `cols`, `rows`, `canvas_size`: from the caller's chosen LOOKALIKE_DIFFICULTIES entry --
-    all three vary per difficulty (grid density, overall size, and implicitly per-sprite
-    size), so this function takes them explicitly rather than defaulting to one tier.
-
-    Picks one pool entry as the target, fills the remaining `cols*rows - 1` cells by
-    sampling WITH REPLACEMENT from the rest of the pool, and pastes each sprite uniformly
-    sized (bbox-cropped then resized to fit one cell, minus `LOOKALIKE_CELL_PADDING`) and
-    centred in its cell -- a literal grid, not scattered/rejection-sampled placement, which
-    trivially guarantees the uniform-size-and-no-overlap properties an earlier scattered
-    version of this game had to retrofit (see _decoy_target_height/_random_canvas_position's
-    docstrings above). Every paste uses _paste_with_shadow, same depth-cue consistency as
-    compose_sprite_puzzle.
+    `sprite_count`, `canvas_size`, `sprite_height`, `max_covered_fraction`: from the
+    caller's chosen LOOKALIKE_DIFFICULTIES entry.
 
     Returns (board_image_bytes, reference_image_bytes, target_box, meta). `target_box` is
-    `grid_cell_rect(target_col, target_row, cols, rows)` -- the exact shape
-    grade_submission/_wheres_okra_render already expect, so nothing downstream needs to
-    know this compositor works differently from compose_sprite_puzzle. `reference_image_bytes`
-    is the target sprite alone on a plain card (LOOKALIKE_REFERENCE_BG), deliberately not
-    composited against the board's busy background, so it reads clearly as "find THIS one"
-    rather than blending into the reveal itself.
+    the target sprite's OWN ACTUAL placed pixel box, normalised -- never blindly assumed,
+    the same "verify what was actually drawn" principle `compose_sprite_puzzle` already
+    follows for the mascot's real position. `reference_image_bytes` is the target sprite
+    alone on a plain card (LOOKALIKE_REFERENCE_BG), deliberately not composited against the
+    board's busy background, so it reads clearly as "find THIS one" rather than blending
+    into the reveal itself.
 
     Raises PuzzleGenerationError if `pool` has fewer than 2 sprites -- nothing can be "the
     only one of its kind" when there is nothing else to duplicate.
     """
+    import numpy as np
     from PIL import Image
 
     if len(pool) < 2:
         raise PuzzleGenerationError(
             f"Need at least 2 lookalike sprites to compose a puzzle, got {len(pool)}.")
-
-    width, height = canvas_size
-    cell_w, cell_h = width / cols, height / rows
 
     try:
         canvas = Image.open(io.BytesIO(background_bytes)).convert("RGBA")
@@ -1941,21 +1978,39 @@ def compose_lookalike_puzzle(background_bytes, pool, rng, cols, rows, canvas_siz
 
     target = rng.choice(pool)
     remaining = [s for s in pool if s["id"] != target["id"]]
+    target_index = rng.randrange(sprite_count)
 
-    total_cells = cols * rows
-    target_index = rng.randrange(total_cells)
-    target_col, target_row = target_index % cols, target_index // cols
+    placed = []
+    target_pos = target_img = None
 
-    target_height = min(cell_w, cell_h) * (1.0 - LOOKALIKE_CELL_PADDING)
-
-    for index in range(total_cells):
-        col, row = index % cols, index // cols
+    for index in range(sprite_count):
         sprite_entry = target if index == target_index else rng.choice(remaining)
-        img = prep_sprite(sprite_entry["bytes"], target_height)
-        cx = (col + 0.5) * cell_w
-        cy = (row + 0.5) * cell_h
-        pos = (round(cx - img.width / 2), round(cy - img.height / 2))
-        _paste_with_shadow(canvas, img, pos)
+        img = prep_sprite(sprite_entry["bytes"], sprite_height)
+        alpha = _sprite_alpha_array(img)
+        total = int(alpha.sum())
+        if total == 0:
+            continue  # a degenerate/fully-transparent sprite -- skip rather than crash
+
+        accepted_pos, accepted_updates = None, []
+        for _attempt in range(_PLACEMENT_MAX_ATTEMPTS):
+            pos = _random_canvas_position(img, canvas_size, rng)
+            ok, updates = _sprite_coverage_check(alpha, pos, placed, max_covered_fraction)
+            accepted_pos, accepted_updates = pos, updates
+            if ok:
+                break
+        # Falls back to the last-tried (possibly cap-violating) position if none of the
+        # attempts succeeded, same documented fallback as _random_canvas_position's own --
+        # a genuinely packed board degrades to "slightly over the cap" rather than hanging
+        # or silently under-filling the puzzle below its difficulty's sprite_count.
+
+        for i, combined in accepted_updates:
+            placed[i]["covered"] = combined
+        placed.append({"pos": accepted_pos, "alpha": alpha, "total": total,
+                       "covered": np.zeros_like(alpha, dtype=bool)})
+        _paste_with_shadow(canvas, img, accepted_pos)
+
+        if index == target_index:
+            target_pos, target_img = accepted_pos, img
 
     buffer = io.BytesIO()
     canvas.convert("RGB").save(buffer, format="PNG")
@@ -1970,14 +2025,17 @@ def compose_lookalike_puzzle(background_bytes, pool, rng, cols, rows, canvas_siz
     ref_canvas.convert("RGB").save(ref_buffer, format="PNG")
     reference_image_bytes = ref_buffer.getvalue()
 
-    target_box = grid_cell_rect(target_col, target_row, cols, rows)
+    width, height = canvas_size
+    target_box = (target_pos[0] / width, target_pos[1] / height,
+                 (target_pos[0] + target_img.width) / width,
+                 (target_pos[1] + target_img.height) / height)
 
     meta = {
         "pipeline": "lookalike",
-        "cols": cols,
-        "rows": rows,
+        "sprite_count": len(placed),
         "target_id": target["id"],
         "pool_size": len(pool),
+        "max_covered_fraction": max_covered_fraction,
     }
     return board_image_bytes, reference_image_bytes, target_box, meta
 
