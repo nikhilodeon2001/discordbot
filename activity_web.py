@@ -104,14 +104,21 @@ def _image_proxy_url(url):
 
 
 def proxy_images(state):
-    """Rewrite image_url to route through /img. Never mutates the input, which may be the shared
-    broadcast dict handed to every SSE subscriber."""
+    """Rewrite image_url (and reference_image_url, if present -- Where's Okra's "find THIS
+    one" reference card) to route through /img. Never mutates the input, which may be the
+    shared broadcast dict handed to every SSE subscriber."""
     if not isinstance(state, dict):
         return state
     url = state.get("image_url")
-    if not url:
+    ref_url = state.get("reference_image_url")
+    if not url and not ref_url:
         return state
-    return {**state, "image_url": _image_proxy_url(url)}
+    out = dict(state)
+    if url:
+        out["image_url"] = _image_proxy_url(url)
+    if ref_url:
+        out["reference_image_url"] = _image_proxy_url(ref_url)
+    return out
 
 
 def _is_safe_host(host):
@@ -405,6 +412,9 @@ _ACTIVITY_HTML = """<!doctype html>
     border:3px solid var(--red); border-radius:50%; pointer-events:none;
     box-shadow:0 0 0 2px rgba(0,0,0,.45); }
   .spothint { font-size:.86rem; color:var(--muted); margin:0 0 10px; text-align:center; }
+  .spotref { display:flex; flex-direction:column; align-items:center; margin:0 0 6px; }
+  .spotrefimg { width:120px; height:120px; object-fit:contain; border-radius:12px;
+    background:rgba(127,127,127,.06); border:1px solid var(--line); }
   .puzzle { font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; font-size:1.3rem;
     letter-spacing:.16em; text-align:center; margin:2px 0 18px; color:var(--fg); overflow-x:auto; }
   input[type=text] { width:100%; padding:15px 16px; font-size:1.05rem; border-radius:14px;
@@ -822,8 +832,14 @@ function render(state) {
     // player taps the mascot directly and the tap's normalised coordinates are graded
     // server-side. The target box is never sent to this page.
     if (state.image_url !== spotterKey) { spotterKey = state.image_url; spotterMark = null; }
+    var refHtml = state.reference_image_url
+      ? '<div class="spotref"><div class="spothint">Find this one:</div>' +
+        '<img class="spotrefimg" src="' + esc(P + state.reference_image_url) +
+        '" alt="Reference"></div>'
+      : '';
     app.innerHTML = '<div class="qhead"><span class="cat">Where\\'s Okra</span></div>' +
-      '<div class="spothint">Tap the okra chef. Wrong taps cost you nothing.</div>' +
+      refHtml +
+      '<div class="spothint">He\\'s hiding among the look-alikes below. Wrong taps cost you nothing.</div>' +
       '<div class="spotwrap"><img class="spotimg" src="' + esc(P + state.image_url) +
       '" alt="Hidden object puzzle"></div>' +
       '<div id="status" class="status"></div>' + scoreboardHtml(state);
