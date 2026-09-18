@@ -10370,11 +10370,11 @@ async def ask_wheres_okra_challenge(winner, winner_id, num=3):
     view = build_option_button_view(button_options, {winner_id}, timeout=magic_time + 5)
 
     prompt = (f"​\n\U0001f579️ **<@{winner_id}>**, pick a difficulty:\n\n"
-              f"\U0001f7e2 **Okra-dinary** — a gentle warmup, 16 to search.\n"
-              f"\U0001f7e1 **Okra Squad** — 36 look-alikes, business as usual.\n"
-              f"\U0001f7e0 **Okra-geddon** — 64 of them, smaller and sneakier.\n"
-              f"\U0001f534 **Okra Overload** — 100 look-alikes. Good luck.\n"
-              f"\U0001f7e3 **Okrap** — 180 look-alikes, crowded and overlapping. Godspeed.\n​")
+              f"\U0001f7e2 **Okra-dinary** — 36 to search, a light warmup.\n"
+              f"\U0001f7e1 **Okra Squad** — 64 look-alikes, business as usual.\n"
+              f"\U0001f7e0 **Okra-geddon** — 100 of them, smaller and sneakier.\n"
+              f"\U0001f534 **Okra Overload** — 180 look-alikes, crowded and overlapping.\n"
+              f"\U0001f7e3 **Okrap** — 360 look-alikes, packed in tight. Godspeed.\n​")
     view.message = await safe_send(channel, prompt, view=view)
 
     target_channel = _active_game_channel or channel
