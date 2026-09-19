@@ -1108,6 +1108,7 @@ categories_to_exclude = []
 collected_responses = []
 current_question = None
 _giveaway_words_cache = {"key": None, "words": frozenset()}  # see _current_giveaway_words()
+_giveaway_guard_reply_cache = {"key": None, "replied": False}  # see _notify_giveaway_guard_reply()
 previous_question = None
 round_in_progress = False  # True from the moment a round is committed to starting until it ends -- lets /checkupdate warn before an update would kill the process mid-round
 current_answer_view = None
@@ -24850,8 +24851,21 @@ async def _notify_giveaway_guard_reply(message):
     """Reply in-channel (as a Discord reply to the flagged message) explaining
     what the 🟥 red card means. A DM was tried first, but it's easy to miss
     while you're actively chatting -- an in-channel reply is guaranteed to be
-    seen, at the cost of being visible to everyone. Fires on every flagged
-    message, not just the first per question."""
+    seen, at the cost of being visible to everyone. The 🟥 reaction still
+    fires on every flagged message (see the call site), but the reply itself
+    is sent only once per question -- keyed on the same (category, question)
+    pair as _current_giveaway_words -- so a question with several parroted
+    guesses doesn't fill the channel with repeats of the same explanation."""
+    cat = current_question.get("trivia_category", "") if current_question else ""
+    q = current_question.get("trivia_question", "") if current_question else ""
+    key = (cat, q)
+    if _giveaway_guard_reply_cache["key"] != key:
+        _giveaway_guard_reply_cache["key"] = key
+        _giveaway_guard_reply_cache["replied"] = False
+    if _giveaway_guard_reply_cache["replied"]:
+        return
+    _giveaway_guard_reply_cache["replied"] = True
+
     guess = message.content.strip()
     if len(guess) > 100:
         guess = guess[:100] + "…"
