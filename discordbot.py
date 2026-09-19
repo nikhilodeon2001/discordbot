@@ -18208,13 +18208,17 @@ async def get_random_city(winner):
         except Exception as e:
             print("GPT failed:", e)
             clue = "I'm somewhere mysterious."
-        
+
         themed_url = await generate_themed_country_image(country_name, city_name)
     else:
         clue = "I'm somewhere mysterious."
         themed_url = None
 
-    
+    # Local time/temperature are always stated outright at the top of the first clue
+    # message, regardless of what the LLM chose to weave in on its own -- the indirect
+    # "reason it out" clues above stay a bonus on top, not a substitute for these two.
+    clue = f"🌡️ Local time: {time_str} | Temp: {temp_f}°F ({temp_c}°C)\n\n{clue}"
+
     return city_name, country_name, "World Cities", clue, street_url, sat_url, live_url, themed_url
 
 
@@ -21840,18 +21844,18 @@ async def select_wof_questions(winner, winner_id, winner_coffees=None):
                 await safe_send(channel, location_clue)
 
             fixed_letters = []
-            await asyncio.sleep(3)
+            await asyncio.sleep(5)
 
             if street_view_url != None:
                 await safe_send(channel, content="\n🏙️👁️ We saw OkraStrut post this to X...\n", embed=discord.Embed().set_image(url=street_view_url))
-                await asyncio.sleep(2)
-            
-            await safe_send(channel, content="\n🛰️🌍 Our spies tracked him to this area...\n", embed=discord.Embed().set_image(url=satellite_view_url))                
-            await asyncio.sleep(2)
+                await asyncio.sleep(5)
+
+            await safe_send(channel, content="\n🛰️🌍 Our spies tracked him to this area...\n", embed=discord.Embed().set_image(url=satellite_view_url))
+            await asyncio.sleep(5)
 
             if ai_on and themed_country_url:
                 await safe_send(channel, content="\n📸🥒 We found this on OkraStrut's Insta...\n", file=discord.File(themed_country_url, filename="country.png"))
-                await asyncio.sleep(2)
+                await asyncio.sleep(5)
 
         image_file, image_width, image_height, display_string = generate_wof_image(wof_answer, wof_clue, fixed_letters)
         print(f"{wof_clue}: {wof_answer}")
@@ -21901,10 +21905,10 @@ async def select_wof_questions(winner, winner_id, winner_coffees=None):
             await asyncio.sleep(1.5)
 
         if selected_wof_category == "8":
-            await asyncio.sleep(1.5)
+            await asyncio.sleep(5)
             maps_message = f"\n🌍❔ Okra's Location: {satellite_view_live_url}\n"
             await safe_send(channel, maps_message)
-            await asyncio.sleep(1.5)
+            await asyncio.sleep(5)
 
         return None
 
