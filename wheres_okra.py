@@ -2201,6 +2201,10 @@ def compose_lookalike_puzzle(background_bytes, pool, rng, sprite_count, canvas_s
         "pipeline": "lookalike",
         "sprite_count": len(placed),
         "target_id": target["id"],
+        "target_name": target.get("name"),
+        "target_source": target.get("source"),
+        "target_submitted_by": target.get("submitted_by"),
+        "target_added_at": target.get("added_at"),
         "pool_size": len(pool),
         "max_covered_fraction": max_covered_fraction,
     }
