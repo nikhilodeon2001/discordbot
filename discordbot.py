@@ -10235,16 +10235,23 @@ async def _wheres_okra_draw_lookalike_puzzle(difficulty):
     loop = asyncio.get_running_loop()
 
     # A winner-submitted custom sprite (see _wheres_okra_offer_custom_sprite) sets this
-    # doc so it's guaranteed to be the target on the very next round, any tier -- consumed
-    # exactly once by deleting it here, regardless of whether it actually ends up usable
-    # (compose_lookalike_puzzle falls back to a random target if the id isn't in `pool`,
-    # e.g. the sprite was removed between rounds; that fallback should not keep re-forcing
-    # a stale id on every future round after that).
+    # doc so it's guaranteed to be the target on the very next MAIN-LOOP round -- Arena
+    # games are deliberately independent of this mechanic entirely (per direct
+    # instruction: "the arena games are independent and the new okra is the unique okra
+    # in the next trivia game in the main loop"), so an Arena-mode call here never even
+    # looks at the doc, let alone consumes it -- _active_game_channel is set by
+    # mini_games.py only while an Arena game is actually running (cleared right after),
+    # the same signal every other per-game function in this file already uses to tell
+    # Arena apart from the main loop. Consumed exactly once by deleting it here, regardless
+    # of whether it actually ends up usable (compose_lookalike_puzzle falls back to a
+    # random target if the id isn't in `pool`, e.g. the sprite was removed between rounds;
+    # that fallback should not keep re-forcing a stale id on every future round after that).
     forced_target_id = None
-    pending = await db["hidden_okra_state"].find_one({"_id": "pending_lookalike_target"})
-    if pending:
-        forced_target_id = pending.get("sprite_id")
-        await db["hidden_okra_state"].delete_one({"_id": "pending_lookalike_target"})
+    if _active_game_channel is None:
+        pending = await db["hidden_okra_state"].find_one({"_id": "pending_lookalike_target"})
+        if pending:
+            forced_target_id = pending.get("sprite_id")
+            await db["hidden_okra_state"].delete_one({"_id": "pending_lookalike_target"})
 
     try:
         board_bytes, reference_bytes, target, meta = await loop.run_in_executor(
@@ -10276,97 +10283,118 @@ async def _wheres_okra_draw_lookalike_puzzle(difficulty):
 async def _wheres_okra_offer_custom_sprite(found_by, found_by_name):
     """Okrap (hardest tier) winner reward: if eligible, offer to collect a custom-sprite
     description, generate it, add it to the live pool, and force it as the target on the
-    very next Where's Okra round (any tier -- see the "pending_lookalike_target" doc
-    _wheres_okra_draw_lookalike_puzzle checks). Gated behind
-    WHERES_OKRA_CUSTOM_SPRITE_ENABLED (kill switch) and get_coffees(found_by) > 0 (the
-    same "Okrans Only" role check the Okra Museum's coffee-gated custom prompt already
-    uses). No-op (returns immediately, no message sent) if either check fails -- an
-    ineligible winner sees nothing different from today.
+    very next MAIN-LOOP Where's Okra round (see the "pending_lookalike_target" doc
+    _wheres_okra_draw_lookalike_puzzle checks, and its Arena-independence note). Gated
+    behind WHERES_OKRA_CUSTOM_SPRITE_ENABLED (kill switch) and get_coffees(found_by) > 0
+    (the same "Okrans Only" role check the Okra Museum's coffee-gated custom prompt
+    already uses). No-op (returns immediately, no message sent) if either check fails --
+    an ineligible winner sees nothing different from today.
+
+    Launched via `asyncio.ensure_future` by the caller, not awaited -- the round loop
+    moves on immediately rather than blocking on description-collection (players can take
+    up to the full prompt window to type) plus generation (real API latency) plus upload.
+    There is deliberately no "it's ready" confirmation message either: the custom sprite
+    simply becomes the target next main-loop round whenever it actually finishes, which is
+    confirmation enough. Since nothing awaits this coroutine, every exception below must
+    be handled internally -- an uncaught one here would only ever surface as an
+    unretrieved-task-exception warning, never anywhere a person would see it.
     """
-    if not WHERES_OKRA_CUSTOM_SPRITE_ENABLED:
-        return
-    if await get_coffees(found_by) <= 0:
-        return
-
-    await safe_send(
-        channel,
-        f"​\n🎁🥒 **<@{found_by}>**, as Okrap's champion you've earned a custom Okra! "
-        f"Describe what it should look like.\n\n"
-        f"⚠️ **Keep it safe and appropriate** -- no real people, no trademarked/copyrighted "
-        f"characters, nothing NSFW or offensive. Requests that don't pass safety, "
-        f"trademark, or copyright checks are simply rejected -- **there are no second "
-        f"chances this round**, so make it count.\n​")
-
-    description = await request_prompt(
-        found_by_name, found_by,
-        header=f"🖌️🔟 **<@{found_by}>**, give me **10 words max** describing your custom Okra.")
-    if description is None:
-        return  # ran out of time -- a bonus, not a required step, nothing else to do
-
-    mascot_path = private_asset_path("okra_chef.png")
-    if not os.path.exists(mascot_path):
-        print("⚠️ Where's Okra custom sprite: okra_chef.png is not available locally")
-        return
-    with open(mascot_path, "rb") as handle:
-        mascot_bytes = handle.read()
-
-    prompt = wheres_okra.build_custom_sprite_prompt(description)
     try:
-        response = await openai_client.images.edit(
-            model="gpt-image-1",
-            image=("okra_chef.png", mascot_bytes, "image/png"),
-            prompt=prompt,
-            size="1024x1024",
-            quality="high",
-            background="transparent",
-        )
-        image_bytes = base64.b64decode(response.data[0].b64_json)
-    except Exception as e:
-        if _is_moderation_rejection(e):
-            await safe_send(
-                channel,
-                f"​\n🚫 **<@{found_by}>**, that description didn't pass -- no custom Okra "
-                f"this time. No second chances this round, as warned!\n​")
+        if not WHERES_OKRA_CUSTOM_SPRITE_ENABLED:
             return
-        sentry_sdk.capture_exception(e)
-        print(f"Error generating Where's Okra custom sprite: {e}")
+        if await get_coffees(found_by) <= 0:
+            return
+
         await safe_send(
             channel,
-            f"​\n⚠️ **<@{found_by}>**, something went wrong generating your custom Okra. "
-            f"No second chances this round, sorry!\n​")
-        return
+            f"​\n🎁🥒 **<@{found_by}>**, as Okrap's champion you've earned a custom Okra! "
+            f"Describe what it should look like.\n\n"
+            f"⚠️ **Keep it safe and appropriate** -- no real people, no trademarked/copyrighted "
+            f"characters, nothing NSFW or offensive. Requests that don't pass safety, "
+            f"trademark, or copyright checks are simply rejected -- **there are no second "
+            f"chances this round**, so make it count.\n​")
 
-    sprite_id = str(uuid.uuid4())
-    s3_key = f"hidden_okra_sprites/{WHERES_OKRA_LOOKALIKE_THEME}/{sprite_id}.png"
-    session = aioboto3.Session()
-    async with session.client("s3") as s3c:
-        await s3c.put_object(Bucket=S3_BUCKET_NAME, Key=s3_key, Body=image_bytes,
-                             ContentType="image/png")
-    image_url = f"https://{S3_BUCKET_NAME}.s3.us-east-2.amazonaws.com/{s3_key}"
+        description = await request_prompt(
+            found_by_name, found_by,
+            header=f"🖌️🔟 **<@{found_by}>**, give me **10 words max** describing your custom Okra.")
+        if description is None:
+            return  # ran out of time -- a bonus, not a required step, nothing else to do
 
-    await db["hidden_okra_sprites"].insert_one({
-        "_id": sprite_id,
-        "theme": WHERES_OKRA_LOOKALIKE_THEME,
-        "s3_key": s3_key,
-        "image_url": image_url,
-        "tags": [description],
-        "scale_class": None,
-        "source": "user_submitted",
-        "submitted_by": found_by,
-        "subject": description,
-        "added_at": datetime.datetime.utcnow(),
-    })
-    await db["hidden_okra_state"].update_one(
-        {"_id": "pending_lookalike_target"},
-        {"$set": {"sprite_id": sprite_id}},
-        upsert=True,
-    )
+        mascot_path = private_asset_path("okra_chef.png")
+        if not os.path.exists(mascot_path):
+            print("⚠️ Where's Okra custom sprite: okra_chef.png is not available locally")
+            return
+        with open(mascot_path, "rb") as handle:
+            mascot_bytes = handle.read()
 
-    await safe_send(
-        channel,
-        f"​\n✅🥒 **<@{found_by}>**, your custom Okra is in! Assuming it wasn't rejected for "
-        f"safety, trademark, or copyright reasons (it wasn't -- you're reading this), check "
-        f"back next round to see your new **Okrite**!\n​")
+        prompt = wheres_okra.build_custom_sprite_prompt(description)
+        try:
+            response = await openai_client.images.edit(
+                model="gpt-image-1",
+                image=("okra_chef.png", mascot_bytes, "image/png"),
+                prompt=prompt,
+                size="1024x1024",
+                quality="high",
+                background="transparent",
+            )
+            image_bytes = base64.b64decode(response.data[0].b64_json)
+        except Exception as e:
+            if _is_moderation_rejection(e):
+                await safe_send(
+                    channel,
+                    f"​\n🚫 **<@{found_by}>**, that description didn't pass -- no custom Okra "
+                    f"this time. No second chances this round, as warned!\n​")
+                return
+            sentry_sdk.capture_exception(e)
+            print(f"Error generating Where's Okra custom sprite: {e}")
+            await safe_send(
+                channel,
+                f"​\n⚠️ **<@{found_by}>**, something went wrong generating your custom Okra. "
+                f"No second chances this round, sorry!\n​")
+            return
+
+        sprite_id = str(uuid.uuid4())
+        s3_key = f"hidden_okra_sprites/{WHERES_OKRA_LOOKALIKE_THEME}/{sprite_id}.png"
+        session = aioboto3.Session()
+        async with session.client("s3") as s3c:
+            await s3c.put_object(Bucket=S3_BUCKET_NAME, Key=s3_key, Body=image_bytes,
+                                 ContentType="image/png")
+        image_url = f"https://{S3_BUCKET_NAME}.s3.us-east-2.amazonaws.com/{s3_key}"
+
+        await db["hidden_okra_sprites"].insert_one({
+            "_id": sprite_id,
+            "theme": WHERES_OKRA_LOOKALIKE_THEME,
+            "s3_key": s3_key,
+            "image_url": image_url,
+            "tags": [description],
+            "scale_class": None,
+            "source": "user_submitted",
+            "submitted_by": found_by,
+            "subject": description,
+            "added_at": datetime.datetime.utcnow(),
+        })
+
+        # _wheres_okra_load_lookalike_pool caches the sprite list for
+        # HIDDEN_OKRA_LIBRARY_CACHE_TTL (30 min) -- without this, a real failure mode:
+        # the pending-target doc gets set correctly below, but the very next round's pool
+        # (served from the stale in-process cache) wouldn't contain this brand-new sprite
+        # yet, forced_target_id would never match anything in it, compose_lookalike_puzzle
+        # would silently fall back to a random target, and the pending doc would still get
+        # consumed/deleted regardless -- the custom sprite just quietly never appears.
+        # Appending directly here (same {"bytes", "id"} shape the loader itself builds)
+        # keeps the cache correct without forcing a full reload.
+        global _wheres_okra_lookalike_cache
+        if _wheres_okra_lookalike_cache is not None:
+            _wheres_okra_lookalike_cache["sprites"].append({"bytes": image_bytes, "id": sprite_id})
+
+        await db["hidden_okra_state"].update_one(
+            {"_id": "pending_lookalike_target"},
+            {"$set": {"sprite_id": sprite_id}},
+            upsert=True,
+        )
+    except Exception as e:
+        sentry_sdk.capture_exception(e)
+        print(f"Error in Where's Okra custom sprite flow:\n{traceback.format_exc()}")
 
 
 async def _wheres_okra_draw_puzzle(difficulty, exclude_theme=None, exclude_background_id=None):
@@ -10642,12 +10670,14 @@ async def ask_wheres_okra_challenge(winner, winner_id, num=3):
             sentry_sdk.capture_exception(e)
             print(f"Error revealing Where's Okra puzzle:\n{traceback.format_exc()}")
 
-        if difficulty == "impossible" and found_by is not None:
-            try:
-                await _wheres_okra_offer_custom_sprite(found_by, user_correct_answers[found_by][0])
-            except Exception as e:
-                sentry_sdk.capture_exception(e)
-                print(f"Error offering Where's Okra custom sprite:\n{traceback.format_exc()}")
+        # Main-loop only, per direct instruction -- Arena's Where's Okra never offers this
+        # (and, separately, never honors/consumes a pending custom-sprite target either;
+        # see _wheres_okra_draw_lookalike_puzzle). Fire-and-forget: the round loop moves on
+        # immediately rather than waiting on description-collection + generation + upload --
+        # the custom sprite simply shows up as the target next MAIN-LOOP round whenever it
+        # actually finishes, with no separate "it's ready" confirmation needed.
+        if difficulty == "impossible" and found_by is not None and _active_game_channel is None:
+            asyncio.ensure_future(_wheres_okra_offer_custom_sprite(found_by, user_correct_answers[found_by][0]))
 
         await asyncio.sleep(1)
         round_num += 1
