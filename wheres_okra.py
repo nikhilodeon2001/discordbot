@@ -1883,11 +1883,11 @@ def available_themes(sprite_themes, background_themes):
 # tier, double the sprite_count -- density = count/area, so doubling count on an unchanged
 # area is exactly 2x density by definition).
 LOOKALIKE_DIFFICULTIES = {
-    "easy":       {"label": "Okra-dinary",   "sprite_count": 36,  "canvas_size": (1080, 1080), "grid": (6, 6),   "sprite_height": 158, "max_covered_fraction": 0.0,  "guess_time": 45},
-    "medium":     {"label": "Okra Squad",    "sprite_count": 64,  "canvas_size": (1320, 1320), "grid": (8, 8),   "sprite_height": 145, "max_covered_fraction": 0.0,  "guess_time": 60},
-    "hard":       {"label": "Okra-geddon",   "sprite_count": 100, "canvas_size": (1500, 1500), "grid": (10, 10), "sprite_height": 132, "max_covered_fraction": 0.0,  "guess_time": 90},
-    "brutal":     {"label": "Okra Overload", "sprite_count": 180, "canvas_size": (1700, 1700), "grid": (12, 12), "sprite_height": 125, "max_covered_fraction": 0.30, "guess_time": 120},
-    "impossible": {"label": "Okrap",         "sprite_count": 360, "canvas_size": (1700, 1700), "grid": (16, 16), "sprite_height": 100, "max_covered_fraction": 0.40, "guess_time": 150},
+    "easy":       {"label": "Okra-dinary",   "sprite_count": 36,  "canvas_size": (1080, 1080), "grid": (6, 6),   "sprite_height": 158, "max_covered_fraction": 0.0,  "guess_time": 30},
+    "medium":     {"label": "Okra Squad",    "sprite_count": 64,  "canvas_size": (1320, 1320), "grid": (8, 8),   "sprite_height": 145, "max_covered_fraction": 0.0,  "guess_time": 30},
+    "hard":       {"label": "Okra-geddon",   "sprite_count": 100, "canvas_size": (1500, 1500), "grid": (10, 10), "sprite_height": 132, "max_covered_fraction": 0.0,  "guess_time": 30},
+    "brutal":     {"label": "Okra Overload", "sprite_count": 180, "canvas_size": (1700, 1700), "grid": (12, 12), "sprite_height": 125, "max_covered_fraction": 0.30, "guess_time": 30},
+    "impossible": {"label": "Okrap",         "sprite_count": 360, "canvas_size": (1700, 1700), "grid": (16, 16), "sprite_height": 100, "max_covered_fraction": 0.40, "guess_time": 15},
 }
 LOOKALIKE_DIFFICULTY_ORDER = ["easy", "medium", "hard", "brutal", "impossible"]
 

@@ -10056,19 +10056,6 @@ def _wheres_okra_render(image_bytes, cols, rows, target=None):
     return buffer
 
 
-async def _wheres_okra_react(message, emoji):
-    """Add a reaction, swallowing the usual Discord failures.
-
-    Only ever launched with ensure_future, so an escaping exception would surface as an
-    unretrieved-task warning rather than anything actionable -- and a wrong guess whose
-    message was deleted mid-round is not worth a log line.
-    """
-    try:
-        await message.add_reaction(emoji)
-    except (discord.HTTPException, discord.Forbidden, discord.NotFound):
-        pass
-
-
 def _wheres_okra_fetch(image_url):
     """Blocking fetch of a puzzle PNG from S3. Always called via run_in_executor."""
     response = requests.get(image_url, timeout=20)
@@ -10605,10 +10592,11 @@ async def ask_wheres_okra_challenge(winner, winner_id, num=3):
 
             # Keep the puzzle image front-and-center: delete every message received during
             # the guess window (guesses and ordinary chat alike), not just the mini-game's
-            # own messages. A short delay (not immediate) so the ✅/❌ reaction added below
-            # is still briefly visible first -- deleting a message removes its reactions
-            # too. CompanionMessage's own .delete() already no-ops safely when there's no
-            # real message behind it (see its docstring), so no type-check needed here.
+            # own messages. No reaction is added any more (see below), so this could delete
+            # immediately, but a short delay is kept anyway in case a future change adds
+            # some other visible feedback here. CompanionMessage's own .delete() already
+            # no-ops safely when there's no real message behind it (see its docstring), so
+            # no type-check needed here.
             asyncio.ensure_future(delete_message_after(message, 1.5))
 
             content = message.content.strip()
@@ -10630,16 +10618,12 @@ async def ask_wheres_okra_challenge(winner, winner_id, num=3):
 
             if correct:
                 found_by = user_id
-                await message.add_reaction("✅")
                 name = message.author.display_name
                 if user_id not in user_correct_answers:
                     user_correct_answers[user_id] = (name, 0)
                 user_correct_answers[user_id] = (name, user_correct_answers[user_id][1] + 1)
-            else:
-                # Fire-and-forget: awaiting here would unpark the guess loop, and any
-                # message arriving while it is not parked in wait_for_message_or_companion
-                # is dropped outright (see the note on that function).
-                asyncio.ensure_future(_wheres_okra_react(message, "❌"))
+            # No reaction on a wrong guess either -- just silently processed (their one
+            # guess this round is used up) and left to the delete scheduled above.
 
         try:
             reveal = await loop.run_in_executor(
@@ -25779,8 +25763,9 @@ async def _notify_giveaway_guard_reply(message):
         guess = guess[:100] + "…"
     try:
         await message.reply(
-            f"🟥 That answer (“{guess}”) is straight from the question or category, so "
-            f"partial-credit matching is off for it -- it'll only count if it's *exactly* right.",
+            f"🟥 That submission (“{guess}”) is straight from the question or category, so "
+            f"partial-credit matching is off for it -- it'll only count if it exactly matches "
+            f"one of the accepted answers.",
             mention_author=False,
         )
     except discord.NotFound:
