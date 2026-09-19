@@ -10283,44 +10283,55 @@ async def _wheres_okra_draw_lookalike_puzzle(difficulty):
 
 async def _wheres_okra_offer_custom_sprite(found_by, found_by_name):
     """Okrap (hardest tier) winner reward: if eligible, offer to collect a custom-sprite
-    description, generate it, add it to the live pool, and force it as the target on the
-    very next MAIN-LOOP Where's Okra round (see the "pending_lookalike_target" doc
+    description, then generate it, add it to the live pool, and force it as the target on
+    the very next MAIN-LOOP Where's Okra round (see the "pending_lookalike_target" doc
     _wheres_okra_draw_lookalike_puzzle checks, and its Arena-independence note). Gated
     behind WHERES_OKRA_CUSTOM_SPRITE_ENABLED (kill switch) and get_coffees(found_by) > 0
     (the same "Okrans Only" role check the Okra Museum's coffee-gated custom prompt
     already uses). No-op (returns immediately, no message sent) if either check fails --
     an ineligible winner sees nothing different from today.
 
-    Launched via `asyncio.ensure_future` by the caller, not awaited -- the round loop
-    moves on immediately rather than blocking on description-collection (players can take
-    up to the full prompt window to type) plus generation (real API latency) plus upload.
-    There is deliberately no "it's ready" confirmation message either: the custom sprite
-    simply becomes the target next main-loop round whenever it actually finishes, which is
-    confirmation enough. Since nothing awaits this coroutine, every exception below must
-    be handled internally -- an uncaught one here would only ever surface as an
-    unretrieved-task-exception warning, never anywhere a person would see it.
+    Awaited by the caller -- the round loop must NOT move on while this winner is still
+    being asked for (or typing) their description, since the prompt view and the round's
+    own messages share the same channel and would otherwise interleave/race. Once a
+    description is actually collected, generation (real API latency) + upload + pool
+    insertion is handed off to _wheres_okra_generate_custom_sprite via
+    `asyncio.ensure_future` -- THAT part the round loop should not block on. There is
+    deliberately no "it's ready" confirmation message for the generation step: the custom
+    sprite simply becomes the target next main-loop round whenever it actually finishes,
+    which is confirmation enough.
     """
+    if not WHERES_OKRA_CUSTOM_SPRITE_ENABLED:
+        return
+    if await get_coffees(found_by) <= 0:
+        return
+
+    await safe_send(
+        channel,
+        f"​\n🎁🥒 **<@{found_by}>**, as Okrap's champion you've earned a custom Okra! "
+        f"Describe what it should look like.\n\n"
+        f"⚠️ **Keep it safe and appropriate** -- no real people, no trademarked/copyrighted "
+        f"characters, nothing NSFW or offensive. Requests that don't pass safety, "
+        f"trademark, or copyright checks are simply rejected -- **there are no second "
+        f"chances this round**, so make it count.\n​")
+
+    description = await request_prompt(
+        found_by_name, found_by,
+        header=f"🖌️🔟 **<@{found_by}>**, give me **10 words max** describing your custom Okra.")
+    if description is None:
+        return  # ran out of time -- a bonus, not a required step, nothing else to do
+
+    asyncio.ensure_future(_wheres_okra_generate_custom_sprite(found_by, description))
+
+
+async def _wheres_okra_generate_custom_sprite(found_by, description):
+    """The real-API-latency half of the custom-sprite reward (generation, upload, pool
+    insertion) -- split out from _wheres_okra_offer_custom_sprite so the round loop only
+    blocks on description collection, not on this. Launched via `asyncio.ensure_future` and
+    never awaited, so every exception below must be handled internally -- an uncaught one
+    here would only ever surface as an unretrieved-task-exception warning, never anywhere a
+    person would see it."""
     try:
-        if not WHERES_OKRA_CUSTOM_SPRITE_ENABLED:
-            return
-        if await get_coffees(found_by) <= 0:
-            return
-
-        await safe_send(
-            channel,
-            f"​\n🎁🥒 **<@{found_by}>**, as Okrap's champion you've earned a custom Okra! "
-            f"Describe what it should look like.\n\n"
-            f"⚠️ **Keep it safe and appropriate** -- no real people, no trademarked/copyrighted "
-            f"characters, nothing NSFW or offensive. Requests that don't pass safety, "
-            f"trademark, or copyright checks are simply rejected -- **there are no second "
-            f"chances this round**, so make it count.\n​")
-
-        description = await request_prompt(
-            found_by_name, found_by,
-            header=f"🖌️🔟 **<@{found_by}>**, give me **10 words max** describing your custom Okra.")
-        if description is None:
-            return  # ran out of time -- a bonus, not a required step, nothing else to do
-
         mascot_path = private_asset_path("okra_chef.png")
         if not os.path.exists(mascot_path):
             print("⚠️ Where's Okra custom sprite: okra_chef.png is not available locally")
@@ -10681,12 +10692,14 @@ async def ask_wheres_okra_challenge(winner, winner_id, num=3):
 
         # Main-loop only, per direct instruction -- Arena's Where's Okra never offers this
         # (and, separately, never honors/consumes a pending custom-sprite target either;
-        # see _wheres_okra_draw_lookalike_puzzle). Fire-and-forget: the round loop moves on
-        # immediately rather than waiting on description-collection + generation + upload --
-        # the custom sprite simply shows up as the target next MAIN-LOOP round whenever it
-        # actually finishes, with no separate "it's ready" confirmation needed.
+        # see _wheres_okra_draw_lookalike_puzzle). Awaited: the round loop must wait out
+        # description collection (so its messages don't interleave with the round's own),
+        # but _wheres_okra_offer_custom_sprite hands the slow part (generation + upload)
+        # off to a fire-and-forget task internally -- the custom sprite simply shows up as
+        # the target next MAIN-LOOP round whenever that actually finishes, with no separate
+        # "it's ready" confirmation needed.
         if difficulty == "impossible" and found_by is not None and _active_game_channel is None:
-            asyncio.ensure_future(_wheres_okra_offer_custom_sprite(found_by, user_correct_answers[found_by][0]))
+            await _wheres_okra_offer_custom_sprite(found_by, user_correct_answers[found_by][0])
 
         await asyncio.sleep(1)
         round_num += 1
