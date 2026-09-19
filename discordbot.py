@@ -10664,13 +10664,17 @@ async def ask_wheres_okra_challenge(winner, winner_id, num=3):
             when_text = added_at.strftime("%B %d, %Y") if added_at else "an earlier round"
             attribution_line = (f"\U0001f3a8 Created by <@{meta['target_submitted_by']}> "
                                 f"on {when_text}\n\n")
+        one_shot_line = ""
+        if num == 1:
+            one_shot_line = ("⚠️ This is your only round -- everyone gets just "
+                             "**ONE** guess, so be thoughtful!\n\n")
 
         ref_embed = discord.Embed()
         ref_embed.set_image(url=puzzle["reference_image_url"])
         await safe_send(
             channel,
             content=(f"​\n\U0001f50d **Round {round_num}**: find THIS one!\n\n"
-                     f"{name_line}{attribution_line}"
+                     f"{name_line}{attribution_line}{one_shot_line}"
                      f"He's hiding somewhere below, surrounded by look-alikes.\n​"),
             embed=ref_embed)
         await asyncio.sleep(5)
