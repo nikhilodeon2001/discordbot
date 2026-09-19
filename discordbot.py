@@ -10153,6 +10153,39 @@ _wheres_okra_background_docs_cache = None  # {"docs": [...], "fetched_at": ts} -
                                             # shared _wheres_okra_bytes_cache above.
 
 
+async def generate_okra_sprite_name(subject):
+    """A short, funny, punny name for one Where's Okra look-alike sprite, based on its
+    subject/costume description (a fixed profession like "astronaut" for the original set,
+    or a user's own free-text description for a winner-submitted sprite). Used both to
+    backfill sprites that predate the "name" field (see _wheres_okra_load_lookalike_pool)
+    and to name brand-new winner-submitted sprites at creation time
+    (_wheres_okra_generate_custom_sprite). Mirrors generate_winner_roast's single-turn
+    gpt-4o-mini pattern."""
+    try:
+        resp = await openai_client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": (
+                    "You name costumed okra-pod characters for a Discord trivia mini-game "
+                    "called \"Where's Okra\" -- think Where's Waldo-style character naming, "
+                    "but every character is the same okra pod wearing a described costume. "
+                    "Given the costume/subject, reply with ONE short, funny, punny name (2-4 "
+                    "words) riffing on \"okra\" and the costume. Reply with ONLY the name -- "
+                    "no quotes, no trailing punctuation, no explanation."
+                )},
+                {"role": "user", "content": f"Costume/subject: {subject}"},
+            ],
+            max_tokens=20,
+            temperature=1.0,
+        )
+        name = resp.choices[0].message.content.strip().strip('"')
+        return name or "Mystery Okra"
+    except Exception as e:
+        sentry_sdk.capture_exception(e)
+        print(f"Error generating Where's Okra sprite name: {e}")
+        return "Mystery Okra"
+
+
 async def _wheres_okra_load_lookalike_pool():
     """Resolve the full 'spot the non-duplicated one' sprite pool, with bytes, from cache
     where possible -- same TTL/refresh pattern as _wheres_okra_load_theme, but flat (one
@@ -10169,6 +10202,21 @@ async def _wheres_okra_load_lookalike_pool():
     if not sprite_docs:
         return []
 
+    # Self-healing backfill for sprites that predate the "name" field -- generated
+    # concurrently (not one at a time) so a cold cache doesn't turn into dozens of
+    # sequential LLM calls' worth of real round-start latency. Persisted immediately so
+    # this only ever runs once per sprite, in whichever environment (staging/prod) first
+    # loads it after this shipped -- no separate manual backfill script needed.
+    missing = [d for d in sprite_docs if not d.get("name")]
+    if missing:
+        names = await asyncio.gather(*[
+            generate_okra_sprite_name(d.get("subject") or next(iter(d.get("tags") or []), "an okra"))
+            for d in missing
+        ])
+        for doc, name in zip(missing, names):
+            doc["name"] = name
+            await db["hidden_okra_sprites"].update_one({"_id": doc["_id"]}, {"$set": {"name": name}})
+
     loop = asyncio.get_running_loop()
     sprites = []
     for doc in sprite_docs:
@@ -10177,7 +10225,9 @@ async def _wheres_okra_load_lookalike_pool():
         except Exception as e:
             sentry_sdk.capture_exception(e)
             continue  # one bad sprite shouldn't take down the whole pool
-        sprites.append({"bytes": data, "id": str(doc["_id"])})
+        sprites.append({"bytes": data, "id": str(doc["_id"]), "name": doc.get("name"),
+                        "source": doc.get("source"), "submitted_by": doc.get("submitted_by"),
+                        "added_at": doc.get("added_at")})
 
     _wheres_okra_lookalike_cache = {"sprites": sprites, "fetched_at": time.time()}
     return sprites
@@ -10217,9 +10267,11 @@ async def _wheres_okra_draw_lookalike_puzzle(difficulty):
     `difficulty`: one of wheres_okra.LOOKALIKE_DIFFICULTY_ORDER -- picks the grid/canvas
     size for this round via wheres_okra.LOOKALIKE_DIFFICULTIES.
 
-    Returns {"image_url", "reference_image_url", "target", "cols", "rows"}, or None if the
-    lookalike pool has fewer than 2 sprites or no background could be loaded -- nothing
-    bootstrapped yet, or a fetch failure.
+    Returns {"image_url", "reference_image_url", "target", "cols", "rows", "meta"}, or None
+    if the lookalike pool has fewer than 2 sprites or no background could be loaded --
+    nothing bootstrapped yet, or a fetch failure. `meta` (from compose_lookalike_puzzle)
+    carries the target's name and, if it's a winner-submitted sprite, who submitted it and
+    when -- see ask_wheres_okra_challenge's "find THIS one!" reveal.
     """
     pool = await _wheres_okra_load_lookalike_pool()
     if len(pool) < 2:
@@ -10278,7 +10330,7 @@ async def _wheres_okra_draw_lookalike_puzzle(difficulty):
     reference_image_url = f"https://{S3_BUCKET_NAME}.s3.us-east-2.amazonaws.com/{ref_key}?v={v}"
 
     return {"image_url": image_url, "reference_image_url": reference_image_url,
-           "target": target, "cols": cols, "rows": rows}
+           "target": target, "cols": cols, "rows": rows, "meta": meta}
 
 
 async def _wheres_okra_offer_custom_sprite(found_by, found_by_name):
@@ -10373,6 +10425,9 @@ async def _wheres_okra_generate_custom_sprite(found_by, description):
                                  ContentType="image/png")
         image_url = f"https://{S3_BUCKET_NAME}.s3.us-east-2.amazonaws.com/{s3_key}"
 
+        name = await generate_okra_sprite_name(description)
+        added_at = datetime.datetime.utcnow()
+
         await db["hidden_okra_sprites"].insert_one({
             "_id": sprite_id,
             "theme": WHERES_OKRA_LOOKALIKE_THEME,
@@ -10383,7 +10438,8 @@ async def _wheres_okra_generate_custom_sprite(found_by, description):
             "source": "user_submitted",
             "submitted_by": found_by,
             "subject": description,
-            "added_at": datetime.datetime.utcnow(),
+            "name": name,
+            "added_at": added_at,
         })
 
         # _wheres_okra_load_lookalike_pool caches the sprite list for
@@ -10393,11 +10449,14 @@ async def _wheres_okra_generate_custom_sprite(found_by, description):
         # yet, forced_target_id would never match anything in it, compose_lookalike_puzzle
         # would silently fall back to a random target, and the pending doc would still get
         # consumed/deleted regardless -- the custom sprite just quietly never appears.
-        # Appending directly here (same {"bytes", "id"} shape the loader itself builds)
-        # keeps the cache correct without forcing a full reload.
+        # Appending directly here (same shape the loader itself builds, name/attribution
+        # included) keeps the cache correct without forcing a full reload.
         global _wheres_okra_lookalike_cache
         if _wheres_okra_lookalike_cache is not None:
-            _wheres_okra_lookalike_cache["sprites"].append({"bytes": image_bytes, "id": sprite_id})
+            _wheres_okra_lookalike_cache["sprites"].append({
+                "bytes": image_bytes, "id": sprite_id, "name": name,
+                "source": "user_submitted", "submitted_by": found_by, "added_at": added_at,
+            })
 
         await db["hidden_okra_state"].update_one(
             {"_id": "pending_lookalike_target"},
@@ -10589,11 +10648,21 @@ async def ask_wheres_okra_challenge(winner, winner_id, num=3):
             round_num += 1
             continue
 
+        meta = puzzle.get("meta") or {}
+        name_line = f"\U0001f33f **{meta.get('target_name') or 'Mystery Okra'}**\n\n"
+        attribution_line = ""
+        if meta.get("target_source") == "user_submitted" and meta.get("target_submitted_by"):
+            added_at = meta.get("target_added_at")
+            when_text = added_at.strftime("%B %d, %Y") if added_at else "an earlier round"
+            attribution_line = (f"\U0001f3a8 Created by <@{meta['target_submitted_by']}> "
+                                f"on {when_text}\n\n")
+
         ref_embed = discord.Embed()
         ref_embed.set_image(url=puzzle["reference_image_url"])
         await safe_send(
             channel,
             content=(f"​\n\U0001f50d **Round {round_num}**: find THIS one!\n\n"
+                     f"{name_line}{attribution_line}"
                      f"He's hiding somewhere below, surrounded by look-alikes.\n​"),
             embed=ref_embed)
         await asyncio.sleep(5)

@@ -1395,6 +1395,29 @@ def run_lookalike_compositor():
     check(meta["target_id"] in {"red", "green", "blue"},
           "an unknown forced_target_id falls back to normal random selection, not a crash")
 
+    # meta carries the target's name and, for a winner-submitted sprite, who submitted it
+    # and when -- see discordbot.py's ask_wheres_okra_challenge "find THIS one!" reveal.
+    named_pool = [
+        {"bytes": _solid_sprite(60, 60, (255, 0, 0, 255)), "id": "red", "name": "Okra-nought"},
+        {"bytes": _solid_sprite(60, 60, (0, 255, 0, 255)), "id": "green", "name": "Sergeant Okra",
+         "source": "user_submitted", "submitted_by": 12345, "added_at": "2026-01-01"},
+        {"bytes": _solid_sprite(60, 60, (0, 0, 255, 255)), "id": "blue", "name": "Okra-mella"},
+    ]
+    _, _, _, meta = wo.compose_lookalike_puzzle(
+        forced_bg, named_pool, wo.make_rng(1), 8, (600, 600), 60, forced_target_id="green")
+    check(meta["target_name"] == "Sergeant Okra", "meta carries the forced target's name")
+    check(meta["target_source"] == "user_submitted", "meta carries the target's source")
+    check(meta["target_submitted_by"] == 12345, "meta carries who submitted the target")
+    check(meta["target_added_at"] == "2026-01-01", "meta carries when the target was submitted")
+    _, _, _, meta = wo.compose_lookalike_puzzle(
+        forced_bg, named_pool, wo.make_rng(1), 8, (600, 600), 60, forced_target_id="red")
+    check(meta["target_name"] == "Okra-nought" and meta["target_source"] is None,
+          "a non-user-submitted target has no source/submitted_by/added_at")
+    _, _, _, meta = wo.compose_lookalike_puzzle(
+        forced_bg, forced_pool, wo.make_rng(1), 8, (600, 600), 60, forced_target_id="green")
+    check(meta["target_name"] is None,
+          "a pool entry with no 'name' key at all still composes fine (meta name is None)")
+
     background_bytes = _solid_sprite(600, 600, (230, 230, 230, 255))
     # Three distinctly-coloured sprites -- distinct colours let the pixel-sampling checks
     # below prove WHICH sprite ended up where, not just that something did.
