@@ -445,7 +445,7 @@ okra_lab_announcement_text = (
     "🥒🔄 **Where's Okra got a new identity** — the geography-guessing game you knew as Where's Okra is now **Okra San Diego**. It got smarter too: OkraStrut's in-character messages now drop several subtle clues about where he's hiding each round, not just the local weather, so there's actually something to reason about\n\n"
     "🕵️🎭 **The \"Where's Okra\" name now belongs to a brand-new game** — think Where's Waldo, but every Waldo on the board is wearing the exact same outfit except one. You'll see a reference photo of one specific costumed Okra first, then have to find the ONE Okra on the board that matches it exactly, hidden among a whole crowd of near-identical look-alikes\n\n"
     "🎭 Every look-alike is Okra in a different disguise — astronaut, pirate, wizard, cheerleader, and dozens more — all sharing the same face and build, so you're matching costumes, not colors\n\n"
-    "🟢🟡🟠🔴🟣 **Five difficulty tiers**: Okra-dinary, Okra Squad, Okra-geddon, Okra Overload, and Okrap — 36 up to 1000 look-alikes to search, your call. Okrap even lets the crowd overlap and pile on top of each other\n"
+    "🟢🟡🟠🔴🟣 **Five difficulty tiers**: Okra-dinary, Okra Squad, Okra-geddon, Okra Overload, and Okrap — 36 up to 5000 look-alikes to search, your call. Okrap even lets the crowd overlap and pile on top of each other\n"
 )
 okra_lab_announcement_show_new_badge = True
 
@@ -10518,7 +10518,7 @@ async def ask_wheres_okra_challenge(winner, winner_id, num=3):
               f"\U0001f7e1 **Okra Squad** — 64 look-alikes, business as usual.\n"
               f"\U0001f7e0 **Okra-geddon** — 100 of them, smaller and sneakier.\n"
               f"\U0001f534 **Okra Overload** — 180 look-alikes, crowded and overlapping.\n"
-              f"\U0001f7e3 **Okrap** — 1000 look-alikes, packed in tight, and only 15 seconds. Godspeed.\n​")
+              f"\U0001f7e3 **Okrap** — 5000 look-alikes, packed in tight, and only 15 seconds. Godspeed.\n​")
     view.message = await safe_send(channel, prompt, view=view)
 
     target_channel = _active_game_channel or channel

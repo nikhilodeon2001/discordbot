@@ -1887,7 +1887,7 @@ LOOKALIKE_DIFFICULTIES = {
     "medium":     {"label": "Okra Squad",    "sprite_count": 64,  "canvas_size": (1320, 1320), "grid": (8, 8),   "sprite_height": 145, "max_covered_fraction": 0.0,  "guess_time": 30},
     "hard":       {"label": "Okra-geddon",   "sprite_count": 100, "canvas_size": (1500, 1500), "grid": (10, 10), "sprite_height": 132, "max_covered_fraction": 0.0,  "guess_time": 30},
     "brutal":     {"label": "Okra Overload", "sprite_count": 180, "canvas_size": (1700, 1700), "grid": (12, 12), "sprite_height": 125, "max_covered_fraction": 0.30, "guess_time": 30},
-    "impossible": {"label": "Okrap",         "sprite_count": 1000,"canvas_size": (2400, 2400), "grid": (16, 16), "sprite_height": 90,  "max_covered_fraction": 0.40, "guess_time": 15},
+    "impossible": {"label": "Okrap",         "sprite_count": 5000,"canvas_size": (2400, 2400), "grid": (16, 16), "sprite_height": 90,  "max_covered_fraction": 0.40, "guess_time": 15},
 }
 LOOKALIKE_DIFFICULTY_ORDER = ["easy", "medium", "hard", "brutal", "impossible"]
 
@@ -1974,7 +1974,8 @@ def build_custom_sprite_prompt(description):
     )
 
 
-def _sprite_coverage_check(candidate_alpha, candidate_pos, placed, max_covered_fraction):
+def _sprite_coverage_check(candidate_alpha, candidate_pos, placed, max_covered_fraction,
+                           candidate_indices=None):
     """Would placing a sprite with `candidate_alpha` (bool array) at `candidate_pos` push
     any ALREADY-placed sprite's cumulative covered fraction over `max_covered_fraction`?
     Symmetric with compute_visibility's math (same _region_overlap_mask primitive) but
@@ -1984,6 +1985,12 @@ def _sprite_coverage_check(candidate_alpha, candidate_pos, placed, max_covered_f
     on the board -- "covered" is a bool array (that sprite's own local frame) of which of
     its opaque pixels are already covered by sprites drawn on top of it so far.
 
+    `candidate_indices`: optional iterable of indices into `placed` to check, instead of
+    every one of them -- a spatial-grid broad-phase (see compose_lookalike_puzzle) can pass
+    just the handful of already-placed sprites near enough to possibly overlap, since at
+    high sprite counts checking every placed sprite for every attempt is quadratic and
+    dominates wall-clock time. Defaults to every index (unchanged behaviour) when omitted.
+
     Returns (ok, updates) -- `updates` is [(index into placed, new "covered" mask), ...]
     for every already-placed sprite the candidate would newly overlap; the caller applies
     these only if it actually accepts this candidate's position (a rejected attempt must
@@ -1992,7 +1999,9 @@ def _sprite_coverage_check(candidate_alpha, candidate_pos, placed, max_covered_f
     ch, cw = candidate_alpha.shape
     cx, cy = candidate_pos
     candidate_box = (cx, cy, cx + cw, cy + ch)
-    for i, p in enumerate(placed):
+    indices = range(len(placed)) if candidate_indices is None else candidate_indices
+    for i in indices:
+        p = placed[i]
         ph, pw = p["alpha"].shape
         box = (p["pos"][0], p["pos"][1], p["pos"][0] + pw, p["pos"][1] + ph)
         # Cheap bounding-box pre-filter before the numpy alpha-mask work below -- at high
@@ -2093,19 +2102,62 @@ def compose_lookalike_puzzle(background_bytes, pool, rng, sprite_count, canvas_s
     placed = []
     target_pos = target_img = None
 
+    # Broad-phase spatial grid: bucket each placed sprite by every canvas cell its bounding
+    # box touches, so a candidate only needs checking against the handful of sprites near
+    # enough to possibly overlap it -- not every sprite placed so far. Without this,
+    # placement is O(sprite_count^2) (checking all `placed` on every attempt), which is fine
+    # at dozens of sprites but dominates wall-clock time once counts reach the high
+    # hundreds/thousands (the "Okrap" tier). Correctness is unaffected: any two overlapping
+    # boxes necessarily share at least one grid cell, so nothing overlap-relevant is missed
+    # -- this only skips pairs that couldn't possibly overlap anyway.
+    from collections import defaultdict
+    grid_cell_size = max(1, sprite_height)
+    grid = defaultdict(list)
+
+    def _cells_for_box(box):
+        x0, y0, x1, y1 = box
+        gx0, gy0 = int(x0 // grid_cell_size), int(y0 // grid_cell_size)
+        gx1, gy1 = int((x1 - 1) // grid_cell_size), int((y1 - 1) // grid_cell_size)
+        for gx in range(gx0, gx1 + 1):
+            for gy in range(gy0, gy1 + 1):
+                yield (gx, gy)
+
+    # The pool typically holds a few dozen unique sprites reused (with replacement) across
+    # sprite_count placements -- at the "Okrap" tier that's thousands of repeats of the same
+    # few dozen images. prep_sprite() decodes the raw PNG and crops/resizes it from scratch,
+    # real work that's identical every time the same sprite id comes up again, so it's
+    # cached per id here instead of redone on every single placement. Safe to share the same
+    # PIL Image object across placements: _paste_with_shadow only ever reads from `sprite`,
+    # never mutates it.
+    prepped_cache = {}
+
+    def _prepped(sprite_entry):
+        key = sprite_entry["id"]
+        cached = prepped_cache.get(key)
+        if cached is None:
+            prepped_img = prep_sprite(sprite_entry["bytes"], sprite_height)
+            prepped_alpha = _sprite_alpha_array(prepped_img)
+            cached = (prepped_img, prepped_alpha, int(prepped_alpha.sum()))
+            prepped_cache[key] = cached
+        return cached
+
     for index in range(sprite_count):
         sprite_entry = target if index == target_index else rng.choice(remaining)
-        img = prep_sprite(sprite_entry["bytes"], sprite_height)
-        alpha = _sprite_alpha_array(img)
-        total = int(alpha.sum())
+        img, alpha, total = _prepped(sprite_entry)
         if total == 0:
             continue  # a degenerate/fully-transparent sprite -- skip rather than crash
+        ch, cw = alpha.shape
 
         accepted_pos, accepted_updates = None, []
         for _attempt in range(_PLACEMENT_MAX_ATTEMPTS):
             raw_x, raw_y = _random_canvas_position(img, effective_canvas_size, rng)
             pos = (raw_x + margin, raw_y + margin)
-            ok, updates = _sprite_coverage_check(alpha, pos, placed, max_covered_fraction)
+            candidate_box = (pos[0], pos[1], pos[0] + cw, pos[1] + ch)
+            nearby = set()
+            for cell in _cells_for_box(candidate_box):
+                nearby.update(grid.get(cell, ()))
+            ok, updates = _sprite_coverage_check(alpha, pos, placed, max_covered_fraction,
+                                                 candidate_indices=nearby)
             accepted_pos, accepted_updates = pos, updates
             if ok:
                 break
@@ -2116,8 +2168,12 @@ def compose_lookalike_puzzle(background_bytes, pool, rng, sprite_count, canvas_s
 
         for i, combined in accepted_updates:
             placed[i]["covered"] = combined
+        new_index = len(placed)
         placed.append({"pos": accepted_pos, "alpha": alpha, "total": total,
                        "covered": np.zeros_like(alpha, dtype=bool)})
+        new_box = (accepted_pos[0], accepted_pos[1], accepted_pos[0] + cw, accepted_pos[1] + ch)
+        for cell in _cells_for_box(new_box):
+            grid[cell].append(new_index)
         _paste_with_shadow(canvas, img, accepted_pos)
 
         if index == target_index:
