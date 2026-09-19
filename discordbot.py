@@ -10308,7 +10308,8 @@ async def _wheres_okra_draw_lookalike_puzzle(difficulty):
         board_bytes, reference_bytes, target, meta = await loop.run_in_executor(
             None, wheres_okra.compose_lookalike_puzzle, background_bytes, pool, rng,
             spec["sprite_count"], spec["canvas_size"], spec["sprite_height"],
-            spec["max_covered_fraction"], forced_target_id)
+            spec["max_covered_fraction"], forced_target_id,
+            spec["target_max_covered_fraction"])
     except wheres_okra.PuzzleGenerationError as e:
         sentry_sdk.capture_exception(e)
         print(f"Error composing Where's Okra lookalike puzzle: {e}")

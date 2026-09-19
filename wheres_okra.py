@@ -1446,6 +1446,16 @@ DECOY_TARGET_HEIGHT_FRACTION = 0.06
 # or silently under-filling the puzzle below its difficulty's sprite_count.
 _PLACEMENT_MAX_ATTEMPTS = 12
 
+# How many extra attempts compose_lookalike_puzzle spends specifically to avoid burying the
+# TARGET sprite once _PLACEMENT_MAX_ATTEMPTS's general check has already given up and fallen
+# back to a cap-violating position. Much bigger than _PLACEMENT_MAX_ATTEMPTS on purpose:
+# avoiding overlap with every other already-placed decoy gets harder as the board fills up
+# (that's what the general cap's fallback is for), but avoiding overlap with ONE specific
+# small box is almost always easy on a canvas this size, regardless of how crowded
+# everything else is -- so it's worth paying for a much bigger budget just for this one
+# sprite rather than raising _PLACEMENT_MAX_ATTEMPTS (and its cost) for every sprite.
+_TARGET_PROTECTION_MAX_ATTEMPTS = 150
+
 # Alpha threshold (0-255) above which a pixel counts as "opaque" for silhouette/visibility
 # purposes -- low enough to include real content, high enough to ignore anti-aliasing fuzz
 # at a sprite's edge.
@@ -1883,11 +1893,11 @@ def available_themes(sprite_themes, background_themes):
 # tier, double the sprite_count -- density = count/area, so doubling count on an unchanged
 # area is exactly 2x density by definition).
 LOOKALIKE_DIFFICULTIES = {
-    "easy":       {"label": "Okra-dinary",   "sprite_count": 36,  "canvas_size": (1080, 1080), "grid": (6, 6),   "sprite_height": 158, "max_covered_fraction": 0.0,  "guess_time": 30},
-    "medium":     {"label": "Okra Squad",    "sprite_count": 64,  "canvas_size": (1320, 1320), "grid": (8, 8),   "sprite_height": 145, "max_covered_fraction": 0.0,  "guess_time": 30},
-    "hard":       {"label": "Okra-geddon",   "sprite_count": 100, "canvas_size": (1500, 1500), "grid": (10, 10), "sprite_height": 132, "max_covered_fraction": 0.0,  "guess_time": 30},
-    "brutal":     {"label": "Okra Overload", "sprite_count": 180, "canvas_size": (1700, 1700), "grid": (12, 12), "sprite_height": 125, "max_covered_fraction": 0.30, "guess_time": 30},
-    "impossible": {"label": "Okrap",         "sprite_count": 3000,"canvas_size": (2400, 2400), "grid": (16, 16), "sprite_height": 90,  "max_covered_fraction": 0.40, "guess_time": 15},
+    "easy":       {"label": "Okra-dinary",   "sprite_count": 36,  "canvas_size": (1080, 1080), "grid": (6, 6),   "sprite_height": 158, "max_covered_fraction": 0.0,  "target_max_covered_fraction": 0.0,  "guess_time": 30},
+    "medium":     {"label": "Okra Squad",    "sprite_count": 64,  "canvas_size": (1320, 1320), "grid": (8, 8),   "sprite_height": 145, "max_covered_fraction": 0.0,  "target_max_covered_fraction": 0.0,  "guess_time": 30},
+    "hard":       {"label": "Okra-geddon",   "sprite_count": 100, "canvas_size": (1500, 1500), "grid": (10, 10), "sprite_height": 132, "max_covered_fraction": 0.0,  "target_max_covered_fraction": 0.0,  "guess_time": 30},
+    "brutal":     {"label": "Okra Overload", "sprite_count": 180, "canvas_size": (1700, 1700), "grid": (12, 12), "sprite_height": 125, "max_covered_fraction": 0.30, "target_max_covered_fraction": 0.15, "guess_time": 30},
+    "impossible": {"label": "Okrap",         "sprite_count": 3000,"canvas_size": (2400, 2400), "grid": (16, 16), "sprite_height": 90,  "max_covered_fraction": 0.40, "target_max_covered_fraction": 0.15, "guess_time": 15},
 }
 LOOKALIKE_DIFFICULTY_ORDER = ["easy", "medium", "hard", "brutal", "impossible"]
 
@@ -2027,7 +2037,8 @@ def _sprite_coverage_check(candidate_alpha, candidate_pos, placed, max_covered_f
 
 
 def compose_lookalike_puzzle(background_bytes, pool, rng, sprite_count, canvas_size,
-                             sprite_height, max_covered_fraction=0.0, forced_target_id=None):
+                             sprite_height, max_covered_fraction=0.0, forced_target_id=None,
+                             target_max_covered_fraction=None):
     """Composite one "spot the non-duplicated one" board with SCATTERED placement (not a
     literal grid -- an earlier grid-cell version of this read as too regular/mechanical per
     direct feedback). Every sprite is the same size (`sprite_height`); positions are chosen
@@ -2035,9 +2046,8 @@ def compose_lookalike_puzzle(background_bytes, pool, rng, sprite_count, canvas_s
     ALREADY-placed sprite's covered fraction above `max_covered_fraction` -- see
     _sprite_coverage_check. At `max_covered_fraction=0.0` this reduces to exactly the
     strict non-overlap guarantee the earlier decoy-sizing fix established (any nonzero
-    overlap is rejected); a higher value (only the hardest tier uses one) allows real
-    crowding/overlap up to that cap, symmetric across every sprite on the board, not just
-    the target.
+    overlap is rejected); a higher value (only the two hardest tiers use one) allows real
+    crowding/overlap up to that cap among ordinary decoys.
 
     `background_bytes`: one of the existing hidden_okra_backgrounds images (any theme --
     this mode has no sprite/background theme coupling, unlike compose_sprite_puzzle; the
@@ -2049,8 +2059,19 @@ def compose_lookalike_puzzle(background_bytes, pool, rng, sprite_count, canvas_s
     callers must pass a real per-document identifier (e.g. the Mongo `_id`), not derive one
     from content.
 
-    `sprite_count`, `canvas_size`, `sprite_height`, `max_covered_fraction`: from the
-    caller's chosen LOOKALIKE_DIFFICULTIES entry.
+    `sprite_count`, `canvas_size`, `sprite_height`, `max_covered_fraction`,
+    `target_max_covered_fraction`: from the caller's chosen LOOKALIKE_DIFFICULTIES entry.
+
+    `target_max_covered_fraction`: a SEPARATE, normally stricter cap applying only to the
+    target sprite -- the general `max_covered_fraction` above is allowed to be loosely
+    enforced at high density (see _PLACEMENT_MAX_ATTEMPTS's fallback: ordinary decoys can
+    end up crowded past the nominal cap, and that's fine, crowding is the point), but the
+    target is the one sprite players are actually asked to find, so it gets its own
+    independently-enforced cap with a much bigger dedicated retry budget
+    (_TARGET_PROTECTION_MAX_ATTEMPTS) -- avoiding overlap with one specific small box is
+    almost always possible somewhere on a canvas this size, no matter how packed everything
+    else is. Defaults to `max_covered_fraction` (no special protection, matching this
+    function's behaviour before this parameter existed) when not given.
 
     `forced_target_id`: if given and present in `pool`, that sprite is used as the target
     instead of a random pick -- the "winner-submitted custom sprite is the target on the
@@ -2070,6 +2091,9 @@ def compose_lookalike_puzzle(background_bytes, pool, rng, sprite_count, canvas_s
     """
     import numpy as np
     from PIL import Image
+
+    if target_max_covered_fraction is None:
+        target_max_covered_fraction = max_covered_fraction
 
     if len(pool) < 2:
         raise PuzzleGenerationError(
@@ -2141,6 +2165,8 @@ def compose_lookalike_puzzle(background_bytes, pool, rng, sprite_count, canvas_s
             prepped_cache[key] = cached
         return cached
 
+    target_placed_index = None  # set once the target itself has actually been placed
+
     for index in range(sprite_count):
         sprite_entry = target if index == target_index else rng.choice(remaining)
         img, alpha, total = _prepped(sprite_entry)
@@ -2164,7 +2190,52 @@ def compose_lookalike_puzzle(background_bytes, pool, rng, sprite_count, canvas_s
         # Falls back to the last-tried (possibly cap-violating) position if none of the
         # attempts succeeded, same documented fallback as _random_canvas_position's own --
         # a genuinely packed board degrades to "slightly over the cap" rather than hanging
-        # or silently under-filling the puzzle below its difficulty's sprite_count.
+        # or silently under-filling the puzzle below its difficulty's sprite_count. That
+        # fallback is fine for ordinary decoys (crowding is the point at high density), but
+        # NOT for the target -- see the dedicated extra pass right below.
+
+        # Target protection: if this candidate (any decoy placed after the target) would
+        # push the target's OWN cumulative coverage past its separate, normally stricter
+        # cap, spend a much bigger dedicated budget looking for a position that respects
+        # the target's cap specifically -- almost always findable somewhere on a canvas
+        # this size, since this only has to dodge one specific small box, not every
+        # already-placed sprite (see the note just below on why the general cap is
+        # deliberately NOT also required here).
+        if target_placed_index is not None and index != target_index:
+            target_ok, _ = _sprite_coverage_check(
+                alpha, accepted_pos, placed, target_max_covered_fraction,
+                candidate_indices=[target_placed_index])
+            if not target_ok:
+                # Deliberately does NOT also require the general cap here -- at extreme
+                # global density (hundreds/thousands of sprites), satisfying the general
+                # cap for OTHER, unrelated already-placed sprites becomes the bottleneck and
+                # has nothing to do with protecting the target; insisting on both starved
+                # this loop out almost immediately in testing. Avoiding overlap with one
+                # specific small box is easy regardless of how crowded everything else is,
+                # so only that is a hard requirement here -- the position's effect on other
+                # sprites' own caps is still recorded for bookkeeping (best effort, same
+                # "possibly cap-violating elsewhere" tolerance the general fallback above
+                # already has), just not used to reject the position.
+                for _extra_attempt in range(_TARGET_PROTECTION_MAX_ATTEMPTS):
+                    raw_x, raw_y = _random_canvas_position(img, effective_canvas_size, rng)
+                    pos = (raw_x + margin, raw_y + margin)
+                    candidate_box = (pos[0], pos[1], pos[0] + cw, pos[1] + ch)
+                    target_ok, _ = _sprite_coverage_check(
+                        alpha, pos, placed, target_max_covered_fraction,
+                        candidate_indices=[target_placed_index])
+                    if target_ok:
+                        nearby = set()
+                        for cell in _cells_for_box(candidate_box):
+                            nearby.update(grid.get(cell, ()))
+                        _, general_updates = _sprite_coverage_check(
+                            alpha, pos, placed, max_covered_fraction, candidate_indices=nearby)
+                        accepted_pos, accepted_updates = pos, general_updates
+                        break
+                # If the extra budget still can't even satisfy the target's own cap alone
+                # (astronomically unlikely -- avoiding one small box, not every sprite),
+                # keep the original accepted_pos/accepted_updates: an even rarer fallback
+                # than the general one above, same "degrade gracefully, don't hang"
+                # principle.
 
         for i, combined in accepted_updates:
             placed[i]["covered"] = combined
@@ -2178,6 +2249,7 @@ def compose_lookalike_puzzle(background_bytes, pool, rng, sprite_count, canvas_s
 
         if index == target_index:
             target_pos, target_img = accepted_pos, img
+            target_placed_index = new_index
 
     buffer = io.BytesIO()
     canvas.convert("RGB").save(buffer, format="PNG")
@@ -2197,6 +2269,10 @@ def compose_lookalike_puzzle(background_bytes, pool, rng, sprite_count, canvas_s
                  (target_pos[0] + target_img.width) / width,
                  (target_pos[1] + target_img.height) / height)
 
+    target_placed = placed[target_placed_index]
+    target_covered_fraction = (
+        (target_placed["covered"].sum() / target_placed["total"]) if target_placed["total"] else 0.0)
+
     meta = {
         "pipeline": "lookalike",
         "sprite_count": len(placed),
@@ -2205,8 +2281,10 @@ def compose_lookalike_puzzle(background_bytes, pool, rng, sprite_count, canvas_s
         "target_source": target.get("source"),
         "target_submitted_by": target.get("submitted_by"),
         "target_added_at": target.get("added_at"),
+        "target_covered_fraction": target_covered_fraction,
         "pool_size": len(pool),
         "max_covered_fraction": max_covered_fraction,
+        "target_max_covered_fraction": target_max_covered_fraction,
     }
     return board_image_bytes, reference_image_bytes, target_box, meta
 

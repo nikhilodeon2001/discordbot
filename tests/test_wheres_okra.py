@@ -1500,6 +1500,49 @@ def run_lookalike_compositor():
     check(meta_loose["max_covered_fraction"] == 0.3, "meta reports the loose cap that was requested")
 
 
+def run_target_protection_stress():
+    section("target protection under extreme crowding (compose_lookalike_puzzle)")
+    from PIL import Image
+    import numpy as np
+
+    # Deliberately hostile: 200 sprites on a 300x300 canvas with sprite_height=60 and a very
+    # loose general cap (0.9) -- guarantees the general check's _PLACEMENT_MAX_ATTEMPTS
+    # fallback kicks in constantly (this is the exact scenario that buried the target in a
+    # real round: extreme density, general-cap fallback triggering often). The target's own,
+    # much stricter, separately-enforced cap should still hold.
+    bg = _solid_sprite(300, 300, (230, 230, 230, 255))
+    target_color = (255, 0, 0, 255)
+    decoy_colors = [(0, 255, 0, 255), (0, 0, 255, 255), (255, 255, 0, 255), (255, 0, 255, 255)]
+    pool = [{"bytes": _solid_sprite(60, 60, target_color), "id": "target"}]
+    pool += [{"bytes": _solid_sprite(60, 60, c), "id": f"decoy{i}"} for i, c in enumerate(decoy_colors)]
+
+    rng = wo.make_rng(7)
+    board_bytes, ref_bytes, target_box, meta = wo.compose_lookalike_puzzle(
+        bg, pool, rng, 200, (300, 300), 60,
+        max_covered_fraction=0.9, forced_target_id="target",
+        target_max_covered_fraction=0.15)
+
+    check(meta["target_id"] == "target", "forced target is honoured even under extreme crowding")
+    check(meta["target_covered_fraction"] <= 0.15 + 1e-6,
+          f"target's own tracked coverage ({meta['target_covered_fraction']:.3f}) stays "
+          f"within its stricter cap even when 200 sprites are packed onto a 300x300 canvas")
+
+    # Independent check on the actual RENDERED board, not just the algorithm's own
+    # bookkeeping -- crop the target's real placed box and confirm most of it still reads as
+    # its true solid colour (any decoy stacked on top would be a different solid colour;
+    # a slight shadow tint from _paste_with_shadow is expected and tolerated).
+    box = wo.normalize_target(target_box)
+    board = Image.open(io.BytesIO(board_bytes)).convert("RGB")
+    w, h = board.size
+    px_box = (round(box[0] * w), round(box[1] * h), round(box[2] * w), round(box[3] * h))
+    crop = np.array(board.crop(px_box))
+    is_target_red = (crop[:, :, 0] > 180) & (crop[:, :, 1] < 100) & (crop[:, :, 2] < 100)
+    visible_fraction = is_target_red.sum() / is_target_red.size
+    check(visible_fraction >= 0.5,
+          f"at least half the target's own box still reads as its true colour on the actual "
+          f"rendered board ({visible_fraction:.2f} visible) -- it must stay findable")
+
+
 def run_lookalike_difficulties():
     section("LOOKALIKE_DIFFICULTIES (the five witty tiers)")
     check(wo.LOOKALIKE_DIFFICULTY_ORDER == ["easy", "medium", "hard", "brutal", "impossible"],
@@ -1541,6 +1584,17 @@ def run_lookalike_difficulties():
     for key in ["brutal", "impossible"]:
         check(wo.LOOKALIKE_DIFFICULTIES[key]["max_covered_fraction"] > 0.0,
               f"{key}: allows real overlap")
+
+    # target_max_covered_fraction: the TARGET's own cap, separate from (and never looser
+    # than) the general crowding cap ordinary decoys are allowed -- see
+    # compose_lookalike_puzzle's target-protection pass. A player has to actually find this
+    # one sprite, so it should never be allowed to get buried as badly as an ordinary decoy.
+    for key in wo.LOOKALIKE_DIFFICULTY_ORDER:
+        spec = wo.LOOKALIKE_DIFFICULTIES[key]
+        check("target_max_covered_fraction" in spec, f"{key}: has a target_max_covered_fraction")
+        check(0.0 <= spec["target_max_covered_fraction"] <= spec["max_covered_fraction"],
+              f"{key}: target cap ({spec['target_max_covered_fraction']}) is no looser than "
+              f"the general cap ({spec['max_covered_fraction']})")
 
 
 def run_text_extraction():
@@ -1682,6 +1736,7 @@ def run_offline():
     run_sprite_coverage_check()
     run_custom_sprite_prompt()
     run_lookalike_compositor()
+    run_target_protection_stress()
     run_lookalike_difficulties()
 
 
