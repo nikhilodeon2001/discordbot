@@ -445,7 +445,7 @@ okra_lab_announcement_text = (
     "🥒🔄 **Where's Okra got a new identity** — the geography-guessing game you knew as Where's Okra is now **Okra San Diego**. It got smarter too: OkraStrut's in-character messages now drop several subtle clues about where he's hiding each round, not just the local weather, so there's actually something to reason about\n\n"
     "🕵️🎭 **The \"Where's Okra\" name now belongs to a brand-new game** — think Where's Waldo, but every Waldo on the board is wearing the exact same outfit except one. You'll see a reference photo of one specific costumed Okra first, then have to find the ONE Okra on the board that matches it exactly, hidden among a whole crowd of near-identical look-alikes\n\n"
     "🎭 Every look-alike is Okra in a different disguise — astronaut, pirate, wizard, cheerleader, and dozens more — all sharing the same face and build, so you're matching costumes, not colors\n\n"
-    "🟢🟡🟠🔴🟣 **Five difficulty tiers**: Okra-dinary, Okra Squad, Okra-geddon, Okra Overload, and Okrap — 36 up to 360 look-alikes to search, your call. Okrap even lets the crowd overlap and pile on top of each other\n"
+    "🟢🟡🟠🔴🟣 **Five difficulty tiers**: Okra-dinary, Okra Squad, Okra-geddon, Okra Overload, and Okrap — 36 up to 1000 look-alikes to search, your call. Okrap even lets the crowd overlap and pile on top of each other\n"
 )
 okra_lab_announcement_show_new_badge = True
 
@@ -6222,7 +6222,8 @@ class MuseumThemeView(RestrictedView):
         self.winner_coffees = winner_coffees
         for i, (key, label) in enumerate(categories.items()):
             disabled = key == "4" and winner_coffees <= 0
-            button = discord.ui.Button(label=label[:80], style=discord.ButtonStyle.primary, row=i // 5,
+            style = discord.ButtonStyle.danger if key == "5" else discord.ButtonStyle.primary
+            button = discord.ui.Button(label=label[:80], style=style, row=i // 5,
                                         disabled=disabled)
             button.callback = self._make_callback(key)
             self.add_item(button)
@@ -10506,7 +10507,7 @@ async def ask_wheres_okra_challenge(winner, winner_id, num=3):
               f"\U0001f7e1 **Okra Squad** — 64 look-alikes, business as usual.\n"
               f"\U0001f7e0 **Okra-geddon** — 100 of them, smaller and sneakier.\n"
               f"\U0001f534 **Okra Overload** — 180 look-alikes, crowded and overlapping.\n"
-              f"\U0001f7e3 **Okrap** — 360 look-alikes, packed in tight. Godspeed.\n​")
+              f"\U0001f7e3 **Okrap** — 1000 look-alikes, packed in tight, and only 15 seconds. Godspeed.\n​")
     view.message = await safe_send(channel, prompt, view=view)
 
     target_channel = _active_game_channel or channel
@@ -20210,6 +20211,7 @@ def museum_categories():
         "2": "😇✨ Okroly and Divine",
         "3": "🎲🔀 (OK)Random",
         "4": "🖼️🔤 Provide the Prompt 🥒",
+        "5": "🏦🥒 Bank It For Later",
     }
 
 
@@ -21078,7 +21080,15 @@ async def ask_category(winner, categories, winner_coffees, winner_id, skip_messa
                 await safe_send(channel, f"\U0001f64f\U0001f614 Sorry **<@{winner_id}>**, choice **{message_content}** is for **Okrans Only** \U0001f952.")
                 continue
 
-            # Case 3: Valid choice
+            # Case 3: Explicit "bank it for later" -- same signal a theme-picker timeout
+            # produces (None selected_category), so generate_round_summary_image banks the
+            # credit instead of generating anything.
+            if message_content == '5':
+                await response.add_reaction("\U0001f3e6")
+                await safe_send(channel, f"\U0001f3e6\U0001f952 Got it **<@{winner_id}>**, I'll bank this one for later.")
+                return None, additional_prompt
+
+            # Case 4: Valid choice
             await response.add_reaction("\u2705")
             await safe_send(channel, f"\U0001f4aa\U0001f6e1\ufe0f I got you **<@{winner_id}>**! Choice {message_content} it is.")
 
