@@ -1120,6 +1120,7 @@ categories_to_exclude = []
 collected_responses = []
 current_question = None
 _giveaway_words_cache = {"key": None, "words": frozenset()}  # see _current_giveaway_words()
+_giveaway_guard_reply_cache = {"key": None, "replied": False}  # see _notify_giveaway_guard_reply()
 previous_question = None
 round_in_progress = False  # True from the moment a round is committed to starting until it ends -- lets /checkupdate warn before an update would kill the process mid-round
 current_answer_view = None
@@ -25750,6 +25751,42 @@ def _current_giveaway_words():
     return _giveaway_words_cache["words"]
 
 
+async def _notify_giveaway_guard_reply(message):
+    """Reply in-channel (as a Discord reply to the flagged message) explaining
+    what the 🟥 red card means. A DM was tried first, but it's easy to miss
+    while you're actively chatting -- an in-channel reply is guaranteed to be
+    seen, at the cost of being visible to everyone. The 🟥 reaction still
+    fires on every flagged message (see the call site), but the reply itself
+    is sent only once per question -- keyed on the same (category, question)
+    pair as _current_giveaway_words -- so a question with several parroted
+    guesses doesn't fill the channel with repeats of the same explanation."""
+    cat = current_question.get("trivia_category", "") if current_question else ""
+    q = current_question.get("trivia_question", "") if current_question else ""
+    key = (cat, q)
+    if _giveaway_guard_reply_cache["key"] != key:
+        _giveaway_guard_reply_cache["key"] = key
+        _giveaway_guard_reply_cache["replied"] = False
+    if _giveaway_guard_reply_cache["replied"]:
+        return
+    _giveaway_guard_reply_cache["replied"] = True
+
+    guess = message.content.strip()
+    if len(guess) > 100:
+        guess = guess[:100] + "…"
+    try:
+        await message.reply(
+            f"🟥 That answer (“{guess}”) is straight from the question or category, so "
+            f"partial-credit matching is off for it -- it'll only count if it's *exactly* right.",
+            mention_author=False,
+        )
+    except discord.NotFound:
+        pass
+    except discord.Forbidden:
+        print("❌ Bot lacks permission to reply in this channel.")
+    except discord.HTTPException as e:
+        print(f"❌ Failed to send giveaway-guard reply: {e}")
+
+
 def levenshtein_similarity(str1, str2):
     return difflib.SequenceMatcher(None, str1.lower(), str2.lower()).ratio()
 
@@ -29194,6 +29231,11 @@ async def on_message(message):
                         print("❌ Bot lacks permission to add reactions.")
                     except discord.HTTPException as e:
                         print(f"❌ Failed to add reaction: {e}")
+                    # Explain the red card as an in-channel reply -- see
+                    # _notify_giveaway_guard_reply for why (a DM is too easy
+                    # to miss mid-chat, and ephemeral replies only exist for
+                    # interactions, not typed messages).
+                    await _notify_giveaway_guard_reply(message)
 
                 # A typed guess that's actually one of this question's choices locks the
                 # user out of the buttons too, the same way clicking a button locks out
