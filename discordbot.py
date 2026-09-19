@@ -442,10 +442,10 @@ async def send_question_queen_submit_ad():
 # the same text is correct whether this deploy is staging or prod.
 okra_lab_announcement_enabled = True
 okra_lab_announcement_text = (
-    "🥒🕵️ **All-new Where's Okra** — instead of hunting for him in a busy scene, you'll get a reference photo of one specific Okra first, then have to spot the one that matches it exactly among a whole board of near-identical look-alikes\n\n"
+    "🥒🔄 **Where's Okra got a new identity** — the geography-guessing game you knew as Where's Okra is now **Okra San Diego**. It got smarter too: OkraStrut's in-character messages now drop several subtle clues about where he's hiding each round, not just the local weather, so there's actually something to reason about\n\n"
+    "🕵️🎭 **The \"Where's Okra\" name now belongs to a brand-new game** — you'll see a reference photo of one specific costumed Okra first, then have to find the ONE Okra on the board that matches it exactly, hidden among a whole crowd of near-identical look-alikes\n\n"
     "🎭 Every look-alike is Okra in a different disguise — astronaut, pirate, wizard, cheerleader, and dozens more — all sharing the same face and build, so you're matching costumes, not colors\n\n"
-    "🟢🟡🟠🔴 **Four difficulty tiers**: Okra-dinary, Pod Squad, Okra-geddon, and Needle in an Okra-stack — 16 up to 100 look-alikes to search, your call\n\n"
-    "🌎🕵️ **Okra San Diego** (the old Where's Okra geography game) got a glow-up too — OkraStrut's in-character messages now drop several subtle clues about where he's hiding each round, not just the local weather, so there's actually something to reason about\n"
+    "🟢🟡🟠🔴🟣 **Five difficulty tiers**: Okra-dinary, Okra Squad, Okra-geddon, Okra Overload, and Okrap — 36 up to 360 look-alikes to search, your call. Okrap even lets the crowd overlap and pile on top of each other\n"
 )
 okra_lab_announcement_show_new_badge = True
 
