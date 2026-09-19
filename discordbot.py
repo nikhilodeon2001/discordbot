@@ -449,6 +449,13 @@ okra_lab_announcement_text = (
 )
 okra_lab_announcement_show_new_badge = True
 
+# Kill switch for the Where's Okra "winner-submitted custom sprite" reward: an Okrap
+# (hardest tier) winner with a coffee-gated role can describe a custom sprite, which is
+# generated, added to the live pool, and forced as the target on the very next round (see
+# _wheres_okra_offer_custom_sprite). Flip off to fully suppress the offer with zero change
+# to the existing win/reveal flow.
+WHERES_OKRA_CUSTOM_SPRITE_ENABLED = True
+
 
 async def sync_okra_lab_announcement(content, embed=None):
     """Post the Okra Lab feature list (NEW badge + announcement text, no "Okra's World"
@@ -10238,11 +10245,24 @@ async def _wheres_okra_draw_lookalike_puzzle(difficulty):
     cols, rows = spec["grid"]
     rng = wheres_okra.make_rng()
     loop = asyncio.get_running_loop()
+
+    # A winner-submitted custom sprite (see _wheres_okra_offer_custom_sprite) sets this
+    # doc so it's guaranteed to be the target on the very next round, any tier -- consumed
+    # exactly once by deleting it here, regardless of whether it actually ends up usable
+    # (compose_lookalike_puzzle falls back to a random target if the id isn't in `pool`,
+    # e.g. the sprite was removed between rounds; that fallback should not keep re-forcing
+    # a stale id on every future round after that).
+    forced_target_id = None
+    pending = await db["hidden_okra_state"].find_one({"_id": "pending_lookalike_target"})
+    if pending:
+        forced_target_id = pending.get("sprite_id")
+        await db["hidden_okra_state"].delete_one({"_id": "pending_lookalike_target"})
+
     try:
         board_bytes, reference_bytes, target, meta = await loop.run_in_executor(
             None, wheres_okra.compose_lookalike_puzzle, background_bytes, pool, rng,
             spec["sprite_count"], spec["canvas_size"], spec["sprite_height"],
-            spec["max_covered_fraction"])
+            spec["max_covered_fraction"], forced_target_id)
     except wheres_okra.PuzzleGenerationError as e:
         sentry_sdk.capture_exception(e)
         print(f"Error composing Where's Okra lookalike puzzle: {e}")
@@ -10263,6 +10283,102 @@ async def _wheres_okra_draw_lookalike_puzzle(difficulty):
 
     return {"image_url": image_url, "reference_image_url": reference_image_url,
            "target": target, "cols": cols, "rows": rows}
+
+
+async def _wheres_okra_offer_custom_sprite(found_by, found_by_name):
+    """Okrap (hardest tier) winner reward: if eligible, offer to collect a custom-sprite
+    description, generate it, add it to the live pool, and force it as the target on the
+    very next Where's Okra round (any tier -- see the "pending_lookalike_target" doc
+    _wheres_okra_draw_lookalike_puzzle checks). Gated behind
+    WHERES_OKRA_CUSTOM_SPRITE_ENABLED (kill switch) and get_coffees(found_by) > 0 (the
+    same "Okrans Only" role check the Okra Museum's coffee-gated custom prompt already
+    uses). No-op (returns immediately, no message sent) if either check fails -- an
+    ineligible winner sees nothing different from today.
+    """
+    if not WHERES_OKRA_CUSTOM_SPRITE_ENABLED:
+        return
+    if await get_coffees(found_by) <= 0:
+        return
+
+    await safe_send(
+        channel,
+        f"​\n🎁🥒 **<@{found_by}>**, as Okrap's champion you've earned a custom Okra! "
+        f"Describe what it should look like.\n\n"
+        f"⚠️ **Keep it safe and appropriate** -- no real people, no trademarked/copyrighted "
+        f"characters, nothing NSFW or offensive. Requests that don't pass safety, "
+        f"trademark, or copyright checks are simply rejected -- **there are no second "
+        f"chances this round**, so make it count.\n​")
+
+    description = await request_prompt(
+        found_by_name, found_by,
+        header=f"🖌️🔟 **<@{found_by}>**, give me **10 words max** describing your custom Okra.")
+    if description is None:
+        return  # ran out of time -- a bonus, not a required step, nothing else to do
+
+    mascot_path = private_asset_path("okra_chef.png")
+    if not os.path.exists(mascot_path):
+        print("⚠️ Where's Okra custom sprite: okra_chef.png is not available locally")
+        return
+    with open(mascot_path, "rb") as handle:
+        mascot_bytes = handle.read()
+
+    prompt = wheres_okra.build_custom_sprite_prompt(description)
+    try:
+        response = await openai_client.images.edit(
+            model="gpt-image-1",
+            image=("okra_chef.png", mascot_bytes, "image/png"),
+            prompt=prompt,
+            size="1024x1024",
+            quality="high",
+            background="transparent",
+        )
+        image_bytes = base64.b64decode(response.data[0].b64_json)
+    except Exception as e:
+        if _is_moderation_rejection(e):
+            await safe_send(
+                channel,
+                f"​\n🚫 **<@{found_by}>**, that description didn't pass -- no custom Okra "
+                f"this time. No second chances this round, as warned!\n​")
+            return
+        sentry_sdk.capture_exception(e)
+        print(f"Error generating Where's Okra custom sprite: {e}")
+        await safe_send(
+            channel,
+            f"​\n⚠️ **<@{found_by}>**, something went wrong generating your custom Okra. "
+            f"No second chances this round, sorry!\n​")
+        return
+
+    sprite_id = str(uuid.uuid4())
+    s3_key = f"hidden_okra_sprites/{WHERES_OKRA_LOOKALIKE_THEME}/{sprite_id}.png"
+    session = aioboto3.Session()
+    async with session.client("s3") as s3c:
+        await s3c.put_object(Bucket=S3_BUCKET_NAME, Key=s3_key, Body=image_bytes,
+                             ContentType="image/png")
+    image_url = f"https://{S3_BUCKET_NAME}.s3.us-east-2.amazonaws.com/{s3_key}"
+
+    await db["hidden_okra_sprites"].insert_one({
+        "_id": sprite_id,
+        "theme": WHERES_OKRA_LOOKALIKE_THEME,
+        "s3_key": s3_key,
+        "image_url": image_url,
+        "tags": [description],
+        "scale_class": None,
+        "source": "user_submitted",
+        "submitted_by": found_by,
+        "subject": description,
+        "added_at": datetime.datetime.utcnow(),
+    })
+    await db["hidden_okra_state"].update_one(
+        {"_id": "pending_lookalike_target"},
+        {"$set": {"sprite_id": sprite_id}},
+        upsert=True,
+    )
+
+    await safe_send(
+        channel,
+        f"​\n✅🥒 **<@{found_by}>**, your custom Okra is in! Assuming it wasn't rejected for "
+        f"safety, trademark, or copyright reasons (it wasn't -- you're reading this), check "
+        f"back next round to see your new **Okrite**!\n​")
 
 
 async def _wheres_okra_draw_puzzle(difficulty, exclude_theme=None, exclude_background_id=None):
@@ -10486,6 +10602,14 @@ async def ask_wheres_okra_challenge(winner, winner_id, num=3):
             except asyncio.TimeoutError:
                 break
 
+            # Keep the puzzle image front-and-center: delete every message received during
+            # the guess window (guesses and ordinary chat alike), not just the mini-game's
+            # own messages. A short delay (not immediate) so the ✅/❌ reaction added below
+            # is still briefly visible first -- deleting a message removes its reactions
+            # too. CompanionMessage's own .delete() already no-ops safely when there's no
+            # real message behind it (see its docstring), so no type-check needed here.
+            asyncio.ensure_future(delete_message_after(message, 1.5))
+
             content = message.content.strip()
             user_id = message.author.id
 
@@ -10532,6 +10656,13 @@ async def ask_wheres_okra_challenge(winner, winner_id, num=3):
         except Exception as e:
             sentry_sdk.capture_exception(e)
             print(f"Error revealing Where's Okra puzzle:\n{traceback.format_exc()}")
+
+        if difficulty == "impossible" and found_by is not None:
+            try:
+                await _wheres_okra_offer_custom_sprite(found_by, user_correct_answers[found_by][0])
+            except Exception as e:
+                sentry_sdk.capture_exception(e)
+                print(f"Error offering Where's Okra custom sprite:\n{traceback.format_exc()}")
 
         await asyncio.sleep(1)
         round_num += 1
@@ -20952,12 +21083,16 @@ class PromptDoneView(RestrictedView):
         await self._resolve(interaction, "x")
 
 
-async def request_prompt(winner, winner_id):
-    """Collects up to 10 words of free text from `winner_id` as their custom Okra Museum
-    prompt. Returns the final prompt string if at least one word was collected (possibly
+async def request_prompt(winner, winner_id, header=None):
+    """Collects up to 10 words of free text from `winner_id` as their custom prompt.
+    Returns the final prompt string if at least one word was collected (possibly
     trimmed to the word/char limit), or None if the window closed with nothing collected --
     callers must treat None the same as a theme-picker timeout (bank the credit, generate
     nothing), not as a valid empty prompt.
+
+    `header`: the message shown above the "type x or hit the button" instruction line.
+    Defaults to the original Okra Museum wording so that call site is unaffected; other
+    callers (e.g. the Where's Okra winner-submitted custom sprite flow) pass their own.
 
     Collection ends early, before the words/window limit, either by a standalone 'x' typed
     anywhere in a message (its own word, not e.g. inside "extra") or by clicking the
@@ -20975,7 +21110,9 @@ async def request_prompt(winner, winner_id):
     # here locally rather than changed everywhere.
     prompt_collection_window = (magic_time + 5) * 2
 
-    message = f"\u200b\n🖼️🔟 **<@{winner_id}>**, give me **10 words max** and be good.\n\u200b"
+    if header is None:
+        header = f"\U0001f5bc\ufe0f\U0001f51f **<@{winner_id}>**, give me **10 words max** and be good."
+    message = f"\u200b\n{header}\n\u200b"
     message += f"\n*(Type* **x** *or hit the button below when you're done.)*\n\u200b"
     view = PromptDoneView(winner_id, timeout=prompt_collection_window)
     prompt_message = await safe_send(channel, message, view=view)
