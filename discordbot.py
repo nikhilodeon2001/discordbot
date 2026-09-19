@@ -10596,6 +10596,7 @@ async def ask_wheres_okra_challenge(winner, winner_id, num=3):
             content=(f"​\n\U0001f50d **Round {round_num}**: find THIS one!\n\n"
                      f"He's hiding somewhere below, surrounded by look-alikes.\n​"),
             embed=ref_embed)
+        await asyncio.sleep(5)
 
         embed = discord.Embed()
         embed.set_image(url="attachment://wheres_okra.png")
