@@ -1108,6 +1108,7 @@ categories_to_exclude = []
 collected_responses = []
 current_question = None
 _giveaway_words_cache = {"key": None, "words": frozenset()}  # see _current_giveaway_words()
+_giveaway_guard_dm_cache = {"key": None, "notified_user_ids": set()}  # see _notify_giveaway_guard_dm()
 previous_question = None
 round_in_progress = False  # True from the moment a round is committed to starting until it ends -- lets /checkupdate warn before an update would kill the process mid-round
 current_answer_view = None
@@ -24846,6 +24847,40 @@ def _current_giveaway_words():
     return _giveaway_words_cache["words"]
 
 
+async def _notify_giveaway_guard_dm(message):
+    """DM the author of a 🟥-flagged guess explaining what the red card means.
+    Discord only supports true ephemeral messages as responses to interactions
+    (slash commands / button clicks); a typed answer is a plain channel
+    message, so a DM is the only "visible to you alone" channel available for
+    it. Sent at most once per user per question -- keyed on the same
+    (category, question) pair as _current_giveaway_words, so the notified set
+    resets naturally when the next question swaps the cache key. Users with
+    server DMs disabled just keep the 🟥 reaction as their only signal."""
+    cat = current_question.get("trivia_category", "") if current_question else ""
+    q = current_question.get("trivia_question", "") if current_question else ""
+    key = (cat, q)
+    if _giveaway_guard_dm_cache["key"] != key:
+        _giveaway_guard_dm_cache["key"] = key
+        _giveaway_guard_dm_cache["notified_user_ids"] = set()
+    if message.author.id in _giveaway_guard_dm_cache["notified_user_ids"]:
+        return
+    _giveaway_guard_dm_cache["notified_user_ids"].add(message.author.id)
+
+    guess = message.content.strip()
+    if len(guess) > 100:
+        guess = guess[:100] + "…"
+    try:
+        await message.author.send(
+            f"🟥 Heads up! Your answer “{guess}” appears word-for-word in the question or "
+            f"category, so the usual partial-credit matching is turned off for it. "
+            f"It will still be counted -- but only if it's *exactly* the right answer."
+        )
+    except discord.Forbidden:
+        pass  # DMs from server members disabled -- nothing private left to send.
+    except discord.HTTPException as e:
+        print(f"❌ Failed to DM giveaway-guard notice: {e}")
+
+
 def levenshtein_similarity(str1, str2):
     return difflib.SequenceMatcher(None, str1.lower(), str2.lower()).ratio()
 
@@ -28290,6 +28325,10 @@ async def on_message(message):
                         print("❌ Bot lacks permission to add reactions.")
                     except discord.HTTPException as e:
                         print(f"❌ Failed to add reaction: {e}")
+                    # Privately tell them what the red card means (once per
+                    # question) -- see _notify_giveaway_guard_dm for why this
+                    # is a DM rather than an ephemeral message.
+                    await _notify_giveaway_guard_dm(message)
 
                 # A typed guess that's actually one of this question's choices locks the
                 # user out of the buttons too, the same way clicking a button locks out
