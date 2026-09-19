@@ -10558,10 +10558,20 @@ async def ask_wheres_okra_challenge(winner, winner_id, num=3):
     global wf_winner
     wf_winner = True
 
+    gifs = [
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/wheresokra1.gif",
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/wheresokra2.gif",
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/wheresokra3.gif",
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/wheresokra4.gif",
+        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/wheresokra5.gif",
+    ]
+    gif_url = random.choice(gifs)
+
     await safe_send(
         channel,
-        content="​\n​\n\U0001f50d\U0001f952 **Where's Okra**: Find the Okrite\n​")
-    await asyncio.sleep(2)
+        content="​\n​\n\U0001f50d\U0001f952 **Where's Okra**: Find the Okrite\n​",
+        embed=discord.Embed().set_image(url=gif_url))
+    await asyncio.sleep(3)
 
     # --- difficulty pick (round winner only) ------------------------------------------
     difficulty = "medium"
