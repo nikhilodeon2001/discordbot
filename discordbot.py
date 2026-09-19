@@ -28488,6 +28488,16 @@ async def start_trivia():
                 question_asked_end = question_asked_start + question_time
                 question_message_link = current_answer_message.jump_url if current_answer_message else None
                 current_question["trivia_message_link"] = question_message_link
+
+                print(f"📝 Asked: {trivia_category} - {trivia_question}")
+                print(f"📝 Answer: {trivia_answer_list}")
+                test_channel = bot.get_channel(ROAST_TEST_CHANNEL_ID)
+                if test_channel:
+                    await safe_send(
+                        test_channel,
+                        content=f"📝 **Asked**: {trivia_category} - {trivia_question}\n📝 **Answer**: {trivia_answer_list}",
+                    )
+
                 try:
                     companion_web.publish_state(build_companion_state(), game="main")
                 except Exception as e:
