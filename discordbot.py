@@ -10489,7 +10489,7 @@ async def ask_wheres_okra_challenge(winner, winner_id, num=3):
 
     await safe_send(
         channel,
-        content="​\n​\n\U0001f50d\U0001f952 **Where's Okra**: Find the Chef\n​")
+        content="​\n​\n\U0001f50d\U0001f952 **Where's Okra**: Find the Okrite\n​")
     await asyncio.sleep(2)
 
     # --- difficulty pick (round winner only) ------------------------------------------
@@ -10595,6 +10595,14 @@ async def ask_wheres_okra_challenge(winner, winner_id, num=3):
                      f"⏱️ You have **{guess_time}** seconds.\n​"),
             embed=embed,
             file=discord.File(buffer, filename="wheres_okra.png"))
+
+        test_channel = bot.get_channel(ROAST_TEST_CHANNEL_ID)
+        if test_channel:
+            answer_cell = wheres_okra.target_grid_label(target, cols, rows)
+            await safe_send(
+                test_channel,
+                content=f"\U0001f50d\U0001f952 **Where's Okra** Round {round_num}: Find the Okrite\n📝 **Answer**: {answer_cell}",
+            )
 
         start_time = asyncio.get_event_loop().time()
         found_by = None          # id of whoever found him, or None -- never a loop leftover
