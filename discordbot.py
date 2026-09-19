@@ -20477,10 +20477,11 @@ async def generate_round_summary_image(round_data, winner, winner_id, winner_cof
                     winner, categories, winner_coffees, winner_id, skip_message=category_already_shown
                 )
 
-            if selected_category is None:
-                # Winner ran out of time -- either never picked a theme, or picked "Provide
-                # the Prompt" but ran out of time typing it -- bank the credit instead of
-                # generating a default/degenerate image.
+            if selected_category is None or selected_category == "banked":
+                # Winner ran out of time (never picked a theme, or picked "Provide the
+                # Prompt" but ran out of time typing it) or explicitly chose "Bank It For
+                # Later" -- either way, bank the credit instead of generating a
+                # default/degenerate image.
                 return None
 
             prompts_by_category = {
@@ -21093,13 +21094,15 @@ async def ask_category(winner, categories, winner_coffees, winner_id, skip_messa
                 await safe_send(channel, f"\U0001f64f\U0001f614 Sorry **<@{winner_id}>**, choice **{message_content}** is for **Okrans Only** \U0001f952.")
                 continue
 
-            # Case 3: Explicit "bank it for later" -- same signal a theme-picker timeout
-            # produces (None selected_category), so generate_round_summary_image banks the
-            # credit instead of generating anything.
+            # Case 3: Explicit "bank it for later" -- returns the "banked" sentinel (instead
+            # of None) so the caller can tell this apart from a plain timeout and skip its
+            # own generic "too slow" message; generate_round_summary_image still treats it
+            # exactly like None (bank the credit, generate nothing).
             if message_content == '5':
+                banked_count = await get_image_credits(winner_id)
                 await response.add_reaction("\U0001f3e6")
-                await safe_send(channel, f"\U0001f3e6\U0001f952 Got it **<@{winner_id}>**, I'll bank this one for later.")
-                return None, additional_prompt
+                await safe_send(channel, f"\U0001f3e6\U0001f952 Got it **<@{winner_id}>**, I'll bank this one for later. (Drawings owed: {banked_count})")
+                return "banked", additional_prompt
 
             # Case 4: Valid choice
             await response.add_reaction("\u2705")
@@ -26801,11 +26804,16 @@ async def update_round_streaks(user, user_id, roast_task=None):
             if ok:
                 await consume_image_credit(user_id)
             elif ok is None:
-                await safe_send(
-                    channel,
-                    f"⏳🎨 **<@{user_id}>**, too slow — no worries, it's **saved**: "
-                    f"win again and I'll ask you to pick. (Drawings owed: {banked})"
-                )
+                # No message here if the winner explicitly chose "Bank It For Later" --
+                # ask_category already sent its own ack (with the drawings-owed count) for
+                # that, and this generic "too slow" message is only for an actual timeout.
+                explicit_bank = category_result is not None and category_result[0] == "banked"
+                if not explicit_bank:
+                    await safe_send(
+                        channel,
+                        f"⏳🎨 **<@{user_id}>**, too slow — no worries, it's **saved**: "
+                        f"win again and I'll ask you to pick. (Drawings owed: {banked})"
+                    )
             else:
                 await safe_send(
                     channel,
