@@ -755,6 +755,19 @@ var spotterKey = null;    // image_url of the puzzle currently shown
 var spotterMark = null;   // [x, y] of the last tap, kept across re-renders
 var discordSdk = null;    // set once in boot() -- null in DEV mode, where there's no real SDK
 
+function okraNameHtml(state) {
+  // Mirrors chat's name_line/attribution_line, minus Discord mention syntax -- this is a
+  // plain page, so the creator shows as their resolved display name (already resolved
+  // server-side) rather than a raw <@id> that could never render as a mention here.
+  if (!state.target_name) return '';
+  var html = '<div class="spothint" style="margin-top:6px">🌿 <strong>' + esc(state.target_name) + '</strong></div>';
+  if (state.attribution_name) {
+    html += '<div class="spothint">🎨 Created by ' + esc(state.attribution_name) +
+      (state.attribution_date ? ' on ' + esc(state.attribution_date) : '') + '</div>';
+  }
+  return html;
+}
+
 function placeSpotterMark(x, y) {
   const wrap = document.querySelector('.spotwrap');
   const img = document.querySelector('.spotimg');
@@ -907,6 +920,7 @@ function render(state) {
       '<div class="spotref"><div class="spothint">Find this one:</div>' +
       '<img class="spotrefimg" src="' + esc(P + state.reference_image_url) +
       '" alt="Reference"></div>' +
+      okraNameHtml(state) +
       '<div class="spothint">Get the puzzle ready… hang tight.</div>';
     if (countdownTimer) { clearInterval(countdownTimer); countdownTimer = null; }
     return;
@@ -927,6 +941,7 @@ function render(state) {
         : '';
       app.innerHTML = '<div class="qhead"><span class="cat">Where\\'s Okra</span></div>' +
         refHtml +
+        okraNameHtml(state) +
         '<div class="spothint">He\\'s hiding among the look-alikes below. Wrong taps cost you nothing.</div>' +
         '<div class="spotwrap"><img class="spotimg" src="' + esc(P + state.image_url) +
         '" alt="Hidden object puzzle"></div>' +
