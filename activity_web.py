@@ -141,18 +141,18 @@ def proxy_images(state):
 
 def restrict_for_activity(state, game):
     """Soft-launch gate: when ACTIVITY_OKRA_ONLY is set, the Activity may only ever display
-    Where's Okra -- its puzzle in progress, its difficulty-pick prompt, and its "round just
-    ended" message. Everything else -- live main-trivia questions/reveals, every other
-    post-round bonus challenge's own prompt, and the arena/simply games entirely -- collapses
-    to a bare idle placeholder. Never mutates the input, which may be the shared broadcast dict
-    handed to every SSE subscriber."""
+    Where's Okra -- its reference-card preview, its difficulty-pick prompt, its puzzle in
+    progress, and its "round just ended" message. Everything else -- live main-trivia
+    questions/reveals, every other post-round bonus challenge's own prompt, and the arena/
+    simply games entirely -- collapses to a bare idle placeholder. Never mutates the input,
+    which may be the shared broadcast dict handed to every SSE subscriber."""
     if not isinstance(state, dict) or not ACTIVITY_OKRA_ONLY:
         return state
     if game != "main":
         return {"phase": "idle"}
     if state.get("spotter") and state.get("image_url"):
         return state
-    if state.get("okra_round_ended"):
+    if state.get("okra_round_ended") or state.get("okra_preview"):
         return state
     prompt_extra = (state.get("prompt") or {}).get("extra") or {}
     if prompt_extra.get("wheres_okra_difficulty_pick"):
@@ -873,6 +873,19 @@ function render(state) {
       imgHtml(state) +
       resultBanner + answerLine + '<div class="actionrow">' + flagHtml(state) + '</div>' + mine +
       scoreboardHtml(state) + legendHtml(state) + roundHtml(state);
+    if (countdownTimer) { clearInterval(countdownTimer); countdownTimer = null; }
+    return;
+  }
+
+  if (state.okra_preview && state.reference_image_url) {
+    // Stage 1: chat already has the reference card up, board isn't ready yet. Shown so the
+    // Activity doesn't lag visibly behind chat's own two-stage reveal (see wheres_okra_
+    // preview's backend comment) -- not interactive, nothing to tap yet.
+    app.innerHTML = '<div class="qhead"><span class="cat">Where\\'s Okra</span></div>' +
+      '<div class="spotref"><div class="spothint">Find this one:</div>' +
+      '<img class="spotrefimg" src="' + esc(P + state.reference_image_url) +
+      '" alt="Reference"></div>' +
+      '<div class="spothint">Get the puzzle ready… hang tight.</div>';
     if (countdownTimer) { clearInterval(countdownTimer); countdownTimer = null; }
     return;
   }
