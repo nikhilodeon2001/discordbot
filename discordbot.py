@@ -10762,7 +10762,7 @@ async def ask_wheres_okra_challenge(winner, winner_id, num=3):
             activity_embed = discord.Embed(
                 title="🧪 Play It Live - Join the Activity!",
                 description=(f"**{activity_voice_channel.mention}**\n\n"
-                             f"Join the voice channel and run `/play` to tap the puzzle "
+                             f"Join the voice channel and run **`/play`** to tap the puzzle "
                              f"live on your screen instead of typing grid squares.\n\n"
                              f"*Totally optional -- you can keep playing right here in chat "
                              f"without joining the channel or the Activity.*"),
@@ -17191,42 +17191,37 @@ async def ask_feud_question(winner, mode, winner_id):
     while xs < max_xs and not answered_correctly:
         feud_image_buffer = create_family_feud_board_image(feud_answers, user_progress, 0)
         image_file = discord.File(fp=feud_image_buffer, filename="image.png")
-        board_embed = discord.Embed(title=f"🟦 **Okra Says!** Top {num_answers} answers on the board\n\u200b")
-        board_embed.description = f"We asked 100 Okrans..."
-        board_embed.set_image(url="attachment://image.png")
 
         await asyncio.sleep(1)
 
-        start_message = ""
-
         if mode == "cooperative":
             if xs == 0:
-                start_message += f"\u200b\n⚠️🚨 **Everyone's in!** Round 1/3! 🟩\n\u200b"
+                footer_text = "\u26a0\ufe0f\U0001f6a8 Everyone's in! Round 1/3! \U0001f7e9"
             elif xs == 1:
-                start_message += f"\u200b\n⚠️🚨 **Everyone's in!** Round 2/3! 🟨\n\u200b"
-            elif xs == 2:
-                start_message += f"\u200b\n⚠️🚨 **Everyone's in!** Last round! 🟥\n\u200b"
-
-        elif mode == "solo":
+                footer_text = "\u26a0\ufe0f\U0001f6a8 Everyone's in! Round 2/3! \U0001f7e8"
+            else:
+                footer_text = "\u26a0\ufe0f\U0001f6a8 Everyone's in! Last round! \U0001f7e5"
+        else:  # solo
             if xs == 0:
-                start_message += f"\u200b\n⚠️🚨 **<@{winner_id}> ONLY!** Round 1/3! 🟩\n\u200b"
+                footer_text = f"\u26a0\ufe0f\U0001f6a8 {winner} ONLY! Round 1/3! \U0001f7e9"
             elif xs == 1:
-                start_message += f"\u200b\n⚠️🚨 **<@{winner_id}> ONLY!** Round 2/3! 🟨\n\u200b"
-            elif xs == 2:
-                start_message += f"\u200b\n⚠️🚨 **<@{winner_id}> ONLY!** Last round! 🟥\n\u200b"
+                footer_text = f"\u26a0\ufe0f\U0001f6a8 {winner} ONLY! Round 2/3! \U0001f7e8"
+            else:
+                footer_text = f"\u26a0\ufe0f\U0001f6a8 {winner} ONLY! Last round! \U0001f7e5"
 
-        
-        # Combined into one message, sent with no delay before the board reveal: the
-        # question repeats across all 3 lives, so returning players already know it and
-        # start typing the instant they see the board -- the old board -> sleep(3) ->
-        # "Everyone's in!" -> sleep(1) -> "GO!" sequence meant the guess listener (which
-        # registers right after this send) wasn't up yet, silently dropping those guesses.
-        prompt_message = start_message
-        prompt_message += f"\u200b\n\u200b\n👉👉 **{feud_prompt.upper()}**\n"
-        prompt_message += f"\n📜🔢 List as many as you can. **GO!** 🏁🚀\n\u200b"
+        # One message now (was board embed + separate "Everyone's in!"/"GO!" text) --
+        # sent with no delay before the board reveal: the question repeats across all 3
+        # lives, so returning players already know it and start typing the instant they
+        # see the board. Embed footers don't render markdown/mentions, so the round banner
+        # (which used to @-mention the solo winner) uses their plain display name instead.
+        board_embed = discord.Embed(
+            description=(f"\U0001f7e6 Top {num_answers} answers on the board. We asked 100 Okrans:\n\n"
+                         f"\U0001f449\U0001f449 **{feud_prompt.upper()}**\n\n"
+                         f"\U0001f4dc\U0001f522 List as many as you can. **GO!** \U0001f3c1\U0001f680"))
+        board_embed.set_footer(text=footer_text)
+        board_embed.set_image(url="attachment://image.png")
 
         await safe_send(channel, embed=board_embed, file=image_file)
-        await safe_send(channel, prompt_message)
 
         target_channel = _active_game_channel or channel
 
