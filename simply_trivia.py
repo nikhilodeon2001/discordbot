@@ -826,21 +826,6 @@ async def start_simply_trivia(bot, db, channel_id, fuzzy_match_func, count_flags
             print(f"📝 Asked: {category} - {question_text}")
             print(f"📝 Answer: {answers}")
 
-            # `bot` here is the real, live-connected instance handed in from on_ready (see
-            # this function's own docstring) -- `discordbot.ROAST_TEST_CHANNEL_ID` is safe to
-            # read via the plain `import discordbot` above despite that module resolving to
-            # an inert duplicate elsewhere, since it's a module-load-time constant, not
-            # runtime state that duplicate copy never actually receives.
-            test_channel = bot.get_channel(discordbot.ROAST_TEST_CHANNEL_ID)
-            if test_channel:
-                try:
-                    await test_channel.send(
-                        f"📝 **Asked** (Simply Trivia): {category} - {question_text}\n"
-                        f"📝 **Answer**: {answers}"
-                    )
-                except Exception as e:
-                    print(f"Failed to post Simply Trivia Q&A to test channel: {e}")
-
             # Wait for answers - up to 20 seconds, or 3 seconds after first correct answer
             max_wait_time = 20.0
             start_time = asyncio.get_event_loop().time()

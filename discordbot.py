@@ -10792,10 +10792,19 @@ async def ask_wheres_okra_challenge(winner, winner_id, num=3):
             test_channel = bot.get_channel(ROAST_TEST_CHANNEL_ID)
             if test_channel:
                 answer_cell = wheres_okra.target_grid_label(target, cols, rows)
+                # Same ringed reveal image the main round posts AFTER guessing closes
+                # (_wheres_okra_render with `target` set draws the circle) -- rendered early
+                # here, before the round even starts, since image_bytes/target are already
+                # known and this channel is for testing, not for players.
+                early_reveal = await loop.run_in_executor(
+                    None, _wheres_okra_render, image_bytes, cols, rows, target)
+                early_reveal_embed = discord.Embed()
+                early_reveal_embed.set_image(url="attachment://wheres_okra_early_reveal.png")
                 await safe_send(
                     test_channel,
                     content=f"\U0001f50d\U0001f952 **Where's Okra** Round {round_num}: Find the Okrite\n📝 **Answer**: {answer_cell}",
-                )
+                    embed=early_reveal_embed,
+                    file=discord.File(early_reveal, filename="wheres_okra_early_reveal.png"))
 
             start_time = asyncio.get_event_loop().time()
             found_by = None          # id of whoever found him, or None -- never a loop leftover
