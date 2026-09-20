@@ -1131,6 +1131,19 @@ wheres_okra_session_active = False
 wheres_okra_round_ended_at = None
 WHERES_OKRA_ENDED_MESSAGE_WINDOW = 30
 
+# {"reference_image_url": str, "at": float} or None. Chat gets a two-stage reveal -- the
+# reference card ("find THIS one!") first, then a dramatic pause, then the tappable board --
+# but the Activity previously had no equivalent first stage: it only ever learned about a round
+# once the real spotter prompt registered (i.e. once the board was ready and guessing opened),
+# so the Activity visibly lagged behind chat's own reference-card post by several seconds. This
+# lets build_companion_state's idle branch show the reference card in the Activity at the same
+# moment chat gets it, well before the actual guess-accepting prompt exists -- deliberately NOT
+# routed through a real companion_bridge prompt, since that would open the guess window early
+# too. Read with a TTL (WHERES_OKRA_PREVIEW_WINDOW) rather than explicitly cleared, so a round
+# that errors out between the reference card and the board doesn't leave this stuck stale.
+wheres_okra_preview = None
+WHERES_OKRA_PREVIEW_WINDOW = 20
+
 
 question_categories = [
     "Mystery Box or Boat", "Famous People", "Anatomy", "Characters", "Music", "Art & Literature", 
@@ -10637,7 +10650,7 @@ async def _wheres_okra_mascot_bytes():
 
 
 async def ask_wheres_okra_challenge(winner, winner_id, num=3):
-    global wf_winner
+    global wf_winner, wheres_okra_preview
     wf_winner = True
 
     gate_session = ACTIVITY_OKRA_ONLY and _active_game_channel is None
@@ -10795,6 +10808,18 @@ async def ask_wheres_okra_challenge(winner, winner_id, num=3):
 
             heading = (f"\U0001f50d **Round {round_num}**: find THIS one!\n\n" if num > 1
                        else "\U0001f50d **Find THIS one!**\n\n")
+
+            # Publish the reference card to the Activity right now too, at the same moment
+            # chat gets it -- not through a real prompt (that would open the guess window
+            # early), just a state field with a TTL that build_companion_state's idle branch
+            # picks up. Without this the Activity had no "stage 1" at all and only ever
+            # learned about the round once the board itself was ready, several seconds after
+            # chat already showed the reference card.
+            wheres_okra_preview = {"reference_image_url": puzzle["reference_image_url"], "at": time.time()}
+            try:
+                companion_web.publish_state({"__refresh__": True}, game="main")
+            except Exception as e:
+                print(f"Error notifying Where's Okra preview: {e}")
 
             ref_embed = discord.Embed()
             ref_embed.set_image(url=puzzle["reference_image_url"])
@@ -30341,6 +30366,14 @@ def build_companion_state(user_id=None):
         elif (wheres_okra_round_ended_at is not None
               and now - wheres_okra_round_ended_at < WHERES_OKRA_ENDED_MESSAGE_WINDOW):
             idle["okra_round_ended"] = True
+        # Stage 1 of the round: the reference card is up in chat, but the board isn't ready
+        # yet (no real prompt exists to carry it through `extra` above -- see wheres_okra_
+        # preview's own comment for why). TTL-checked rather than explicitly cleared, so an
+        # aborted round can't leave this stuck showing forever.
+        elif (wheres_okra_preview is not None
+              and now - wheres_okra_preview["at"] < WHERES_OKRA_PREVIEW_WINDOW):
+            idle["okra_preview"] = True
+            idle["reference_image_url"] = wheres_okra_preview["reference_image_url"]
         return idle
     trivia_url = cq.get("trivia_url", "")
     answer_list = cq.get("trivia_answer_list", []) or []
