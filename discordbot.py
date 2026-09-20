@@ -18392,9 +18392,12 @@ async def ask_survey_question():
 
 
 async def generate_themed_country_image(country, city):
+    scene = random.choice(OKRA_SAN_DIEGO_IMAGE_SCENES)
     build_prompt = build_okra_image_prompt_grok if IMAGE_PROVIDER == "grok" else build_okra_image_prompt_openai
     prompt = await build_prompt(
-        f"Show a stereotypical person with a face from {country} holding an okra in a stereotypical setting in {country}."
+        f"Show a stereotypical person with a face from {country} holding an okra, {scene}, in a "
+        f"stereotypical setting in {country}. Do not include any text, signage, or one single "
+        f"unmistakable landmark that would give away the exact city."
     )
 
     try:
@@ -18475,6 +18478,22 @@ OKRA_SAN_DIEGO_CLUE_ANGLES = [
     "currency and shopping",
     "a famous local export or industry",
     "the language or accent overheard nearby",
+]
+
+# Randomly picked for generate_themed_country_image's prompt each round, same reasoning as
+# OKRA_SAN_DIEGO_CLUE_ANGLES above -- one fixed scene every round made every round's "OkraStrut's
+# Insta post" image look the same regardless of which country was actually picked.
+OKRA_SAN_DIEGO_IMAGE_SCENES = [
+    "at a bustling outdoor market stall",
+    "riding local public transportation",
+    "at a street food stand",
+    "relaxing in a public park",
+    "at a rooftop cafe overlooking the skyline",
+    "in a crowded town square",
+    "waiting at a bus or train stop",
+    "browsing a small local shop",
+    "at an outdoor sporting event",
+    "crossing a busy street corner",
 ]
 
 
@@ -28701,7 +28720,7 @@ async def start_trivia():
             #await ask_rapidfire_challenge("TheOkraG", 591861826690613248, 1)
             #await ask_okra_says_challenge("TheOkraG", 591861826690613248, 1)
             #await ask_custom_trivia_challenge("TheOkraG", 591861826690613248, 10)
-            await ask_wheres_okra_challenge("TheOkraG", 591861826690613248, 1)
+            #await ask_wheres_okra_challenge("TheOkraG", 591861826690613248, 1)
 
             if resume_no_players_override is not None:
                 no_players = resume_no_players_override
