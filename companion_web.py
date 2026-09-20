@@ -1857,7 +1857,7 @@ async function submit(answer) {
         // block the guess either), but flagged so the player knows it won't count
         // unless it's the exact answer.
         setStatus(data.guard_blocked
-          ? '🟥 Locked in: ' + answer + ' — but that\'s just a word from the category/question, it won\'t count unless it\'s the exact answer'
+          ? '🟥 Locked in: ' + answer + ' — but that\\'s just a word from the category/question, it won\\'t count unless it\\'s the exact answer'
           : '🔒 Locked in: ' + answer, data.guard_blocked ? 'bad' : 'ok');
         const inp = document.getElementById('ans'); if (inp) inp.disabled = true;
         document.querySelectorAll('.choice').forEach(function (b) {
@@ -1868,7 +1868,7 @@ async function submit(answer) {
       } else {
         // Free-text: multiple submissions allowed (like Discord typing).
         setStatus(data.guard_blocked
-          ? '🟥 That\'s just a word from the category/question — you need the exact answer to get credit'
+          ? '🟥 That\\'s just a word from the category/question — you need the exact answer to get credit'
           : '✓ Submitted: ' + answer + ' — you can submit again', data.guard_blocked ? 'bad' : 'ok');
         const inp = document.getElementById('ans'); if (inp) { inp.value = ''; inp.focus(); }
       }
