@@ -29,6 +29,19 @@ import aiohttp
 from aiohttp import web
 
 # ---------------------------------------------------------------------------
+# Feature flags
+# ---------------------------------------------------------------------------
+# Soft-launch restriction, independent of ENABLED below (which gates the Activity's existence
+# entirely): while true, the Activity only ever renders a Where's Okra round in progress -- every
+# other kind of live state (main-trivia Q&A, other post-round bonus challenges, Mini-Game Arena,
+# Simply Trivia) collapses to an inert idle placeholder instead (see restrict_for_activity).
+# Independently declared here rather than imported from discordbot.py, matching how ENABLED
+# itself is independently declared in discordbot.py/companion_web.py -- this module deliberately
+# imports nothing from companion_web (see the module docstring). Flip to "false" and redeploy to
+# restore full Activity gameplay with no other code changes.
+ACTIVITY_OKRA_ONLY = os.getenv("ACTIVITY_OKRA_ONLY", "true").lower() == "true"
+
+# ---------------------------------------------------------------------------
 # Injected state (set by init(), called from companion_web.start_companion_web)
 # ---------------------------------------------------------------------------
 
@@ -119,6 +132,20 @@ def proxy_images(state):
     if ref_url:
         out["reference_image_url"] = _image_proxy_url(ref_url)
     return out
+
+
+def restrict_for_activity(state, game):
+    """Soft-launch gate: when ACTIVITY_OKRA_ONLY is set, the Activity may only ever display a
+    Where's Okra round in progress. Everything else -- live main-trivia questions/reveals, every
+    other post-round bonus challenge (which rides the same `prompt` field build_companion_state
+    already carries in its idle branch), and the arena/simply games entirely -- collapses to a
+    bare idle placeholder. Never mutates the input, which may be the shared broadcast dict handed
+    to every SSE subscriber."""
+    if not isinstance(state, dict) or not ACTIVITY_OKRA_ONLY:
+        return state
+    if game == "main" and state.get("spotter") and state.get("image_url"):
+        return state
+    return {"phase": "idle"}
 
 
 def _is_safe_host(host):
@@ -282,6 +309,7 @@ async def handle_poll(request):
     if seq <= since and live.get("phase") != "open":
         return web.Response(status=204)
 
+    state = restrict_for_activity(state, game)
     return web.json_response({"seq": seq, "state": proxy_images(state)})
 
 

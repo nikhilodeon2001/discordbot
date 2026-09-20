@@ -15,6 +15,14 @@ ACTIVITY_ENABLED = os.environ.get('ACTIVITY_ENABLED', 'false').lower() == 'true'
 # Applied on every cold boot by the startup reveal hooks below -- flip and redeploy to switch.
 ACTIVITY_BETA_PUBLIC = os.environ.get('ACTIVITY_BETA_PUBLIC', 'false').lower() == 'true'
 
+# Soft-launch restriction, independent of ACTIVITY_ENABLED above (which gates the Activity's
+# existence entirely): while true, /play only works while a Where's Okra round is live, the
+# trivia-beta voice channel opens/closes around that window instead of staying permanently
+# public, and the Activity itself only ever renders the Okra tap surface (see
+# activity_web.restrict_for_activity). Flip to "false" and redeploy to restore the full,
+# always-available Activity experience -- no other code changes needed.
+ACTIVITY_OKRA_ONLY = os.environ.get('ACTIVITY_OKRA_ONLY', 'true').lower() == 'true'
+
 import sentry_sdk
 from sentry_sdk.integrations.logging import LoggingIntegration
 
@@ -855,18 +863,24 @@ async def apply_beta_channel_visibility(voice_bot_instance, label):
     holds Manage Channels there), so flipping ACTIVITY_BETA_PUBLIC and redeploying is enough to
     toggle trivia-beta between private testing and open-to-everyone -- no manual permission
     editing needed. Also keeps the real trivia VC and mini-game arena VC's rocket-icon launcher
-    disabled, since trivia-beta is the Activity's one home now."""
+    disabled, since trivia-beta is the Activity's one home now.
+
+    While ACTIVITY_OKRA_ONLY is on, this always boots locked regardless of ACTIVITY_BETA_PUBLIC --
+    the channel only opens for the duration of a Where's Okra session (see
+    _open_wheres_okra_activity_window), so a stale "public" setting from before the soft launch
+    doesn't leave it sitting open between sessions."""
     try:
         vc = voice_bot_instance.get_channel(TRIVIA_BETA_VOICE_CHANNEL_ID)
         if vc:
             role = vc.guild.get_role(EVERYONE_ROLE_ID)
             if role:
                 perms = vc.overwrites_for(role)
-                perms.view_channel = ACTIVITY_BETA_PUBLIC
-                perms.connect = ACTIVITY_BETA_PUBLIC
+                public = ACTIVITY_BETA_PUBLIC and not ACTIVITY_OKRA_ONLY
+                perms.view_channel = public
+                perms.connect = public
                 perms.use_embedded_activities = True
                 await vc.set_permissions(role, overwrite=perms)
-                mode = "public" if ACTIVITY_BETA_PUBLIC else "private"
+                mode = "public" if public else "private"
                 print(f"🧪 trivia-beta voice channel set to {mode} ({label})")
     except Exception as e:
         print(f"⚠️ Could not set trivia-beta voice channel visibility ({label}): {e}")
@@ -1103,6 +1117,11 @@ game_bot = ContextVar('game_bot', default=None)
 _active_game_bot = None
 _active_game_channel = None
 
+# True for exactly the duration of a main-round Where's Okra bonus (see
+# _open_/_close_wheres_okra_activity_window and ACTIVITY_OKRA_ONLY above) -- lets /play's
+# handler know whether it's allowed to launch the Activity right now.
+wheres_okra_session_active = False
+
 
 question_categories = [
     "Mystery Box or Boat", "Famous People", "Anatomy", "Characters", "Music", "Art & Literature", 
@@ -1263,6 +1282,59 @@ async def release_game_voice_channel(voice_client, voice_channel):
             print(f"✅ Hidden voice channel and removed connect permission from @everyone")
     except Exception as e:
         print(f"Error hiding voice channel: {e}")
+
+
+async def _open_wheres_okra_activity_window():
+    """Make trivia-beta joinable and mark a Where's Okra session live, for exactly the duration
+    of one ask_wheres_okra_challenge call (covers every round when num > 1). Mirrors the audio
+    mini-games' own "make the voice channel visible" step (see e.g. ask_soundfx_challenge).
+    Returns the voice channel (or None) so the caller can mention it without a second lookup."""
+    global wheres_okra_session_active
+    wheres_okra_session_active = True
+    voice_channel = get_bot().get_channel(TRIVIA_BETA_VOICE_CHANNEL_ID)
+    if not voice_channel:
+        return None
+    try:
+        everyone_role = voice_channel.guild.get_role(EVERYONE_ROLE_ID)
+        if everyone_role:
+            existing_perms = voice_channel.overwrites_for(everyone_role)
+            existing_perms.view_channel = True
+            existing_perms.connect = True
+            await voice_channel.set_permissions(everyone_role, overwrite=existing_perms)
+            print("✅ Opened trivia-beta voice channel for a Where's Okra session")
+    except Exception as e:
+        print(f"Error opening trivia-beta voice channel: {e}")
+    return voice_channel
+
+
+async def _close_wheres_okra_activity_window():
+    """Companion teardown, called unconditionally from ask_wheres_okra_challenge's finally block
+    so every exit path (normal completion, no puzzle pool, render error) ends the session the
+    same way. Reuses release_game_voice_channel's kick+hide idiom above, but -- unlike that
+    function -- does NOT skip the beta channel: while ACTIVITY_OKRA_ONLY is on, trivia-beta is
+    Where's Okra's ephemeral home, not a standing Activity dock."""
+    global wheres_okra_session_active
+    wheres_okra_session_active = False
+    voice_channel = get_bot().get_channel(TRIVIA_BETA_VOICE_CHANNEL_ID)
+    if not voice_channel:
+        return
+    try:
+        for member in list(voice_channel.members):
+            await member.move_to(None)
+        print("✅ Kicked all members from trivia-beta voice channel")
+    except Exception as e:
+        print(f"Error kicking members from trivia-beta voice channel: {e}")
+    try:
+        everyone_role = voice_channel.guild.get_role(EVERYONE_ROLE_ID)
+        if everyone_role:
+            existing_perms = voice_channel.overwrites_for(everyone_role)
+            existing_perms.view_channel = False
+            existing_perms.connect = False
+            await voice_channel.set_permissions(everyone_role, overwrite=existing_perms)
+            print("✅ Locked trivia-beta voice channel until the next Where's Okra session")
+    except Exception as e:
+        print(f"Error hiding trivia-beta voice channel: {e}")
+
 
 async def safe_send(channel=None, *args, max_retries=3, delay=2, use_embed=True, image_url=None, file=None, **kwargs):
     # Use context channel if no explicit channel provided
@@ -10557,282 +10629,310 @@ async def ask_wheres_okra_challenge(winner, winner_id, num=3):
     global wf_winner
     wf_winner = True
 
-    gifs = [
-        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/wheresokra1.gif",
-        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/wheresokra2.gif",
-        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/wheresokra3.gif",
-        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/wheresokra4.gif",
-        "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/wheresokra5.gif",
-    ]
-    gif_url = random.choice(gifs)
-
-    await safe_send(
-        channel,
-        content="​\n​\n\U0001f50d\U0001f952 **Where's Okra**: Find the Okrite\n​",
-        embed=discord.Embed().set_image(url=gif_url))
-    await asyncio.sleep(3)
-
-    # --- difficulty pick (round winner only) ------------------------------------------
-    difficulty = "medium"
-    emoji = {"easy": "\U0001f7e2", "medium": "\U0001f7e1", "hard": "\U0001f7e0",
-             "brutal": "\U0001f534", "impossible": "\U0001f7e3"}
-    button_options = [
-        {"value": name, "label": f"{emoji[name]} {wheres_okra.LOOKALIKE_DIFFICULTIES[name]['label']}"}
-        for name in wheres_okra.LOOKALIKE_DIFFICULTY_ORDER]
-    view = build_option_button_view(button_options, {winner_id}, timeout=magic_time + 5)
-
-    prompt = (f"​\n\U0001f579️ **<@{winner_id}>**, pick a difficulty:\n\n"
-              f"\U0001f7e2 **Okra-dinary** — 36 to search, a light warmup.\n"
-              f"\U0001f7e1 **Okra Squad** — 64 look-alikes, business as usual.\n"
-              f"\U0001f7e0 **Okra-geddon** — 100 of them, smaller and sneakier.\n"
-              f"\U0001f534 **Okra Overload** — 180 look-alikes, crowded and overlapping.\n"
-              f"\U0001f7e3 **Okrap** — 3000 look-alikes, packed in tight, and only 15 seconds. Godspeed.\n​")
-    view.message = await safe_send(channel, prompt, view=view)
-
-    target_channel = _active_game_channel or channel
-
-    def check_difficulty(m):
-        return (m.author.id == winner_id and m.channel == target_channel
-                and m.author != get_bot().user)
-
+    gate_session = ACTIVITY_OKRA_ONLY and _active_game_channel is None
+    activity_voice_channel = None
+    if gate_session:
+        activity_voice_channel = await _open_wheres_okra_activity_window()
     try:
-        msg = await resolve_input_race(
-            view,
-            companion_bridge.wait_for_message_or_companion(
-                check_difficulty, magic_time + 5, target_channel, {winner_id},
-                kind="mini_game_answer", options=button_options),
-        )
-        picked = msg.content.strip().lower()
-        for name in wheres_okra.LOOKALIKE_DIFFICULTY_ORDER:
-            if picked == name or picked == name[0]:
-                difficulty = name
-                break
-    except asyncio.TimeoutError:
-        pass
+        gifs = [
+            "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/wheresokra1.gif",
+            "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/wheresokra2.gif",
+            "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/wheresokra3.gif",
+            "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/wheresokra4.gif",
+            "https://triviabotwebsite.s3.us-east-2.amazonaws.com/introgifs/wheresokra5.gif",
+        ]
+        gif_url = random.choice(gifs)
 
-    spec = wheres_okra.LOOKALIKE_DIFFICULTIES[difficulty]
-    cols, rows = spec["grid"]
-    guess_time = spec["guess_time"]
-
-    await safe_send(channel,
-                    f"​\n\U0001f4a5 **{spec['label']}** it is.\n​")
-    await asyncio.sleep(2)
-
-    if num > 1:
-        await safe_send(channel, f"​\n5️⃣\U0001f947 Best of **{num}**...\n​")
+        await safe_send(
+            channel,
+            content="​\n​\n\U0001f50d\U0001f952 **Where's Okra**: Find the Okrite\n​",
+            embed=discord.Embed().set_image(url=gif_url))
         await asyncio.sleep(3)
 
-    user_correct_answers = {}
-    sorted_users = []
-    loop = asyncio.get_running_loop()
+        # Mirrors the audio mini-games' own "join voice channel" prompt (see e.g.
+        # ask_soundfx_challenge's voice_embed) -- Discord doesn't let a bot auto-launch the
+        # Activity into anyone's client, so the best we can do is make joining + running /play
+        # as frictionless and visible as possible.
+        if gate_session and activity_voice_channel is not None:
+            activity_embed = discord.Embed(
+                title="🧪 Play It Live - Join the Activity!",
+                description=(f"**{activity_voice_channel.mention}**\n\n"
+                             f"Join the voice channel and run `/play` to tap the puzzle "
+                             f"live on your screen instead of typing grid squares."),
+                color=discord.Color.gold())
+            await safe_send(channel, embed=activity_embed)
 
-    round_num = 1
-    while round_num <= num:
+        # --- difficulty pick (round winner only) ------------------------------------------
+        difficulty = "medium"
+        emoji = {"easy": "\U0001f7e2", "medium": "\U0001f7e1", "hard": "\U0001f7e0",
+                 "brutal": "\U0001f534", "impossible": "\U0001f7e3"}
+        button_options = [
+            {"value": name, "label": f"{emoji[name]} {wheres_okra.LOOKALIKE_DIFFICULTIES[name]['label']}"}
+            for name in wheres_okra.LOOKALIKE_DIFFICULTY_ORDER]
+        view = build_option_button_view(button_options, {winner_id}, timeout=magic_time + 5)
+
+        prompt = (f"​\n\U0001f579️ **<@{winner_id}>**, pick a difficulty:\n\n"
+                  f"\U0001f7e2 **Okra-dinary** — 36 to search, a light warmup.\n"
+                  f"\U0001f7e1 **Okra Squad** — 64 look-alikes, business as usual.\n"
+                  f"\U0001f7e0 **Okra-geddon** — 100 of them, smaller and sneakier.\n"
+                  f"\U0001f534 **Okra Overload** — 180 look-alikes, crowded and overlapping.\n"
+                  f"\U0001f7e3 **Okrap** — 3000 look-alikes, packed in tight, and only 15 seconds. Godspeed.\n​")
+        view.message = await safe_send(channel, prompt, view=view)
+
+        target_channel = _active_game_channel or channel
+
+        def check_difficulty(m):
+            return (m.author.id == winner_id and m.channel == target_channel
+                    and m.author != get_bot().user)
+
         try:
-            puzzle = await _wheres_okra_draw_lookalike_puzzle(difficulty)
-        except Exception as e:
-            sentry_sdk.capture_exception(e)
-            print(f"Error composing Where's Okra puzzle:\n{traceback.format_exc()}")
-            return None
+            msg = await resolve_input_race(
+                view,
+                companion_bridge.wait_for_message_or_companion(
+                    check_difficulty, magic_time + 5, target_channel, {winner_id},
+                    kind="mini_game_answer", options=button_options),
+            )
+            picked = msg.content.strip().lower()
+            for name in wheres_okra.LOOKALIKE_DIFFICULTY_ORDER:
+                if picked == name or picked == name[0]:
+                    difficulty = name
+                    break
+        except asyncio.TimeoutError:
+            pass
 
-        if not puzzle:
+        spec = wheres_okra.LOOKALIKE_DIFFICULTIES[difficulty]
+        cols, rows = spec["grid"]
+        guess_time = spec["guess_time"]
+
+        await safe_send(channel,
+                        f"​\n\U0001f4a5 **{spec['label']}** it is.\n​")
+        await asyncio.sleep(2)
+
+        if num > 1:
+            await safe_send(channel, f"​\n5️⃣\U0001f947 Best of **{num}**...\n​")
+            await asyncio.sleep(3)
+
+        user_correct_answers = {}
+        sorted_users = []
+        loop = asyncio.get_running_loop()
+
+        round_num = 1
+        while round_num <= num:
+            try:
+                puzzle = await _wheres_okra_draw_lookalike_puzzle(difficulty)
+            except Exception as e:
+                sentry_sdk.capture_exception(e)
+                print(f"Error composing Where's Okra puzzle:\n{traceback.format_exc()}")
+                return None
+
+            if not puzzle:
+                await safe_send(
+                    channel,
+                    f"​\n⚠️ No lookalike sprite pool is bootstrapped yet.\n\n"
+                    f"Run `scripts/upload_okra_lookalike_sprites.py` (and make sure at least "
+                    f"one `hidden_okra_backgrounds` document exists).\n​")
+                return None
+
+            target = puzzle["target"]
+
+            try:
+                image_bytes = await loop.run_in_executor(
+                    None, _wheres_okra_fetch, puzzle["image_url"])
+                buffer = await loop.run_in_executor(
+                    None, _wheres_okra_render, image_bytes, cols, rows, None)
+            except Exception as e:
+                sentry_sdk.capture_exception(e)
+                print(f"Error rendering Where's Okra puzzle:\n{traceback.format_exc()}")
+                await safe_send(channel, "​\n⚠️ That puzzle wouldn't load. Skipping it.\n​")
+                round_num += 1
+                continue
+
+            meta = puzzle.get("meta") or {}
+            name_line = f"\U0001f33f **{meta.get('target_name') or 'Mystery Okra'}**\n\n"
+            attribution_line = ""
+            if (meta.get("target_source") == "user_submitted" and meta.get("target_submitted_by")
+                    and meta["target_submitted_by"] != okrag_id):
+                # Skip attribution for Okra himself (the host account, okrag_id) -- he's not a
+                # player, so crediting him as the "creator" of his own look-alike reads oddly.
+                added_at = meta.get("target_added_at")
+                when_text = added_at.strftime("%B %d, %Y") if added_at else "an earlier round"
+                attribution_line = (f"\U0001f3a8 Created by <@{meta['target_submitted_by']}> "
+                                    f"on {when_text}\n\n")
+            one_shot_line = ""
+            if num == 1:
+                one_shot_line = "⚠️ Everyone gets just **ONE** guess, so be thoughtful!\n\n"
+
+            heading = (f"\U0001f50d **Round {round_num}**: find THIS one!\n\n" if num > 1
+                       else "\U0001f50d **Find THIS one!**\n\n")
+
+            ref_embed = discord.Embed()
+            ref_embed.set_image(url=puzzle["reference_image_url"])
             await safe_send(
                 channel,
-                f"​\n⚠️ No lookalike sprite pool is bootstrapped yet.\n\n"
-                f"Run `scripts/upload_okra_lookalike_sprites.py` (and make sure at least "
-                f"one `hidden_okra_backgrounds` document exists).\n​")
-            return None
+                content=(f"​\n{heading}"
+                         f"{name_line}{attribution_line}{one_shot_line}"
+                         f"He's hiding somewhere below, surrounded by look-alikes.\n\n"
+                         f"🧹 I'll delete messages while guesses are open, to keep the image "
+                         f"front and center.\n​"),
+                embed=ref_embed)
+            await asyncio.sleep(5)
 
-        target = puzzle["target"]
-
-        try:
-            image_bytes = await loop.run_in_executor(
-                None, _wheres_okra_fetch, puzzle["image_url"])
-            buffer = await loop.run_in_executor(
-                None, _wheres_okra_render, image_bytes, cols, rows, None)
-        except Exception as e:
-            sentry_sdk.capture_exception(e)
-            print(f"Error rendering Where's Okra puzzle:\n{traceback.format_exc()}")
-            await safe_send(channel, "​\n⚠️ That puzzle wouldn't load. Skipping it.\n​")
-            round_num += 1
-            continue
-
-        meta = puzzle.get("meta") or {}
-        name_line = f"\U0001f33f **{meta.get('target_name') or 'Mystery Okra'}**\n\n"
-        attribution_line = ""
-        if meta.get("target_source") == "user_submitted" and meta.get("target_submitted_by"):
-            added_at = meta.get("target_added_at")
-            when_text = added_at.strftime("%B %d, %Y") if added_at else "an earlier round"
-            attribution_line = (f"\U0001f3a8 Created by <@{meta['target_submitted_by']}> "
-                                f"on {when_text}\n\n")
-        one_shot_line = ""
-        if num == 1:
-            one_shot_line = ("⚠️ This is your only round -- everyone gets just "
-                             "**ONE** guess, so be thoughtful!\n\n")
-
-        ref_embed = discord.Embed()
-        ref_embed.set_image(url=puzzle["reference_image_url"])
-        await safe_send(
-            channel,
-            content=(f"​\n\U0001f50d **Round {round_num}**: find THIS one!\n\n"
-                     f"{name_line}{attribution_line}{one_shot_line}"
-                     f"He's hiding somewhere below, surrounded by look-alikes.\n​"),
-            embed=ref_embed)
-        await asyncio.sleep(5)
-
-        embed = discord.Embed()
-        embed.set_image(url="attachment://wheres_okra.png")
-        await safe_send(
-            channel,
-            content=(f"​\n\U0001f5fa️ Type a grid square like "
-                     f"**{wheres_okra.column_label(cols // 2)}{rows // 2}** "
-                     f"— first one on him wins.\n"
-                     f"⏱️ You have **{guess_time}** seconds.\n​"),
-            embed=embed,
-            file=discord.File(buffer, filename="wheres_okra.png"))
-
-        test_channel = bot.get_channel(ROAST_TEST_CHANNEL_ID)
-        if test_channel:
-            answer_cell = wheres_okra.target_grid_label(target, cols, rows)
+            embed = discord.Embed()
+            embed.set_image(url="attachment://wheres_okra.png")
             await safe_send(
-                test_channel,
-                content=f"\U0001f50d\U0001f952 **Where's Okra** Round {round_num}: Find the Okrite\n📝 **Answer**: {answer_cell}",
-            )
+                channel,
+                content=(f"​\n\U0001f5fa️ Type a grid square like "
+                         f"**{wheres_okra.column_label(cols // 2)}{rows // 2}** "
+                         f"— first one on him wins.\n"
+                         f"⏱️ You have **{guess_time}** seconds.\n​"),
+                embed=embed,
+                file=discord.File(buffer, filename="wheres_okra.png"))
 
-        start_time = asyncio.get_event_loop().time()
-        found_by = None          # id of whoever found him, or None -- never a loop leftover
-        guessed_users = set()    # one guess per user this round, right or wrong, typed or tapped
+            test_channel = bot.get_channel(ROAST_TEST_CHANNEL_ID)
+            if test_channel:
+                answer_cell = wheres_okra.target_grid_label(target, cols, rows)
+                await safe_send(
+                    test_channel,
+                    content=f"\U0001f50d\U0001f952 **Where's Okra** Round {round_num}: Find the Okrite\n📝 **Answer**: {answer_cell}",
+                )
 
-        def check(m):
-            return m.channel == target_channel and m.author != get_bot().user
+            start_time = asyncio.get_event_loop().time()
+            found_by = None          # id of whoever found him, or None -- never a loop leftover
+            guessed_users = set()    # one guess per user this round, right or wrong, typed or tapped
 
-        while asyncio.get_event_loop().time() - start_time < guess_time and found_by is None:
+            def check(m):
+                return m.channel == target_channel and m.author != get_bot().user
+
+            while asyncio.get_event_loop().time() - start_time < guess_time and found_by is None:
+                try:
+                    remaining = guess_time - (asyncio.get_event_loop().time() - start_time)
+                    message = await companion_bridge.wait_for_message_or_companion(
+                        check, remaining, target_channel, None,
+                        kind="wheres_okra_click", reveal_answer=False,
+                        # The Activity gets the raw S3 image (no grid burned in) so a tap's
+                        # normalised coordinates are relative to the same frame the stored
+                        # target box was measured against. `target` is deliberately NOT here.
+                        extra={"spotter": True, "image_url": puzzle["image_url"],
+                               "reference_image_url": puzzle["reference_image_url"],
+                               "cols": cols, "rows": rows})
+                except asyncio.TimeoutError:
+                    break
+
+                # Keep the puzzle image front-and-center: delete every message received during
+                # the guess window (guesses and ordinary chat alike), not just the mini-game's
+                # own messages. No reaction is added any more (see below), so this could delete
+                # immediately, but a short delay is kept anyway in case a future change adds
+                # some other visible feedback here. CompanionMessage's own .delete() already
+                # no-ops safely when there's no real message behind it (see its docstring), so
+                # no type-check needed here.
+                asyncio.ensure_future(delete_message_after(message, 1.5))
+
+                content = message.content.strip()
+                user_id = message.author.id
+
+                # A tap carries far finer coordinates than the grid allows, so it counts only
+                # from the Activity/companion (a CompanionMessage). Accepting "click:x,y"
+                # typed into chat would let anyone sweep the image and brute-force the target.
+                allow_click = isinstance(message, companion_bridge.CompanionMessage)
+                kind, correct = wheres_okra.grade_submission(
+                    content, target, cols, rows, allow_click=allow_click)
+
+                if kind is None:
+                    continue  # ordinary chat in an open-floor channel, not a guess
+
+                if user_id in guessed_users:
+                    continue  # already used their one guess this round
+                guessed_users.add(user_id)
+
+                if correct:
+                    found_by = user_id
+                    name = message.author.display_name
+                    if user_id not in user_correct_answers:
+                        user_correct_answers[user_id] = (name, 0)
+                    user_correct_answers[user_id] = (name, user_correct_answers[user_id][1] + 1)
+                # No reaction on a wrong guess either -- just silently processed (their one
+                # guess this round is used up) and left to the delete scheduled above.
+
             try:
-                remaining = guess_time - (asyncio.get_event_loop().time() - start_time)
-                message = await companion_bridge.wait_for_message_or_companion(
-                    check, remaining, target_channel, None,
-                    kind="wheres_okra_click", reveal_answer=False,
-                    # The Activity gets the raw S3 image (no grid burned in) so a tap's
-                    # normalised coordinates are relative to the same frame the stored
-                    # target box was measured against. `target` is deliberately NOT here.
-                    extra={"spotter": True, "image_url": puzzle["image_url"],
-                           "reference_image_url": puzzle["reference_image_url"],
-                           "cols": cols, "rows": rows})
-            except asyncio.TimeoutError:
-                break
+                reveal = await loop.run_in_executor(
+                    None, _wheres_okra_render, image_bytes, cols, rows, target)
+                reveal_embed = discord.Embed()
+                reveal_embed.set_image(url="attachment://wheres_okra_reveal.png")
+                cell = wheres_okra.target_grid_label(target, cols, rows)
+                if found_by is not None:
+                    header = (f"​\n✅\U0001f389 **<@{found_by}>** found him in **{cell}**!\n​")
+                else:
+                    header = (f"​\n❌\U0001f622 Nobody found him.\n\n"
+                              f"He was in **{cell}** the whole time.\n​")
+                await safe_send(channel, content=header, embed=reveal_embed,
+                                file=discord.File(reveal, filename="wheres_okra_reveal.png"))
+            except Exception as e:
+                sentry_sdk.capture_exception(e)
+                print(f"Error revealing Where's Okra puzzle:\n{traceback.format_exc()}")
 
-            # Keep the puzzle image front-and-center: delete every message received during
-            # the guess window (guesses and ordinary chat alike), not just the mini-game's
-            # own messages. No reaction is added any more (see below), so this could delete
-            # immediately, but a short delay is kept anyway in case a future change adds
-            # some other visible feedback here. CompanionMessage's own .delete() already
-            # no-ops safely when there's no real message behind it (see its docstring), so
-            # no type-check needed here.
-            asyncio.ensure_future(delete_message_after(message, 1.5))
+            # Main-loop only, per direct instruction -- Arena's Where's Okra never offers this
+            # (and, separately, never honors/consumes a pending custom-sprite target either;
+            # see _wheres_okra_draw_lookalike_puzzle). Awaited: the round loop must wait out
+            # description collection (so its messages don't interleave with the round's own),
+            # but _wheres_okra_offer_custom_sprite hands the slow part (generation + upload)
+            # off to a fire-and-forget task internally -- the custom sprite simply shows up as
+            # the target next MAIN-LOOP round whenever that actually finishes, with no separate
+            # "it's ready" confirmation needed.
+            if difficulty == "impossible" and found_by is not None and _active_game_channel is None:
+                await _wheres_okra_offer_custom_sprite(found_by, user_correct_answers[found_by][0])
 
-            content = message.content.strip()
-            user_id = message.author.id
+            await asyncio.sleep(1)
+            round_num += 1
 
-            # A tap carries far finer coordinates than the grid allows, so it counts only
-            # from the Activity/companion (a CompanionMessage). Accepting "click:x,y"
-            # typed into chat would let anyone sweep the image and brute-force the target.
-            allow_click = isinstance(message, companion_bridge.CompanionMessage)
-            kind, correct = wheres_okra.grade_submission(
-                content, target, cols, rows, allow_click=allow_click)
+            sorted_users = sorted(user_correct_answers.items(),
+                                  key=lambda x: x[1][1], reverse=True)
 
-            if kind is None:
-                continue  # ordinary chat in an open-floor channel, not a guess
+            if num == 1:
+                if sorted_users:
+                    top_score = sorted_users[0][1][1]
+                    top_winners = [uid for uid, (name, score) in sorted_users
+                                   if score == top_score]
+                    return top_winners[0] if len(top_winners) == 1 else None
+                return None
 
-            if user_id in guessed_users:
-                continue  # already used their one guess this round
-            guessed_users.add(user_id)
-
-            if correct:
-                found_by = user_id
-                name = message.author.display_name
-                if user_id not in user_correct_answers:
-                    user_correct_answers[user_id] = (name, 0)
-                user_correct_answers[user_id] = (name, user_correct_answers[user_id][1] + 1)
-            # No reaction on a wrong guess either -- just silently processed (their one
-            # guess this round is used up) and left to the delete scheduled above.
-
-        try:
-            reveal = await loop.run_in_executor(
-                None, _wheres_okra_render, image_bytes, cols, rows, target)
-            reveal_embed = discord.Embed()
-            reveal_embed.set_image(url="attachment://wheres_okra_reveal.png")
-            cell = wheres_okra.target_grid_label(target, cols, rows)
-            if found_by is not None:
-                header = (f"​\n✅\U0001f389 **<@{found_by}>** found him in **{cell}**!\n​")
-            else:
-                header = (f"​\n❌\U0001f622 Nobody found him.\n\n"
-                          f"He was in **{cell}** the whole time.\n​")
-            await safe_send(channel, content=header, embed=reveal_embed,
-                            file=discord.File(reveal, filename="wheres_okra_reveal.png"))
-        except Exception as e:
-            sentry_sdk.capture_exception(e)
-            print(f"Error revealing Where's Okra puzzle:\n{traceback.format_exc()}")
-
-        # Main-loop only, per direct instruction -- Arena's Where's Okra never offers this
-        # (and, separately, never honors/consumes a pending custom-sprite target either;
-        # see _wheres_okra_draw_lookalike_puzzle). Awaited: the round loop must wait out
-        # description collection (so its messages don't interleave with the round's own),
-        # but _wheres_okra_offer_custom_sprite hands the slow part (generation + upload)
-        # off to a fire-and-forget task internally -- the custom sprite simply shows up as
-        # the target next MAIN-LOOP round whenever that actually finishes, with no separate
-        # "it's ready" confirmation needed.
-        if difficulty == "impossible" and found_by is not None and _active_game_channel is None:
-            await _wheres_okra_offer_custom_sprite(found_by, user_correct_answers[found_by][0])
-
-        await asyncio.sleep(1)
-        round_num += 1
-
-        sorted_users = sorted(user_correct_answers.items(),
-                              key=lambda x: x[1][1], reverse=True)
-
-        if num == 1:
+            standings = ""
             if sorted_users:
-                top_score = sorted_users[0][1][1]
-                top_winners = [uid for uid, (name, score) in sorted_users
-                               if score == top_score]
-                return top_winners[0] if len(top_winners) == 1 else None
-            return None
+                standings += ("​\n\U0001f3c1\U0001f3c6 Final Standings\n​"
+                              if round_num > num
+                              else "​\n\U0001f4ca\U0001f3c6 Current Standings\n​")
+                for counter, (uid, (name, score)) in enumerate(sorted_users, start=1):
+                    standings += f"{counter}. **{name}**: {score}\n"
+                standings += "​"
+            if standings:
+                await safe_send(channel, standings)
 
-        standings = ""
+            await asyncio.sleep(3)
+
+        await asyncio.sleep(2)
+        okra_winner_id = None
         if sorted_users:
-            standings += ("​\n\U0001f3c1\U0001f3c6 Final Standings\n​"
-                          if round_num > num
-                          else "​\n\U0001f4ca\U0001f3c6 Current Standings\n​")
-            for counter, (uid, (name, score)) in enumerate(sorted_users, start=1):
-                standings += f"{counter}. **{name}**: {score}\n"
-            standings += "​"
-        if standings:
-            await safe_send(channel, standings)
-
-        await asyncio.sleep(3)
-
-    await asyncio.sleep(2)
-    okra_winner_id = None
-    if sorted_users:
-        top_score = sorted_users[0][1][1]
-        top_winners = [(uid, name) for uid, (name, score) in sorted_users
-                       if score == top_score]
-        if len(top_winners) == 1:
-            okra_winner_id, winner_name = top_winners[0]
-            message = f"​\n\U0001f389\U0001f947 The winner is **{winner_name}**!\n​"
+            top_score = sorted_users[0][1][1]
+            top_winners = [(uid, name) for uid, (name, score) in sorted_users
+                           if score == top_score]
+            if len(top_winners) == 1:
+                okra_winner_id, winner_name = top_winners[0]
+                message = f"​\n\U0001f389\U0001f947 The winner is **{winner_name}**!\n​"
+            else:
+                message = "​\n\U0001f91d It's a tie! **Winners:**\n​"
+                for uid, name in top_winners:
+                    message += f"• **{name}** ({top_score} pts)\n"
+                message += "​"
         else:
-            message = "​\n\U0001f91d It's a tie! **Winners:**\n​"
-            for uid, name in top_winners:
-                message += f"• **{name}** ({top_score} pts)\n"
-            message += "​"
-    else:
-        message = ("​\n\U0001f44e\U0001f622 **Nobody found him once.** "
-                   "He's still out there.\n​")
+            message = ("​\n\U0001f44e\U0001f622 **Nobody found him once.** "
+                       "He's still out there.\n​")
 
-    await safe_send(channel, message)
-    wf_winner = True
-    await asyncio.sleep(3)
-    return okra_winner_id
+        await safe_send(channel, message)
+        wf_winner = True
+        await asyncio.sleep(3)
+        return okra_winner_id
+    finally:
+        if gate_session:
+            await _close_wheres_okra_activity_window()
 
 
 async def _wheres_okra_topup_once():
@@ -33481,6 +33581,11 @@ if ACTIVITY_ENABLED:
         if not voice_state or not voice_state.channel or voice_state.channel.id != TRIVIA_BETA_VOICE_CHANNEL_ID:
             await interaction.response.send_message(
                 "❌ Join the 🧪┃trivia-beta voice channel first, then try again.",
+                ephemeral=True)
+            return
+        if ACTIVITY_OKRA_ONLY and not wheres_okra_session_active:
+            await interaction.response.send_message(
+                "❌ Where's Okra isn't running right now — jump in next time it pops up!",
                 ephemeral=True)
             return
         try:

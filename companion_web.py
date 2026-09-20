@@ -432,7 +432,7 @@ async def handle_current(request):
     state = _get_state(session["user_id"], game) if _get_state else {"phase": "idle"}
     state = dict(state)
     if request.query.get("activity") == "1":
-        state = activity_web.proxy_images(state)
+        state = activity_web.proxy_images(activity_web.restrict_for_activity(state, game))
     state["authenticated"] = True
     state["display_name"] = session["display_name"]
     return web.json_response(state)
@@ -460,7 +460,9 @@ async def handle_stream(request):
         await resp.write(b":" + b" " * 2048 + b"\n\n")
 
     async def _emit(data):
-        await _write_event(resp, activity_web.proxy_images(data) if as_activity else data)
+        if as_activity:
+            data = activity_web.proxy_images(activity_web.restrict_for_activity(data, game))
+        await _write_event(resp, data)
 
     queue = asyncio.Queue(maxsize=32)
     _subscribers[game].add(queue)
