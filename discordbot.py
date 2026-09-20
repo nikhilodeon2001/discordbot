@@ -10821,8 +10821,13 @@ async def ask_wheres_okra_challenge(winner, winner_id, num=3):
                 continue
 
             meta = puzzle.get("meta") or {}
-            name_line = f"\U0001f33f **{meta.get('target_name') or 'Mystery Okra'}**\n\n"
+            target_name = meta.get("target_name") or "Mystery Okra"
+            name_line = f"\U0001f33f **{target_name}**\n\n"
             attribution_line = ""
+            # Plain values for the Activity (no Discord mention rendering there, so this is
+            # resolved to a display name up front rather than shipping a raw user id).
+            attribution_name = None
+            attribution_date = None
             if (meta.get("target_source") == "user_submitted" and meta.get("target_submitted_by")
                     and meta["target_submitted_by"] != okrag_id):
                 # Skip attribution for Okra himself (the host account, okrag_id) -- he's not a
@@ -10831,6 +10836,8 @@ async def ask_wheres_okra_challenge(winner, winner_id, num=3):
                 when_text = added_at.strftime("%B %d, %Y") if added_at else "an earlier round"
                 attribution_line = (f"\U0001f3a8 Created by <@{meta['target_submitted_by']}> "
                                     f"on {when_text}\n\n")
+                attribution_name = companion_resolve_member(meta["target_submitted_by"]) or "a player"
+                attribution_date = when_text
             one_shot_line = ""
             if num == 1:
                 one_shot_line = "⚠️ Everyone gets just **ONE** guess, so be thoughtful!\n\n"
@@ -10844,7 +10851,11 @@ async def ask_wheres_okra_challenge(winner, winner_id, num=3):
             # picks up. Without this the Activity had no "stage 1" at all and only ever
             # learned about the round once the board itself was ready, several seconds after
             # chat already showed the reference card.
-            wheres_okra_preview = {"reference_image_url": puzzle["reference_image_url"], "at": time.time()}
+            wheres_okra_preview = {
+                "reference_image_url": puzzle["reference_image_url"], "at": time.time(),
+                "target_name": target_name, "attribution_name": attribution_name,
+                "attribution_date": attribution_date,
+            }
             try:
                 companion_web.publish_state({"__refresh__": True}, game="main")
             except Exception as e:
@@ -10918,7 +10929,9 @@ async def ask_wheres_okra_challenge(winner, winner_id, num=3):
                         # target box was measured against. `target` is deliberately NOT here.
                         extra={"spotter": True, "image_url": puzzle["image_url"],
                                "reference_image_url": puzzle["reference_image_url"],
-                               "cols": cols, "rows": rows},
+                               "cols": cols, "rows": rows,
+                               "target_name": target_name, "attribution_name": attribution_name,
+                               "attribution_date": attribution_date},
                         # guessed_users is the same set this loop mutates below -- passing it
                         # live (not a copy) means a repeat tap from someone who already used
                         # their guess this round gets rejected with "already_answered" right
@@ -17192,7 +17205,7 @@ async def ask_feud_question(winner, mode, winner_id):
         feud_image_buffer = create_family_feud_board_image(feud_answers, user_progress, 0)
         image_file = discord.File(fp=feud_image_buffer, filename="image.png")
 
-        await asyncio.sleep(1)
+        await asyncio.sleep(3)
 
         if mode == "cooperative":
             if xs == 0:
@@ -17423,7 +17436,7 @@ async def ask_feud_question(winner, mode, winner_id):
             embed.set_image(url="attachment://image.png")
             
             await safe_send(channel, embed=embed, files=[image_file])
-            await asyncio.sleep(2)
+            await asyncio.sleep(4)
             
             message = f"{correct_guesses} out of {num_answers}\n"
             if user_correct_answers and mode == "cooperative":
@@ -17433,7 +17446,7 @@ async def ask_feud_question(winner, mode, winner_id):
                     message += f"{i}. **{data['name']}**: {data['count']}\n"
             message += "\u200b"
             await safe_send(channel, message)
-            await asyncio.sleep(2)
+            await asyncio.sleep(4)
 
     result_message = ""
     feud_winner_id = None
@@ -28688,7 +28701,7 @@ async def start_trivia():
             #await ask_rapidfire_challenge("TheOkraG", 591861826690613248, 1)
             #await ask_okra_says_challenge("TheOkraG", 591861826690613248, 1)
             #await ask_custom_trivia_challenge("TheOkraG", 591861826690613248, 10)
-            #await ask_wheres_okra_challenge("TheOkraG", 591861826690613248, 1)
+            await ask_wheres_okra_challenge("TheOkraG", 591861826690613248, 1)
 
             if resume_no_players_override is not None:
                 no_players = resume_no_players_override
@@ -30397,6 +30410,9 @@ def build_companion_state(user_id=None):
             idle["image_url"] = extra["image_url"]
             idle["reference_image_url"] = extra.get("reference_image_url")
             idle["grid"] = {"cols": extra.get("cols"), "rows": extra.get("rows")}
+            idle["target_name"] = extra.get("target_name")
+            idle["attribution_name"] = extra.get("attribution_name")
+            idle["attribution_date"] = extra.get("attribution_date")
         # Tell the Activity a Where's Okra round just ended, for a short window, so it can show
         # a "head back to chat" message instead of the generic idle placeholder -- superseded by
         # the spotter branch above if a new session has already started in the meantime.
@@ -30413,6 +30429,9 @@ def build_companion_state(user_id=None):
               and now - wheres_okra_preview["at"] < WHERES_OKRA_PREVIEW_WINDOW):
             idle["okra_preview"] = True
             idle["reference_image_url"] = wheres_okra_preview["reference_image_url"]
+            idle["target_name"] = wheres_okra_preview.get("target_name")
+            idle["attribution_name"] = wheres_okra_preview.get("attribution_name")
+            idle["attribution_date"] = wheres_okra_preview.get("attribution_date")
         return idle
     trivia_url = cq.get("trivia_url", "")
     answer_list = cq.get("trivia_answer_list", []) or []
