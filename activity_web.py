@@ -117,8 +117,29 @@ async def _prune_activity_auth_loop():
 # mapped domain sidesteps that entirely; the signed token is what keeps this from becoming an
 # open proxy (only URLs the bot itself put in a state payload are ever fetchable, and only for 6h).
 
+_image_proxy_url_cache = {}  # raw url -> (proxy url, expires_at)
+
+
 def _image_proxy_url(url):
-    return "/img?i=" + _sign({"k": "img", "u": url, "exp": time.time() + _IMAGE_TOKEN_TTL})
+    """Cached per raw URL so the SAME image always gets the SAME signed proxy URL for as long
+    as that signature stays valid. Without this, every call minted a fresh token (a new `exp`
+    baked in each time), so the same Where's Okra puzzle image got a different `/img?i=...`
+    string on every state broadcast -- and companion_bridge re-broadcasts on every guess-loop
+    iteration (i.e. every chat message during a round). The client compares this exact string
+    to detect "is this still the same puzzle", so a constantly-changing URL defeated that
+    check and made the puzzle image visibly reload on every unrelated message."""
+    now = time.time()
+    cached = _image_proxy_url_cache.get(url)
+    if cached and cached[1] > now:
+        return cached[0]
+    # Prune opportunistically rather than on a timer -- this cache only grows while rounds are
+    # actively generating images, so it's naturally bounded and self-cleans between them.
+    for key in [k for k, (_, exp) in _image_proxy_url_cache.items() if exp <= now]:
+        del _image_proxy_url_cache[key]
+    expires_at = now + _IMAGE_TOKEN_TTL
+    proxy_url = "/img?i=" + _sign({"k": "img", "u": url, "exp": expires_at})
+    _image_proxy_url_cache[url] = (proxy_url, expires_at)
+    return proxy_url
 
 
 def proxy_images(state):
