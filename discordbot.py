@@ -10789,22 +10789,32 @@ async def ask_wheres_okra_challenge(winner, winner_id, num=3):
                 embed=embed,
                 file=discord.File(buffer, filename="wheres_okra.png"))
 
-            test_channel = bot.get_channel(ROAST_TEST_CHANNEL_ID)
-            if test_channel:
-                answer_cell = wheres_okra.target_grid_label(target, cols, rows)
-                # Same ringed reveal image the main round posts AFTER guessing closes
-                # (_wheres_okra_render with `target` set draws the circle) -- rendered early
-                # here, before the round even starts, since image_bytes/target are already
-                # known and this channel is for testing, not for players.
-                early_reveal = await loop.run_in_executor(
-                    None, _wheres_okra_render, image_bytes, cols, rows, target)
-                early_reveal_embed = discord.Embed()
-                early_reveal_embed.set_image(url="attachment://wheres_okra_early_reveal.png")
-                await safe_send(
-                    test_channel,
-                    content=f"\U0001f50d\U0001f952 **Where's Okra** Round {round_num}: Find the Okrite\n📝 **Answer**: {answer_cell}",
-                    embed=early_reveal_embed,
-                    file=discord.File(early_reveal, filename="wheres_okra_early_reveal.png"))
+            async def _post_test_channel_answer():
+                # Fire-and-forget: rendering the ringed reveal image (2400x2400 at the
+                # hardest tier) plus the Discord upload takes real wall-clock time, and this
+                # is for testing only -- it must never delay start_time/the guess-loop's
+                # prompt registration below, which is what actually makes the puzzle appear
+                # in the Activity. Awaiting it inline here previously did exactly that,
+                # making /play visibly lag behind chat's own grid-image post.
+                test_channel = bot.get_channel(ROAST_TEST_CHANNEL_ID)
+                if not test_channel:
+                    return
+                try:
+                    answer_cell = wheres_okra.target_grid_label(target, cols, rows)
+                    early_reveal = await loop.run_in_executor(
+                        None, _wheres_okra_render, image_bytes, cols, rows, target)
+                    early_reveal_embed = discord.Embed()
+                    early_reveal_embed.set_image(url="attachment://wheres_okra_early_reveal.png")
+                    await safe_send(
+                        test_channel,
+                        content=f"\U0001f50d\U0001f952 **Where's Okra** Round {round_num}: Find the Okrite\n📝 **Answer**: {answer_cell}",
+                        embed=early_reveal_embed,
+                        file=discord.File(early_reveal, filename="wheres_okra_early_reveal.png"))
+                except Exception as e:
+                    sentry_sdk.capture_exception(e)
+                    print(f"Error posting Where's Okra test-channel answer:\n{traceback.format_exc()}")
+
+            asyncio.ensure_future(_post_test_channel_answer())
 
             start_time = asyncio.get_event_loop().time()
             found_by = None          # id of whoever found him, or None -- never a loop leftover
