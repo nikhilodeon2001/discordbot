@@ -650,7 +650,8 @@ async function submitAction(text, statusElId) {
     if (data.ok) { el.textContent = 'Sent ✓'; el.className = 'status ok'; }
     else {
       el.textContent = data.reason === 'no_active_prompt' ? 'That closed — refresh.' :
-        data.reason === 'not_allowed' ? 'Only the round winner can choose.' : 'Could not send, try again.';
+        data.reason === 'not_allowed' ? 'Only the round winner can choose.' :
+        data.reason === 'already_answered' ? 'You already guessed this round.' : 'Could not send, try again.';
       el.className = 'status bad';
     }
   } catch (e) {

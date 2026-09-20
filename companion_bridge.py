@@ -130,7 +130,7 @@ class CompanionMessage:
 
 class Prompt:
     def __init__(self, prompt_id, channel, scope, allowed_user_ids, kind, prompt_text, reveal_answer=True,
-                 options=None, multi=False, extra=None):
+                 options=None, multi=False, extra=None, blocked_user_ids=None, no_echo=False):
         self.id = prompt_id
         self.channel = channel
         self.scope = scope
@@ -168,6 +168,15 @@ class Prompt:
         # copied by someone who hasn't answered yet, the same leak the live-trivia companion
         # flow is designed to avoid.
         self.reveal_answer = reveal_answer
+        # Live reference to the caller's own set (e.g. a mini-game round loop's `guessed_users`),
+        # not a snapshot -- checked at submission time, so a user who already used their one
+        # guess this round gets rejected even though this same prompt object stays registered
+        # for everyone else. None means no such restriction (the common case).
+        self.blocked_user_ids = blocked_user_ids
+        # True suppresses the webhook echo entirely (not even the masked placeholder) -- for
+        # submissions where "someone tapped/guessed" isn't meaningful public information worth
+        # flashing into chat, unlike a real trivia answer.
+        self.no_echo = no_echo
         self.future = asyncio.get_running_loop().create_future()
 
 
@@ -182,14 +191,15 @@ def _scope_for_channel(channel):
 
 
 def register_prompt(channel, allowed_user_ids, kind, prompt_text=None, reveal_answer=True, options=None, multi=False,
-                    extra=None):
+                    extra=None, blocked_user_ids=None, no_echo=False):
     """`allowed_user_ids=None` registers an "open floor" prompt -- any authenticated companion
     user may submit (matching a Discord check() with no author-id restriction). Otherwise pass
     the concrete set of ids check() already restricts to. See Prompt.options for `options`/
-    `multi`."""
+    `multi`, and Prompt.blocked_user_ids/no_echo for the other two."""
     prompt_id = next(_prompt_id_counter)
     prompt = Prompt(prompt_id, channel, _scope_for_channel(channel), allowed_user_ids, kind, prompt_text,
-                     reveal_answer, options=options, multi=multi, extra=extra)
+                     reveal_answer, options=options, multi=multi, extra=extra,
+                     blocked_user_ids=blocked_user_ids, no_echo=no_echo)
     _prompts[prompt_id] = prompt
     for uid in prompt.allowed_user_ids:
         _prompts_by_user.setdefault(uid, set()).add(prompt_id)
@@ -309,8 +319,12 @@ async def submit_companion_input(user_id, display_name, text, scope):
         return {"ok": False, "reason": "no_active_prompt"}
     if not prompt.open_floor and user_id not in prompt.allowed_user_ids:
         return {"ok": False, "reason": "not_allowed"}
-    echo_text = text if prompt.reveal_answer else _MASKED_ANSWER_ECHO
-    echo_task = asyncio.ensure_future(_send_relay_echo(prompt.channel, display_name, user_id, echo_text))
+    if prompt.blocked_user_ids is not None and user_id in prompt.blocked_user_ids:
+        return {"ok": False, "reason": "already_answered"}
+    echo_task = None
+    if not prompt.no_echo:
+        echo_text = text if prompt.reveal_answer else _MASKED_ANSWER_ECHO
+        echo_task = asyncio.ensure_future(_send_relay_echo(prompt.channel, display_name, user_id, echo_text))
     message = CompanionMessage(text, CompanionAuthor(user_id, display_name), prompt.channel, echo_task=echo_task)
     try:
         prompt.future.set_result(message)
@@ -336,7 +350,8 @@ def _notify_prompt_change(scope):
 
 
 async def wait_for_message_or_companion(check, timeout, channel, allowed_user_ids, kind, prompt_text=None,
-                                         reveal_answer=True, options=None, multi=False, extra=None):
+                                         reveal_answer=True, options=None, multi=False, extra=None,
+                                         blocked_user_ids=None, no_echo=False):
     """Drop-in replacement for `get_bot().wait_for("message", timeout=timeout, check=check)`
     that also accepts a matching companion (web) submission. Returns a real discord.Message
     when Discord wins the race, or a CompanionMessage when the companion app does. Raises
@@ -344,9 +359,11 @@ async def wait_for_message_or_companion(check, timeout, channel, allowed_user_id
     `reveal_answer=False` masks the webhook echo's content (see Prompt.reveal_answer) -- pass
     it for mini-games where multiple players can independently get credit in the same window.
     `options`/`multi`: see Prompt.options -- pass the same option list a Discord-side
-    RestrictedView (discordbot.py) was built from so the companion renders matching buttons."""
+    RestrictedView (discordbot.py) was built from so the companion renders matching buttons.
+    `blocked_user_ids`/`no_echo`: see Prompt's own docstring comments for each."""
     prompt = register_prompt(channel, allowed_user_ids, kind, prompt_text, reveal_answer=reveal_answer,
-                              options=options, multi=multi, extra=extra)
+                              options=options, multi=multi, extra=extra,
+                              blocked_user_ids=blocked_user_ids, no_echo=no_echo)
     _notify_prompt_change(prompt.scope)
     msg_task = asyncio.ensure_future(_get_bot().wait_for("message", check=check))
     comp_task = asyncio.ensure_future(prompt.future)
