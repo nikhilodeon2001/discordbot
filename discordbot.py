@@ -17090,14 +17090,16 @@ async def ask_feud_question(winner, mode, winner_id):
                 start_message += f"\u200b\n⚠️🚨 **<@{winner_id}> ONLY!** Last round! 🟥\n\u200b"
 
         
-        await safe_send(channel, embed=board_embed, file=image_file)
-        await asyncio.sleep(3)
-        await safe_send(channel, start_message)
-        await asyncio.sleep(1)
-
-        prompt_message = f"\u200b\n\u200b\n👉👉 **{feud_prompt.upper()}**\n"
+        # Combined into one message, sent with no delay before the board reveal: the
+        # question repeats across all 3 lives, so returning players already know it and
+        # start typing the instant they see the board -- the old board -> sleep(3) ->
+        # "Everyone's in!" -> sleep(1) -> "GO!" sequence meant the guess listener (which
+        # registers right after this send) wasn't up yet, silently dropping those guesses.
+        prompt_message = start_message
+        prompt_message += f"\u200b\n\u200b\n👉👉 **{feud_prompt.upper()}**\n"
         prompt_message += f"\n📜🔢 List as many as you can. **GO!** 🏁🚀\n\u200b"
 
+        await safe_send(channel, embed=board_embed, file=image_file)
         await safe_send(channel, prompt_message)
 
         target_channel = _active_game_channel or channel
