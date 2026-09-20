@@ -895,18 +895,33 @@ function render(state) {
     // Where's Okra. The image carries no grid overlay (that is the chat surface); here the
     // player taps the mascot directly and the tap's normalised coordinates are graded
     // server-side. The target box is never sent to this page.
-    if (state.image_url !== spotterKey) { spotterKey = state.image_url; spotterMark = null; }
-    var refHtml = state.reference_image_url
-      ? '<div class="spotref"><div class="spothint">Find this one:</div>' +
-        '<img class="spotrefimg" src="' + esc(P + state.reference_image_url) +
-        '" alt="Reference"></div>'
-      : '';
-    app.innerHTML = '<div class="qhead"><span class="cat">Where\\'s Okra</span></div>' +
-      refHtml +
-      '<div class="spothint">He\\'s hiding among the look-alikes below. Wrong taps cost you nothing.</div>' +
-      '<div class="spotwrap"><img class="spotimg" src="' + esc(P + state.image_url) +
-      '" alt="Hidden object puzzle"></div>' +
-      '<div id="status" class="status"></div>' + scoreboardHtml(state);
+    if (state.image_url !== spotterKey) {
+      // A genuinely new puzzle (or the first render of this one) -- full rebuild.
+      spotterKey = state.image_url;
+      spotterMark = null;
+      var refHtml = state.reference_image_url
+        ? '<div class="spotref"><div class="spothint">Find this one:</div>' +
+          '<img class="spotrefimg" src="' + esc(P + state.reference_image_url) +
+          '" alt="Reference"></div>'
+        : '';
+      app.innerHTML = '<div class="qhead"><span class="cat">Where\\'s Okra</span></div>' +
+        refHtml +
+        '<div class="spothint">He\\'s hiding among the look-alikes below. Wrong taps cost you nothing.</div>' +
+        '<div class="spotwrap"><img class="spotimg" src="' + esc(P + state.image_url) +
+        '" alt="Hidden object puzzle"></div>' +
+        '<div id="status" class="status"></div>' +
+        '<div id="spotterScoreboard">' + scoreboardHtml(state) + '</div>';
+    } else {
+      // Same puzzle already on screen -- companion_bridge re-notifies every connected
+      // client on every guess-loop iteration (i.e. on every chat message in the channel,
+      // right or wrong), so this render() call is often just a no-op refresh, not a new
+      // puzzle. Rebuilding innerHTML here would tear down and reload the image for no
+      // reason -- flashing it on every unrelated chat message -- and would also wipe out
+      // any tap-feedback text still sitting in #status before the player had a chance to
+      // read it. Only the scoreboard (the one thing that can actually change) is updated.
+      var sbEl = document.getElementById('spotterScoreboard');
+      if (sbEl) sbEl.innerHTML = scoreboardHtml(state);
+    }
     if (spotterMark) placeSpotterMark(spotterMark[0], spotterMark[1]);
     if (countdownTimer) { clearInterval(countdownTimer); countdownTimer = null; }
     return;
