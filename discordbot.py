@@ -1131,6 +1131,12 @@ wheres_okra_session_active = False
 wheres_okra_round_ended_at = None
 WHERES_OKRA_ENDED_MESSAGE_WINDOW = 30
 
+# {"winner_name": str|None, "custom_sprite_eligible": bool}, set alongside wheres_okra_round_
+# ended_at so the Activity's "round over" message can name the winner and, on Okrap wins,
+# point them back to chat for the custom-sprite offer -- the same info the chat reveal already
+# shows, just carried to the Activity too.
+wheres_okra_round_ended_info = {"winner_name": None, "custom_sprite_eligible": False}
+
 # {"reference_image_url": str, "at": float} or None. Chat gets a two-stage reveal -- the
 # reference card ("find THIS one!") first, then a dramatic pause, then the tappable board --
 # but the Activity previously had no equivalent first stage: it only ever learned about a round
@@ -1330,15 +1336,22 @@ async def _open_wheres_okra_activity_window():
     return voice_channel
 
 
-async def _close_wheres_okra_activity_window():
+async def _close_wheres_okra_activity_window(winner_name=None, custom_sprite_eligible=False):
     """Companion teardown, called unconditionally from ask_wheres_okra_challenge's finally block
     so every exit path (normal completion, no puzzle pool, render error) ends the session the
     same way. Reuses release_game_voice_channel's kick+hide idiom above, but -- unlike that
     function -- does NOT skip the beta channel: while ACTIVITY_OKRA_ONLY is on, trivia-beta is
-    Where's Okra's ephemeral home, not a standing Activity dock."""
-    global wheres_okra_session_active, wheres_okra_round_ended_at
+    Where's Okra's ephemeral home, not a standing Activity dock.
+
+    `winner_name`/`custom_sprite_eligible` default to "nobody won" for callers that don't have
+    a real result to report (e.g. the finally block's safety-net call on an error path)."""
+    global wheres_okra_session_active, wheres_okra_round_ended_at, wheres_okra_round_ended_info
     wheres_okra_session_active = False
     wheres_okra_round_ended_at = time.time()
+    wheres_okra_round_ended_info = {
+        "winner_name": winner_name,
+        "custom_sprite_eligible": custom_sprite_eligible,
+    }
     voice_channel = get_bot().get_channel(TRIVIA_BETA_VOICE_CHANNEL_ID)
     if not voice_channel:
         return
@@ -10749,7 +10762,9 @@ async def ask_wheres_okra_challenge(winner, winner_id, num=3):
                 title="🧪 Play It Live - Join the Activity!",
                 description=(f"**{activity_voice_channel.mention}**\n\n"
                              f"Join the voice channel and run `/play` to tap the puzzle "
-                             f"live on your screen instead of typing grid squares."),
+                             f"live on your screen instead of typing grid squares.\n\n"
+                             f"*Totally optional -- you can keep playing right here in chat "
+                             f"without joining the channel or the Activity.*"),
                 color=discord.Color.gold())
             await safe_send(channel, embed=activity_embed)
 
@@ -10948,7 +10963,11 @@ async def ask_wheres_okra_challenge(winner, winner_id, num=3):
             # reason to keep them docked in voice for it. Harmless if it fires again from the
             # finally block below (kicking an already-empty channel is a no-op).
             if gate_session and round_num >= num:
-                await _close_wheres_okra_activity_window()
+                winner_name = user_correct_answers[found_by][0] if found_by is not None else None
+                # Same eligibility check _wheres_okra_offer_custom_sprite uses below.
+                custom_sprite_eligible = (difficulty == "impossible" and found_by is not None
+                                          and _active_game_channel is None)
+                await _close_wheres_okra_activity_window(winner_name, custom_sprite_eligible)
 
             try:
                 reveal = await loop.run_in_executor(
@@ -30379,6 +30398,8 @@ def build_companion_state(user_id=None):
         elif (wheres_okra_round_ended_at is not None
               and now - wheres_okra_round_ended_at < WHERES_OKRA_ENDED_MESSAGE_WINDOW):
             idle["okra_round_ended"] = True
+            idle["okra_winner_name"] = wheres_okra_round_ended_info.get("winner_name")
+            idle["okra_custom_sprite_eligible"] = wheres_okra_round_ended_info.get("custom_sprite_eligible", False)
         # Stage 1 of the round: the reference card is up in chat, but the board isn't ready
         # yet (no real prompt exists to carry it through `extra` above -- see wheres_okra_
         # preview's own comment for why). TTL-checked rather than explicitly cleared, so an

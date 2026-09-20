@@ -915,8 +915,15 @@ function render(state) {
     // discordSdk.close() is the only way to actually dismiss the Activity panel for the
     // viewer -- there's no SDK command to navigate them to a specific channel, so this is
     // the closest thing to "take me back to chat" that's actually possible.
-    app.innerHTML = '<div class="idle"><span class="big">Round over!</span>' +
-      'Head back to the text channel to see who found him. 👋</div>' +
+    var winnerName = state.okra_winner_name;
+    var resultLine = winnerName ? '🎉 ' + esc(winnerName) + ' found him!' : 'Nobody found him this time.';
+    var customSpriteHtml = (state.okra_custom_sprite_eligible && winnerName)
+      ? '<div class="spothint" style="margin-top:10px">Since that was <strong>Okrap</strong>, ' +
+        esc(winnerName) + ' gets to create a custom Okrite for next time (and beyond) -- ' +
+        'head back to chat to describe it!</div>'
+      : '';
+    app.innerHTML = '<div class="idle"><span class="big">Round over!</span>' + resultLine + '</div>' +
+      customSpriteHtml +
       '<button type="button" class="primary" data-action="close-activity" ' +
       'style="margin-top:14px">Return to chat</button>';
     if (countdownTimer) { clearInterval(countdownTimer); countdownTimer = null; }
