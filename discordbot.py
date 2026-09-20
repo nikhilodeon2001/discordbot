@@ -10389,14 +10389,14 @@ async def _wheres_okra_draw_lookalike_puzzle(difficulty):
         return None
 
     puzzle_id = str(uuid.uuid4())
-    board_key = f"hidden_okra/live/{puzzle_id}.png"
-    ref_key = f"hidden_okra/live/{puzzle_id}_ref.png"
+    board_key = f"hidden_okra/live/{puzzle_id}.webp"
+    ref_key = f"hidden_okra/live/{puzzle_id}_ref.webp"
     session = aioboto3.Session()
     async with session.client("s3") as s3c:
         await s3c.put_object(Bucket=S3_BUCKET_NAME, Key=board_key, Body=board_bytes,
-                             ContentType="image/png")
+                             ContentType="image/webp")
         await s3c.put_object(Bucket=S3_BUCKET_NAME, Key=ref_key, Body=reference_bytes,
-                             ContentType="image/png")
+                             ContentType="image/webp")
     v = int(time.time())
     image_url = f"https://{S3_BUCKET_NAME}.s3.us-east-2.amazonaws.com/{board_key}?v={v}"
     reference_image_url = f"https://{S3_BUCKET_NAME}.s3.us-east-2.amazonaws.com/{ref_key}?v={v}"

@@ -61,7 +61,12 @@ _get_seq = None                 # callable(game) -> int
 _get_last_published = None      # callable(game) -> dict | None
 
 _IMAGE_TOKEN_TTL = 6 * 3600
-_IMAGE_MAX_BYTES = 8 * 1024 * 1024
+# Where's Okra's lookalike puzzle board can be a 2400x2400 PNG compositing up to 3000 sprites
+# (see wheres_okra.LOOKALIKE_DIFFICULTIES) -- comfortably over the old 8MB cap, which silently
+# truncated the stream mid-transfer (see the sent > _IMAGE_MAX_BYTES break below), producing a
+# corrupt PNG the browser just renders as a broken image. Only URLs the bot itself put in a
+# state payload are ever fetchable here (signed token, 6h TTL), so a generous cap costs nothing.
+_IMAGE_MAX_BYTES = 24 * 1024 * 1024
 _IMAGE_ALLOWED_TYPES = {"image/png", "image/jpeg", "image/jpg", "image/gif", "image/webp", "image/avif"}
 _image_semaphore = None  # created lazily, bound to the running loop
 
@@ -190,7 +195,7 @@ async def handle_image_proxy(request):
 
     async with _image_semaphore:
         try:
-            timeout = aiohttp.ClientTimeout(total=10)
+            timeout = aiohttp.ClientTimeout(total=20)
             async with aiohttp.ClientSession(timeout=timeout) as http:
                 async with http.get(url, allow_redirects=False) as upstream:
                     if upstream.status != 200:
