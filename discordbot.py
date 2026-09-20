@@ -10917,7 +10917,16 @@ async def ask_wheres_okra_challenge(winner, winner_id, num=3):
                         # target box was measured against. `target` is deliberately NOT here.
                         extra={"spotter": True, "image_url": puzzle["image_url"],
                                "reference_image_url": puzzle["reference_image_url"],
-                               "cols": cols, "rows": rows})
+                               "cols": cols, "rows": rows},
+                        # guessed_users is the same set this loop mutates below -- passing it
+                        # live (not a copy) means a repeat tap from someone who already used
+                        # their guess this round gets rejected with "already_answered" right
+                        # at submission time, instead of silently accepted here and only
+                        # discarded later by this loop's own `if user_id in guessed_users`
+                        # check. no_echo=True: a tap isn't public information worth flashing
+                        # into chat the way a real trivia answer is, and it just gets deleted
+                        # 1.5s later anyway.
+                        blocked_user_ids=guessed_users, no_echo=True)
                 except asyncio.TimeoutError:
                     break
 
