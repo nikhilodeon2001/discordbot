@@ -10673,19 +10673,6 @@ async def ask_wheres_okra_challenge(winner, winner_id, num=3):
             embed=discord.Embed().set_image(url=gif_url))
         await asyncio.sleep(3)
 
-        # Mirrors the audio mini-games' own "join voice channel" prompt (see e.g.
-        # ask_soundfx_challenge's voice_embed) -- Discord doesn't let a bot auto-launch the
-        # Activity into anyone's client, so the best we can do is make joining + running /play
-        # as frictionless and visible as possible.
-        if gate_session and activity_voice_channel is not None:
-            activity_embed = discord.Embed(
-                title="🧪 Play It Live - Join the Activity!",
-                description=(f"**{activity_voice_channel.mention}**\n\n"
-                             f"Join the voice channel and run `/play` to tap the puzzle "
-                             f"live on your screen instead of typing grid squares."),
-                color=discord.Color.gold())
-            await safe_send(channel, embed=activity_embed)
-
         # --- difficulty pick (round winner only) ------------------------------------------
         difficulty = "medium"
         emoji = {"easy": "\U0001f7e2", "medium": "\U0001f7e1", "hard": "\U0001f7e0",
@@ -10750,20 +10737,46 @@ async def ask_wheres_okra_challenge(winner, winner_id, num=3):
 
         await safe_send(channel,
                         f"​\n\U0001f4a5 **{spec['label']}** it is.\n​")
-        await asyncio.sleep(2)
+
+        # Mirrors the audio mini-games' own "join voice channel" prompt (see e.g.
+        # ask_soundfx_challenge's voice_embed) -- Discord doesn't let a bot auto-launch the
+        # Activity into anyone's client, so the best we can do is make joining + running /play
+        # as frictionless and visible as possible. Sent after the difficulty is locked in
+        # (rather than at the very top) so it's the last thing anyone sees before the puzzle
+        # itself, giving it the best shot at actually being read before play starts.
+        if gate_session and activity_voice_channel is not None:
+            activity_embed = discord.Embed(
+                title="🧪 Play It Live - Join the Activity!",
+                description=(f"**{activity_voice_channel.mention}**\n\n"
+                             f"Join the voice channel and run `/play` to tap the puzzle "
+                             f"live on your screen instead of typing grid squares."),
+                color=discord.Color.gold())
+            await safe_send(channel, embed=activity_embed)
 
         if num > 1:
             await safe_send(channel, f"​\n5️⃣\U0001f947 Best of **{num}**...\n​")
-            await asyncio.sleep(3)
+
+        loop = asyncio.get_running_loop()
+
+        # Start generating the first puzzle now -- concurrently with a guaranteed 5s pause,
+        # not on top of it -- so there's always at least 5 seconds after the join prompt above
+        # before any puzzle/hint appears (time to actually join the channel and launch the
+        # Activity), without that wait stacking on top of however long generation takes.
+        first_puzzle_task = asyncio.ensure_future(_wheres_okra_draw_lookalike_puzzle(difficulty))
+        await asyncio.gather(first_puzzle_task, asyncio.sleep(5), return_exceptions=True)
 
         user_correct_answers = {}
         sorted_users = []
-        loop = asyncio.get_running_loop()
+        pending_puzzle_task = first_puzzle_task
 
         round_num = 1
         while round_num <= num:
             try:
-                puzzle = await _wheres_okra_draw_lookalike_puzzle(difficulty)
+                if pending_puzzle_task is not None:
+                    puzzle = await pending_puzzle_task
+                    pending_puzzle_task = None
+                else:
+                    puzzle = await _wheres_okra_draw_lookalike_puzzle(difficulty)
             except Exception as e:
                 sentry_sdk.capture_exception(e)
                 print(f"Error composing Where's Okra puzzle:\n{traceback.format_exc()}")
