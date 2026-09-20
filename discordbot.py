@@ -1123,6 +1123,14 @@ _active_game_channel = None
 # handler know whether it's allowed to launch the Activity right now.
 wheres_okra_session_active = False
 
+# Timestamp of the last _close_wheres_okra_activity_window() call, or None. build_companion_
+# state's idle branch surfaces a "round's over, head back to chat" state to the Activity for a
+# short window after this (see WHERES_OKRA_ENDED_MESSAGE_WINDOW below) -- a one-shot broadcast
+# alone isn't enough since the Activity's own poll fallback would just overwrite it with the
+# plain idle state on its next 2s tick. Reset to None when a new session opens.
+wheres_okra_round_ended_at = None
+WHERES_OKRA_ENDED_MESSAGE_WINDOW = 30
+
 
 question_categories = [
     "Mystery Box or Boat", "Famous People", "Anatomy", "Characters", "Music", "Art & Literature", 
@@ -1290,8 +1298,9 @@ async def _open_wheres_okra_activity_window():
     of one ask_wheres_okra_challenge call (covers every round when num > 1). Mirrors the audio
     mini-games' own "make the voice channel visible" step (see e.g. ask_soundfx_challenge).
     Returns the voice channel (or None) so the caller can mention it without a second lookup."""
-    global wheres_okra_session_active
+    global wheres_okra_session_active, wheres_okra_round_ended_at
     wheres_okra_session_active = True
+    wheres_okra_round_ended_at = None
     voice_channel = get_bot().get_channel(TRIVIA_BETA_VOICE_CHANNEL_ID)
     if not voice_channel:
         return None
@@ -1314,8 +1323,9 @@ async def _close_wheres_okra_activity_window():
     same way. Reuses release_game_voice_channel's kick+hide idiom above, but -- unlike that
     function -- does NOT skip the beta channel: while ACTIVITY_OKRA_ONLY is on, trivia-beta is
     Where's Okra's ephemeral home, not a standing Activity dock."""
-    global wheres_okra_session_active
+    global wheres_okra_session_active, wheres_okra_round_ended_at
     wheres_okra_session_active = False
+    wheres_okra_round_ended_at = time.time()
     voice_channel = get_bot().get_channel(TRIVIA_BETA_VOICE_CHANNEL_ID)
     if not voice_channel:
         return
@@ -10691,8 +10701,28 @@ async def ask_wheres_okra_challenge(winner, winner_id, num=3):
                 view,
                 companion_bridge.wait_for_message_or_companion(
                     check_difficulty, magic_time + 5, target_channel, {winner_id},
-                    kind="mini_game_answer", options=button_options),
+                    kind="mini_game_answer", options=button_options,
+                    # Tags this specific prompt so the Activity's soft-launch filter
+                    # (activity_web.restrict_for_activity) recognizes it and lets it through
+                    # -- unlike every other post-round bonus's own menu prompt, which stays
+                    # hidden there. Lets the round winner pick a difficulty from inside the
+                    # Activity too, not just via chat.
+                    extra={"wheres_okra_difficulty_pick": True}),
             )
+            # Whichever side won (a Discord button click, typed chat, or the Activity's
+            # difficulty-pick submission), shut the button view down immediately so the same
+            # winner can't also submit through it. resolve_input_race deliberately leaves
+            # view.future untouched when the chat/companion side wins -- some other call
+            # sites reuse the same view across several resolve_input_race calls in a retry
+            # loop -- but this call site is one-shot, so it's safe to finalize it here.
+            if not view.future.done():
+                view.future.cancel()
+            for item in view.children:
+                item.disabled = True
+            try:
+                await view.message.edit(view=view)
+            except (discord.HTTPException, discord.NotFound):
+                pass
             picked = msg.content.strip().lower()
             for name in wheres_okra.LOOKALIKE_DIFFICULTY_ORDER:
                 if picked == name or picked == name[0]:
@@ -30305,6 +30335,12 @@ def build_companion_state(user_id=None):
             idle["image_url"] = extra["image_url"]
             idle["reference_image_url"] = extra.get("reference_image_url")
             idle["grid"] = {"cols": extra.get("cols"), "rows": extra.get("rows")}
+        # Tell the Activity a Where's Okra round just ended, for a short window, so it can show
+        # a "head back to chat" message instead of the generic idle placeholder -- superseded by
+        # the spotter branch above if a new session has already started in the meantime.
+        elif (wheres_okra_round_ended_at is not None
+              and now - wheres_okra_round_ended_at < WHERES_OKRA_ENDED_MESSAGE_WINDOW):
+            idle["okra_round_ended"] = True
         return idle
     trivia_url = cq.get("trivia_url", "")
     answer_list = cq.get("trivia_answer_list", []) or []
