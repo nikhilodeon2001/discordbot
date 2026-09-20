@@ -140,15 +140,22 @@ def proxy_images(state):
 
 
 def restrict_for_activity(state, game):
-    """Soft-launch gate: when ACTIVITY_OKRA_ONLY is set, the Activity may only ever display a
-    Where's Okra round in progress. Everything else -- live main-trivia questions/reveals, every
-    other post-round bonus challenge (which rides the same `prompt` field build_companion_state
-    already carries in its idle branch), and the arena/simply games entirely -- collapses to a
-    bare idle placeholder. Never mutates the input, which may be the shared broadcast dict handed
-    to every SSE subscriber."""
+    """Soft-launch gate: when ACTIVITY_OKRA_ONLY is set, the Activity may only ever display
+    Where's Okra -- its puzzle in progress, its difficulty-pick prompt, and its "round just
+    ended" message. Everything else -- live main-trivia questions/reveals, every other
+    post-round bonus challenge's own prompt, and the arena/simply games entirely -- collapses
+    to a bare idle placeholder. Never mutates the input, which may be the shared broadcast dict
+    handed to every SSE subscriber."""
     if not isinstance(state, dict) or not ACTIVITY_OKRA_ONLY:
         return state
-    if game == "main" and state.get("spotter") and state.get("image_url"):
+    if game != "main":
+        return {"phase": "idle"}
+    if state.get("spotter") and state.get("image_url"):
+        return state
+    if state.get("okra_round_ended"):
+        return state
+    prompt_extra = (state.get("prompt") or {}).get("extra") or {}
+    if prompt_extra.get("wheres_okra_difficulty_pick"):
         return state
     return {"phase": "idle"}
 
@@ -621,6 +628,15 @@ function submitActionInput() {
   if (el) el.value = '';
 }
 
+function closeActivity() {
+  // The only way to actually dismiss the Activity panel for the viewer -- there's no SDK
+  // command to navigate them to a specific channel. No-ops in DEV mode (no real SDK there).
+  if (!discordSdk) return;
+  try {
+    discordSdk.close(DiscordSDKBundle.RPCCloseCodes.CLOSE_NORMAL, 'Round over');
+  } catch (e) {}
+}
+
 async function submitAction(text, statusElId) {
   try {
     const r = await fetch(P + '/api/action', {
@@ -715,6 +731,7 @@ function submitText() {
 // --- Where's Okra tap surface --------------------------------------------------------
 var spotterKey = null;    // image_url of the puzzle currently shown
 var spotterMark = null;   // [x, y] of the last tap, kept across re-renders
+var discordSdk = null;    // set once in boot() -- null in DEV mode, where there's no real SDK
 
 function placeSpotterMark(x, y) {
   const wrap = document.querySelector('.spotwrap');
@@ -881,6 +898,18 @@ function render(state) {
     return;
   }
 
+  if (state.okra_round_ended) {
+    // discordSdk.close() is the only way to actually dismiss the Activity panel for the
+    // viewer -- there's no SDK command to navigate them to a specific channel, so this is
+    // the closest thing to "take me back to chat" that's actually possible.
+    app.innerHTML = '<div class="idle"><span class="big">Round over!</span>' +
+      'Head back to the text channel to see who found him. 👋</div>' +
+      '<button type="button" class="primary" data-action="close-activity" ' +
+      'style="margin-top:14px">Return to chat</button>';
+    if (countdownTimer) { clearInterval(countdownTimer); countdownTimer = null; }
+    return;
+  }
+
   if (state.phase !== 'open') {
     app.innerHTML = '<div class="idle"><span class="big">No live question right now</span>' +
       'Hang tight — the next one is coming. ⏳</div>' + promptHtml(state);
@@ -1012,6 +1041,7 @@ async function boot() {
   try {
     await loadSdkScript();
     const sdk = new DiscordSDKBundle.DiscordSDK(CLIENT_ID);
+    discordSdk = sdk;
     await sdk.ready();
     const { code } = await sdk.commands.authorize({
       client_id: CLIENT_ID, response_type: 'code', state: '', prompt: 'none', scope: ['identify'],
@@ -1052,6 +1082,7 @@ document.addEventListener('click', function (e) {
   else if (action === 'close-flag') closeFlagModal();
   else if (action === 'submit-flag') submitFlag();
   else if (action === 'submit-action-input') submitActionInput();
+  else if (action === 'close-activity') closeActivity();
 });
 
 // The puzzle image needs the click's coordinates, so it can't ride the data-action
