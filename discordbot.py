@@ -451,7 +451,8 @@ async def send_question_queen_submit_ad():
 okra_lab_announcement_enabled = True
 okra_lab_announcement_text = (
     "🥒🔄 **Where's Okra got a new identity** — the geography-guessing game you knew as Where's Okra is now **Okra San Diego**. It got smarter too: OkraStrut's in-character messages now drop several subtle clues about where he's hiding each round, not just the local weather, so there's actually something to reason about\n\n"
-    "🕵️🎭 **The \"Where's Okra\" name now belongs to a brand-new game** — think Where's Waldo: you'll see a reference photo of one specific costumed Okra first, then have to spot that exact one hiding in a sea of other Okras\n"
+    "🕵️🎭 **The \"Where's Okra\" name now belongs to a brand-new game** — think Where's Waldo: you'll see a reference photo of one specific costumed Okra first, then have to spot that exact one hiding in a sea of other Okras\n\n"
+    "🧪🎮 **Get a sneak peek at a new interactive experience** — we're piloting an in-Discord app version of the game, starting with Where's Okra: tap the puzzle live on your screen instead of typing grid squares. Watch for the prompt next time Where's Okra shows up, with more modes coming as we expand it\n"
 )
 okra_lab_announcement_show_new_badge = True
 
