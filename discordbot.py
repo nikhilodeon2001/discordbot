@@ -28586,6 +28586,7 @@ async def start_trivia():
             #await ask_rapidfire_challenge("TheOkraG", 591861826690613248, 1)
             #await ask_okra_says_challenge("TheOkraG", 591861826690613248, 1)
             #await ask_custom_trivia_challenge("TheOkraG", 591861826690613248, 10)
+            await ask_wheres_okra_challenge("TheOkraG", 591861826690613248, 3)
 
             if resume_no_players_override is not None:
                 no_players = resume_no_players_override
