@@ -1897,7 +1897,7 @@ LOOKALIKE_DIFFICULTIES = {
     "medium":     {"label": "Okra Squad",    "sprite_count": 64,  "canvas_size": (1320, 1320), "grid": (8, 8),   "sprite_height": 145, "max_covered_fraction": 0.0,  "target_max_covered_fraction": 0.0,  "guess_time": 30},
     "hard":       {"label": "Okra-geddon",   "sprite_count": 100, "canvas_size": (1500, 1500), "grid": (10, 10), "sprite_height": 132, "max_covered_fraction": 0.0,  "target_max_covered_fraction": 0.0,  "guess_time": 30},
     "brutal":     {"label": "Okra Overload", "sprite_count": 180, "canvas_size": (1700, 1700), "grid": (12, 12), "sprite_height": 125, "max_covered_fraction": 0.30, "target_max_covered_fraction": 0.15, "guess_time": 30},
-    "impossible": {"label": "Okrap",         "sprite_count": 3000,"canvas_size": (2400, 2400), "grid": (16, 16), "sprite_height": 90,  "max_covered_fraction": 0.40, "target_max_covered_fraction": 0.15, "guess_time": 15},
+    "impossible": {"label": "Okrap",         "sprite_count": 3000,"canvas_size": (2400, 2400), "grid": (16, 16), "sprite_height": 90,  "max_covered_fraction": 0.40, "target_max_covered_fraction": 0.15, "guess_time": 60},  # TEMP: 60s for testing, revert to 15
 }
 LOOKALIKE_DIFFICULTY_ORDER = ["easy", "medium", "hard", "brutal", "impossible"]
 
