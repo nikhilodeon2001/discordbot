@@ -10750,6 +10750,7 @@ async def ask_wheres_okra_challenge(winner, winner_id, num=3):
 
         await safe_send(channel,
                         f"​\n\U0001f4a5 **{spec['label']}** it is.\n​")
+        await asyncio.sleep(3)
 
         # Mirrors the audio mini-games' own "join voice channel" prompt (see e.g.
         # ask_soundfx_challenge's voice_embed) -- Discord doesn't let a bot auto-launch the
