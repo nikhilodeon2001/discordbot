@@ -10854,6 +10854,15 @@ async def ask_wheres_okra_challenge(winner, winner_id, num=3):
                 # No reaction on a wrong guess either -- just silently processed (their one
                 # guess this round is used up) and left to the delete scheduled above.
 
+            # Guessing just closed (found early or the clock ran out) -- on the session's last
+            # round, kick everyone out of the Activity right now rather than waiting for the
+            # whole function to return. There's nothing left to tap, and the reveal below is a
+            # normal chat message everyone (Activity or not) sees the same way, so there's no
+            # reason to keep them docked in voice for it. Harmless if it fires again from the
+            # finally block below (kicking an already-empty channel is a no-op).
+            if gate_session and round_num >= num:
+                await _close_wheres_okra_activity_window()
+
             try:
                 reveal = await loop.run_in_executor(
                     None, _wheres_okra_render, image_bytes, cols, rows, target)
