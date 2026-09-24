@@ -1023,7 +1023,7 @@ function render(state) {
     (state.already_answered ? '' : '<button class="primary" data-action="submit-text">Submit</button>') +
     flagHtml(state) + '</div>';
 
-  const timerHtml = state.ends_at ? '<span id="timer" class="timer">--</span>' : '';
+  const timerHtml = state.ends_at ? '<span id="timer" class="timer">' + (state.golf_mode ? '⛳' : '--') + '</span>' : '';
   app.innerHTML = '<div class="qhead"><span class="cat">' + esc(state.category || '') + '</span>' +
       timerHtml + '</div>' +
       (state.question ? '<div class="q">' + esc(state.question) + '</div>' : '') +
@@ -1034,7 +1034,7 @@ function render(state) {
 
   if (isNew && !state.already_answered) { const i = document.getElementById('ans'); if (i) i.focus(); }
   if (countdownTimer) { clearInterval(countdownTimer); countdownTimer = null; }
-  if (state.ends_at) {
+  if (state.ends_at && !state.golf_mode) {
     fmtRemaining();
     countdownTimer = setInterval(fmtRemaining, 250);
   }
