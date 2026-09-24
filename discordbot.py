@@ -28903,11 +28903,21 @@ async def start_trivia():
                 # the button reflects the true time left and hits 0 exactly at question_asked_end —
                 # matching the phone/web pill (which uses Math.ceil) — instead of accumulating per-edit
                 # drift from a fixed-count sleep(1) loop.
+                golf_footer_set = False
                 while True:
                     remaining = max(0, math.ceil(question_asked_end - time.time()))
-                    if current_question_embed is not None:
+                    # Golf mode's footer marker is static, so it's set once and then left alone --
+                    # re-editing an unchanged footer every tick would just burn Discord edit rate
+                    # limit for no visible change.
+                    skip_edit = golf_mode and remaining > 0 and golf_footer_set
+                    if current_question_embed is not None and not skip_edit:
                         if remaining == 0:
                             current_question_embed.set_footer(text=current_footer_base_text)
+                        elif golf_mode:
+                            timer_line = "⛳ Golf Mode"
+                            new_footer = f"{current_footer_base_text}\n\n{timer_line}" if current_footer_base_text else timer_line
+                            current_question_embed.set_footer(text=new_footer)
+                            golf_footer_set = True
                         else:
                             timer_line = f"⏳ {remaining}s"
                             new_footer = f"{current_footer_base_text}\n\n{timer_line}" if current_footer_base_text else timer_line
@@ -30471,6 +30481,7 @@ def build_companion_state(user_id=None):
         "round_overview": _companion_round_overview,
         "question_number": _companion_question_number,
         "ends_at": question_asked_end,
+        "golf_mode": golf_mode,
         # Standings as of the last reveal -- lets a spectator display show "who's ahead" while
         # the next question is still open, not just in the brief reveal flash. Phone/Activity
         # don't render these during "open" today, so this is purely additive for them.

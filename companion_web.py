@@ -1746,7 +1746,7 @@ function render(state) {
     (state.already_answered ? '' : '<button class="primary" onclick="submitText()">Submit</button>') +
     flagHtml(state) + '</div>';
 
-  const timerHtml = state.ends_at ? '<span id="timer" class="timer">--</span>' : '';
+  const timerHtml = state.ends_at ? '<span id="timer" class="timer">' + (state.golf_mode ? '⛳' : '--') + '</span>' : '';
   app.innerHTML = simpleMode
     ? inputHtml + actionRow + '<div id="status" class="status"></div>' + legendHtml(state)
     : '<div class="qhead"><span class="cat">' + esc(state.category || '') + '</span>' +
@@ -1759,7 +1759,7 @@ function render(state) {
 
   if (isNew && !state.already_answered) { const i = document.getElementById('ans'); if (i) i.focus(); }
   if (countdownTimer) { clearInterval(countdownTimer); countdownTimer = null; }
-  if (state.ends_at) {
+  if (state.ends_at && !state.golf_mode) {
     fmtRemaining();
     countdownTimer = setInterval(fmtRemaining, 250);
   }

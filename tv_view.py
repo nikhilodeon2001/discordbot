@@ -249,7 +249,9 @@ _TV_HTML = """<!doctype html>
       html += '<div class="category">' + esc(state.category || "") + '</div>';
     }
     if (state.phase === "open" && state.ends_at) {
-      html += '<span id="timer" class="timer"></span>';
+      html += state.golf_mode
+        ? '<span id="timer" class="timer">⛳</span>'
+        : '<span id="timer" class="timer"></span>';
     }
     html += '</div>';
     html += '<div class="question">' + esc(state.question || "") + '</div>';
@@ -265,7 +267,7 @@ _TV_HTML = """<!doctype html>
     }
     main.innerHTML = '<div class="fitwrap">' + html + '</div>';
     fitMain();
-    if (state.phase === "open" && state.ends_at) {
+    if (state.phase === "open" && state.ends_at && !state.golf_mode) {
       tickTimer(state.ends_at);
       timerInterval = setInterval(function () { tickTimer(state.ends_at); }, 250);
     }
