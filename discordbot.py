@@ -29638,8 +29638,18 @@ async def on_message(message):
                 # question -- independent of whether it's otherwise correct (see the
                 # giveaway-guard fix history: e.g. "river" for "Amazon River" must not
                 # earn credit just because "river" is in nearly every river question).
-                if GIVEAWAY_WORD_GUARD_ENABLED and answer_matching.is_fully_given_away(
-                        message.content, _current_giveaway_words()):
+                # Skipped for multiple-choice/True-False questions: their grading
+                # (answer_matching.match_answer's dedicated MC branch) already only
+                # accepts an exact letter or exact choice text, with none of the
+                # free-text leniency heuristics this guard exists to protect -- and a
+                # bare letter like "A" is essentially guaranteed to collide with some
+                # short whole word the question text happens to contain (e.g. the "A"
+                # that starts many questions), which is a false positive, not a real
+                # giveaway.
+                current_url = current_question.get("trivia_url", "") if current_question else ""
+                if (GIVEAWAY_WORD_GUARD_ENABLED and not _is_multiple_choice_url(current_url)
+                        and answer_matching.is_fully_given_away(
+                            message.content, _current_giveaway_words())):
                     try:
                         await message.add_reaction("🟥")
                     except discord.NotFound:
@@ -30709,9 +30719,13 @@ def companion_submit_answer(user_id, display_name, text, client="companion"):
             current_answer_view.answered_user_ids.add(user_id)
     # Same real-time "you just parroted the category/question" signal on_message reacts
     # with 🟥 for -- there's no Discord message to react to here, so it's surfaced in the
-    # response instead for the companion page's own UI to show.
+    # response instead for the companion page's own UI to show. Same multiple-choice
+    # exclusion as on_message too (see there for why) -- read off current_question rather
+    # than a bare `trivia_url`, since no such module global actually exists here.
+    current_url = current_question.get("trivia_url", "") if current_question else ""
     guard_blocked = bool(
-        GIVEAWAY_WORD_GUARD_ENABLED and answer_matching.is_fully_given_away(text, _current_giveaway_words())
+        GIVEAWAY_WORD_GUARD_ENABLED and not _is_multiple_choice_url(current_url)
+        and answer_matching.is_fully_given_away(text, _current_giveaway_words())
     )
     return {"ok": True, "guard_blocked": guard_blocked}
 
