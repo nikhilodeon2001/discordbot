@@ -13135,6 +13135,29 @@ async def ask_president_challenge(winner, winner_id, num=5):
 
 
 
+async def _sample_league_questions(collection, league, count, recent_ids, hard_exclude_ids=None):
+    """Sample `count` sports_logos_questions docs for a league, preferring ones not
+    in `recent_ids`. If the league doesn't have enough fresh (non-recent) questions,
+    backfill with previously-asked ones for that league rather than returning short —
+    a league should only come up empty if it truly has zero questions in the DB.
+    `hard_exclude_ids` (e.g. the question currently on screen) are always excluded,
+    even during backfill."""
+    hard_exclude_ids = list(hard_exclude_ids) if hard_exclude_ids else []
+    pipeline = [
+        {"$match": {"league": league, "_id": {"$nin": list(recent_ids) + hard_exclude_ids}}},
+        {"$sample": {"size": count}},
+    ]
+    docs = [doc async for doc in collection.aggregate(pipeline)]
+    if len(docs) < count:
+        fetched_ids = [doc["_id"] for doc in docs]
+        backfill_pipeline = [
+            {"$match": {"league": league, "_id": {"$nin": fetched_ids + hard_exclude_ids}}},
+            {"$sample": {"size": count - len(docs)}},
+        ]
+        docs += [doc async for doc in collection.aggregate(backfill_pipeline)]
+    return docs
+
+
 async def ask_sports_logos_challenge(winner, winner_id, num=5):
     global wf_winner
     wf_winner = True
@@ -13261,11 +13284,7 @@ async def ask_sports_logos_challenge(winner, winner_id, num=5):
     # Fetch exact number of questions from each league
     league_questions = {}
     for league, count in questions_needed.items():
-        pipeline = [
-            {"$match": {"_id": {"$nin": list(recent_ids)}, "league": league}},
-            {"$sample": {"size": count}}
-        ]
-        league_questions[league] = [doc async for doc in collection.aggregate(pipeline)]
+        league_questions[league] = await _sample_league_questions(collection, league, count, recent_ids)
 
     # Build question pool in predetermined round-robin order
     for league_name in league_order:
@@ -13375,11 +13394,9 @@ async def ask_sports_logos_challenge(winner, winner_id, num=5):
                 # Fetch exact number of logos from each league (excluding current question and recent IDs)
                 fusion_league_logos = {}
                 for fusion_league, fusion_count in fusion_questions_needed.items():
-                    fusion_pipeline = [
-                        {"$match": {"_id": {"$nin": list(recent_ids) + [qid]}, "league": fusion_league}},
-                        {"$sample": {"size": fusion_count}}
-                    ]
-                    fusion_league_logos[fusion_league] = [doc async for doc in collection.aggregate(fusion_pipeline)]
+                    fusion_league_logos[fusion_league] = await _sample_league_questions(
+                        collection, fusion_league, fusion_count, recent_ids, hard_exclude_ids=[qid]
+                    )
 
                 # Build fusion_logos list in round-robin order
                 for fusion_league_name in fusion_league_order:
