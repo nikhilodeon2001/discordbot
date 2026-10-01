@@ -65,6 +65,14 @@ CASES = [
      False, "reported gap: plural category word 'Martins' must still block singular guess 'martin'"),
     ("vincent", "Martin Bormann", "", "", "",
      False, "regression guard: 'vincent' is not a real match for 'Martin Bormann' regardless of giveaway logic"),
+
+    # --- "Spot the Kitty" bug: short partial guess vs. a much-longer question word ---
+    ("short", "British Shorthair", "Spot the Kitty", "",
+     "The British Straighthair, the British Shorthair, the British Nohair",
+     False, "reported bug repro: partial giveaway-word fragment 'short' (substring of "
+            "question's 'shorthair') stays WRONG under the scoring guard -- the red-card "
+            "fix (see run_giveaway_guard_blocked_match) only changes the visible feedback, "
+            "not the graded outcome"),
 ]
 
 
@@ -151,5 +159,60 @@ def run_per_call_override():
     return len(failures)
 
 
+def run_short_shorthair_repro():
+    """Proves the "short"/"shorthair" case is a real giveaway-guard collision --
+    i.e. the guard is the *only* thing standing between "short" and a match --
+    which is the precondition the red-card fix (_giveaway_guard_blocked_match)
+    relies on to decide whether to flag it."""
+    if discordbot is None:
+        return 0
+    category = "Spot the Kitty"
+    question_text = "The British Straighthair, the British Shorthair, the British Nohair"
+    guarded = discordbot.legacy_fuzzy_match(
+        "short", "British Shorthair", category, "", question_text=question_text,
+        enable_giveaway_guard=True)
+    unguarded = discordbot.legacy_fuzzy_match(
+        "short", "British Shorthair", category, "", question_text=question_text,
+        enable_giveaway_guard=False)
+    ok = guarded is False and unguarded is True
+    status = "PASS" if ok else "FAIL"
+    print(f"[{status}] 'short' vs 'British Shorthair': guard on -> {guarded} (expected False), "
+          f"guard off -> {unguarded} (expected True)")
+    return 0 if ok else 1
+
+
+def run_giveaway_guard_blocked_match():
+    """Exercises discordbot._giveaway_guard_blocked_match directly -- the new
+    helper that decides whether the 🟥 reaction fires for a partial giveaway-
+    word collision like "short" vs. question word "shorthair"."""
+    if discordbot is None:
+        return 0
+    original_question = discordbot.current_question
+    discordbot.current_question = {
+        "trivia_category": "Spot the Kitty",
+        "trivia_question": "The British Straighthair, the British Shorthair, the British Nohair",
+        "trivia_url": "",
+        "trivia_answer_list": ["British Shorthair"],
+    }
+    try:
+        cases = [
+            ("short", True, "partial giveaway-word fragment must be flagged"),
+            ("british shorthair", False, "already-correct guess must not be flagged"),
+            ("xyz", False, "an answer that wouldn't match even unguarded must not be flagged"),
+        ]
+        failures = 0
+        for guess, expected, note in cases:
+            actual = discordbot._giveaway_guard_blocked_match(guess)
+            ok = actual == expected
+            failures += 0 if ok else 1
+            status = "PASS" if ok else "FAIL"
+            print(f"[{status}] _giveaway_guard_blocked_match({guess!r}) "
+                  f"= {actual} (expected {expected})  -- {note}")
+        return failures
+    finally:
+        discordbot.current_question = original_question
+
+
 if __name__ == "__main__":
-    sys.exit(1 if (run() + run_toggle() + run_per_call_override()) else 0)
+    sys.exit(1 if (run() + run_toggle() + run_per_call_override()
+                    + run_short_shorthair_repro() + run_giveaway_guard_blocked_match()) else 0)

@@ -1165,7 +1165,7 @@ categories_to_exclude = []
 collected_responses = []
 current_question = None
 _giveaway_words_cache = {"key": None, "words": frozenset()}  # see _current_giveaway_words()
-_giveaway_guard_reply_cache = {"key": None, "replied": False}  # see _notify_giveaway_guard_reply()
+_giveaway_guard_reply_cache = {"key": None, "replied_reasons": set()}  # see _notify_giveaway_guard_reply()
 previous_question = None
 round_in_progress = False  # True from the moment a round is committed to starting until it ends -- lets /checkupdate warn before an update would kill the process mid-round
 current_answer_view = None
@@ -26158,41 +26158,67 @@ def _current_giveaway_words():
     return _giveaway_words_cache["words"]
 
 
-async def _notify_giveaway_guard_reply(message):
+async def _notify_giveaway_guard_reply(message, reason="parrot"):
     """Reply in-channel (as a Discord reply to the flagged message) explaining
     what the 🟥 red card means. A DM was tried first, but it's easy to miss
     while you're actively chatting -- an in-channel reply is guaranteed to be
     seen, at the cost of being visible to everyone. The 🟥 reaction still
     fires on every flagged message (see the call site), but the reply itself
-    is sent only once per question -- keyed on the same (category, question)
-    pair as _current_giveaway_words -- so a question with several parroted
-    guesses doesn't fill the channel with repeats of the same explanation."""
+    is sent only once per (question, reason) -- keyed on the same (category,
+    question) pair as _current_giveaway_words -- so a question with several
+    flagged guesses doesn't fill the channel with repeats of the same
+    explanation. `reason` distinguishes the two ways a guess can get flagged:
+    "parrot" (the whole guess is copied straight from the prompt) vs.
+    "partial" (a shorter guess collides with a fragment of a prompt word,
+    e.g. "short" vs. question word "shorthair") -- each gets its own one-time
+    explanation per question, since a question could trigger both from
+    different players."""
     cat = current_question.get("trivia_category", "") if current_question else ""
     q = current_question.get("trivia_question", "") if current_question else ""
     key = (cat, q)
     if _giveaway_guard_reply_cache["key"] != key:
         _giveaway_guard_reply_cache["key"] = key
-        _giveaway_guard_reply_cache["replied"] = False
-    if _giveaway_guard_reply_cache["replied"]:
+        _giveaway_guard_reply_cache["replied_reasons"] = set()
+    if reason in _giveaway_guard_reply_cache["replied_reasons"]:
         return
-    _giveaway_guard_reply_cache["replied"] = True
+    _giveaway_guard_reply_cache["replied_reasons"].add(reason)
 
     guess = message.content.strip()
     if len(guess) > 100:
         guess = guess[:100] + "…"
-    try:
-        await message.reply(
+    if reason == "partial":
+        text = (
+            f"🟥 That submission (“{guess}”) is too close to a word already given away in the "
+            f"question or category, so partial-credit matching is off for it -- it'll only count "
+            f"if it exactly matches one of the accepted answers."
+        )
+    else:
+        text = (
             f"🟥 That submission (“{guess}”) is straight from the question or category, so "
             f"partial-credit matching is off for it -- it'll only count if it exactly matches "
-            f"one of the accepted answers.",
-            mention_author=False,
+            f"one of the accepted answers."
         )
+    try:
+        await message.reply(text, mention_author=False)
     except discord.NotFound:
         pass
     except discord.Forbidden:
         print("❌ Bot lacks permission to reply in this channel.")
     except discord.HTTPException as e:
         print(f"❌ Failed to send giveaway-guard reply: {e}")
+
+
+async def _add_red_card_reaction(message):
+    """Add the 🟥 reaction, tolerating the same failure modes as any other
+    reaction add (message deleted, missing permission, transient API error)."""
+    try:
+        await message.add_reaction("🟥")
+    except discord.NotFound:
+        pass
+    except discord.Forbidden:
+        print("❌ Bot lacks permission to add reactions.")
+    except discord.HTTPException as e:
+        print(f"❌ Failed to add reaction: {e}")
 
 
 def levenshtein_similarity(str1, str2):
@@ -26495,6 +26521,38 @@ def fuzzy_match(user_answer, correct_answer, category, url, _skip_alias_check=Fa
         user_answer, correct_answer, category=category, url=url,
         config=config, skip_alias=_skip_alias_check, question_text=question_text,
         enable_giveaway_guard=resolved_guard,
+    )
+
+
+def _giveaway_guard_blocked_match(message_content):
+    """True if `message_content` is currently graded WRONG against every
+    answer in the live question only because the giveaway-word guard
+    suppressed a leniency branch that would otherwise have accepted it --
+    i.e. fuzzy_match returns False with the guard on (today's real scoring)
+    but True with it forced off for this one hypothetical re-check. Reuses
+    the real matcher (via the enable_giveaway_guard per-call override)
+    instead of duplicating its heuristics, so this can never drift from what
+    check_correct_responses_delete will actually score later.
+
+    Catches partial-word collisions is_fully_given_away() misses because
+    that check only flags a *whole* giveaway word verbatim -- e.g. "short"
+    is graded wrong for "British Shorthair" because "short" is a substring
+    of the giveaway word "shorthair" pulled from the question text, but
+    "short" itself is never a giveaway word verbatim, so
+    is_fully_given_away("short", ...) is False even though scoring blocked it."""
+    if not current_question or not message_content or not message_content.strip():
+        return False
+    category = current_question.get("trivia_category", "")
+    url = current_question.get("trivia_url", "")
+    question_text = current_question.get("trivia_question", "")
+    answer_list = current_question.get("trivia_answer_list") or []
+    if any(fuzzy_match(message_content, answer, category, url, question_text=question_text)
+           for answer in answer_list):
+        return False  # already correct as-is; nothing to flag
+    return any(
+        fuzzy_match(message_content, answer, category, url, question_text=question_text,
+                    enable_giveaway_guard=False)
+        for answer in answer_list
     )
 
 
@@ -29664,22 +29722,21 @@ async def on_message(message):
                 # that starts many questions), which is a false positive, not a real
                 # giveaway.
                 current_url = current_question.get("trivia_url", "") if current_question else ""
-                if (GIVEAWAY_WORD_GUARD_ENABLED and not _is_multiple_choice_url(current_url)
-                        and answer_matching.is_fully_given_away(
-                            message.content, _current_giveaway_words())):
-                    try:
-                        await message.add_reaction("🟥")
-                    except discord.NotFound:
-                        pass
-                    except discord.Forbidden:
-                        print("❌ Bot lacks permission to add reactions.")
-                    except discord.HTTPException as e:
-                        print(f"❌ Failed to add reaction: {e}")
+                if GIVEAWAY_WORD_GUARD_ENABLED and not _is_multiple_choice_url(current_url):
                     # Explain the red card as an in-channel reply -- see
                     # _notify_giveaway_guard_reply for why (a DM is too easy
                     # to miss mid-chat, and ephemeral replies only exist for
                     # interactions, not typed messages).
-                    await _notify_giveaway_guard_reply(message)
+                    if answer_matching.is_fully_given_away(message.content, _current_giveaway_words()):
+                        await _add_red_card_reaction(message)
+                        await _notify_giveaway_guard_reply(message, reason="parrot")
+                    elif _giveaway_guard_blocked_match(message.content):
+                        # Not a whole-word parrot, but a shorter guess that collides with a
+                        # fragment of a longer giveaway word (e.g. "short" vs. question word
+                        # "shorthair") -- still silently blocked by the scoring guard, so it
+                        # still deserves the same visible explanation.
+                        await _add_red_card_reaction(message)
+                        await _notify_giveaway_guard_reply(message, reason="partial")
 
                 # A typed guess that's actually one of this question's choices locks the
                 # user out of the buttons too, the same way clicking a button locks out
@@ -30742,7 +30799,8 @@ def companion_submit_answer(user_id, display_name, text, client="companion"):
     current_url = current_question.get("trivia_url", "") if current_question else ""
     guard_blocked = bool(
         GIVEAWAY_WORD_GUARD_ENABLED and not _is_multiple_choice_url(current_url)
-        and answer_matching.is_fully_given_away(text, _current_giveaway_words())
+        and (answer_matching.is_fully_given_away(text, _current_giveaway_words())
+             or _giveaway_guard_blocked_match(text))
     )
     return {"ok": True, "guard_blocked": guard_blocked}
 
