@@ -9039,12 +9039,13 @@ ANIMAL_FIELD_META = [
 ANIMAL_TAXONOMY_FIELDS = ["phylum", "class", "order", "family", "genus", "species"]
 
 # Known trivial-substring cheats: almost every family name ends in "-idae" and a
-# large share of orders end in "-formes" (plus its 4-letter sliding windows), so
-# typing just the suffix is a free match through the generic fuzzy matcher's
-# substring-leniency layer. Intercepted before fuzzy_match ever sees them.
+# large share of orders end in "-formes" (plus its 4+ letter sliding windows:
+# form/orme/rmes/forme/ormes), so typing just a fragment of the suffix is a free
+# match through the generic fuzzy matcher's substring-leniency layer. Intercepted
+# before fuzzy_match ever sees them.
 ANIMAL_CHEAT_GUESSES = {
     "family": {"idae"},
-    "order": {"formes", "form", "orme", "rmes"},
+    "order": {"formes", "form", "orme", "rmes", "forme", "ormes"},
 }
 ANIMAL_CHEAT_REACTION = "🖕"
 
@@ -9244,7 +9245,7 @@ async def ask_animal_challenge(winner, winner_id, num=7):
                     continue
                 processed_users.add(key)
 
-                if content.lower() in ANIMAL_CHEAT_GUESSES.get(target_field, ()):
+                if answer_matching.normalize_text(content) in ANIMAL_CHEAT_GUESSES.get(target_field, ()):
                     await message.add_reaction(ANIMAL_CHEAT_REACTION)
                     continue
 
