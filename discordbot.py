@@ -9038,14 +9038,25 @@ ANIMAL_FIELD_META = [
 # hint.
 ANIMAL_TAXONOMY_FIELDS = ["phylum", "class", "order", "family", "genus", "species"]
 
-# Known trivial-substring cheats: almost every family name ends in "-idae" and a
-# large share of orders end in "-formes" (plus its 4+ letter sliding windows:
-# form/orme/rmes/forme/ormes), so typing just a fragment of the suffix is a free
-# match through the generic fuzzy matcher's substring-leniency layer. Intercepted
-# before fuzzy_match ever sees them.
+# Known trivial-substring cheats: almost every family name ends in "-idae", and
+# since the letter right before that suffix varies by genus root ("Canidae",
+# "Felidae", ...), any single-letter+"ida"/"idae" fragment (not just "idae"
+# itself) is also a free match for whichever chunk of families share that
+# letter -- e.g. "nida" works for Canidae the same way "idae" works for
+# everything. Orders have the analogous "-formes"/"-iformes" pattern. Generated
+# for all 26 letters rather than hand-picked, so it isn't limited to whichever
+# fragments happened to turn up in a spot check. Intercepted before fuzzy_match
+# (and its substring-leniency layer) ever sees them.
 ANIMAL_CHEAT_GUESSES = {
-    "family": {"idae"},
-    "order": {"formes", "form", "orme", "rmes", "forme", "ormes"},
+    "family": (
+        {"idae"}
+        | {c + "ida" for c in string.ascii_lowercase}
+        | {c + "idae" for c in string.ascii_lowercase}
+    ),
+    "order": (
+        {"formes", "form", "orme", "rmes", "forme", "ormes"}
+        | {c + "formes" for c in string.ascii_lowercase}
+    ),
 }
 ANIMAL_CHEAT_REACTION = "🖕"
 
