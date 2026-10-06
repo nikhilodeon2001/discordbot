@@ -9038,6 +9038,16 @@ ANIMAL_FIELD_META = [
 # hint.
 ANIMAL_TAXONOMY_FIELDS = ["phylum", "class", "order", "family", "genus", "species"]
 
+# Known trivial-substring cheats: almost every family name ends in "-idae" and a
+# large share of orders end in "-formes" (plus its 4-letter sliding windows), so
+# typing just the suffix is a free match through the generic fuzzy matcher's
+# substring-leniency layer. Intercepted before fuzzy_match ever sees them.
+ANIMAL_CHEAT_GUESSES = {
+    "family": {"idae"},
+    "order": {"formes", "form", "orme", "rmes"},
+}
+ANIMAL_CHEAT_REACTION = "🖕"
+
 
 def _build_animal_match(target_field, recent_ids, relax_recent=False):
     match = {} if relax_recent else {"_id": {"$nin": list(recent_ids)}}
@@ -9233,6 +9243,10 @@ async def ask_animal_challenge(winner, winner_id, num=7):
                 if key in processed_users:
                     continue
                 processed_users.add(key)
+
+                if content.lower() in ANIMAL_CHEAT_GUESSES.get(target_field, ()):
+                    await message.add_reaction(ANIMAL_CHEAT_REACTION)
+                    continue
 
                 if fuzzy_match(content, answer_value, category, detail_url):
                     await message.add_reaction("✅")
