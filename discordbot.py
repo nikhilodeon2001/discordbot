@@ -9043,10 +9043,20 @@ ANIMAL_TAXONOMY_FIELDS = ["phylum", "class", "order", "family", "genus", "specie
 # "Felidae", ...), any single-letter+"ida"/"idae" fragment (not just "idae"
 # itself) is also a free match for whichever chunk of families share that
 # letter -- e.g. "nida" works for Canidae the same way "idae" works for
-# everything. Orders have the analogous "-formes"/"-iformes" pattern. Generated
-# for all 26 letters rather than hand-picked, so it isn't limited to whichever
-# fragments happened to turn up in a spot check. Intercepted before fuzzy_match
-# (and its substring-leniency layer) ever sees them.
+# everything.
+#
+# Orders have the analogous "-formes" pattern, plus almost all "-formes" orders
+# use the fixed "-iformes" linking-vowel form (bird/fish orders), which is
+# itself a 7-letter version of the same bug *and* has its own shorter windows
+# ("ifor"/"iform"/"iforme") that are just as free. Generated for all 26 letters
+# rather than hand-picked, so it isn't limited to whichever fragments happened
+# to turn up in a spot check. Going one level deeper than this (the letter
+# before "i" in "-iformes", e.g. "riformes" vs "niformes") stops being a
+# grammatical-suffix freebie and starts requiring actual genus-root knowledge
+# (max ~6%, spread thin across many letters, no outlier) -- that's left alone,
+# consistent with the matcher's intentional "cucu" for "cucumber" style
+# partial-credit leniency elsewhere. Intercepted before fuzzy_match (and its
+# substring-leniency layer) ever sees them.
 ANIMAL_CHEAT_GUESSES = {
     "family": (
         {"idae"}
@@ -9056,6 +9066,9 @@ ANIMAL_CHEAT_GUESSES = {
     "order": (
         {"formes", "form", "orme", "rmes", "forme", "ormes"}
         | {c + "formes" for c in string.ascii_lowercase}
+        | {c + "for" for c in string.ascii_lowercase}
+        | {c + "form" for c in string.ascii_lowercase}
+        | {c + "forme" for c in string.ascii_lowercase}
     ),
 }
 ANIMAL_CHEAT_REACTION = "🖕"
