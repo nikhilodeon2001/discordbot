@@ -4948,11 +4948,16 @@ async def ask_lyric_challenge(winner, winner_id, num=5):
     # Get 5 random year documents from MongoDB
     recent_ids = await get_recent_question_ids_from_mongo("billboard")
     billboard_collection = db["billboard_questions"]
-    pipeline = [
-        {"$match": {"_id": {"$nin": list(recent_ids)}}},
-        {"$sample": {"size": 5}}
-    ]
-    year_docs = [doc async for doc in billboard_collection.aggregate(pipeline)]
+    year_docs = []
+    for relax_recent in (False, True):
+        match = {} if relax_recent else {"_id": {"$nin": list(recent_ids)}}
+        pipeline = [
+            {"$match": match},
+            {"$sample": {"size": 5}}
+        ]
+        year_docs = [doc async for doc in billboard_collection.aggregate(pipeline)]
+        if year_docs:
+            break
 
     if not year_docs:
         await safe_send(channel, "\u200b\n❌ Unable to get year data. Please try again.\n\u200b")
@@ -9074,25 +9079,26 @@ ANIMAL_CHEAT_GUESSES = {
 ANIMAL_CHEAT_REACTION = "🖕"
 
 
-def _build_animal_match(target_field, recent_ids, relax_recent=False):
+def _build_animal_match(target_field, recent_ids, relax_recent=False, exclude_dogs=False):
     match = {} if relax_recent else {"_id": {"$nin": list(recent_ids)}}
     match[target_field] = {"$exists": True, "$nin": [None, ""]}
-    if target_field == "name":
+    if target_field == "name" or exclude_dogs:
         # Post-migration, every niche dog-breed/mix doc has this exact canonical species
         # string -- excluding it keeps genus="Canis" wild animals (wolves, coyote, jackals,
-        # dingo, which each kept their own distinct species string) eligible for Name mode.
+        # dingo, which each kept their own distinct species string) eligible for Name mode,
+        # and lets callers cap dogs to one per round once a dog has already been picked.
         match["species"] = {"$ne": "Canis Lupus"}
     return match
 
 
-async def _pick_animal_doc(collection, recent_ids, target_field):
+async def _pick_animal_doc(collection, recent_ids, target_field, exclude_dogs=False):
     """Runs the sample/group/sample pipeline for one target field. Retries once with the
     recent-id exclusion relaxed if the strict pass finds nothing (should be effectively
     unreachable given field coverage stats, but makes the empty case a handled None instead
     of a crash on an empty questions[0])."""
     for relax_recent in (False, True):
         pipeline = [
-            {"$match": _build_animal_match(target_field, recent_ids, relax_recent=relax_recent)},
+            {"$match": _build_animal_match(target_field, recent_ids, relax_recent=relax_recent, exclude_dogs=exclude_dogs)},
             {"$sample": {"size": 100}},
             {"$group": {"_id": "$question", "question_doc": {"$first": "$$ROOT"}}},
             {"$replaceRoot": {"newRoot": "$question_doc"}},
@@ -9191,16 +9197,26 @@ async def ask_animal_challenge(winner, winner_id, num=7):
         await asyncio.sleep(3)
 
     animal_num = 1
+    dog_picked_this_round = False
     while animal_num <= num:
         target_field = selected_fields[(animal_num - 1) % len(selected_fields)]
         try:
             recent_ids = await get_recent_question_ids_from_mongo("animal")
             collection = db["animal_questions"]
-            q = await _pick_animal_doc(collection, recent_ids, target_field)
+            q = await _pick_animal_doc(collection, recent_ids, target_field, exclude_dogs=dog_picked_this_round)
 
             if q is None:
                 for fallback_field in [f for f in selected_fields if f != target_field] + (["name"] if target_field != "name" else []):
-                    q = await _pick_animal_doc(collection, recent_ids, fallback_field)
+                    q = await _pick_animal_doc(collection, recent_ids, fallback_field, exclude_dogs=dog_picked_this_round)
+                    if q is not None:
+                        target_field = fallback_field
+                        break
+
+            if q is None and dog_picked_this_round:
+                # Non-dog pool exhausted for this round (small corpus edge case) -- allow a
+                # second dog rather than breaking the round over the cap.
+                for fallback_field in selected_fields:
+                    q = await _pick_animal_doc(collection, recent_ids, fallback_field, exclude_dogs=False)
                     if q is not None:
                         target_field = fallback_field
                         break
@@ -9212,6 +9228,9 @@ async def ask_animal_challenge(winner, winner_id, num=7):
                 continue
 
             print(q)
+
+            if q.get("species") == "Canis Lupus":
+                dog_picked_this_round = True
 
             answer_value = q[target_field]
             image_url = q["image_url"]
