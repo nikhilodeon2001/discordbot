@@ -450,9 +450,8 @@ async def send_question_queen_submit_ad():
 # the same text is correct whether this deploy is staging or prod.
 okra_lab_announcement_enabled = True
 okra_lab_announcement_text = (
-    "🎧🎤 **LyrIQ stopped flaking out** — the \"Unable to get year data\" error some of you hit is fixed; the year picker now always finds a year to play instead of occasionally coming up empty\n\n"
-    "🐶🦓 **Animal game's dog pile, fixed** — rounds were turning into 5-out-of-7 dog breeds way too often. Capped at one dog per round now, so the other 7,000+ species actually get a turn\n\n"
-    "⚽🟥 **New: Messi Mode** — turn off red cards for parroting the question/category for the rest of the round. Pick it from the round-end options menu, or toggle it any time with `#messi`. No ref's showing cards tonight\n"
+    "⭐🔁 **New: round-option shortcuts** — win enough rounds with your usual picks and the options menu starts offering \"My Default\", \"Most Used\", and \"Last Selected\" buttons, so you don't have to re-pick every time\n\n"
+    "⚙️🥒 **New: `/mydefaults`** — save a default combo, copy in your most-used or last pick, or build a custom one from scratch. Flip on auto-apply and it's set for you the moment you win, no clicking needed\n"
 )
 okra_lab_announcement_show_new_badge = True
 
@@ -6588,15 +6587,24 @@ class WofModifierModal(discord.ui.Modal, title="Set Round Modifiers"):
         )
         for keyword in selected:
             await _apply_keyword_flag(keyword, self.keyword_config, self.winner_coffees, self.round_winner_id)
+        await log_round_options_selection(
+            self.round_winner_id, selected,
+            entry_point="round_end_options_picker", channel_id=interaction.channel.id,
+        )
 
 
 class WofModifierView(RestrictedView):
     """Button that opens WofModifierModal, plus a "Done" button matching the existing typed
     standalone-"x" early-exit shortcut. Typed chat (including "x") keeps working unchanged
     alongside this -- see prompt_user_for_response, which races this view exactly like the
-    other converted flows."""
+    other converted flows.
 
-    def __init__(self, keyword_config, winner_coffees, round_winner_id, window_closed, *, timeout):
+    `shortcuts` (optional) adds up to 3 extra one-click buttons -- "My Default" / "Most Used" /
+    "Last Selected" -- each only passed in when the underlying per-user data actually exists
+    (see prompt_user_for_response), so a user with no history yet sees none of them. Each entry
+    is {"label": str, "keywords": [str, ...]}."""
+
+    def __init__(self, keyword_config, winner_coffees, round_winner_id, window_closed, *, timeout, shortcuts=None):
         super().__init__({round_winner_id, okrag_id}, timeout=timeout)
         self.keyword_config = keyword_config
         self.winner_coffees = winner_coffees
@@ -6610,6 +6618,22 @@ class WofModifierView(RestrictedView):
         done_button = discord.ui.Button(label="✅ I'm Done", style=discord.ButtonStyle.success)
         done_button.callback = self._done
         self.add_item(done_button)
+
+        for shortcut in (shortcuts or []):
+            shortcut_button = discord.ui.Button(label=shortcut["label"][:80], style=discord.ButtonStyle.secondary)
+            shortcut_button.callback = self._make_shortcut_callback(shortcut["keywords"])
+            self.add_item(shortcut_button)
+
+    def _make_shortcut_callback(self, keywords):
+        async def _callback(interaction: discord.Interaction):
+            for keyword in keywords:
+                await _apply_keyword_flag(keyword, self.keyword_config, self.winner_coffees, self.round_winner_id)
+            await log_round_options_selection(
+                self.round_winner_id, keywords,
+                entry_point="round_end_options_picker", channel_id=interaction.channel.id,
+            )
+            await self._resolve(interaction, "x")
+        return _callback
 
     async def _open_modal(self, interaction: discord.Interaction):
         await interaction.response.send_modal(
@@ -22699,6 +22723,10 @@ async def ask_wof_number(winner, winner_id, cached_coffees=None, menu_text=None,
                 # Store frequency data for user selection
                 await store_minigame_frequency(selected_question, "user", "discord")
                 await record_recent_minigame_selection(selected_question)
+                await log_minigame_selection(
+                    responder_id, selected_question,
+                    entry_point="round_end_minigame_picker", channel_id=message.channel.id,
+                )
 
                 await message.add_reaction(get_minigame_emoji(selected_question))
                 await safe_send(channel, f"\n\U0001f4aa\U0001f6e1\ufe0f I got you **<@{responder_id}>**. **{selected_question}** it is.\n\u200b")
@@ -24369,7 +24397,7 @@ async def process_round_options(round_winner, winner_points, round_winner_id, wi
             "🔐🛡️ **Glyph**: Add anti-Google defenses\n"
             "🎖🥒 **Dicktator**: Choose the categories\n"
             "🍑🔪 **Assassin**: Previous winner picks\n"
-            "⚽🔴 **Messi**: No red cards for parroting\n"
+            "⚽🟥 **Messi**: No red cards for parroting\n"
 
             "\n🕹️: Toggle mid-round with **#[command]**"
             "\n⛳: Golf excluded\n\n"
@@ -24449,7 +24477,38 @@ async def prompt_user_for_response(round_winner, winner_points, winner_coffees, 
     # the window below closes -- a late submission becomes a no-op with a "too late" reply
     # instead of silently mutating global flags for whatever round is running by then.
     window_closed = {"value": False}
-    view = WofModifierView(keyword_config, winner_coffees, round_winner_id, window_closed, timeout=round_options_window)
+
+    saved_default = await get_saved_default(round_winner_id)
+    most_used = await get_most_used_selection(round_winner_id, "round_end_options")
+    last_selected = await get_last_selected_selection(round_winner_id, "round_end_options")
+
+    # Auto-apply: an explicit opt-in toggle (set via /mydefaults, never on by default) that
+    # applies the user's saved default the moment they win, with no click needed this round.
+    # The normal picker below still opens afterward exactly as usual, so they can still layer
+    # on more modifiers or override via chat/modal/shortcuts -- this only removes the need to
+    # click for their usual combo, it doesn't lock the round.
+    if saved_default and saved_default.get("auto_apply") and saved_default["keywords"]:
+        for keyword in saved_default["keywords"]:
+            await _apply_keyword_flag(keyword, keyword_config, winner_coffees, round_winner_id)
+        await safe_send(channel, f"⭐ Auto-applying **<@{round_winner_id}>**'s saved default: {saved_default['display']}.")
+        await log_round_options_selection(
+            round_winner_id, saved_default["keywords"],
+            entry_point="round_end_options_auto_apply", channel_id=target_channel.id,
+        )
+
+    # Quick shortcuts -- "My Default" / "Most Used" / "Last Selected" -- each only offered
+    # when the underlying per-user data actually exists, so a brand-new user with no saved
+    # default or history sees none of these buttons (see WofModifierView).
+    shortcuts = []
+    if saved_default:
+        shortcuts.append({"label": "⭐ My Default", "keywords": saved_default["keywords"]})
+    if most_used:
+        shortcuts.append({"label": "🔁 Most Used", "keywords": most_used["keywords"]})
+    if last_selected:
+        shortcuts.append({"label": "🕐 Last Selected", "keywords": last_selected["keywords"]})
+
+    view = WofModifierView(keyword_config, winner_coffees, round_winner_id, window_closed,
+                            timeout=round_options_window, shortcuts=shortcuts)
     view.message = await safe_send(channel, "\U0001f447 Or set modifiers from the buttons below:", view=view)
     # Companion (phone/web) gets a flat multi-select of every keyword plus the "Done" shortcut --
     # applied via the same message_content substring pass as typed chat (see the loop below), so
@@ -24483,16 +24542,25 @@ async def prompt_user_for_response(round_winner, winner_points, winner_coffees, 
                 # Keyword flags -- one shared table (_KEYWORD_EFFECTS) drives both this typed-chat
                 # substring match and WofModifierModal's multi-select, so each keyword's coffee-gate
                 # + global flag(s) + announcement exists exactly once (see _apply_keyword_flag).
+                matched_keywords = []
                 for keyword in _KEYWORD_EFFECTS:
                     config = keyword_config[keyword]
                     if keyword in message_content and (not config["exclude_hashtag"] or f"#{keyword}" not in message_content):
                         await _apply_keyword_flag(keyword, keyword_config, winner_coffees, round_winner_id)
+                        matched_keywords.append(keyword)
 
                 # x (as a standalone word, not e.g. inside "xela"/"marx") ends the prompt early --
                 # checked last so it still chains with whatever other keywords were in this same
                 # message, matching how every other option can be combined in one string. The
                 # WofModifierView "Done" button also resolves to this same "x" content.
-                if re.search(r'\bx\b', message_content):
+                is_done = bool(re.search(r'\bx\b', message_content))
+                if matched_keywords or is_done:
+                    await log_round_options_selection(
+                        round_winner_id, matched_keywords,
+                        entry_point="round_end_options_picker", channel_id=target_channel.id,
+                    )
+
+                if is_done:
                     await message.add_reaction("\U0001f3c1")
                     await safe_send(channel, f"\U0001f3c1 **<@{round_winner_id}>** is all set. Let's get to it!")
                     break
@@ -30128,6 +30196,165 @@ async def record_recent_minigame_selection(number):
         print(f"Error recording recent minigame selection: {e}")
 
 
+# --- Per-user round-option & mini-game selection history / saved defaults ---
+# Collects what a user tends to pick so the round-end options picker can offer "My Default" /
+# "Most Used" / "Last Selected" shortcuts once that user has enough history (naturally absent
+# until they do -- this *is* the "collection mode" period, no feature flag needed). Mini-game
+# picks are logged the same way, from both the round-end picker and /arena, but nothing reads
+# that history back yet -- it's pure data collection for a future shortcut feature there too.
+
+# Maps /arena's mini_games.GAME_NAMES strings onto the round-end picker's numbered `unlocks`
+# scheme (see ask_wof_number) so a game played via either entry point resolves to the same
+# canonical key/display name in user_selection_history. Built by matching each GAME_NAMES
+# entry to the exact same underlying ask_*_challenge function the numbered picker dispatches
+# to -- every one of mini_games.GAME_NAMES has exactly one such counterpart.
+ARENA_NAME_TO_MINIGAME_NUMBER = {
+    "poster blitz": "12", "movie mayhem": "13", "missing link": "14", "famous peeps": "15",
+    "magic eye": "17", "okranimal": "18", "the riddler": "19", "word nerd": "20",
+    "flag fest": "21", "lyriq": "22", "polyglottery": "23", "prose and cons": "24",
+    "sign language": "25", "elementary": "26", "jigsawed": "27", "geokraphy": "28",
+    "faceoff": "29", "rushmore": "30", "wordle war": "31", "list battle": "11",
+    "ranker lists": "16", "musiq": "32", "myopic mystery": "33", "microscopic mystery": "34",
+    "fusion challenge": "35", "tally": "36", "xxxx": "39", "checkmate": "37",
+    "wall street": "38", "spotlight": "41", "hear here": "42", "who says": "43",
+    "lets talk": "44", "feud blitz": "10", "okrace": "40", "jock talk": "45",
+    "30 for 30": "46", "okra says": "47", "valedictorian": "49", "buzz words": "50",
+    "greg's nightmare": "67", "okra's anatomy": "51",
+}
+
+
+def _canonical_minigame_key_name(number_or_name):
+    """Resolves either a round-end-picker number ("5".."52", "67") or an /arena game name
+    (mini_games.GAME_NAMES, e.g. "faceoff") to the same (key, display_name) identity, reusing
+    _recent_minigame_key_name's WoF-collapsing so both entry points land on one canonical key
+    per game regardless of which naming scheme they arrived with."""
+    text = str(number_or_name).lower()
+    if text in ARENA_NAME_TO_MINIGAME_NUMBER:
+        return _recent_minigame_key_name(ARENA_NAME_TO_MINIGAME_NUMBER[text])
+    return _recent_minigame_key_name(number_or_name)
+
+
+async def _log_selection_event(user_id, category, value, display, *, entry_point, channel_id, keywords=None):
+    await insert_data_to_mongo("user_selection_history", {
+        "user_id": user_id,
+        "category": category,
+        "entry_point": entry_point,
+        "channel_id": channel_id,
+        "value": value,
+        "display": display,
+        "keywords": keywords,
+    })
+
+
+async def log_round_options_selection(user_id, keywords, *, entry_point, channel_id):
+    """Logs one round-end-options pick (a possibly-empty set of _KEYWORD_EFFECTS keywords),
+    keyed by the exact sorted combo -- "most used" should reflect whole combos a user applies
+    together, not individual keyword frequency."""
+    sorted_keywords = sorted(keywords)
+    value = "+".join(sorted_keywords)
+    display = ", ".join(_KEYWORD_EFFECTS[k][2] for k in sorted_keywords) if sorted_keywords else "No modifiers"
+    await _log_selection_event(user_id, "round_end_options", value, display,
+                                entry_point=entry_point, channel_id=channel_id, keywords=sorted_keywords)
+
+
+async def log_minigame_selection(user_id, number_or_name, *, entry_point, channel_id):
+    """Logs one explicit mini-game pick from either entry point (round-end picker or /arena),
+    under a canonical key so the same game counts as the same selection regardless of source."""
+    value, display = _canonical_minigame_key_name(number_or_name)
+    await _log_selection_event(user_id, "minigame", value, display,
+                                entry_point=entry_point, channel_id=channel_id)
+
+
+async def get_most_used_selection(user_id, category):
+    """Returns {"value","display","keywords"} for the user's most-frequently-logged selection
+    in `category`, or None if they have no history yet. Only ever called today with
+    category="round_end_options" -- mini-game history isn't read back anywhere yet."""
+    try:
+        db = await connect_to_mongodb()
+        pipeline = [
+            {"$match": {"user_id": user_id, "category": category}},
+            {"$group": {"_id": "$value", "count": {"$sum": 1},
+                        "display": {"$first": "$display"}, "keywords": {"$first": "$keywords"}}},
+            {"$sort": {"count": -1}},
+            {"$limit": 1},
+        ]
+        results = await db.user_selection_history.aggregate(pipeline).to_list(length=1)
+        if not results:
+            return None
+        top = results[0]
+        return {"value": top["_id"], "display": top["display"], "keywords": top.get("keywords")}
+    except Exception as e:
+        sentry_sdk.capture_exception(e)
+        print(f"⚠️ get_most_used_selection: {e}")
+        return None
+
+
+async def get_last_selected_selection(user_id, category):
+    """Returns {"value","display","keywords"} for the user's most recent selection in
+    `category`, or None if they have no history yet. Same scope note as above."""
+    try:
+        db = await connect_to_mongodb()
+        doc = await db.user_selection_history.find_one(
+            {"user_id": user_id, "category": category},
+            sort=[("timestamp", -1)],
+        )
+        if not doc:
+            return None
+        return {"value": doc["value"], "display": doc["display"], "keywords": doc.get("keywords")}
+    except Exception as e:
+        sentry_sdk.capture_exception(e)
+        print(f"⚠️ get_last_selected_selection: {e}")
+        return None
+
+
+async def get_saved_default(user_id):
+    """Returns the user's saved round-end-options default (incl. "auto_apply"), or None if
+    they've never saved one."""
+    try:
+        db = await connect_to_mongodb()
+        doc = await db.user_option_defaults.find_one({"_id": user_id})
+        return doc.get("round_end_options") if doc else None
+    except Exception as e:
+        sentry_sdk.capture_exception(e)
+        print(f"⚠️ get_saved_default: {e}")
+        return None
+
+
+async def set_saved_default(user_id, value, display, keywords):
+    """Explicitly saves (or replaces) the user's round-end-options default. Always resets
+    auto_apply to False -- saving/replacing a default doesn't itself turn auto-apply on."""
+    db = await connect_to_mongodb()
+    await db.user_option_defaults.update_one(
+        {"_id": user_id},
+        {"$set": {"round_end_options": {
+            "value": value, "display": display, "keywords": keywords,
+            "saved_at": datetime.datetime.utcnow(), "auto_apply": False,
+        }}},
+        upsert=True,
+    )
+
+
+async def clear_saved_default(user_id):
+    """Removes the user's saved round-end-options default -- auto_apply goes with it, since
+    there's nothing left to auto-apply."""
+    db = await connect_to_mongodb()
+    await db.user_option_defaults.update_one({"_id": user_id}, {"$unset": {"round_end_options": ""}})
+
+
+async def set_auto_apply(user_id, enabled):
+    """Toggles auto-apply on the user's existing saved default. Caller is responsible for only
+    offering this once a default exists (get_saved_default(user_id) is not None)."""
+    db = await connect_to_mongodb()
+    await db.user_option_defaults.update_one(
+        {"_id": user_id}, {"$set": {"round_end_options.auto_apply": enabled}}
+    )
+
+
+async def ensure_user_selection_history_indexes():
+    db = await connect_to_mongodb()
+    await db.user_selection_history.create_index([("user_id", 1), ("category", 1), ("timestamp", -1)])
+
+
 async def cleanup_tournament_roles():
     """Remove tournament roles from all members and restore permissions on startup"""
     try:
@@ -30743,7 +30970,7 @@ def _companion_active_modes():
         (glyph_mode,      glyph_mode_default,      "🔐🛡️", "Glyph"),
         (image_questions, image_questions_default, "❌📷", "No Images"),
         (rave_mode,       rave_mode_default,       "🪩", "Rave"),
-        (messi_mode,      messi_mode_default,      "⚽🔴", "Messi"),
+        (messi_mode,      messi_mode_default,      "⚽🟥", "Messi"),
     ]
     return [{"emoji": emoji, "label": label}
             for current, default, emoji, label in specs if bool(current) != bool(default)]
@@ -34186,6 +34413,12 @@ async def on_ready():
         sentry_sdk.capture_exception(_e)
         print(f"⚠️ simply streaks index startup hook: {_e}")
 
+    try:
+        await ensure_user_selection_history_indexes()
+    except Exception as _e:
+        sentry_sdk.capture_exception(_e)
+        print(f"⚠️ user selection history index startup hook: {_e}")
+
     if museum_backfill_enabled and (museum_backfill_task is None or museum_backfill_task.done()):
         museum_backfill_task = asyncio.create_task(run_museum_archive_backfill_loop())
         print("🏛️ Museum archive backfill loop started")
@@ -34735,6 +34968,10 @@ async def arena(interaction: discord.Interaction, game_name: str = None, num: in
                 arena_game_name = resolved_name
                 await interaction.followup.send(f"🎮 **Starting arena game:** {resolved_name.upper()}")
                 print(f"🎯 Running specific game: {resolved_name} in channel {interaction.channel.id}")
+                await log_minigame_selection(
+                    interaction.user.id, resolved_name,
+                    entry_point="arena_command", channel_id=interaction.channel.id,
+                )
                 await mini_games.run_mini_game(
                     bot,
                     resolved_name,
@@ -34756,6 +34993,121 @@ async def arena(interaction: discord.Interaction, game_name: str = None, num: in
             arena_game_task = None
             arena_game_starter_id = None
             arena_game_name = None
+
+
+class RoundOptionsDefaultModal(discord.ui.Modal, title="Custom Default"):
+    """Lets a user build a round-end-options default from scratch -- not necessarily anything
+    they've actually played before -- mirroring WofModifierModal's Label+Select construction,
+    but on_submit saves to user_option_defaults instead of mutating live round globals."""
+
+    flags_label = discord.ui.Label(
+        text="Round modifiers",
+        description="Pick the combo you want as your default (optional)",
+        component=discord.ui.Select(
+            options=[
+                discord.SelectOption(label=info[0][:100], value=key)
+                for key, info in _KEYWORD_EFFECTS.items()
+            ],
+            min_values=0,
+            max_values=len(_KEYWORD_EFFECTS),
+            required=False,
+        ),
+    )
+
+    def __init__(self, user_id):
+        super().__init__()
+        self.user_id = user_id
+
+    async def on_submit(self, interaction: discord.Interaction):
+        keywords = sorted(self.flags_label.component.values)
+        value = "+".join(keywords)
+        display = ", ".join(_KEYWORD_EFFECTS[k][2] for k in keywords) if keywords else "No modifiers"
+        await set_saved_default(self.user_id, value, display, keywords)
+        await interaction.response.send_message(f"✅ Saved your default: **{display}**.", ephemeral=True)
+
+
+class MyDefaultsView(discord.ui.View):
+    """/mydefaults's action buttons. A plain View (not RestrictedView) since the message it's
+    attached to is already ephemeral and scoped to the invoking user by Discord itself -- no
+    per-user interaction_check needed. Each button is only added when its prerequisite
+    (a saved default, or some history) actually exists, mirroring WofModifierView's shortcuts."""
+
+    def __init__(self, user_id, saved_default, most_used, last_selected):
+        super().__init__(timeout=120)
+        self.user_id = user_id
+
+        if most_used:
+            button = discord.ui.Button(label="⭐ Set Default = Most Used", style=discord.ButtonStyle.primary)
+            button.callback = self._make_set_default_callback(most_used)
+            self.add_item(button)
+
+        if last_selected:
+            button = discord.ui.Button(label="🕐 Set Default = Last Selected", style=discord.ButtonStyle.primary)
+            button.callback = self._make_set_default_callback(last_selected)
+            self.add_item(button)
+
+        custom_button = discord.ui.Button(label="✏️ Custom Default", style=discord.ButtonStyle.secondary)
+        custom_button.callback = self._open_custom_modal
+        self.add_item(custom_button)
+
+        if saved_default:
+            clear_button = discord.ui.Button(label="🗑️ Clear Default", style=discord.ButtonStyle.danger)
+            clear_button.callback = self._clear_default
+            self.add_item(clear_button)
+
+            auto_apply_on = bool(saved_default.get("auto_apply"))
+            toggle_button = discord.ui.Button(
+                label=f"🔁 Auto-Apply: {'On' if auto_apply_on else 'Off'}",
+                style=discord.ButtonStyle.success if auto_apply_on else discord.ButtonStyle.secondary,
+            )
+            toggle_button.callback = self._make_toggle_auto_apply_callback(not auto_apply_on)
+            self.add_item(toggle_button)
+
+    def _make_set_default_callback(self, source):
+        async def _callback(interaction: discord.Interaction):
+            await set_saved_default(self.user_id, source["value"], source["display"], source["keywords"])
+            await interaction.response.send_message(f"✅ Default set to **{source['display']}**.", ephemeral=True)
+        return _callback
+
+    async def _open_custom_modal(self, interaction: discord.Interaction):
+        await interaction.response.send_modal(RoundOptionsDefaultModal(self.user_id))
+
+    async def _clear_default(self, interaction: discord.Interaction):
+        await clear_saved_default(self.user_id)
+        await interaction.response.send_message("🗑️ Default cleared.", ephemeral=True)
+
+    def _make_toggle_auto_apply_callback(self, enabled):
+        async def _callback(interaction: discord.Interaction):
+            await set_auto_apply(self.user_id, enabled)
+            await interaction.response.send_message(
+                f"🔁 Auto-apply turned **{'on' if enabled else 'off'}**.", ephemeral=True
+            )
+        return _callback
+
+
+@bot.tree.command(name="mydefaults", description="See and update your saved round-end options default", guild=discord.Object(id=OKRAN_GUILD_ID))
+async def mydefaults(interaction: discord.Interaction):
+    user_id = interaction.user.id
+    saved_default = await get_saved_default(user_id)
+    most_used = await get_most_used_selection(user_id, "round_end_options")
+    last_selected = await get_last_selected_selection(user_id, "round_end_options")
+
+    def _describe(entry):
+        return entry["display"] if entry else "Not set"
+
+    auto_apply_line = ""
+    if saved_default:
+        auto_apply_line = f"\nAuto-apply each round: **{'On' if saved_default.get('auto_apply') else 'Off'}**"
+
+    message = (
+        "🎮 **Your Round-End Options**\n"
+        f"My Default: **{_describe(saved_default)}**{auto_apply_line}\n"
+        f"Most Used: **{_describe(most_used)}**\n"
+        f"Last Selected: **{_describe(last_selected)}**"
+    )
+    view = MyDefaultsView(user_id, saved_default, most_used, last_selected)
+    await interaction.response.send_message(message, view=view, ephemeral=True)
+
 
 @bot.event
 async def on_raw_reaction_add(payload):
