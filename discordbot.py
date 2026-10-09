@@ -450,9 +450,9 @@ async def send_question_queen_submit_ad():
 # the same text is correct whether this deploy is staging or prod.
 okra_lab_announcement_enabled = True
 okra_lab_announcement_text = (
-    "🥒🔄 **Where's Okra got a new identity** — the geography-guessing game you knew as Where's Okra is now **Okra San Diego**. It got smarter too: OkraStrut's in-character messages now drop several subtle clues about where he's hiding each round, not just the local weather, so there's actually something to reason about\n\n"
-    "🕵️🎭 **The \"Where's Okra\" name now belongs to a brand-new game** — think Where's Waldo: you'll see a reference photo of one specific costumed Okra first, then have to spot that exact one hiding in a sea of other Okras\n\n"
-    "🧪🎮 **Get a sneak peek at a new interactive experience** — we're piloting an in-Discord app version of the game, starting with Where's Okra: tap the puzzle live on your screen instead of typing grid squares. Watch for the prompt next time Where's Okra shows up, with more modes coming as we expand it\n"
+    "🎧🎤 **LyrIQ stopped flaking out** — the \"Unable to get year data\" error some of you hit is fixed; the year picker now always finds a year to play instead of occasionally coming up empty\n\n"
+    "🐶🦓 **Animal game's dog pile, fixed** — rounds were turning into 5-out-of-7 dog breeds way too often. Capped at one dog per round now, so the other 7,000+ species actually get a turn\n\n"
+    "⚽🟥 **New: Messi Mode** — turn off red cards for parroting the question/category for the rest of the round. Pick it from the round-end options menu, or toggle it any time with `#messi`. No ref's showing cards tonight\n"
 )
 okra_lab_announcement_show_new_badge = True
 
@@ -1030,6 +1030,8 @@ cloak_mode = cloak_mode_default
 cloaked_user = None
 rave_mode_default = False
 rave_mode = rave_mode_default
+messi_mode_default = False
+messi_mode = messi_mode_default
 
 # --- Feud LLM answer matching ---
 # Feud's board holds survey responses, so players say the same thing in different words
@@ -6519,6 +6521,9 @@ _KEYWORD_EFFECTS = {
     "rave": ("🪩 Rave (flashing neon images)",
              "\n🪩🔊 {mention} just dropped the bass on trivia night. Every question is a flashing neon banger now.", "Rave",
              lambda rw_id: _set_globals(rave_mode=True)),
+    "messi": ("⚽ Messi (no red cards)",
+              "\n⚽🐐 {mention} has signed Messi. No ref's showing red cards tonight -- parrot away.", "Messi",
+              lambda rw_id: _set_globals(messi_mode=True)),
 }
 
 
@@ -20374,7 +20379,7 @@ async def save_round_options_to_db():
     global num_jeopardy_clues, num_mysterybox_clues, num_wof_clues
     global god_mode, quickie_mode, yolo_mode, num_math_questions, num_stats_questions
     global image_questions, marx_mode, blind_mode, sniper_mode, blitz_mode, exact_mode, golf_mode, glyph_mode
-    global cloak_mode, cloaked_user, rave_mode
+    global cloak_mode, cloaked_user, rave_mode, messi_mode
 
     try:
         # Store each variable as a document with _id as the variable name
@@ -20402,6 +20407,7 @@ async def save_round_options_to_db():
             {"_id": "round_cloak_mode", "value": int(cloak_mode)},
             {"_id": "round_cloaked_user", "value": cloaked_user or 0},  # Store 0 if None
             {"_id": "round_rave_mode", "value": int(rave_mode)},
+            {"_id": "round_messi_mode", "value": int(messi_mode)},
         ]
 
         for update in updates:
@@ -20423,7 +20429,7 @@ async def load_round_options_from_db():
     global num_jeopardy_clues, num_mysterybox_clues, num_wof_clues
     global god_mode, quickie_mode, yolo_mode, num_math_questions, num_stats_questions
     global image_questions, marx_mode, blind_mode, sniper_mode, blitz_mode, exact_mode, golf_mode, glyph_mode
-    global cloak_mode, cloaked_user, rave_mode
+    global cloak_mode, cloaked_user, rave_mode, messi_mode
 
     try:
         # Load each variable, with fallback to defaults
@@ -20449,6 +20455,7 @@ async def load_round_options_from_db():
         cloak_mode = bool(await get_int_param(db, "round_cloak_mode", int(cloak_mode_default)))
         glyph_mode = bool(await get_int_param(db, "round_glyph_mode", int(glyph_mode_default)))
         rave_mode = bool(await get_int_param(db, "round_rave_mode", int(rave_mode_default)))
+        messi_mode = bool(await get_int_param(db, "round_messi_mode", int(messi_mode_default)))
 
         cloaked_user_val = await get_int_param(db, "round_cloaked_user", 0)
         cloaked_user = cloaked_user_val if cloaked_user_val != 0 else None
@@ -24284,7 +24291,7 @@ def generate_rave_crossword_gif(answer, prefill=0.5, frame_ms=RAVE_GIF_FRAME_MS,
 
 
 async def clear_round_options():
-    global since_token, time_between_questions, time_between_questions_default, question_time, question_time_default, ghost_mode, since_token, categories_to_exclude, num_crossword_clues, num_jeopardy_clues, num_mysterybox_clues, num_wof_clues, num_sat_questions, jeopardy_boosted, crossword_boosted, sat_boosted, math_boosted, mysterybox_boosted, god_mode, quickie_mode, last_question_winner, last_question_winner_id, yolo_mode, magic_number, wf_winner, num_math_questions, num_stats_questions, image_questions, nice_okra, creep_okra, marx_mode, blind_mode, seductive_okra, joke_okra, sniper_mode, blitz_mode, exact_mode, golf_mode, glyph_mode, cloak_mode, cloaked_user, haiku_okra, trailer_okra, heist_okra, horoscope_okra, rap_okra, shakespeare_okra, pirate_okra, noir_okra, hype_okra, roast_okra, rave_mode
+    global since_token, time_between_questions, time_between_questions_default, question_time, question_time_default, ghost_mode, since_token, categories_to_exclude, num_crossword_clues, num_jeopardy_clues, num_mysterybox_clues, num_wof_clues, num_sat_questions, jeopardy_boosted, crossword_boosted, sat_boosted, math_boosted, mysterybox_boosted, god_mode, quickie_mode, last_question_winner, last_question_winner_id, yolo_mode, magic_number, wf_winner, num_math_questions, num_stats_questions, image_questions, nice_okra, creep_okra, marx_mode, blind_mode, seductive_okra, joke_okra, sniper_mode, blitz_mode, exact_mode, golf_mode, glyph_mode, cloak_mode, cloaked_user, haiku_okra, trailer_okra, heist_okra, horoscope_okra, rap_okra, shakespeare_okra, pirate_okra, noir_okra, hype_okra, roast_okra, rave_mode, messi_mode
     time_between_questions = time_between_questions_default
     question_time = question_time_default
     ghost_mode = ghost_mode_default
@@ -24333,6 +24340,7 @@ async def clear_round_options():
     cloak_mode = cloak_mode_default
     cloaked_user = None
     rave_mode = rave_mode_default
+    messi_mode = messi_mode_default
 
 async def process_round_options(round_winner, winner_points, round_winner_id, winner_coffees=None):
     if round_winner is None:
@@ -24361,6 +24369,7 @@ async def process_round_options(round_winner, winner_points, round_winner_id, wi
             "🔐🛡️ **Glyph**: Add anti-Google defenses\n"
             "🎖🥒 **Dicktator**: Choose the categories\n"
             "🍑🔪 **Assassin**: Previous winner picks\n"
+            "⚽🔴 **Messi**: No red cards for parroting\n"
 
             "\n🕹️: Toggle mid-round with **#[command]**"
             "\n⛳: Golf excluded\n\n"
@@ -24420,7 +24429,8 @@ async def prompt_user_for_response(round_winner, winner_points, winner_coffees, 
         "poindexter": {"requires_coffee": False, "exclude_hashtag": True},
         "golf": {"requires_coffee": False, "exclude_hashtag": False},
         "glyph": {"requires_coffee": False, "exclude_hashtag": True},
-        "rave": {"requires_coffee": False, "exclude_hashtag": True}
+        "rave": {"requires_coffee": False, "exclude_hashtag": True},
+        "messi": {"requires_coffee": False, "exclude_hashtag": True}
     }
 
     target_channel = _active_game_channel or channel
@@ -26515,7 +26525,7 @@ def legacy_fuzzy_match(user_answer, correct_answer, category, url, _skip_alias_c
     # the leniency heuristics below so a guess can't win by parroting a word
     # the prompt already handed the user for free (e.g. "time" for "ragtime"
     # when the category is '"Time" For A Change').
-    guard_enabled = GIVEAWAY_WORD_GUARD_ENABLED if enable_giveaway_guard is None else enable_giveaway_guard
+    guard_enabled = (GIVEAWAY_WORD_GUARD_ENABLED and not messi_mode) if enable_giveaway_guard is None else enable_giveaway_guard
     giveaway_words = _giveaway_words(category, question_text) if guard_enabled else set()
     user_is_giveaway_word = any(
         _is_giveaway_word(w, giveaway_words)
@@ -26574,7 +26584,7 @@ def fuzzy_match(user_answer, correct_answer, category, url, _skip_alias_check=Fa
             question_text=question_text, enable_giveaway_guard=enable_giveaway_guard,
         )
     config = answer_matching.STRICT if (exact_mode and not ignore_exact_mode) else answer_matching.ACTIVE_CONFIG
-    resolved_guard = GIVEAWAY_WORD_GUARD_ENABLED if enable_giveaway_guard is None else enable_giveaway_guard
+    resolved_guard = (GIVEAWAY_WORD_GUARD_ENABLED and not messi_mode) if enable_giveaway_guard is None else enable_giveaway_guard
     return answer_matching.match_answer(
         user_answer, correct_answer, category=category, url=url,
         config=config, skip_alias=_skip_alias_check, question_text=question_text,
@@ -29347,7 +29357,7 @@ def print_round_settings():
     print(f"🪩✨ Rave Mode: {rave_mode}")
 
 async def reset_round_options(reset_command, winner_id):
-    global time_between_questions, question_time, question_time_default, ghost_mode, god_mode, quickie_mode, yolo_mode, mirror_mode, echo_mode, image_questions, marx_mode, blind_mode, zen_mode, sniper_mode, blitz_mode, exact_mode, golf_mode, glyph_mode, cloak_mode, cloaked_user, rave_mode
+    global time_between_questions, question_time, question_time_default, ghost_mode, god_mode, quickie_mode, yolo_mode, mirror_mode, echo_mode, image_questions, marx_mode, blind_mode, zen_mode, sniper_mode, blitz_mode, exact_mode, golf_mode, glyph_mode, cloak_mode, cloaked_user, rave_mode, messi_mode
 
     reset_success = False
 
@@ -29456,6 +29466,14 @@ async def reset_round_options(reset_command, winner_id):
             await safe_send(channel, content=f"\n🪩🔊 **{winner_id}** just dropped the bass on trivia night. Every question is a flashing neon banger now.\n")
         else:
             await safe_send(channel, content=f"\n🪩🛑 **{winner_id}** called the noise complaint in on themselves. Rave's over.\n")
+
+    if "messi" in reset_command:
+        messi_mode = not messi_mode
+        reset_success = True
+        if messi_mode:
+            await safe_send(channel, content=f"\n⚽🐐 **{winner_id}** has signed Messi. No ref's showing red cards tonight -- parrot away.\n")
+        else:
+            await safe_send(channel, content=f"\n🟥⚽ **{winner_id}** benched Messi. Red cards are back on the pitch.\n")
 
     delay_match = re.search(r'\bdelay\s*(\d+)\b', reset_command)
     if delay_match:
@@ -29780,7 +29798,7 @@ async def on_message(message):
                 # that starts many questions), which is a false positive, not a real
                 # giveaway.
                 current_url = current_question.get("trivia_url", "") if current_question else ""
-                if GIVEAWAY_WORD_GUARD_ENABLED and not _is_multiple_choice_url(current_url):
+                if GIVEAWAY_WORD_GUARD_ENABLED and not messi_mode and not _is_multiple_choice_url(current_url):
                     # Explain the red card as an in-channel reply -- see
                     # _notify_giveaway_guard_reply for why (a DM is too easy
                     # to miss mid-chat, and ephemeral replies only exist for
@@ -30725,6 +30743,7 @@ def _companion_active_modes():
         (glyph_mode,      glyph_mode_default,      "🔐🛡️", "Glyph"),
         (image_questions, image_questions_default, "❌📷", "No Images"),
         (rave_mode,       rave_mode_default,       "🪩", "Rave"),
+        (messi_mode,      messi_mode_default,      "⚽🔴", "Messi"),
     ]
     return [{"emoji": emoji, "label": label}
             for current, default, emoji, label in specs if bool(current) != bool(default)]
@@ -30856,7 +30875,7 @@ def companion_submit_answer(user_id, display_name, text, client="companion"):
     # than a bare `trivia_url`, since no such module global actually exists here.
     current_url = current_question.get("trivia_url", "") if current_question else ""
     guard_blocked = bool(
-        GIVEAWAY_WORD_GUARD_ENABLED and not _is_multiple_choice_url(current_url)
+        GIVEAWAY_WORD_GUARD_ENABLED and not messi_mode and not _is_multiple_choice_url(current_url)
         and (answer_matching.is_fully_given_away(text, _current_giveaway_words())
              or _giveaway_guard_blocked_match(text))
     )
