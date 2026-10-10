@@ -463,11 +463,16 @@ okra_lab_announcement_show_new_badge = True
 WHERES_OKRA_CUSTOM_SPRITE_ENABLED = True
 
 # Kill switch for the round-end-options "My Default"/"Most Used"/"Last Selected" shortcuts,
-# auto-apply, and /mydefaults. Usage history (user_selection_history, via
-# log_round_options_selection/log_minigame_selection) is always collected regardless of this
-# flag -- it's deliberately left on so there's already real per-player data to work with once
-# this flips on. Flip on (and ship the matching Okra Lab announcement) together at launch.
+# auto-apply, and /mydefaults. Usage (user_option_defaults' combo_counts, via
+# record_round_options_pick/record_minigame_pick) is always collected regardless of this flag
+# -- it's deliberately left on so there's already real per-player data to work with once this
+# flips on. Flip on (and ship the matching Okra Lab announcement) together at launch.
 ROUND_OPTION_DEFAULTS_ENABLED = True
+
+# Minimum pick-count a round-end-options combo needs before it's offered as the "Most Used"
+# shortcut -- below this, it's treated exactly like "no data" (hidden). Filters out a
+# one-or-two-off pick that isn't actually a habit yet. See get_most_used_round_options.
+MOST_USED_MIN_COUNT = 5
 
 
 async def sync_okra_lab_announcement(content, embed=None):
@@ -6567,7 +6572,7 @@ class WofModifierModal(discord.ui.Modal, title="Set Round Modifiers"):
         ),
     )
 
-    def __init__(self, keyword_config, winner_coffees, round_winner_id, window_closed):
+    def __init__(self, keyword_config, winner_coffees, round_winner_id, window_closed, round_pick):
         super().__init__()
         self.keyword_config = keyword_config
         self.winner_coffees = winner_coffees
@@ -6579,6 +6584,10 @@ class WofModifierModal(discord.ui.Modal, title="Set Round Modifiers"):
         # on_submit has that applying these flags would now be silently mutating global state
         # for whatever round happens to be running by the time this finally arrives.
         self.window_closed = window_closed
+        # Shared accumulator (see prompt_user_for_response) -- contributes this submission's
+        # keywords rather than recording them directly, so everything applied across the whole
+        # window (chat + modal + shortcuts) ends up recorded as one combo for the round.
+        self.round_pick = round_pick
 
     async def on_submit(self, interaction: discord.Interaction):
         if self.window_closed["value"]:
@@ -6594,10 +6603,8 @@ class WofModifierModal(discord.ui.Modal, title="Set Round Modifiers"):
         )
         for keyword in selected:
             await _apply_keyword_flag(keyword, self.keyword_config, self.winner_coffees, self.round_winner_id)
-        await log_round_options_selection(
-            self.round_winner_id, selected,
-            entry_point="round_end_options_picker", channel_id=interaction.channel.id,
-        )
+        self.round_pick["interacted"] = True
+        self.round_pick["keywords"].update(selected)
 
 
 class WofModifierView(RestrictedView):
@@ -6609,14 +6616,20 @@ class WofModifierView(RestrictedView):
     `shortcuts` (optional) adds up to 3 extra one-click buttons -- "My Default" / "Most Used" /
     "Last Selected" -- each only passed in when the underlying per-user data actually exists
     (see prompt_user_for_response), so a user with no history yet sees none of them. Each entry
-    is {"label": str, "keywords": [str, ...]}."""
+    is {"label": str, "keywords": [str, ...]}.
 
-    def __init__(self, keyword_config, winner_coffees, round_winner_id, window_closed, *, timeout, shortcuts=None):
+    `round_pick` is the shared accumulator (see prompt_user_for_response) that typed chat, the
+    modal, and these shortcut buttons all contribute to -- nothing records anything itself
+    mid-window, so the one final record after the window closes reflects the true, fully
+    combined set of everything actually applied this round."""
+
+    def __init__(self, keyword_config, winner_coffees, round_winner_id, window_closed, round_pick, *, timeout, shortcuts=None):
         super().__init__({round_winner_id, okrag_id}, timeout=timeout)
         self.keyword_config = keyword_config
         self.winner_coffees = winner_coffees
         self.round_winner_id = round_winner_id
         self.window_closed = window_closed
+        self.round_pick = round_pick
 
         flags_button = discord.ui.Button(label="🚩 Set Round Modifiers", style=discord.ButtonStyle.primary)
         flags_button.callback = self._open_modal
@@ -6635,16 +6648,15 @@ class WofModifierView(RestrictedView):
         async def _callback(interaction: discord.Interaction):
             for keyword in keywords:
                 await _apply_keyword_flag(keyword, self.keyword_config, self.winner_coffees, self.round_winner_id)
-            await log_round_options_selection(
-                self.round_winner_id, keywords,
-                entry_point="round_end_options_picker", channel_id=interaction.channel.id,
-            )
+            self.round_pick["interacted"] = True
+            self.round_pick["keywords"].update(keywords)
             await self._resolve(interaction, "x")
         return _callback
 
     async def _open_modal(self, interaction: discord.Interaction):
         await interaction.response.send_modal(
-            WofModifierModal(self.keyword_config, self.winner_coffees, self.round_winner_id, self.window_closed)
+            WofModifierModal(self.keyword_config, self.winner_coffees, self.round_winner_id,
+                              self.window_closed, self.round_pick)
         )
 
     async def _done(self, interaction: discord.Interaction):
@@ -22730,9 +22742,9 @@ async def ask_wof_number(winner, winner_id, cached_coffees=None, menu_text=None,
                 # Store frequency data for user selection
                 await store_minigame_frequency(selected_question, "user", "discord")
                 await record_recent_minigame_selection(selected_question)
-                await log_minigame_selection(
+                await record_minigame_pick(
                     responder_id, selected_question,
-                    entry_point="round_end_minigame_picker", channel_id=message.channel.id,
+                    entry_point="round_end_minigame_picker",
                 )
 
                 await message.add_reaction(get_minigame_emoji(selected_question))
@@ -24485,6 +24497,12 @@ async def prompt_user_for_response(round_winner, winner_points, winner_coffees, 
     # instead of silently mutating global flags for whatever round is running by then.
     window_closed = {"value": False}
 
+    # Shared accumulator -- typed chat, the modal, and shortcut buttons all contribute to this
+    # rather than recording anything themselves mid-window, so the one record made after the
+    # window closes reflects the true, fully combined set of everything actually applied this
+    # round (see WofModifierView/WofModifierModal).
+    round_pick = {"keywords": set(), "interacted": False}
+
     saved_default = None
     if ROUND_OPTION_DEFAULTS_ENABLED:
         saved_default = await get_saved_default(round_winner_id)
@@ -24499,9 +24517,9 @@ async def prompt_user_for_response(round_winner, winner_points, winner_coffees, 
         await safe_send(channel, f"⭐ Auto-applying **<@{round_winner_id}>**'s saved default: {saved_default['display']}.")
         for keyword in saved_default["keywords"]:
             await _apply_keyword_flag(keyword, keyword_config, winner_coffees, round_winner_id)
-        await log_round_options_selection(
+        await record_round_options_pick(
             round_winner_id, saved_default["keywords"],
-            entry_point="round_end_options_auto_apply", channel_id=target_channel.id,
+            entry_point="round_end_options_auto_apply",
         )
         await save_round_options_to_db()
         return
@@ -24509,8 +24527,8 @@ async def prompt_user_for_response(round_winner, winner_points, winner_coffees, 
     most_used = None
     last_selected = None
     if ROUND_OPTION_DEFAULTS_ENABLED:
-        most_used = await get_most_used_selection(round_winner_id, "round_end_options")
-        last_selected = await get_last_selected_selection(round_winner_id, "round_end_options")
+        most_used = await get_most_used_round_options(round_winner_id)
+        last_selected = await get_last_selected_round_options(round_winner_id)
 
     # Quick shortcuts -- "My Default" / "Most Used" / "Last Selected" -- each only offered
     # when the underlying per-user data actually exists, so a brand-new user with no saved
@@ -24523,7 +24541,7 @@ async def prompt_user_for_response(round_winner, winner_points, winner_coffees, 
     if last_selected:
         shortcuts.append({"label": "🕐 Last Selected", "keywords": last_selected["keywords"]})
 
-    view = WofModifierView(keyword_config, winner_coffees, round_winner_id, window_closed,
+    view = WofModifierView(keyword_config, winner_coffees, round_winner_id, window_closed, round_pick,
                             timeout=round_options_window, shortcuts=shortcuts)
     view.message = await safe_send(channel, "\U0001f447 Or set modifiers from the buttons below:", view=view)
     # Companion (phone/web) gets a flat multi-select of every keyword plus the "Done" shortcut --
@@ -24571,10 +24589,8 @@ async def prompt_user_for_response(round_winner, winner_points, winner_coffees, 
                 # WofModifierView "Done" button also resolves to this same "x" content.
                 is_done = bool(re.search(r'\bx\b', message_content))
                 if matched_keywords or is_done:
-                    await log_round_options_selection(
-                        round_winner_id, matched_keywords,
-                        entry_point="round_end_options_picker", channel_id=target_channel.id,
-                    )
+                    round_pick["interacted"] = True
+                    round_pick["keywords"].update(matched_keywords)
 
                 if is_done:
                     await message.add_reaction("\U0001f3c1")
@@ -24586,8 +24602,13 @@ async def prompt_user_for_response(round_winner, winner_points, winner_coffees, 
 
     window_closed["value"] = True
     await save_round_options_to_db()
+    if round_pick["interacted"]:
+        await record_round_options_pick(
+            round_winner_id, sorted(round_pick["keywords"]),
+            entry_point="round_end_options_picker",
+        )
 
-    
+
 async def generate_okra_joke(winner_name):
     prompt = (
         f"Create a funny and creative dad joke and involve the winner's username '{winner_name}' in your joke. "
@@ -30212,18 +30233,19 @@ async def record_recent_minigame_selection(number):
         print(f"Error recording recent minigame selection: {e}")
 
 
-# --- Per-user round-option & mini-game selection history / saved defaults ---
-# Collects what a user tends to pick so the round-end options picker can offer "My Default" /
-# "Most Used" / "Last Selected" shortcuts once that user has enough history (naturally absent
-# until they do -- this *is* the "collection mode" period, no feature flag needed). Mini-game
-# picks are logged the same way, from both the round-end picker and /arena, but nothing reads
-# that history back yet -- it's pure data collection for a future shortcut feature there too.
+# --- Per-user round-option & mini-game pick counters / saved defaults ---
+# Collects what a user tends to pick, as per-user counters in user_option_defaults, so the
+# round-end options picker can offer "My Default" / "Most Used" / "Last Selected" shortcuts
+# once that user has enough history (naturally absent until they do -- this *is* the
+# "collection mode" period, no feature flag needed). Mini-game picks are counted the same way,
+# from both the round-end picker and /arena, but nothing reads those counts back yet -- it's
+# pure data collection for a future shortcut feature there too.
 
 # Maps /arena's mini_games.GAME_NAMES strings onto the round-end picker's numbered `unlocks`
 # scheme (see ask_wof_number) so a game played via either entry point resolves to the same
-# canonical key/display name in user_selection_history. Built by matching each GAME_NAMES
-# entry to the exact same underlying ask_*_challenge function the numbered picker dispatches
-# to -- every one of mini_games.GAME_NAMES has exactly one such counterpart.
+# canonical key/display name. Built by matching each GAME_NAMES entry to the exact same
+# underlying ask_*_challenge function the numbered picker dispatches to -- every one of
+# mini_games.GAME_NAMES has exactly one such counterpart.
 ARENA_NAME_TO_MINIGAME_NUMBER = {
     "poster blitz": "12", "movie mayhem": "13", "missing link": "14", "famous peeps": "15",
     "magic eye": "17", "okranimal": "18", "the riddler": "19", "word nerd": "20",
@@ -30250,76 +30272,96 @@ def _canonical_minigame_key_name(number_or_name):
     return _recent_minigame_key_name(number_or_name)
 
 
-async def _log_selection_event(user_id, category, value, display, *, entry_point, channel_id, keywords=None):
-    await insert_data_to_mongo("user_selection_history", {
-        "user_id": user_id,
-        "category": category,
-        "entry_point": entry_point,
-        "channel_id": channel_id,
-        "value": value,
-        "display": display,
-        "keywords": keywords,
-    })
+def _combo_key(keywords):
+    """Canonical grouping key for a round-end-options combo. "_none_" (not "") for the
+    empty-combo case -- Mongo dynamic update paths (round_end_options.combo_counts.<key>.count)
+    can't end in an empty segment."""
+    return "+".join(sorted(keywords)) or "_none_"
 
 
-async def log_round_options_selection(user_id, keywords, *, entry_point, channel_id):
-    """Logs one round-end-options pick (a possibly-empty set of _KEYWORD_EFFECTS keywords),
-    keyed by the exact sorted combo -- "most used" should reflect whole combos a user applies
-    together, not individual keyword frequency."""
+async def record_round_options_pick(user_id, keywords, *, entry_point):
+    """Records one round-end-options pick -- the full combo actually applied for a round,
+    however many separate actions (chat/modal/shortcut) it took to assemble (see
+    prompt_user_for_response's round_pick accumulator). One atomic upsert: increments that
+    exact combo's counter and overwrites last_selected, both under round_end_options."""
     sorted_keywords = sorted(keywords)
-    value = "+".join(sorted_keywords)
+    key = _combo_key(sorted_keywords)
     display = ", ".join(_KEYWORD_EFFECTS[k][2] for k in sorted_keywords) if sorted_keywords else "No modifiers"
-    await _log_selection_event(user_id, "round_end_options", value, display,
-                                entry_point=entry_point, channel_id=channel_id, keywords=sorted_keywords)
+    db = await connect_to_mongodb()
+    await db.user_option_defaults.update_one(
+        {"_id": user_id},
+        {
+            "$inc": {f"round_end_options.combo_counts.{key}.count": 1},
+            "$set": {
+                f"round_end_options.combo_counts.{key}.display": display,
+                f"round_end_options.combo_counts.{key}.keywords": sorted_keywords,
+                "round_end_options.last_selected": {
+                    "value": key, "display": display, "keywords": sorted_keywords,
+                    "selected_at": datetime.datetime.utcnow(),
+                },
+            },
+        },
+        upsert=True,
+    )
 
 
-async def log_minigame_selection(user_id, number_or_name, *, entry_point, channel_id):
-    """Logs one explicit mini-game pick from either entry point (round-end picker or /arena),
-    under a canonical key so the same game counts as the same selection regardless of source."""
+async def record_minigame_pick(user_id, number_or_name, *, entry_point):
+    """Records one mini-game pick from either entry point (round-end picker or /arena), under
+    a canonical key so the same game counts as the same selection regardless of source. Logging
+    only for now -- nothing reads minigame.combo_counts back yet -- but entry-point counts are
+    kept separate so round-end-picker vs /arena picks stay distinguishable if that changes."""
     value, display = _canonical_minigame_key_name(number_or_name)
-    await _log_selection_event(user_id, "minigame", value, display,
-                                entry_point=entry_point, channel_id=channel_id)
+    db = await connect_to_mongodb()
+    await db.user_option_defaults.update_one(
+        {"_id": user_id},
+        {
+            "$inc": {
+                f"minigame.combo_counts.{value}.count": 1,
+                f"minigame.combo_counts.{value}.by_entry_point.{entry_point}": 1,
+            },
+            "$set": {
+                f"minigame.combo_counts.{value}.display": display,
+                "minigame.last_selected": {
+                    "value": value, "display": display, "entry_point": entry_point,
+                    "selected_at": datetime.datetime.utcnow(),
+                },
+            },
+        },
+        upsert=True,
+    )
 
 
-async def get_most_used_selection(user_id, category):
-    """Returns {"value","display","keywords"} for the user's most-frequently-logged selection
-    in `category`, or None if they have no history yet. Only ever called today with
-    category="round_end_options" -- mini-game history isn't read back anywhere yet."""
+async def get_most_used_round_options(user_id):
+    """Returns {"value","display","keywords"} for the user's most-picked round-end-options
+    combo, or None if they have no history yet or their top combo hasn't been picked at least
+    MOST_USED_MIN_COUNT times -- a one-off or two-off pick isn't a real habit yet, so the
+    shortcut stays hidden exactly like "no data" until it is."""
     try:
         db = await connect_to_mongodb()
-        pipeline = [
-            {"$match": {"user_id": user_id, "category": category}},
-            {"$group": {"_id": "$value", "count": {"$sum": 1},
-                        "display": {"$first": "$display"}, "keywords": {"$first": "$keywords"}}},
-            {"$sort": {"count": -1}},
-            {"$limit": 1},
-        ]
-        results = await db.user_selection_history.aggregate(pipeline).to_list(length=1)
-        if not results:
+        doc = await db.user_option_defaults.find_one({"_id": user_id})
+        combo_counts = (doc or {}).get("round_end_options", {}).get("combo_counts") or {}
+        if not combo_counts:
             return None
-        top = results[0]
-        return {"value": top["_id"], "display": top["display"], "keywords": top.get("keywords")}
+        top_key, top = max(combo_counts.items(), key=lambda item: item[1]["count"])
+        if top["count"] < MOST_USED_MIN_COUNT:
+            return None
+        return {"value": top_key, "display": top["display"], "keywords": top.get("keywords")}
     except Exception as e:
         sentry_sdk.capture_exception(e)
-        print(f"⚠️ get_most_used_selection: {e}")
+        print(f"⚠️ get_most_used_round_options: {e}")
         return None
 
 
-async def get_last_selected_selection(user_id, category):
-    """Returns {"value","display","keywords"} for the user's most recent selection in
-    `category`, or None if they have no history yet. Same scope note as above."""
+async def get_last_selected_round_options(user_id):
+    """Returns {"value","display","keywords"} for the user's most recent round-end-options
+    pick, or None if they have no history yet."""
     try:
         db = await connect_to_mongodb()
-        doc = await db.user_selection_history.find_one(
-            {"user_id": user_id, "category": category},
-            sort=[("timestamp", -1)],
-        )
-        if not doc:
-            return None
-        return {"value": doc["value"], "display": doc["display"], "keywords": doc.get("keywords")}
+        doc = await db.user_option_defaults.find_one({"_id": user_id})
+        return (doc or {}).get("round_end_options", {}).get("last_selected")
     except Exception as e:
         sentry_sdk.capture_exception(e)
-        print(f"⚠️ get_last_selected_selection: {e}")
+        print(f"⚠️ get_last_selected_round_options: {e}")
         return None
 
 
@@ -30364,11 +30406,6 @@ async def set_auto_apply(user_id, enabled):
     await db.user_option_defaults.update_one(
         {"_id": user_id}, {"$set": {"round_end_options.auto_apply": enabled}}
     )
-
-
-async def ensure_user_selection_history_indexes():
-    db = await connect_to_mongodb()
-    await db.user_selection_history.create_index([("user_id", 1), ("category", 1), ("timestamp", -1)])
 
 
 async def cleanup_tournament_roles():
@@ -34429,12 +34466,6 @@ async def on_ready():
         sentry_sdk.capture_exception(_e)
         print(f"⚠️ simply streaks index startup hook: {_e}")
 
-    try:
-        await ensure_user_selection_history_indexes()
-    except Exception as _e:
-        sentry_sdk.capture_exception(_e)
-        print(f"⚠️ user selection history index startup hook: {_e}")
-
     if museum_backfill_enabled and (museum_backfill_task is None or museum_backfill_task.done()):
         museum_backfill_task = asyncio.create_task(run_museum_archive_backfill_loop())
         print("🏛️ Museum archive backfill loop started")
@@ -34984,9 +35015,9 @@ async def arena(interaction: discord.Interaction, game_name: str = None, num: in
                 arena_game_name = resolved_name
                 await interaction.followup.send(f"🎮 **Starting arena game:** {resolved_name.upper()}")
                 print(f"🎯 Running specific game: {resolved_name} in channel {interaction.channel.id}")
-                await log_minigame_selection(
+                await record_minigame_pick(
                     interaction.user.id, resolved_name,
-                    entry_point="arena_command", channel_id=interaction.channel.id,
+                    entry_point="arena_command",
                 )
                 await mini_games.run_mini_game(
                     bot,
@@ -35120,8 +35151,8 @@ async def mydefaults(interaction: discord.Interaction):
         return
 
     saved_default = await get_saved_default(user_id)
-    most_used = await get_most_used_selection(user_id, "round_end_options")
-    last_selected = await get_last_selected_selection(user_id, "round_end_options")
+    most_used = await get_most_used_round_options(user_id)
+    last_selected = await get_last_selected_round_options(user_id)
 
     def _describe(entry):
         return entry["display"] if entry else "Not set"
