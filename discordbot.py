@@ -26,9 +26,26 @@ ACTIVITY_OKRA_ONLY = os.environ.get('ACTIVITY_OKRA_ONLY', 'true').lower() == 'tr
 import sentry_sdk
 from sentry_sdk.integrations.logging import LoggingIntegration
 
+
+def _sentry_before_send(event, hint):
+    """Snapshots the active game channel synchronously (a plain mutable global another
+    coroutine could reassign before a scheduled task runs), then hands off to
+    _report_error_to_discord (defined later in the file, once ERROR_LOG_CHANNEL_ID,
+    get_bot(), discord, etc. all exist -- fine, since this body only runs at actual
+    bot-runtime, long after the whole module has finished loading). Must never raise and
+    must never call sentry_sdk.capture_* itself -- that would recurse into this hook."""
+    try:
+        channel_snapshot = globals().get("_active_game_channel") or globals().get("channel")
+        asyncio.get_running_loop().create_task(_report_error_to_discord(event, hint, channel_snapshot))
+    except Exception as hook_exc:
+        print(f"⚠️ _sentry_before_send failed to schedule Discord alert: {hook_exc}")
+    return event
+
+
 sentry_sdk.init(
     dsn=os.environ.get('SENTRY_DSN'),
-    integrations=[LoggingIntegration(level=None, event_level='ERROR')]
+    integrations=[LoggingIntegration(level=None, event_level='ERROR')],
+    before_send=_sentry_before_send,
 )
 
 import requests
@@ -61,7 +78,7 @@ import logging
 import tempfile
 import base64
 from bson import ObjectId
-from collections import Counter, defaultdict, OrderedDict
+from collections import Counter, defaultdict, OrderedDict, deque
 import math
 import sys
 import signal
@@ -813,6 +830,7 @@ if prod_or_stage == "stage":
     OKRA_MUSEUM_CHANNEL_ID = 1524928905989853258
     INTRO_IMAGE_ADMIN_CHANNEL_ID = 1449499426669334700
     GAME_OPTIONS_CHANNEL_ID = 1535132000170541146
+    ERROR_LOG_CHANNEL_ID = 1558488022729629818
 
 elif prod_or_stage == "prod":
     okrag_id = 591861826690613248
@@ -866,6 +884,7 @@ elif prod_or_stage == "prod":
     OKRA_MUSEUM_CHANNEL_ID = 1524472945240572075
     INTRO_IMAGE_ADMIN_CHANNEL_ID = 1449497884931395755
     GAME_OPTIONS_CHANNEL_ID = 1535132787789795389
+    ERROR_LOG_CHANNEL_ID = 1558487734258106478
 
 AMBIENT_CHAT_CHANNEL_IDS = {channel_id, CHAT_CHANNEL_ID, PICS_CHANNEL_ID}
 
@@ -30922,6 +30941,142 @@ async def _alert_scoring_mismatch(user_ids, responses_snapshot, trivia_category,
             await safe_send(alert_channel, embed=embed)
         except Exception as e:
             print(f"Failed to send scoring-mismatch alert: {e}")
+
+
+# ---------------------------------------------------------------------------
+# Sentry -> Discord error forwarding (see _sentry_before_send near the top of the file,
+# which schedules this for literally every sentry_sdk.capture_exception/capture_message
+# call in the codebase -- no per-call-site changes needed).
+# ---------------------------------------------------------------------------
+
+_ERROR_ALERT_WINDOW_SECONDS = 30
+_ERROR_ALERT_MAX_PER_WINDOW = 5
+_ERROR_ALERT_COOLDOWN_SECONDS = 60
+
+_error_alert_times = deque()
+_error_alert_cooldown_until = 0.0
+_error_alert_suppressed_count = 0
+
+
+def _error_alert_rate_limited():
+    """True => caller should drop this alert silently (either already in a suppressed
+    burst window, or this call is the one that just tipped it into one -- folded into the
+    burst notice instead of sent individually). False => caller should send normally."""
+    global _error_alert_cooldown_until, _error_alert_suppressed_count
+    now = time.time()
+
+    if now < _error_alert_cooldown_until:
+        _error_alert_suppressed_count += 1
+        return True
+
+    while _error_alert_times and now - _error_alert_times[0] > _ERROR_ALERT_WINDOW_SECONDS:
+        _error_alert_times.popleft()
+    _error_alert_times.append(now)
+
+    if len(_error_alert_times) > _ERROR_ALERT_MAX_PER_WINDOW:
+        _error_alert_cooldown_until = now + _ERROR_ALERT_COOLDOWN_SECONDS
+        _error_alert_times.clear()
+        _error_alert_suppressed_count = 0
+        asyncio.create_task(_post_burst_notice_and_wait_for_cooldown())
+        return True
+
+    return False
+
+
+async def _post_burst_notice_and_wait_for_cooldown():
+    dest = get_bot().get_channel(ERROR_LOG_CHANNEL_ID)
+    if dest:
+        await dest.send(f"🚨 More than {_ERROR_ALERT_MAX_PER_WINDOW} errors in "
+                         f"{_ERROR_ALERT_WINDOW_SECONDS}s -- suppressing further error "
+                         f"alerts for {_ERROR_ALERT_COOLDOWN_SECONDS}s.")
+    await asyncio.sleep(_ERROR_ALERT_COOLDOWN_SECONDS)
+    global _error_alert_suppressed_count
+    suppressed = _error_alert_suppressed_count
+    _error_alert_suppressed_count = 0
+    if dest and suppressed:
+        await dest.send(f"ℹ️ Cooldown over -- {suppressed} more error(s) were suppressed during the cooldown window.")
+
+
+def _build_error_jump_link(channel_snapshot):
+    """Best-effort link back to roughly where/when an error happened -- the exact message
+    isn't tracked per error site, so this jumps to the active game channel's most recent
+    message (last_message_id is populated purely from gateway events, no extra API call)."""
+    if channel_snapshot is None:
+        return "_(no active game channel at time of error)_"
+    guild = getattr(channel_snapshot, "guild", None)
+    if guild is None:
+        return "_(active channel has no guild)_"
+    last_id = getattr(channel_snapshot, "last_message_id", None)
+    if last_id:
+        return f"[Jump to ~where it happened](https://discord.com/channels/{guild.id}/{channel_snapshot.id}/{last_id})"
+    return f"[Jump to channel](https://discord.com/channels/{guild.id}/{channel_snapshot.id}) _(no messages yet)_"
+
+
+async def _send_error_alert(dest_channel, embed, attachment, max_retries=3, delay=2):
+    """Direct channel.send, not safe_send -- safe_send unconditionally overwrites
+    embed.color with the bot's standard embed_color, which would stomp the red/orange
+    severity color set below, and its file= handling assumes an *image* attachment
+    (sets embed.set_image(...)), not a plain text file."""
+    for attempt in range(1, max_retries + 1):
+        try:
+            if attachment is not None:
+                return await dest_channel.send(embed=embed, file=attachment)
+            return await dest_channel.send(embed=embed)
+        except Exception as e:
+            print(f"⚠️ Attempt {attempt}: failed to post error alert - {e}")
+            if attempt == max_retries:
+                return
+            await asyncio.sleep(delay)
+
+
+async def _report_error_to_discord(event, hint, channel_snapshot):
+    """Scheduled by _sentry_before_send for every sentry_sdk.capture_exception/
+    capture_message call (plus anything LoggingIntegration auto-captures). Must never let
+    an exception escape -- this runs as its own fire-and-forget task, so an uncaught error
+    here would only ever surface as an "exception was never retrieved" warning, silently
+    defeating the whole point of this feature."""
+    try:
+        if _error_alert_rate_limited():
+            return
+
+        exc_info = (hint or {}).get("exc_info")
+        if exc_info and exc_info[0] is not None:
+            tb_text = "".join(traceback.format_exception(*exc_info))
+            title = f"🔴 {exc_info[0].__name__}: {str(exc_info[1])[:200]}"
+            color = discord.Color.red()
+        else:
+            logentry = event.get("logentry") or {}
+            msg_text = (event.get("message") or logentry.get("formatted")
+                        or logentry.get("message") or "(no message/traceback captured)")
+            tb_text = msg_text
+            title = f"🟠 {msg_text[:200]}"
+            color = discord.Color.orange()
+
+        embed = discord.Embed(title=title[:256], color=color, timestamp=datetime.datetime.now(timezone.utc))
+        embed.add_field(name="Environment", value=prod_or_stage, inline=True)
+        embed.add_field(name="Level", value=str(event.get("level", "error")), inline=True)
+        logger_name = event.get("logger")
+        if logger_name:
+            embed.add_field(name="Logger", value=str(logger_name)[:256], inline=True)
+        embed.add_field(name="Chat context", value=_build_error_jump_link(channel_snapshot), inline=False)
+
+        attachment = None
+        body = f"```\n{tb_text}\n```"
+        if len(body) <= 1024:
+            embed.add_field(name="Traceback / message", value=body, inline=False)
+        else:
+            embed.add_field(name="Traceback / message",
+                             value=f"```\n{tb_text[:950]}\n...[truncated, see attachment]\n```", inline=False)
+            attachment = discord.File(io.BytesIO(tb_text.encode("utf-8")), filename="traceback.txt")
+
+        dest = get_bot().get_channel(ERROR_LOG_CHANNEL_ID)
+        if dest is None:
+            print(f"⚠️ _report_error_to_discord: channel {ERROR_LOG_CHANNEL_ID} not found")
+            return
+        await _send_error_alert(dest, embed, attachment)
+    except Exception as e:
+        print(f"⚠️ _report_error_to_discord itself failed: {e}")
+        # Deliberately not sentry_sdk.capture_exception(e) -- would recurse into before_send.
 
 
 # ---------------------------------------------------------------------------
