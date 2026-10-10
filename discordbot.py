@@ -471,7 +471,7 @@ WHERES_OKRA_CUSTOM_SPRITE_ENABLED = True
 # log_round_options_selection/log_minigame_selection) is always collected regardless of this
 # flag -- it's deliberately left on so there's already real per-player data to work with once
 # this flips on. Flip on (and ship the matching Okra Lab announcement) together at launch.
-ROUND_OPTION_DEFAULTS_ENABLED = False
+ROUND_OPTION_DEFAULTS_ENABLED = True
 
 
 async def sync_okra_lab_announcement(content, embed=None):
