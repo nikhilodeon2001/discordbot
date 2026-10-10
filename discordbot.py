@@ -450,7 +450,7 @@ async def send_question_queen_submit_ad():
 # the same text is correct whether this deploy is staging or prod.
 okra_lab_announcement_enabled = True
 okra_lab_announcement_text = (
-    "⭐🔁 **New: round-option shortcuts** — win enough rounds with your usual picks and the options menu starts offering \"My Default\", \"Most Used\", and \"Last Selected\" buttons, so you don't have to re-pick every time\n\n"
+    "⭐🔁 **New: round-option shortcuts** — the options menu can now offer one-click buttons for your usual picks: \"Last Selected\" shows up after your first pick, \"Most Used\" once you've picked the same combo 5+ times, and \"My Default\" once you've saved one with `/mydefaults`\n\n"
     "⚙️🥒 **New: `/mydefaults`** — save a default combo, copy in your most-used or last pick, or build a custom one from scratch. Flip on auto-apply and it's set for you the moment you win, no clicking needed\n"
 )
 okra_lab_announcement_show_new_badge = True
