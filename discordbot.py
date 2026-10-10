@@ -450,9 +450,13 @@ async def send_question_queen_submit_ad():
 # the same text is correct whether this deploy is staging or prod.
 okra_lab_announcement_enabled = True
 okra_lab_announcement_text = (
-    "⭐🔁 **New: round-option shortcuts** — win enough rounds with your usual picks and the options menu starts offering \"My Default\", \"Most Used\", and \"Last Selected\" buttons, so you don't have to re-pick every time\n\n"
-    "⚙️🥒 **New: `/mydefaults`** — save a default combo, copy in your most-used or last pick, or build a custom one from scratch. Flip on auto-apply and it's set for you the moment you win, no clicking needed\n"
+    "🎧🎤 **LyrIQ stopped flaking out** — the \"Unable to get year data\" error some of you hit is fixed; the year picker now always finds a year to play instead of occasionally coming up empty\n\n"
+    "🐶🦓 **Animal game's dog pile, fixed** — rounds were turning into 5-out-of-7 dog breeds way too often. Capped at one dog per round now, so the other 7,000+ species actually get a turn\n\n"
+    "⚽🟥 **New: Messi Mode** — turn off red cards for parroting the question/category for the rest of the round. Pick it from the round-end options menu, or toggle it any time with `#messi`. No ref's showing cards tonight\n"
 )
+# NOTE: when ROUND_OPTION_DEFAULTS_ENABLED flips to True, replace this with an announcement
+# for the round-option shortcuts / /mydefaults -- held back deliberately so we're not
+# advertising a feature that's still hidden behind the flag above.
 okra_lab_announcement_show_new_badge = True
 
 # Kill switch for the Where's Okra "winner-submitted custom sprite" reward: an Okrap
@@ -461,6 +465,13 @@ okra_lab_announcement_show_new_badge = True
 # _wheres_okra_offer_custom_sprite). Flip off to fully suppress the offer with zero change
 # to the existing win/reveal flow.
 WHERES_OKRA_CUSTOM_SPRITE_ENABLED = True
+
+# Kill switch for the round-end-options "My Default"/"Most Used"/"Last Selected" shortcuts,
+# auto-apply, and /mydefaults. Usage history (user_selection_history, via
+# log_round_options_selection/log_minigame_selection) is always collected regardless of this
+# flag -- it's deliberately left on so there's already real per-player data to work with once
+# this flips on. Flip on (and ship the matching Okra Lab announcement) together at launch.
+ROUND_OPTION_DEFAULTS_ENABLED = False
 
 
 async def sync_okra_lab_announcement(content, embed=None):
@@ -24478,9 +24489,13 @@ async def prompt_user_for_response(round_winner, winner_points, winner_coffees, 
     # instead of silently mutating global flags for whatever round is running by then.
     window_closed = {"value": False}
 
-    saved_default = await get_saved_default(round_winner_id)
-    most_used = await get_most_used_selection(round_winner_id, "round_end_options")
-    last_selected = await get_last_selected_selection(round_winner_id, "round_end_options")
+    saved_default = None
+    most_used = None
+    last_selected = None
+    if ROUND_OPTION_DEFAULTS_ENABLED:
+        saved_default = await get_saved_default(round_winner_id)
+        most_used = await get_most_used_selection(round_winner_id, "round_end_options")
+        last_selected = await get_last_selected_selection(round_winner_id, "round_end_options")
 
     # Auto-apply: an explicit opt-in toggle (set via /mydefaults, never on by default) that
     # applies the user's saved default the moment they win, with no click needed this round.
@@ -35087,6 +35102,10 @@ class MyDefaultsView(discord.ui.View):
 
 @bot.tree.command(name="mydefaults", description="See and update your saved round-end options default", guild=discord.Object(id=OKRAN_GUILD_ID))
 async def mydefaults(interaction: discord.Interaction):
+    if not ROUND_OPTION_DEFAULTS_ENABLED:
+        await interaction.response.send_message("❌ This feature isn't available yet.", ephemeral=True)
+        return
+
     user_id = interaction.user.id
 
     # Round-end options themselves are already gated behind winner_coffees > 0 (see
