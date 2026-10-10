@@ -11603,6 +11603,7 @@ async def ask_soundfx_challenge(winner, winner_id, num=5):
             await safe_send(channel, message)
 
             answered = False
+            audio_failed = False
 
             # Play the sound effect in the voice channel (looping)
             audio_task = None
@@ -11610,11 +11611,14 @@ async def ask_soundfx_challenge(winner, winner_id, num=5):
                 if voice_client:
                     # Create a background task to loop the audio
                     async def loop_audio():
+                        nonlocal audio_failed
+                        consecutive_failures = 0
                         try:
                             while not answered:
                                 if voice_client and not voice_client.is_playing():
                                     if answered:  # Double-check before playing
                                         break
+                                    attempt_start = time.monotonic()
                                     audio_source = discord.FFmpegPCMAudio(url)
                                     voice_client.play(audio_source)
                                     # Wait for audio to finish playing with very frequent checks
@@ -11624,6 +11628,17 @@ async def ask_soundfx_challenge(winner, winner_id, num=5):
                                     if answered and voice_client.is_playing():
                                         voice_client.stop()
                                         break
+                                    # ffmpeg exits almost instantly on a bad URL (e.g. a 404'd
+                                    # presigned S3 link) -- a handful of such failures in a row
+                                    # means this clip is broken, not that it just finished fast,
+                                    # so stop hammering it and let the outer loop skip ahead.
+                                    if time.monotonic() - attempt_start < 0.3:
+                                        consecutive_failures += 1
+                                        if consecutive_failures >= 3:
+                                            audio_failed = True
+                                            break
+                                    else:
+                                        consecutive_failures = 0
                                     # 0.5s delay before repeating (if not answered)
                                     if not answered:
                                         await asyncio.sleep(0.5)
@@ -11643,7 +11658,7 @@ async def ask_soundfx_challenge(winner, winner_id, num=5):
             def check(m):
                 return m.channel == target_channel and m.author != get_bot().user
 
-            while asyncio.get_event_loop().time() - start_time < 20 and not answered:
+            while asyncio.get_event_loop().time() - start_time < 20 and not answered and not audio_failed:
                 try:
                     timeout = 20 - (asyncio.get_event_loop().time() - start_time)
                     msg = await companion_bridge.wait_for_message_or_companion(
@@ -11688,11 +11703,14 @@ async def ask_soundfx_challenge(winner, winner_id, num=5):
             if voice_client and voice_client.is_playing():
                 voice_client.stop()
 
-            if not was_answered:
+            if audio_failed:
+                sentry_sdk.capture_message(f"Sound FX round audio repeatedly failed to play: url={url}")
+                await safe_send(channel, "\u200b\n\u26a0\ufe0f Couldn't load this round's audio, skipping.\n\u200b")
+            elif not was_answered:
                 await safe_send(channel, f"\u200b\n❌😢 No one got it.\n\n📝🧠 Answer: **{description.upper()}**\n\u200b")
 
 
-            await asyncio.sleep(5)
+            await asyncio.sleep(1 if audio_failed else 5)
 
         except Exception as e:
             sentry_sdk.capture_exception(e)
@@ -12092,6 +12110,7 @@ async def ask_audio_music_challenge(winner, winner_id, num=5):
             await safe_send(channel, message)
 
             answered = False
+            audio_failed = False
 
             # Play the sound effect in the voice channel (looping)
             audio_task = None
@@ -12099,11 +12118,14 @@ async def ask_audio_music_challenge(winner, winner_id, num=5):
                 if voice_client:
                     # Create a background task to loop the audio
                     async def loop_audio():
+                        nonlocal audio_failed
+                        consecutive_failures = 0
                         try:
                             while not answered:
                                 if voice_client and not voice_client.is_playing():
                                     if answered:  # Double-check before playing
                                         break
+                                    attempt_start = time.monotonic()
                                     audio_source = discord.FFmpegPCMAudio(url)
                                     voice_client.play(audio_source)
                                     # Wait for audio to finish playing with very frequent checks
@@ -12113,6 +12135,17 @@ async def ask_audio_music_challenge(winner, winner_id, num=5):
                                     if answered and voice_client.is_playing():
                                         voice_client.stop()
                                         break
+                                    # ffmpeg exits almost instantly on a bad URL (e.g. a 404'd
+                                    # presigned S3 link) -- a handful of such failures in a row
+                                    # means this clip is broken, not that it just finished fast,
+                                    # so stop hammering it and let the outer loop skip ahead.
+                                    if time.monotonic() - attempt_start < 0.3:
+                                        consecutive_failures += 1
+                                        if consecutive_failures >= 3:
+                                            audio_failed = True
+                                            break
+                                    else:
+                                        consecutive_failures = 0
                                     # 0.5s delay before repeating (if not answered)
                                     if not answered:
                                         await asyncio.sleep(0.5)
@@ -12132,7 +12165,7 @@ async def ask_audio_music_challenge(winner, winner_id, num=5):
             def check(m):
                 return m.channel == target_channel and m.author != get_bot().user
 
-            while asyncio.get_event_loop().time() - start_time < 20 and not answered:
+            while asyncio.get_event_loop().time() - start_time < 20 and not answered and not audio_failed:
                 try:
                     timeout = 20 - (asyncio.get_event_loop().time() - start_time)
                     msg = await companion_bridge.wait_for_message_or_companion(
@@ -12177,11 +12210,14 @@ async def ask_audio_music_challenge(winner, winner_id, num=5):
             if voice_client and voice_client.is_playing():
                 voice_client.stop()
 
-            if not was_answered:
+            if audio_failed:
+                sentry_sdk.capture_message(f"Audio-music round audio repeatedly failed to play: url={url}")
+                await safe_send(channel, "\u200b\n\u26a0\ufe0f Couldn't load this song's audio, skipping.\n\u200b")
+            elif not was_answered:
                 await safe_send(channel, f"\u200b\n❌😢 No one got it.\n\n📝🧠 Answer: **{answer_string}**\n\u200b")
 
 
-            await asyncio.sleep(5)
+            await asyncio.sleep(1 if audio_failed else 5)
 
         except Exception as e:
             sentry_sdk.capture_exception(e)
@@ -24612,17 +24648,25 @@ async def prompt_user_for_response(round_winner, winner_points, winner_coffees, 
 
     # Quick shortcuts -- "My Default" / "Most Used" / "Last Selected" -- each only offered
     # when the underlying per-user data actually exists, so a brand-new user with no saved
-    # default or history sees none of these buttons (see WofModifierView).
+    # default or history sees none of these buttons (see WofModifierView). Wrapped in its own
+    # try/except -- these are a convenience on top of the round-options flow, not something the
+    # round itself needs, so a bug here should degrade to "no shortcuts" rather than reaching
+    # the catch-all in start_trivia() and aborting the whole in-progress round/session.
     shortcuts = []
-    if saved_default:
-        shortcuts.append({"label": "⭐ My Default", "keywords": saved_default["keywords"],
-                           "delay": saved_default.get("delay"), "answer": saved_default.get("answer")})
-    if most_used:
-        shortcuts.append({"label": "🔁 Most Used", "keywords": most_used["keywords"],
-                           "delay": most_used.get("delay"), "answer": most_used.get("answer")})
-    if last_selected:
-        shortcuts.append({"label": "🕐 Last Selected", "keywords": last_selected["keywords"],
-                           "delay": last_selected.get("delay"), "answer": last_selected.get("answer")})
+    try:
+        if saved_default:
+            shortcuts.append({"label": "⭐ My Default", "keywords": saved_default.get("keywords", []),
+                               "delay": saved_default.get("delay"), "answer": saved_default.get("answer")})
+        if most_used:
+            shortcuts.append({"label": "🔁 Most Used", "keywords": most_used.get("keywords", []),
+                               "delay": most_used.get("delay"), "answer": most_used.get("answer")})
+        if last_selected:
+            shortcuts.append({"label": "🕐 Last Selected", "keywords": last_selected.get("keywords", []),
+                               "delay": last_selected.get("delay"), "answer": last_selected.get("answer")})
+    except Exception as e:
+        sentry_sdk.capture_exception(e)
+        print(f"⚠️ Error building round-options shortcuts: {e}")
+        shortcuts = []
 
     view = WofModifierView(keyword_config, winner_coffees, round_winner_id, window_closed, round_pick,
                             timeout=round_options_window, shortcuts=shortcuts)
@@ -24742,7 +24786,7 @@ async def generate_custom_trivia_questions(category):
 
     try:
         response = await openai_client.chat.completions.create(
-            model="gpt-5.6-sol",
+            model="gpt-4.1",
             messages=[
                 {"role": "system", "content": "You are a trivia question generator. Always respond with valid JSON only."},
                 {"role": "user", "content": prompt}
@@ -30470,11 +30514,17 @@ async def get_last_selected_round_options(user_id):
 
 async def get_saved_default(user_id):
     """Returns the user's saved round-end-options default (incl. "auto_apply"), or None if
-    they've never saved one."""
+    they've never saved one. "round_end_options" alone isn't enough to tell -- it's also where
+    combo_counts/last_selected history lives, created the first time anyone picks modifiers at
+    all, long before they ever touch /mydefaults -- so this checks for "saved_at", which only
+    set_saved_default writes, to distinguish an actual saved default from plain history."""
     try:
         db = await connect_to_mongodb()
         doc = await db.user_option_defaults.find_one({"_id": user_id})
-        return doc.get("round_end_options") if doc else None
+        section = (doc or {}).get("round_end_options")
+        if not section or "saved_at" not in section:
+            return None
+        return section
     except Exception as e:
         sentry_sdk.capture_exception(e)
         print(f"⚠️ get_saved_default: {e}")
@@ -30483,15 +30533,21 @@ async def get_saved_default(user_id):
 
 async def set_saved_default(user_id, value, display, keywords, delay=None, answer=None):
     """Explicitly saves (or replaces) the user's round-end-options default. Always resets
-    auto_apply to False -- saving/replacing a default doesn't itself turn auto-apply on."""
+    auto_apply to False -- saving/replacing a default doesn't itself turn auto-apply on. Sets
+    each round_end_options.* field individually rather than replacing the whole subdocument, so
+    this doesn't clobber the combo_counts/last_selected history living alongside it."""
     db = await connect_to_mongodb()
     await db.user_option_defaults.update_one(
         {"_id": user_id},
-        {"$set": {"round_end_options": {
-            "value": value, "display": display, "keywords": keywords,
-            "delay": delay, "answer": answer,
-            "saved_at": datetime.datetime.utcnow(), "auto_apply": False,
-        }}},
+        {"$set": {
+            "round_end_options.value": value,
+            "round_end_options.display": display,
+            "round_end_options.keywords": keywords,
+            "round_end_options.delay": delay,
+            "round_end_options.answer": answer,
+            "round_end_options.saved_at": datetime.datetime.utcnow(),
+            "round_end_options.auto_apply": False,
+        }},
         upsert=True,
     )
 
