@@ -22818,10 +22818,11 @@ async def ask_wof_number(winner, winner_id, cached_coffees=None, menu_text=None,
                 )
                 content = message.content.strip().lower()
                 responder_id = message.author.id
-                if responder_id == winner_id and cached_coffees is not None:
-                    winner_coffees = cached_coffees
-                else:
-                    winner_coffees = await get_coffees(responder_id)
+                # Always fetch fresh, for the winner just like every other responder --
+                # this is the moment the "Okrans Only" gate below is decided, so a winner
+                # who became an Okran (e.g. via /bump -> Bumper King) since the round
+                # started is recognized for this pick, not just next round.
+                winner_coffees = await get_coffees(responder_id)
 
                 if content == "x":
                     return "x"
@@ -24519,8 +24520,10 @@ async def process_round_options(round_winner, winner_points, round_winner_id, wi
     if round_winner is None:
         return
 
-    if winner_coffees is None:
-        winner_coffees = await get_coffees(round_winner_id)
+    # Always re-fetch fresh rather than trusting the caller's round-start snapshot --
+    # this is the moment the Okrans-only gameplay-options menu gate is decided, so a
+    # winner who became an Okran since the round started is recognized this round.
+    winner_coffees = await get_coffees(round_winner_id)
 
     if winner_coffees > 0:
         message = f"\u200b\n🍔🍟 **<@{round_winner_id}>**, what's your order?\n"
