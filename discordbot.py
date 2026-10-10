@@ -6551,6 +6551,22 @@ async def _apply_keyword_flag(keyword, keyword_config, winner_coffees, round_win
     apply_fn(round_winner_id)
 
 
+async def _apply_delay_value(delay_value, round_winner_id):
+    """Applies an already-clamped (3-15) delay-between-questions value + announcement,
+    identically whether it came from typed chat, the modal, a shortcut, or auto-apply."""
+    global time_between_questions
+    time_between_questions = delay_value
+    await safe_send(channel, f"⏱️⏳ **<@{round_winner_id}>** has set {delay_value}s between questions.")
+
+
+async def _apply_answer_value(answer_value, round_winner_id):
+    """Applies an already-clamped (3-question_time_default) time-to-answer value +
+    announcement, identically across every entry point -- see _apply_delay_value."""
+    global question_time
+    question_time = answer_value
+    await safe_send(channel, f"⏱️❓ **<@{round_winner_id}>** has set {answer_value}s to answer.")
+
+
 class WofModifierModal(discord.ui.Modal, title="Set Round Modifiers"):
     """One-submission multi-select for prompt_user_for_response()'s keyword flags, mirroring
     DevicePollModal's Label-wrapped multi-select Select pattern -- avoids a separate Confirm
@@ -6570,6 +6586,12 @@ class WofModifierModal(discord.ui.Modal, title="Set Round Modifiers"):
             max_values=len(_KEYWORD_EFFECTS),
             required=False,
         ),
+    )
+    delay_input = discord.ui.TextInput(
+        label="Delay between questions (3-15s)", placeholder="e.g. 8", required=False, max_length=3,
+    )
+    answer_input = discord.ui.TextInput(
+        label="Time to answer (seconds)", placeholder="e.g. 12", required=False, max_length=3,
     )
 
     def __init__(self, keyword_config, winner_coffees, round_winner_id, window_closed, round_pick):
@@ -6603,8 +6625,29 @@ class WofModifierModal(discord.ui.Modal, title="Set Round Modifiers"):
         )
         for keyword in selected:
             await _apply_keyword_flag(keyword, self.keyword_config, self.winner_coffees, self.round_winner_id)
+
+        delay_value = None
+        if self.delay_input.value.strip():
+            try:
+                delay_value = max(3, min(int(self.delay_input.value.strip()), 15))
+                await _apply_delay_value(delay_value, self.round_winner_id)
+            except ValueError:
+                pass
+
+        answer_value = None
+        if self.answer_input.value.strip():
+            try:
+                answer_value = max(3, min(int(self.answer_input.value.strip()), question_time_default))
+                await _apply_answer_value(answer_value, self.round_winner_id)
+            except ValueError:
+                pass
+
         self.round_pick["interacted"] = True
         self.round_pick["keywords"].update(selected)
+        if delay_value is not None:
+            self.round_pick["delay"] = delay_value
+        if answer_value is not None:
+            self.round_pick["answer"] = answer_value
 
 
 class WofModifierView(RestrictedView):
@@ -6616,7 +6659,7 @@ class WofModifierView(RestrictedView):
     `shortcuts` (optional) adds up to 3 extra one-click buttons -- "My Default" / "Most Used" /
     "Last Selected" -- each only passed in when the underlying per-user data actually exists
     (see prompt_user_for_response), so a user with no history yet sees none of them. Each entry
-    is {"label": str, "keywords": [str, ...]}.
+    is {"label": str, "keywords": [str, ...], "delay": int|None, "answer": int|None}.
 
     `round_pick` is the shared accumulator (see prompt_user_for_response) that typed chat, the
     modal, and these shortcut buttons all contribute to -- nothing records anything itself
@@ -6641,15 +6684,25 @@ class WofModifierView(RestrictedView):
 
         for shortcut in (shortcuts or []):
             shortcut_button = discord.ui.Button(label=shortcut["label"][:80], style=discord.ButtonStyle.secondary)
-            shortcut_button.callback = self._make_shortcut_callback(shortcut["keywords"])
+            shortcut_button.callback = self._make_shortcut_callback(
+                shortcut["keywords"], shortcut.get("delay"), shortcut.get("answer")
+            )
             self.add_item(shortcut_button)
 
-    def _make_shortcut_callback(self, keywords):
+    def _make_shortcut_callback(self, keywords, delay=None, answer=None):
         async def _callback(interaction: discord.Interaction):
             for keyword in keywords:
                 await _apply_keyword_flag(keyword, self.keyword_config, self.winner_coffees, self.round_winner_id)
+            if delay is not None:
+                await _apply_delay_value(delay, self.round_winner_id)
+            if answer is not None:
+                await _apply_answer_value(answer, self.round_winner_id)
             self.round_pick["interacted"] = True
             self.round_pick["keywords"].update(keywords)
+            if delay is not None:
+                self.round_pick["delay"] = delay
+            if answer is not None:
+                self.round_pick["answer"] = answer
             await self._resolve(interaction, "x")
         return _callback
 
@@ -24501,25 +24554,33 @@ async def prompt_user_for_response(round_winner, winner_points, winner_coffees, 
     # rather than recording anything themselves mid-window, so the one record made after the
     # window closes reflects the true, fully combined set of everything actually applied this
     # round (see WofModifierView/WofModifierModal).
-    round_pick = {"keywords": set(), "interacted": False}
+    round_pick = {"keywords": set(), "interacted": False, "delay": None, "answer": None}
 
     saved_default = None
     if ROUND_OPTION_DEFAULTS_ENABLED:
         saved_default = await get_saved_default(round_winner_id)
 
     # Auto-apply: an explicit opt-in toggle (set via /mydefaults, never on by default). When
-    # on, the user doesn't get a choice this round at all -- their saved default is announced
-    # up front (before each modifier's own flavor-text announcement, so it reads as "here's
-    # what's coming" rather than a surprise recap after the fact), applied, and the round-end
-    # options window is skipped entirely. To change what auto-applies, they go to /mydefaults;
-    # there's no override-this-round path once auto-apply is on.
-    if saved_default and saved_default.get("auto_apply") and saved_default["keywords"]:
+    # on, the user doesn't get a choice this round at all -- their saved default (keywords plus
+    # any saved delay/answer) is announced up front (before each modifier's own flavor-text
+    # announcement, so it reads as "here's what's coming" rather than a surprise recap after
+    # the fact), applied, and the round-end options window is skipped entirely. To change what
+    # auto-applies, they go to /mydefaults; there's no override-this-round path once auto-apply
+    # is on.
+    if saved_default and saved_default.get("auto_apply") and (
+        saved_default.get("keywords") or saved_default.get("delay") is not None or saved_default.get("answer") is not None
+    ):
         await safe_send(channel, f"⭐ Auto-applying **<@{round_winner_id}>**'s saved default: {saved_default['display']}.")
         for keyword in saved_default["keywords"]:
             await _apply_keyword_flag(keyword, keyword_config, winner_coffees, round_winner_id)
+        if saved_default.get("delay") is not None:
+            await _apply_delay_value(saved_default["delay"], round_winner_id)
+        if saved_default.get("answer") is not None:
+            await _apply_answer_value(saved_default["answer"], round_winner_id)
         await record_round_options_pick(
             round_winner_id, saved_default["keywords"],
             entry_point="round_end_options_auto_apply",
+            delay=saved_default.get("delay"), answer=saved_default.get("answer"),
         )
         await safe_send(channel, f"\U0001f3c1 **<@{round_winner_id}>** is all set. Let's get to it!")
         await save_round_options_to_db()
@@ -24536,11 +24597,14 @@ async def prompt_user_for_response(round_winner, winner_points, winner_coffees, 
     # default or history sees none of these buttons (see WofModifierView).
     shortcuts = []
     if saved_default:
-        shortcuts.append({"label": "⭐ My Default", "keywords": saved_default["keywords"]})
+        shortcuts.append({"label": "⭐ My Default", "keywords": saved_default["keywords"],
+                           "delay": saved_default.get("delay"), "answer": saved_default.get("answer")})
     if most_used:
-        shortcuts.append({"label": "🔁 Most Used", "keywords": most_used["keywords"]})
+        shortcuts.append({"label": "🔁 Most Used", "keywords": most_used["keywords"],
+                           "delay": most_used.get("delay"), "answer": most_used.get("answer")})
     if last_selected:
-        shortcuts.append({"label": "🕐 Last Selected", "keywords": last_selected["keywords"]})
+        shortcuts.append({"label": "🕐 Last Selected", "keywords": last_selected["keywords"],
+                           "delay": last_selected.get("delay"), "answer": last_selected.get("answer")})
 
     view = WofModifierView(keyword_config, winner_coffees, round_winner_id, window_closed, round_pick,
                             timeout=round_options_window, shortcuts=shortcuts)
@@ -24565,14 +24629,16 @@ async def prompt_user_for_response(round_winner, winner_points, winner_coffees, 
                 delay_match = re.search(r'\bdelay\s*(\d+)\b', message_content)
                 if delay_match:
                     delay_value = max(3, min(int(delay_match.group(1)), 15))
-                    time_between_questions = delay_value
-                    await safe_send(channel, f"\u23f1\ufe0f\u23f3 **<@{round_winner_id}>** has set {delay_value}s between questions.")
+                    await _apply_delay_value(delay_value, round_winner_id)
+                    round_pick["interacted"] = True
+                    round_pick["delay"] = delay_value
 
                 answer_match = re.search(r'\banswer\s*(\d+)\b', message_content)
                 if answer_match:
                     answer_value = max(3, min(int(answer_match.group(1)), question_time_default))
-                    question_time = answer_value
-                    await safe_send(channel, f"\u23f1\ufe0f\u2753 **<@{round_winner_id}>** has set {answer_value}s to answer.")
+                    await _apply_answer_value(answer_value, round_winner_id)
+                    round_pick["interacted"] = True
+                    round_pick["answer"] = answer_value
 
                 # Keyword flags -- one shared table (_KEYWORD_EFFECTS) drives both this typed-chat
                 # substring match and WofModifierModal's multi-select, so each keyword's coffee-gate
@@ -24607,6 +24673,7 @@ async def prompt_user_for_response(round_winner, winner_points, winner_coffees, 
         await record_round_options_pick(
             round_winner_id, sorted(round_pick["keywords"]),
             entry_point="round_end_options_picker",
+            delay=round_pick["delay"], answer=round_pick["answer"],
         )
 
 
@@ -30273,21 +30340,34 @@ def _canonical_minigame_key_name(number_or_name):
     return _recent_minigame_key_name(number_or_name)
 
 
-def _combo_key(keywords):
-    """Canonical grouping key for a round-end-options combo. "_none_" (not "") for the
-    empty-combo case -- Mongo dynamic update paths (round_end_options.combo_counts.<key>.count)
+def _combo_key(keywords, delay=None, answer=None):
+    """Canonical grouping key for a round-end-options combo -- keywords plus, if present, the
+    delay/answer numbers, so a combo that differs only by delay/answer counts as its own
+    distinct pick (same "picked together" principle as keywords). "_none_" (not "") for the
+    fully-empty case -- Mongo dynamic update paths (round_end_options.combo_counts.<key>.count)
     can't end in an empty segment."""
-    return "+".join(sorted(keywords)) or "_none_"
+    parts = sorted(keywords)
+    if delay is not None:
+        parts.append(f"delay{delay}")
+    if answer is not None:
+        parts.append(f"answer{answer}")
+    return "+".join(parts) or "_none_"
 
 
-async def record_round_options_pick(user_id, keywords, *, entry_point):
-    """Records one round-end-options pick -- the full combo actually applied for a round,
-    however many separate actions (chat/modal/shortcut) it took to assemble (see
-    prompt_user_for_response's round_pick accumulator). One atomic upsert: increments that
-    exact combo's counter and overwrites last_selected, both under round_end_options."""
+async def record_round_options_pick(user_id, keywords, *, entry_point, delay=None, answer=None):
+    """Records one round-end-options pick -- the full combo actually applied for a round
+    (keywords plus any delay/answer numbers), however many separate actions (chat/modal/
+    shortcut) it took to assemble (see prompt_user_for_response's round_pick accumulator). One
+    atomic upsert: increments that exact combo's counter and overwrites last_selected, both
+    under round_end_options."""
     sorted_keywords = sorted(keywords)
-    key = _combo_key(sorted_keywords)
-    display = ", ".join(_KEYWORD_EFFECTS[k][2] for k in sorted_keywords) if sorted_keywords else "No modifiers"
+    key = _combo_key(sorted_keywords, delay, answer)
+    display_parts = [_KEYWORD_EFFECTS[k][2] for k in sorted_keywords]
+    if delay is not None:
+        display_parts.append(f"Delay: {delay}s")
+    if answer is not None:
+        display_parts.append(f"Answer: {answer}s")
+    display = ", ".join(display_parts) if display_parts else "No modifiers"
     db = await connect_to_mongodb()
     await db.user_option_defaults.update_one(
         {"_id": user_id},
@@ -30296,8 +30376,11 @@ async def record_round_options_pick(user_id, keywords, *, entry_point):
             "$set": {
                 f"round_end_options.combo_counts.{key}.display": display,
                 f"round_end_options.combo_counts.{key}.keywords": sorted_keywords,
+                f"round_end_options.combo_counts.{key}.delay": delay,
+                f"round_end_options.combo_counts.{key}.answer": answer,
                 "round_end_options.last_selected": {
                     "value": key, "display": display, "keywords": sorted_keywords,
+                    "delay": delay, "answer": answer,
                     "selected_at": datetime.datetime.utcnow(),
                 },
             },
@@ -30346,7 +30429,8 @@ async def get_most_used_round_options(user_id):
         top_key, top = max(combo_counts.items(), key=lambda item: item[1]["count"])
         if top["count"] < MOST_USED_MIN_COUNT:
             return None
-        return {"value": top_key, "display": top["display"], "keywords": top.get("keywords")}
+        return {"value": top_key, "display": top["display"], "keywords": top.get("keywords"),
+                "delay": top.get("delay"), "answer": top.get("answer")}
     except Exception as e:
         sentry_sdk.capture_exception(e)
         print(f"⚠️ get_most_used_round_options: {e}")
@@ -30379,7 +30463,7 @@ async def get_saved_default(user_id):
         return None
 
 
-async def set_saved_default(user_id, value, display, keywords):
+async def set_saved_default(user_id, value, display, keywords, delay=None, answer=None):
     """Explicitly saves (or replaces) the user's round-end-options default. Always resets
     auto_apply to False -- saving/replacing a default doesn't itself turn auto-apply on."""
     db = await connect_to_mongodb()
@@ -30387,6 +30471,7 @@ async def set_saved_default(user_id, value, display, keywords):
         {"_id": user_id},
         {"$set": {"round_end_options": {
             "value": value, "display": display, "keywords": keywords,
+            "delay": delay, "answer": answer,
             "saved_at": datetime.datetime.utcnow(), "auto_apply": False,
         }}},
         upsert=True,
@@ -35061,6 +35146,12 @@ class RoundOptionsDefaultModal(discord.ui.Modal, title="Custom Default"):
             required=False,
         ),
     )
+    delay_input = discord.ui.TextInput(
+        label="Delay between questions (3-15s)", placeholder="e.g. 8", required=False, max_length=3,
+    )
+    answer_input = discord.ui.TextInput(
+        label="Time to answer (seconds)", placeholder="e.g. 12", required=False, max_length=3,
+    )
 
     def __init__(self, user_id):
         super().__init__()
@@ -35068,9 +35159,30 @@ class RoundOptionsDefaultModal(discord.ui.Modal, title="Custom Default"):
 
     async def on_submit(self, interaction: discord.Interaction):
         keywords = sorted(self.flags_label.component.values)
-        value = "+".join(keywords)
-        display = ", ".join(_KEYWORD_EFFECTS[k][2] for k in keywords) if keywords else "No modifiers"
-        await set_saved_default(self.user_id, value, display, keywords)
+
+        delay = None
+        if self.delay_input.value.strip():
+            try:
+                delay = max(3, min(int(self.delay_input.value.strip()), 15))
+            except ValueError:
+                pass
+
+        answer = None
+        if self.answer_input.value.strip():
+            try:
+                answer = max(3, min(int(self.answer_input.value.strip()), question_time_default))
+            except ValueError:
+                pass
+
+        value = _combo_key(keywords, delay, answer)
+        display_parts = [_KEYWORD_EFFECTS[k][2] for k in keywords]
+        if delay is not None:
+            display_parts.append(f"Delay: {delay}s")
+        if answer is not None:
+            display_parts.append(f"Answer: {answer}s")
+        display = ", ".join(display_parts) if display_parts else "No modifiers"
+
+        await set_saved_default(self.user_id, value, display, keywords, delay=delay, answer=answer)
         await interaction.response.send_message(f"✅ Saved your default: **{display}**.", ephemeral=True)
 
 
@@ -35113,7 +35225,8 @@ class MyDefaultsView(discord.ui.View):
 
     def _make_set_default_callback(self, source):
         async def _callback(interaction: discord.Interaction):
-            await set_saved_default(self.user_id, source["value"], source["display"], source["keywords"])
+            await set_saved_default(self.user_id, source["value"], source["display"], source["keywords"],
+                                     delay=source.get("delay"), answer=source.get("answer"))
             await interaction.response.send_message(f"✅ Default set to **{source['display']}**.", ephemeral=True)
         return _callback
 
