@@ -28695,6 +28695,21 @@ async def ensure_category_emoji(category):
         print(f"⚠️ ensure_category_emoji: failed for '{category}': {e}")
 
 
+async def seed_builtin_category_emojis():
+    """Greg's Nightmare's math categories (gregs_nightmare.CATEGORIES) feed into the main
+    trivia rotation via get_math_question(), which only forwards category['display'] -- not
+    category['emoji'] -- so get_category_emoji() (which only knows about category_emojis
+    entries populated via the user-submission approval flow) has never heard of these
+    categories and falls back to the generic "❓❔" placeholder. Runs once at startup so each
+    of them goes through ensure_category_emoji() just like any other category, rather than
+    reusing gregs_nightmare.CATEGORIES' own emoji field directly -- that field is a single
+    emoji per category (e.g. "⚡" for Exponents & Logs), while every real category_emojis
+    entry is a Claude-picked *pair* (e.g. "🍺🍻" for Beer); seeding the single-emoji version
+    verbatim would make these categories look inconsistent everywhere else they're shown."""
+    for cat in gregs_nightmare.CATEGORIES:
+        await ensure_category_emoji(cat["display"])
+
+
 _TITLE_CASE_SKIP = {"a", "an", "the", "of", "in", "on", "at", "to", "for", "and", "or", "but", "nor", "with", "by", "from"}
 
 def _jeopardy_title_case(text):
@@ -34774,6 +34789,12 @@ async def on_ready():
     except Exception as _e:
         sentry_sdk.capture_exception(_e)
         print(f"⚠️ flag index startup hook: {_e}")
+
+    try:
+        await seed_builtin_category_emojis()
+    except Exception as _e:
+        sentry_sdk.capture_exception(_e)
+        print(f"⚠️ built-in category emoji seeding startup hook: {_e}")
 
     try:
         await ensure_simply_streaks_indexes()
