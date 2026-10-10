@@ -24486,26 +24486,31 @@ async def prompt_user_for_response(round_winner, winner_points, winner_coffees, 
     window_closed = {"value": False}
 
     saved_default = None
-    most_used = None
-    last_selected = None
     if ROUND_OPTION_DEFAULTS_ENABLED:
         saved_default = await get_saved_default(round_winner_id)
-        most_used = await get_most_used_selection(round_winner_id, "round_end_options")
-        last_selected = await get_last_selected_selection(round_winner_id, "round_end_options")
 
-    # Auto-apply: an explicit opt-in toggle (set via /mydefaults, never on by default) that
-    # applies the user's saved default the moment they win, with no click needed this round.
-    # The normal picker below still opens afterward exactly as usual, so they can still layer
-    # on more modifiers or override via chat/modal/shortcuts -- this only removes the need to
-    # click for their usual combo, it doesn't lock the round.
+    # Auto-apply: an explicit opt-in toggle (set via /mydefaults, never on by default). When
+    # on, the user doesn't get a choice this round at all -- their saved default is announced
+    # up front (before each modifier's own flavor-text announcement, so it reads as "here's
+    # what's coming" rather than a surprise recap after the fact), applied, and the round-end
+    # options window is skipped entirely. To change what auto-applies, they go to /mydefaults;
+    # there's no override-this-round path once auto-apply is on.
     if saved_default and saved_default.get("auto_apply") and saved_default["keywords"]:
+        await safe_send(channel, f"⭐ Auto-applying **<@{round_winner_id}>**'s saved default: {saved_default['display']}.")
         for keyword in saved_default["keywords"]:
             await _apply_keyword_flag(keyword, keyword_config, winner_coffees, round_winner_id)
-        await safe_send(channel, f"⭐ Auto-applying **<@{round_winner_id}>**'s saved default: {saved_default['display']}.")
         await log_round_options_selection(
             round_winner_id, saved_default["keywords"],
             entry_point="round_end_options_auto_apply", channel_id=target_channel.id,
         )
+        await save_round_options_to_db()
+        return
+
+    most_used = None
+    last_selected = None
+    if ROUND_OPTION_DEFAULTS_ENABLED:
+        most_used = await get_most_used_selection(round_winner_id, "round_end_options")
+        last_selected = await get_last_selected_selection(round_winner_id, "round_end_options")
 
     # Quick shortcuts -- "My Default" / "Most Used" / "Last Selected" -- each only offered
     # when the underlying per-user data actually exists, so a brand-new user with no saved
@@ -35121,9 +35126,14 @@ async def mydefaults(interaction: discord.Interaction):
     def _describe(entry):
         return entry["display"] if entry else "Not set"
 
-    auto_apply_line = ""
     if saved_default:
         auto_apply_line = f"\nAuto-apply each round: **{'On' if saved_default.get('auto_apply') else 'Off'}**"
+    else:
+        # There's nothing to auto-apply without a default yet -- surfaced here so a user who's
+        # never set one knows the toggle exists and how to unlock it, rather than it silently
+        # never appearing (the button itself still only shows once saved_default is set, see
+        # MyDefaultsView).
+        auto_apply_line = "\nAuto-apply each round: *(set a default below to unlock this)*"
 
     message = (
         "🎮 **Your Round-End Options**\n"
