@@ -5576,7 +5576,7 @@ class NewIntroModal(discord.ui.Modal, title="Generate Intro Image"):
         component=discord.ui.Select(
             options=[
                 discord.SelectOption(label="gpt-image-1-mini (default)", value="gpt-image-1-mini", default=True),
-                discord.SelectOption(label="gpt-image-1", value="gpt-image-1"),
+                discord.SelectOption(label="gpt-image-2.5-flare", value="gpt-image-2.5-flare"),
             ],
             min_values=1,
             max_values=1,
@@ -5728,7 +5728,7 @@ class NewAvatarModal(discord.ui.Modal, title="Generate Custom Avatar"):
         component=discord.ui.Select(
             options=[
                 discord.SelectOption(label="gpt-image-1-mini (default)", value="gpt-image-1-mini", default=True),
-                discord.SelectOption(label="gpt-image-1", value="gpt-image-1"),
+                discord.SelectOption(label="gpt-image-2.5-flare", value="gpt-image-2.5-flare"),
             ],
             min_values=1,
             max_values=1,
@@ -10679,7 +10679,7 @@ async def _wheres_okra_generate_custom_sprite(found_by, description):
         prompt = wheres_okra.build_custom_sprite_prompt(description)
         try:
             response = await openai_client.images.edit(
-                model="gpt-image-1",
+                model="gpt-image-2.5-flare",
                 image=("okra_chef.png", mascot_bytes, "image/png"),
                 prompt=prompt,
                 size="1024x1024",
@@ -24742,7 +24742,7 @@ async def generate_custom_trivia_questions(category):
 
     try:
         response = await openai_client.chat.completions.create(
-            model="gpt-4-turbo",
+            model="gpt-5.6-sol",
             messages=[
                 {"role": "system", "content": "You are a trivia question generator. Always respond with valid JSON only."},
                 {"role": "user", "content": prompt}
