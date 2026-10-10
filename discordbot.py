@@ -35088,6 +35088,17 @@ class MyDefaultsView(discord.ui.View):
 @bot.tree.command(name="mydefaults", description="See and update your saved round-end options default", guild=discord.Object(id=OKRAN_GUILD_ID))
 async def mydefaults(interaction: discord.Interaction):
     user_id = interaction.user.id
+
+    # Round-end options themselves are already gated behind winner_coffees > 0 (see
+    # process_round_options -- a non-Okran winner never even sees the picker these defaults
+    # apply to), so /mydefaults is gated here too rather than letting a non-Okran set up
+    # defaults/auto-apply they could never actually use.
+    if await get_coffees(user_id) <= 0:
+        await interaction.response.send_message(
+            "🙏😔 Sorry — `/mydefaults` is for **Okrans Only** 🥒.", ephemeral=True
+        )
+        return
+
     saved_default = await get_saved_default(user_id)
     most_used = await get_most_used_selection(user_id, "round_end_options")
     last_selected = await get_last_selected_selection(user_id, "round_end_options")
