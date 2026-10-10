@@ -5940,13 +5940,25 @@ class RestrictedView(discord.ui.View):
             self.future.cancel()
 
     async def _resolve(self, interaction: discord.Interaction, value: str):
+        # Normally this is the first (and only) response to `interaction`. A caller that does
+        # slow work (several sequential safe_send calls) before resolving can instead defer()
+        # up front to beat Discord's 3-second ack window, then land here with the interaction
+        # already responded to -- edit_original_response() is the correct follow-up in that
+        # case, since interaction.response can only be used once per interaction.
+        already_responded = interaction.response.is_done()
         if self.future.done():
-            await interaction.response.send_message("✅ Already answered!", ephemeral=True)
+            if already_responded:
+                await interaction.followup.send("✅ Already answered!", ephemeral=True)
+            else:
+                await interaction.response.send_message("✅ Already answered!", ephemeral=True)
             return
         self.future.set_result(ComponentChoice(value, interaction))
         for item in self.children:
             item.disabled = True
-        await interaction.response.edit_message(view=self)
+        if already_responded:
+            await interaction.edit_original_response(view=self)
+        else:
+            await interaction.response.edit_message(view=self)
 
     async def reset(self):
         """Re-arm the view for another pick after the caller rejects the resolved selection
@@ -6691,6 +6703,12 @@ class WofModifierView(RestrictedView):
 
     def _make_shortcut_callback(self, keywords, delay=None, answer=None):
         async def _callback(interaction: discord.Interaction):
+            # Acknowledge immediately -- applying several keywords plus delay/answer each
+            # sends its own channel message sequentially, which can exceed Discord's 3-second
+            # ack window for a component interaction. Deferring here first means _resolve()
+            # below (which detects this via interaction.response.is_done()) can take as long
+            # as it needs to finish up. See RestrictedView._resolve.
+            await interaction.response.defer()
             for keyword in keywords:
                 await _apply_keyword_flag(keyword, self.keyword_config, self.winner_coffees, self.round_winner_id)
             if delay is not None:
