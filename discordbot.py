@@ -24521,6 +24521,7 @@ async def prompt_user_for_response(round_winner, winner_points, winner_coffees, 
             round_winner_id, saved_default["keywords"],
             entry_point="round_end_options_auto_apply",
         )
+        await safe_send(channel, f"\U0001f3c1 **<@{round_winner_id}>** is all set. Let's get to it!")
         await save_round_options_to_db()
         return
 
