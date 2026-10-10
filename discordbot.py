@@ -450,13 +450,9 @@ async def send_question_queen_submit_ad():
 # the same text is correct whether this deploy is staging or prod.
 okra_lab_announcement_enabled = True
 okra_lab_announcement_text = (
-    "🎧🎤 **LyrIQ stopped flaking out** — the \"Unable to get year data\" error some of you hit is fixed; the year picker now always finds a year to play instead of occasionally coming up empty\n\n"
-    "🐶🦓 **Animal game's dog pile, fixed** — rounds were turning into 5-out-of-7 dog breeds way too often. Capped at one dog per round now, so the other 7,000+ species actually get a turn\n\n"
-    "⚽🟥 **New: Messi Mode** — turn off red cards for parroting the question/category for the rest of the round. Pick it from the round-end options menu, or toggle it any time with `#messi`. No ref's showing cards tonight\n"
+    "⭐🔁 **New: round-option shortcuts** — win enough rounds with your usual picks and the options menu starts offering \"My Default\", \"Most Used\", and \"Last Selected\" buttons, so you don't have to re-pick every time\n\n"
+    "⚙️🥒 **New: `/mydefaults`** — save a default combo, copy in your most-used or last pick, or build a custom one from scratch. Flip on auto-apply and it's set for you the moment you win, no clicking needed\n"
 )
-# NOTE: when ROUND_OPTION_DEFAULTS_ENABLED flips to True, replace this with an announcement
-# for the round-option shortcuts / /mydefaults -- held back deliberately so we're not
-# advertising a feature that's still hidden behind the flag above.
 okra_lab_announcement_show_new_badge = True
 
 # Kill switch for the Where's Okra "winner-submitted custom sprite" reward: an Okrap
